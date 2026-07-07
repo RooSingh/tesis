@@ -1,1 +1,1 @@
-"""Telemetry generator package for the thesis project."""
+"""Paquete del generador de telemetría para el proyecto de tesis."""

@@ -1,5 +1,5 @@
-"""Scheduling logic for signal-by-signal emission.
+"""Lógica de planificación de emisión por señal.
 
-This module will decide when each signal must be emitted according to its
-configured frequency class or period.
+Este módulo decidirá cuándo debe emitirse cada señal según su clase de
+frecuencia o período configurado.
 """

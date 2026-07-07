@@ -1,5 +1,6 @@
-"""Entry point for the telemetry generator MVP.
+"""Punto de entrada del MVP del generador de telemetría.
 
-This module will orchestrate configuration, state updates, scheduling, and
-message construction for the first version of the generator.
+Este módulo orquestará la configuración, la actualización del estado, la
+planificación temporal y la construcción de mensajes para la primera versión
+del generador.
 """

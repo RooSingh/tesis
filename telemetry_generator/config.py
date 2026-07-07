@@ -1,41 +1,49 @@
-"""Initial generator configuration.
+"""Configuración inicial del generador.
 
-This module defines the first MVP signal catalog for the telemetry generator.
-At this stage, the goal is not to simulate every possible vehicle variable,
-but to establish a small, meaningful, and technically justified set of
-signals that can be emitted by the first version of the system.
+Este módulo define el primer catálogo de señales del MVP para el generador de
+telemetría. En esta etapa, el objetivo no es simular todas las variables
+posibles del vehículo, sino establecer un conjunto acotado, útil y
+técnicamente justificable de señales que puedan emitirse en la primera versión
+del sistema.
 
-Important note:
-- the periods defined here are initial working values,
-- they are not claimed as exact OEM CAN cycle times,
-- and they remain open to revision after deeper CAN analysis or broader
-  multi-segment validation.
+Nota importante:
+- los períodos definidos aquí son valores iniciales de trabajo,
+- no se presentan como cycle times OEM exactos,
+- y quedan abiertos a revisión tras un análisis CAN más profundo o una
+  validación sobre más segmentos.
 
-Why this file matters:
-- it centralizes what the generator emits,
-- it gives each signal a unit and an emission period,
-- and it preserves traceability with the CAN/DBC analysis already performed.
+Por qué este archivo importa:
+- centraliza qué emite el generador,
+- asigna unidad y período a cada señal,
+- y conserva trazabilidad con el análisis CAN/DBC ya realizado.
 """
 
 from __future__ import annotations
 
 
-# The initial MVP focuses on:
-# - vehicle speed and wheel speeds,
-# - steering input,
-# - basic vehicle kinematics,
-# - and two basic driver-input variables: brake and throttle.
+# El MVP inicial se concentra en:
+# - velocidad del vehículo y velocidades de rueda,
+# - entrada de dirección,
+# - cinemática vehicular básica,
+# - y dos variables básicas de acción del conductor: freno y acelerador.
 #
-# The chosen periods are provisional but grounded in the work already done:
-# - local evidence from the sample segment,
-# - preliminary semantic mapping through openDBC,
-# - and bibliography-based frequency bands.
+# Los períodos elegidos son provisionales, pero están apoyados en:
+# - evidencia local de la muestra analizada,
+# - mapeo semántico preliminar mediante openDBC,
+# - y bandas de frecuencia respaldadas por bibliografía.
 #
-# Confidence is not identical for all signals:
-# - wheel speeds, steer angle, speed, and kinematics have stronger support,
-# - brake_pressed and gas_pedal are included in the MVP because they are
-#   highly valuable for driving analysis, but their direct semantic closure on
-#   the current sample is still less complete than the core kinematic set.
+# Importante sobre can_id:
+# - los valores consignados aquí deben leerse como referencias CAN preliminares,
+#   no como identificaciones semánticas absolutamente cerradas para toda la tesis,
+# - su función actual es conservar trazabilidad con el análisis CAN ya hecho,
+# - y quedan abiertos a futura consolidación o corrección en nuevas rondas de
+#   estudio del dataset.
+#
+# El nivel de confianza no es idéntico para todas las señales:
+# - wheel speeds, steer angle, speed y kinematics tienen apoyo más fuerte,
+# - brake_pressed y gas_pedal se incluyen por su alto valor analítico,
+#   aunque su cierre semántico directo sobre la muestra actual es todavía menos
+#   sólido que el del conjunto cinemático principal.
 
 MVP_SIGNALS = [
     {
@@ -45,7 +53,7 @@ MVP_SIGNALS = [
         "source_type": "can_simulated",
         "required": True,
         "can_id": 170,
-        "notes": "Front-left wheel speed. High-confidence high-frequency dynamic signal.",
+        "notes": "Velocidad de rueda delantera izquierda. Señal dinámica de alta frecuencia con buen nivel de confianza.",
     },
     {
         "signal_name": "wheel_speed_fr",
@@ -54,7 +62,7 @@ MVP_SIGNALS = [
         "source_type": "can_simulated",
         "required": True,
         "can_id": 170,
-        "notes": "Front-right wheel speed. High-confidence high-frequency dynamic signal.",
+        "notes": "Velocidad de rueda delantera derecha. Señal dinámica de alta frecuencia con buen nivel de confianza.",
     },
     {
         "signal_name": "wheel_speed_rl",
@@ -63,7 +71,7 @@ MVP_SIGNALS = [
         "source_type": "can_simulated",
         "required": True,
         "can_id": 170,
-        "notes": "Rear-left wheel speed. High-confidence high-frequency dynamic signal.",
+        "notes": "Velocidad de rueda trasera izquierda. Señal dinámica de alta frecuencia con buen nivel de confianza.",
     },
     {
         "signal_name": "wheel_speed_rr",
@@ -72,7 +80,7 @@ MVP_SIGNALS = [
         "source_type": "can_simulated",
         "required": True,
         "can_id": 170,
-        "notes": "Rear-right wheel speed. High-confidence high-frequency dynamic signal.",
+        "notes": "Velocidad de rueda trasera derecha. Señal dinámica de alta frecuencia con buen nivel de confianza.",
     },
     {
         "signal_name": "steer_angle",
@@ -81,7 +89,7 @@ MVP_SIGNALS = [
         "source_type": "can_simulated",
         "required": True,
         "can_id": 37,
-        "notes": "Steering angle from steering angle sensor family. Strong local and DBC support.",
+        "notes": "Ángulo de dirección asociado a la familia steering angle sensor. Con apoyo fuerte en la muestra y en el DBC.",
     },
     {
         "signal_name": "speed",
@@ -90,7 +98,7 @@ MVP_SIGNALS = [
         "source_type": "can_simulated",
         "required": True,
         "can_id": 180,
-        "notes": "Vehicle speed signal with medium temporal band. Strong local and DBC support.",
+        "notes": "Señal de velocidad general del vehículo con banda temporal media. Con apoyo fuerte en la muestra y en el DBC.",
     },
     {
         "signal_name": "accel_x",
@@ -99,7 +107,7 @@ MVP_SIGNALS = [
         "source_type": "can_simulated",
         "required": True,
         "can_id": 36,
-        "notes": "Longitudinal acceleration from kinematics family. Good support, period remains revisable.",
+        "notes": "Aceleración longitudinal de la familia kinematics. Buen apoyo, con período todavía revisable.",
     },
     {
         "signal_name": "accel_y",
@@ -108,7 +116,7 @@ MVP_SIGNALS = [
         "source_type": "can_simulated",
         "required": True,
         "can_id": 36,
-        "notes": "Lateral acceleration from kinematics family. Good support, period remains revisable.",
+        "notes": "Aceleración lateral de la familia kinematics. Buen apoyo, con período todavía revisable.",
     },
     {
         "signal_name": "yaw_rate",
@@ -117,7 +125,7 @@ MVP_SIGNALS = [
         "source_type": "can_simulated",
         "required": True,
         "can_id": 36,
-        "notes": "Yaw-rate signal from kinematics family. Good support, period remains revisable.",
+        "notes": "Yaw rate de la familia kinematics. Buen apoyo, con período todavía revisable.",
     },
     {
         "signal_name": "brake_pressed",
@@ -126,7 +134,7 @@ MVP_SIGNALS = [
         "source_type": "can_simulated",
         "required": True,
         "can_id": 550,
-        "notes": "Binary brake state included in the MVP for driver-input analysis. Semantic linkage remains more tentative than core kinematic signals.",
+        "notes": "Estado binario del freno incluido en el MVP para análisis de acción del conductor. Su vínculo semántico sigue siendo más tentativo que el de las señales cinemáticas centrales.",
     },
     {
         "signal_name": "gas_pedal",
@@ -135,6 +143,6 @@ MVP_SIGNALS = [
         "source_type": "can_simulated",
         "required": True,
         "can_id": 705,
-        "notes": "Throttle / accelerator pedal position signal. Included for analysis value, pending stronger direct closure on the sample.",
+        "notes": "Señal de posición del acelerador. Se incluye por su alto valor analítico, aunque todavía queda pendiente una validación semántica más fuerte sobre la muestra.",
     },
 ]
