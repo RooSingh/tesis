@@ -15,12 +15,20 @@ basico del generador antes de integrarlo con el resto de la arquitectura.
 
 from __future__ import annotations
 
+import json
 from datetime import datetime, timedelta, timezone
+
+import paho.mqtt.client as mqtt
 
 from telemetry_generator.message_builder import construir_mensaje_senal
 from telemetry_generator.scheduler import SignalScheduler
 from telemetry_generator.signals import actualizar_estado_basico
 from telemetry_generator.state import TelemetryState
+
+
+MQTT_HOST = "localhost"
+MQTT_PORT = 1883
+MQTT_TOPIC = "tesis/telemetry/live"
 
 
 def crear_estado_inicial() -> TelemetryState:
@@ -86,6 +94,8 @@ def ejecutar_ciclos_simulados(cantidad_ciclos: int = 5, paso_ms: int = 10) -> No
 
     estado = crear_estado_inicial()
     scheduler = SignalScheduler()
+    cliente_mqtt = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
+    cliente_mqtt.connect(MQTT_HOST, MQTT_PORT, 60)
 
     tiempo_actual_ms = 0
 
@@ -110,8 +120,11 @@ def ejecutar_ciclos_simulados(cantidad_ciclos: int = 5, paso_ms: int = 10) -> No
         for signal_name in senales:
             mensaje = construir_mensaje_senal(estado, signal_name)
             print(_formatear_mensaje_resumido(mensaje))
+            cliente_mqtt.publish(MQTT_TOPIC, json.dumps(mensaje))
 
         tiempo_actual_ms += paso_ms
+
+    cliente_mqtt.disconnect()
 
 
 if __name__ == "__main__":
