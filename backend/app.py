@@ -11,7 +11,12 @@ from __future__ import annotations
 from fastapi import FastAPI
 
 from backend.config import BACKEND_APP_NAME
-from backend.db import obtener_ultimos_mensajes
+from backend.db import (
+    obtener_mensajes_por_senal,
+    obtener_mensajes_por_sesion,
+    obtener_ultimos_mensajes,
+    obtener_ultimos_por_senal,
+)
 
 
 app = FastAPI(title=BACKEND_APP_NAME)
@@ -38,3 +43,29 @@ def telemetry_latest(limit: int = 20) -> list[dict]:
     """
 
     return obtener_ultimos_mensajes(limit)
+
+
+@app.get("/telemetry/by-signal/{signal_name}")
+def telemetry_by_signal(signal_name: str, limit: int = 50) -> list[dict]:
+    """Devuelve los ultimos mensajes persistidos para una senal concreta.
+
+    Parametros:
+    - signal_name: nombre logico de la senal a consultar.
+    - limit: cantidad maxima de mensajes a devolver.
+    """
+
+    return obtener_mensajes_por_senal(signal_name, limit)
+
+
+@app.get("/telemetry/latest-by-signal")
+def telemetry_latest_by_signal() -> list[dict]:
+    """Devuelve la ultima muestra disponible de cada senal."""
+
+    return obtener_ultimos_por_senal()
+
+
+@app.get("/telemetry/by-session/{session_id}")
+def telemetry_by_session(session_id: str, limit: int = 100) -> list[dict]:
+    """Devuelve mensajes persistidos pertenecientes a una sesion concreta."""
+
+    return obtener_mensajes_por_sesion(session_id, limit)

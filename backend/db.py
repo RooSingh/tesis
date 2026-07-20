@@ -140,6 +140,129 @@ def obtener_ultimos_mensajes(limite: int = 20) -> list[dict]:
                 (limite,),
             )
 
+            if cur.description is None:
+                return []
+
+            columnas = [desc[0] for desc in cur.description]
+            filas = cur.fetchall()
+
+    return [dict(zip(columnas, fila)) for fila in filas]
+
+
+def obtener_mensajes_por_senal(signal_name: str, limite: int = 50) -> list[dict]:
+    """Devuelve los ultimos mensajes persistidos para una senal concreta.
+
+    Parametros:
+    - signal_name: nombre logico de la senal a consultar.
+    - limite: cantidad maxima de filas a recuperar.
+    """
+
+    with obtener_conexion() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT
+                    timestamp,
+                    vehicle_id,
+                    driver_id,
+                    session_id,
+                    lap_id,
+                    signal_name,
+                    value_numeric,
+                    value_boolean,
+                    value_text,
+                    unit,
+                    quality_flag,
+                    can_id,
+                    src
+                FROM telemetry_messages
+                WHERE signal_name = %s
+                ORDER BY timestamp DESC
+                LIMIT %s
+                """,
+                (signal_name, limite),
+            )
+
+            if cur.description is None:
+                return []
+
+            columnas = [desc[0] for desc in cur.description]
+            filas = cur.fetchall()
+
+    return [dict(zip(columnas, fila)) for fila in filas]
+
+
+def obtener_ultimos_por_senal() -> list[dict]:
+    """Devuelve la ultima muestra disponible de cada senal.
+
+    Esta consulta resulta util para vistas tipo snapshot o panel en vivo,
+    donde interesa el ultimo estado conocido del vehiculo por cada senal.
+    """
+
+    with obtener_conexion() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT DISTINCT ON (signal_name)
+                    timestamp,
+                    vehicle_id,
+                    driver_id,
+                    session_id,
+                    lap_id,
+                    signal_name,
+                    value_numeric,
+                    value_boolean,
+                    value_text,
+                    unit,
+                    quality_flag,
+                    can_id,
+                    src
+                FROM telemetry_messages
+                ORDER BY signal_name, timestamp DESC
+                """
+            )
+
+            if cur.description is None:
+                return []
+
+            columnas = [desc[0] for desc in cur.description]
+            filas = cur.fetchall()
+
+    return [dict(zip(columnas, fila)) for fila in filas]
+
+
+def obtener_mensajes_por_sesion(session_id: str, limite: int = 100) -> list[dict]:
+    """Devuelve mensajes persistidos pertenecientes a una sesion concreta."""
+
+    with obtener_conexion() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT
+                    timestamp,
+                    vehicle_id,
+                    driver_id,
+                    session_id,
+                    lap_id,
+                    signal_name,
+                    value_numeric,
+                    value_boolean,
+                    value_text,
+                    unit,
+                    quality_flag,
+                    can_id,
+                    src
+                FROM telemetry_messages
+                WHERE session_id = %s
+                ORDER BY timestamp DESC
+                LIMIT %s
+                """,
+                (session_id, limite),
+            )
+
+            if cur.description is None:
+                return []
+
             columnas = [desc[0] for desc in cur.description]
             filas = cur.fetchall()
 
