@@ -11,6 +11,7 @@ from __future__ import annotations
 from fastapi import FastAPI
 
 from backend.config import BACKEND_APP_NAME
+from backend.db import obtener_ultimos_mensajes
 
 
 app = FastAPI(title=BACKEND_APP_NAME)
@@ -26,3 +27,14 @@ def root() -> dict:
 def health() -> dict:
     """Endpoint de salud simple para pruebas locales iniciales."""
     return {"status": "ok"}
+
+
+@app.get("/telemetry/latest")
+def telemetry_latest(limit: int = 20) -> list[dict]:
+    """Devuelve los ultimos mensajes telemetricos persistidos.
+
+    Parametros:
+    - limit: cantidad maxima de mensajes a devolver.
+    """
+
+    return obtener_ultimos_mensajes(limit)

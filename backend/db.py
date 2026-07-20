@@ -106,3 +106,41 @@ def insertar_telemetria(mensaje: TelemetryMessage) -> None:
                     "src": metadata.src,
                 },
             )
+
+
+def obtener_ultimos_mensajes(limite: int = 20) -> list[dict]:
+    """Devuelve los ultimos mensajes persistidos en la base de datos.
+
+    Parametros:
+    - limite: cantidad maxima de filas a recuperar.
+    """
+
+    with obtener_conexion() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT
+                    timestamp,
+                    vehicle_id,
+                    driver_id,
+                    session_id,
+                    lap_id,
+                    signal_name,
+                    value_numeric,
+                    value_boolean,
+                    value_text,
+                    unit,
+                    quality_flag,
+                    can_id,
+                    src
+                FROM telemetry_messages
+                ORDER BY timestamp DESC
+                LIMIT %s
+                """,
+                (limite,),
+            )
+
+            columnas = [desc[0] for desc in cur.description]
+            filas = cur.fetchall()
+
+    return [dict(zip(columnas, fila)) for fila in filas]
