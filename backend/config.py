@@ -17,3 +17,9 @@ MQTT_PORT = 1883
 MQTT_TOPIC = "tesis/telemetry/live"
 
 BACKEND_APP_NAME = "tesis-telemetry-backend"
+
+DB_HOST = "localhost"
+DB_PORT = 5432
+DB_NAME = "tesis_db"
+DB_USER = "tesis_user"
+DB_PASSWORD = "tesis_pass"

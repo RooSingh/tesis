@@ -17,6 +17,8 @@ import json
 import paho.mqtt.client as mqtt
 
 from backend.config import MQTT_HOST, MQTT_PORT, MQTT_TOPIC
+from backend.db import insertar_telemetria
+from backend.models import TelemetryMessage
 
 
 # Buffer sencillo en memoria para almacenar los ultimos mensajes recibidos.
@@ -47,10 +49,12 @@ def on_message(client: mqtt.Client, userdata, msg: mqtt.MQTTMessage) -> None:
     """Callback ejecutado cuando llega un mensaje desde MQTT."""
 
     payload = msg.payload.decode("utf-8")
-    mensaje = json.loads(payload)
+    mensaje_dict = json.loads(payload)
+    mensaje = TelemetryMessage.model_validate(mensaje_dict)
 
-    print(f"[MQTT] Mensaje recibido en {msg.topic}: {mensaje.get('signal_name')}")
-    _guardar_mensaje_en_memoria(mensaje)
+    print(f"[MQTT] Mensaje recibido en {msg.topic}: {mensaje.signal_name}")
+    _guardar_mensaje_en_memoria(mensaje.model_dump())
+    insertar_telemetria(mensaje)
 
 
 def crear_cliente_mqtt() -> mqtt.Client:
