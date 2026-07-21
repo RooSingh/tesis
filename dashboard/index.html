@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Dashboard de Telemetria</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <main class="contenedor-principal">
+    <header class="encabezado">
+      <h1>Dashboard de Telemetria</h1>
+      <p>Vista minima inicial del estado actual del vehiculo.</p>
+    </header>
+
+    <section class="panel panel-tarjetas">
+      <div class="panel-titulo">
+        <h2>Resumen rapido</h2>
+      </div>
+      <div id="tarjetas-telemetria" class="grid-tarjetas"></div>
+    </section>
+
+    <section class="panel panel-grafico">
+      <div class="panel-titulo">
+        <h2>Serie temporal de una senal</h2>
+      </div>
+      <div class="controles-grafico">
+        <label for="selector-senal">Senal:</label>
+        <select id="selector-senal">
+          <option value="speed">speed</option>
+          <option value="wheel_speed_fl">wheel_speed_fl</option>
+          <option value="yaw_rate">yaw_rate</option>
+          <option value="steer_angle">steer_angle</option>
+          <option value="gas_pedal">gas_pedal</option>
+        </select>
+      </div>
+      <canvas id="grafico-senal" width="1000" height="280"></canvas>
+    </section>
+
+    <section class="panel panel-estado">
+      <div class="panel-titulo">
+        <h2>Ultima muestra por senal</h2>
+        <button id="boton-recargar" type="button">Recargar</button>
+      </div>
+      <p id="estado-carga">Esperando carga inicial...</p>
+
+      <table id="tabla-telemetria">
+        <thead>
+          <tr>
+            <th>Senal</th>
+            <th>Valor</th>
+            <th>Unidad</th>
+            <th>Timestamp</th>
+            <th>Calidad</th>
+            <th>CAN ID</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </section>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>

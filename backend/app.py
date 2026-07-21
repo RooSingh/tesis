@@ -9,6 +9,7 @@ incorporar consumo MQTT, persistencia o logica mas compleja.
 from __future__ import annotations
 
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
 from backend.config import BACKEND_APP_NAME
 from backend.db import (
@@ -20,6 +21,17 @@ from backend.db import (
 
 
 app = FastAPI(title=BACKEND_APP_NAME)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://127.0.0.1:3000",
+        "http://localhost:3000",
+    ],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 @app.get("/")
