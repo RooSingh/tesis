@@ -57,6 +57,7 @@ class TelemetryState:
     # --- Entradas basicas del conductor ---------------------------------
     brake_pressed: bool = False
     gas_pedal: float = 0.0
+    gas_pressed: bool = False
 
     # --- Calidad por defecto --------------------------------------------
     # Este valor podra ser usado luego por el constructor de mensajes cuando

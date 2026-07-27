@@ -27,7 +27,8 @@ SIGNAL_DEFINITIONS = {
     "accel_y": {"state_field": "accel_y", "unit": "m/s2", "can_id": 36},
     "yaw_rate": {"state_field": "yaw_rate", "unit": "deg/s", "can_id": 36},
     "brake_pressed": {"state_field": "brake_pressed", "unit": "bool", "can_id": 550},
-    "gas_pedal": {"state_field": "gas_pedal", "unit": "%", "can_id": 705},
+    "gas_pedal": {"state_field": "gas_pedal", "unit": "%", "can_id": None},
+    "gas_pressed": {"state_field": "gas_pressed", "unit": "bool", "can_id": 466},
 }
 
 

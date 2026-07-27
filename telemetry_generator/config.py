@@ -41,9 +41,9 @@ from __future__ import annotations
 #
 # El nivel de confianza no es idéntico para todas las señales:
 # - wheel speeds, steer angle, speed y kinematics tienen apoyo más fuerte,
-# - brake_pressed y gas_pedal se incluyen por su alto valor analítico,
-#   aunque su cierre semántico directo sobre la muestra actual es todavía menos
-#   sólido que el del conjunto cinemático principal.
+# - brake_pressed y gas_pressed cuentan con validación CAN dirigida,
+# - gas_pedal se conserva como porcentaje simulado de valor deportivo, sin
+#   asociarlo a un ID CAN no validado para esta plataforma.
 
 MVP_SIGNALS = [
     {
@@ -134,7 +134,7 @@ MVP_SIGNALS = [
         "source_type": "can_simulated",
         "required": True,
         "can_id": 550,
-        "notes": "Estado binario del freno incluido en el MVP para análisis de acción del conductor. Su vínculo semántico sigue siendo más tentativo que el de las señales cinemáticas centrales.",
+        "notes": "Estado binario del freno validado en la segunda pasada CAN sobre el ID 550.",
     },
     {
         "signal_name": "gas_pedal",
@@ -142,7 +142,16 @@ MVP_SIGNALS = [
         "period_ms": 20,
         "source_type": "can_simulated",
         "required": True,
-        "can_id": 705,
-        "notes": "Señal de posición del acelerador. Se incluye por su alto valor analítico, aunque todavía queda pendiente una validación semántica más fuerte sobre la muestra.",
+        "can_id": None,
+        "notes": "Posición continua simulada de acelerador para telemetría racing. No posee un ID CAN validado en la muestra RAV4 actual.",
+    },
+    {
+        "signal_name": "gas_pressed",
+        "unit": "bool",
+        "period_ms": 20,
+        "source_type": "can_simulated",
+        "required": False,
+        "can_id": 466,
+        "notes": "Acción binaria de acelerador, inspirada en PCM_CRUISE.GAS_RELEASED y validada como referencia CAN en la segunda pasada dirigida.",
     },
 ]

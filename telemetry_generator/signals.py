@@ -38,6 +38,7 @@ def actualizar_estado_basico(estado: TelemetryState, paso_ms: int = 10) -> Telem
 
     # --- 1. Dinamica longitudinal --------------------------------------
     # El acelerador genera empuje positivo. El freno fuerza desaceleracion.
+    estado.gas_pressed = estado.gas_pedal > 0.0
     empuje_acelerador = (estado.gas_pedal / 100.0) * 3.0
     desaceleracion_freno = 4.5 if estado.brake_pressed else 0.0
 
