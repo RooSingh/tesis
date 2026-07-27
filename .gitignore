@@ -3,3 +3,4 @@ external/
 .venv/
 __pycache__/
 *.pyc
+session-*.md
