@@ -2,6 +2,7 @@
 
 import argparse
 from collections import Counter
+from importlib import import_module
 from pathlib import Path
 import sys
 
@@ -57,7 +58,8 @@ def extraer_valor_big_endian(payload: bytes, bit_inicial: int, longitud: int) ->
 def cargar_payloads_freno(rlog_path: Path) -> Counter[bytes]:
     """Recorre el log y cuenta los payloads del mensaje BRAKE_MODULE."""
     sys.path.extend([str(OPENPILOT_PATH), str(OPENDBC_PATH)])
-    from openpilot.cereal import log as capnp_log
+    capnp_cereal = import_module("openpilot.cereal")
+    capnp_log = capnp_cereal.log
 
     data = zstd.ZstdDecompressor().decompress(rlog_path.read_bytes())
     payloads: Counter[bytes] = Counter()
