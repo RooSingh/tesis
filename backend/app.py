@@ -1,9 +1,10 @@
 """Punto de entrada inicial del backend.
 
 Este modulo crea una primera aplicacion FastAPI del proyecto y expone
-endpoints minimos de verificacion. En esta etapa, su objetivo principal es
-confirmar que el backend puede existir como servicio web independiente antes de
-incorporar consumo MQTT, persistencia o logica mas compleja.
+endpoints de verificacion y consulta de telemetria persistida. El consumo MQTT
+se ejecuta en un proceso separado mediante `backend.mqtt_consumer`; esta
+aplicacion expone por HTTP los datos que dicho consumidor ya inserto en la base
+de datos.
 """
 
 from __future__ import annotations

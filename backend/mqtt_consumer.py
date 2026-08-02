@@ -6,8 +6,10 @@ etapa, su objetivo es simple:
 - conectarse al broker local,
 - suscribirse al topic de telemetria del generador,
 - recibir mensajes,
-- mostrarlos en consola,
-- y conservar una pequena memoria de los ultimos mensajes recibidos.
+- validarlos,
+- persistirlos en la base de datos,
+- y conservar una pequena memoria de los ultimos mensajes recibidos para
+  inspeccion inmediata.
 """
 
 from __future__ import annotations
@@ -22,8 +24,8 @@ from backend.models import TelemetryMessage
 
 
 # Buffer sencillo en memoria para almacenar los ultimos mensajes recibidos.
-# Esto no reemplaza una base de datos; solo sirve para pruebas iniciales del
-# backend mientras todavia no existe persistencia formal.
+# No reemplaza la persistencia: complementa la base de datos durante pruebas e
+# inspeccion inmediata del flujo recibido.
 ULTIMOS_MENSAJES: list[dict] = []
 MAX_MENSAJES_EN_MEMORIA = 20
 

@@ -7,10 +7,12 @@ Este modulo orquesta una primera cadena funcional del modo simulacion:
 3. actualiza el estado del vehiculo,
 4. consulta al scheduler que senales toca emitir,
 5. construye los mensajes correspondientes,
-6. e imprime esos mensajes por consola.
+6. los imprime por consola,
+7. y los publica por MQTT.
 
-En esta etapa no se publica todavia por MQTT. El objetivo es validar el flujo
-basico del generador antes de integrarlo con el resto de la arquitectura.
+La ejecucion requiere un broker MQTT accesible en la configuracion local. El
+generador sigue siendo una fuente simulada: MQTT solo transporta los mensajes
+hacia el resto de la arquitectura.
 """
 
 from __future__ import annotations
@@ -22,7 +24,7 @@ import paho.mqtt.client as mqtt
 
 from telemetry_generator.message_builder import construir_mensaje_senal
 from telemetry_generator.scheduler import SignalScheduler
-from telemetry_generator.signals import actualizar_estado_basico
+from telemetry_generator.signals import aplicar_escenario_demostrativo, actualizar_estado_basico
 from telemetry_generator.state import TelemetryState
 
 
@@ -36,21 +38,22 @@ def crear_estado_inicial() -> TelemetryState:
 
     return TelemetryState(
         timestamp="2026-07-01T15:30:12.120000Z",
-        vehicle_id="car_01",
-        driver_id="driver_01",
-        session_id="session_01",
-        lap_id="lap_01",
+        vehicle_id="demo_car_01",
+        driver_id="demo_driver_01",
+        session_id="demo_session_01",
+        lap_id="demo_sequence_01",
+        sector_id="demo_sector_01",
         speed=100.0,
         wheel_speed_fl=100.0,
         wheel_speed_fr=100.0,
         wheel_speed_rl=100.0,
         wheel_speed_rr=100.0,
-        steer_angle=5.0,
+        steer_angle=0.0,
         accel_x=0.0,
         accel_y=0.0,
         yaw_rate=0.0,
         brake_pressed=False,
-        gas_pedal=40.0,
+        gas_pedal=65.0,
     )
 
 
@@ -84,11 +87,12 @@ def _formatear_mensaje_resumido(mensaje: dict) -> str:
     return f"- {signal_name:<15} | t={timestamp} | valor={value:<8} {unit:<6} | can_id={can_id}"
 
 
-def ejecutar_ciclos_simulados(cantidad_ciclos: int = 5, paso_ms: int = 10) -> None:
-    """Ejecuta una simulacion corta del generador MVP.
+def ejecutar_ciclos_simulados(cantidad_ciclos: int = 6_000, paso_ms: int = 10) -> None:
+    """Ejecuta la secuencia demostrativa de 60 segundos del generador MVP.
 
     Parametros:
-    - cantidad_ciclos: cantidad de iteraciones del flujo.
+    - cantidad_ciclos: cantidad de iteraciones del flujo. Por defecto cubre
+      los 60 segundos completos de la demostracion.
     - paso_ms: tamano del paso temporal por ciclo.
     """
 
@@ -108,7 +112,8 @@ def ejecutar_ciclos_simulados(cantidad_ciclos: int = 5, paso_ms: int = 10) -> No
             "2026-07-01T15:30:12.120000Z", tiempo_actual_ms
         )
 
-        # 1. Actualizamos el estado interno del vehiculo.
+        # 1. Aplicamos la fase temporal y actualizamos el estado del vehiculo.
+        aplicar_escenario_demostrativo(estado, tiempo_actual_ms)
         actualizar_estado_basico(estado, paso_ms=paso_ms)
 
         # 2. Preguntamos al scheduler que senales toca emitir ahora.
