@@ -1,274 +1,356 @@
 const API_BASE_URL = "http://127.0.0.1:8000";
-const ENDPOINT_ULTIMA_MUESTRA = `${API_BASE_URL}/telemetry/latest-by-signal`;
-const ENDPOINT_POR_SENAL = `${API_BASE_URL}/telemetry/by-signal`;
-
-const estadoCarga = document.getElementById("estado-carga");
-const cuerpoTabla = document.querySelector("#tabla-telemetria tbody");
-const botonRecargar = document.getElementById("boton-recargar");
-const contenedorTarjetas = document.getElementById("tarjetas-telemetria");
-const selectorSenal = document.getElementById("selector-senal");
-const canvasGrafico = document.getElementById("grafico-senal");
-const contextoGrafico = canvasGrafico.getContext("2d");
+const SESSION_ID = "mqtt_phase_test";
+const ENDPOINT_SESION = `${API_BASE_URL}/telemetry/by-session/${SESSION_ID}?limit=100`;
 const INTERVALO_RECARGA_MS = 3000;
 
-const SENALES_DESTACADAS = [
-  "speed",
-  "steer_angle",
-  "yaw_rate",
-  "accel_x",
-  "accel_y",
-  "gas_pedal",
-  "gas_pressed",
-  "brake_pressed",
-  "wheel_speed_fl",
-  "wheel_speed_fr",
-  "wheel_speed_rl",
-  "wheel_speed_rr",
-];
-
-const ETIQUETAS_SENALES = {
-  speed: "Velocidad",
-  steer_angle: "Angulo de direccion",
-  yaw_rate: "Yaw rate",
-  accel_x: "Aceleracion longitudinal",
-  accel_y: "Aceleracion lateral",
-  gas_pedal: "Acelerador",
-  gas_pressed: "Acelerador activado",
-  brake_pressed: "Freno activado",
-  wheel_speed_fl: "Rueda delantera izq.",
-  wheel_speed_fr: "Rueda delantera der.",
-  wheel_speed_rl: "Rueda trasera izq.",
-  wheel_speed_rr: "Rueda trasera der.",
+const estadoCarga = document.getElementById("estado-carga");
+const resumenSesion = document.getElementById("resumen-sesion");
+const estadoOrigen = document.getElementById("estado-origen");
+const contextoSesion = document.getElementById("contexto-sesion");
+const lineaFases = document.getElementById("linea-fases");
+const cantidadFases = document.getElementById("cantidad-fases");
+const resumenOperativo = document.getElementById("resumen-operativo");
+const descripcionPuntoSeleccionado = document.getElementById("descripcion-punto-seleccionado");
+const valoresPuntoSeleccionado = document.getElementById("valores-punto-seleccionado");
+const cuerpoTabla = document.querySelector("#tabla-telemetria tbody");
+const botonRecargar = document.getElementById("boton-recargar");
+const detalleGrafico = document.getElementById("detalle-grafico");
+const GRAFICOS = {
+  speed: document.getElementById("grafico-velocidad"),
+  brake_pressed: document.getElementById("grafico-freno"),
+  steer_angle: document.getElementById("grafico-direccion"),
 };
 
-function obtenerEtiquetaSenal(signalName) {
-  return ETIQUETAS_SENALES[signalName] ?? signalName;
+const SENALES_OPERATIVAS = ["speed", "brake_pressed", "steer_angle"];
+const ETIQUETAS = {
+  speed: "Velocidad",
+  brake_pressed: "Freno",
+  steer_angle: "Direccion",
+};
+const ETIQUETAS_SEGMENTOS = {
+  demo_straight_entry: "Recta inicial",
+  demo_braking_zone: "Zona de frenada",
+  demo_corner_entry: "Entrada a curva",
+  demo_corner_apex: "Apice",
+  demo_corner_exit: "Salida de curva",
+  demo_straight_exit: "Recta final",
+};
+
+let mensajesSesion = [];
+let indiceFaseSeleccionado = null;
+
+function obtenerEtiqueta(signalName) {
+  return ETIQUETAS[signalName] ?? signalName;
 }
 
-function obtenerClaseCalidad(qualityFlag) {
-  return `calidad-${qualityFlag ?? "desconocida"}`;
+function obtenerEtiquetaSegmento(segmentId) {
+  return ETIQUETAS_SEGMENTOS[segmentId] ?? segmentId ?? "Sin segmento";
 }
 
-function formatearValor(valorNumerico, valorBooleano, valorTexto) {
-  if (valorNumerico !== null && valorNumerico !== undefined) {
-    return Number(valorNumerico).toFixed(3);
+function obtenerValor(mensaje) {
+  if (mensaje.value_numeric !== null && mensaje.value_numeric !== undefined) {
+    return Number(mensaje.value_numeric);
   }
 
-  if (valorBooleano !== null && valorBooleano !== undefined) {
-    return String(valorBooleano);
+  if (mensaje.value_boolean !== null && mensaje.value_boolean !== undefined) {
+    return mensaje.value_boolean ? 1 : 0;
   }
 
-  if (valorTexto !== null && valorTexto !== undefined) {
-    return valorTexto;
+  return null;
+}
+
+function formatearValor(mensaje) {
+  if (mensaje.value_numeric !== null && mensaje.value_numeric !== undefined) {
+    const valor = Number(mensaje.value_numeric);
+    return (Math.abs(valor) < 0.005 ? 0 : valor).toFixed(2);
   }
 
-  return "-";
+  if (mensaje.value_boolean !== null && mensaje.value_boolean !== undefined) {
+    return mensaje.value_boolean ? "ACTIVO" : "LIBERADO";
+  }
+
+  return mensaje.value_text ?? "-";
 }
 
-function limpiarTabla() {
-  cuerpoTabla.innerHTML = "";
+function formatearHora(timestamp) {
+  return new Date(timestamp).toLocaleTimeString("es-AR", {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    fractionalSecondDigits: 3,
+  });
 }
 
-function limpiarTarjetas() {
-  contenedorTarjetas.innerHTML = "";
+function ordenarCronologicamente(mensajes) {
+  return [...mensajes].sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
 }
 
-function renderizarTarjetas(mensajes) {
-  limpiarTarjetas();
+function obtenerUltimosPorSenal(mensajes) {
+  const ultimos = new Map();
+  for (const mensaje of ordenarCronologicamente(mensajes)) {
+    ultimos.set(mensaje.signal_name, mensaje);
+  }
+  return ultimos;
+}
 
-  const mensajesPorSenal = new Map(mensajes.map((mensaje) => [mensaje.signal_name, mensaje]));
+function obtenerFases(mensajes) {
+  const fases = new Map();
+  for (const mensaje of ordenarCronologicamente(mensajes)) {
+    if (!fases.has(mensaje.timestamp)) {
+      fases.set(mensaje.timestamp, mensaje);
+    }
+  }
+  return [...fases.values()];
+}
 
-  for (const signalName of SENALES_DESTACADAS) {
-    const mensaje = mensajesPorSenal.get(signalName);
+function renderizarContexto(mensajes) {
+  const muestra = ordenarCronologicamente(mensajes).at(-1);
+  if (!muestra) {
+    return;
+  }
 
+  resumenSesion.textContent = `${muestra.vehicle_id} · ${muestra.driver_id} · ${muestra.lap_id}`;
+  estadoOrigen.textContent = muestra.source_type === "can_simulated" ? "SIMULACION CONTROLADA" : muestra.source_type;
+  estadoOrigen.className = `estado-origen estado-${muestra.source_type}`;
+
+  const datos = [
+    ["Sesion", muestra.session_id],
+    ["Vehiculo", muestra.vehicle_id],
+    ["Piloto", muestra.driver_id],
+    ["Vuelta", muestra.lap_id ?? "-"],
+    ["Sector", muestra.sector_id ?? "-"],
+  ];
+  contextoSesion.innerHTML = datos.map(([etiqueta, valor]) => `<div><dt>${etiqueta}</dt><dd>${valor}</dd></div>`).join("");
+}
+
+function renderizarResumenOperativo() {
+  resumenOperativo.textContent = "Selecciona un punto de control para revisar velocidad, freno y direccion.";
+}
+
+function renderizarFases(mensajes) {
+  const fases = obtenerFases(mensajes);
+  if (indiceFaseSeleccionado === null || indiceFaseSeleccionado >= fases.length) {
+    indiceFaseSeleccionado = Math.max(fases.length - 1, 0);
+  }
+  const cantidadFasesUnicas = new Set(fases.map((fase) => fase.track_segment_id)).size;
+  cantidadFases.textContent = `${fases.length} puntos de control · ${cantidadFasesUnicas} fases`;
+  lineaFases.innerHTML = fases.map((fase, indice) => `
+    <button
+      class="hito-fase ${indice === indiceFaseSeleccionado ? "hito-seleccionado" : ""}"
+      type="button"
+      data-indice-fase="${indice}"
+      aria-pressed="${indice === indiceFaseSeleccionado}"
+    >
+      <span class="numero-fase">${String(indice + 1).padStart(2, "0")}</span>
+      <div>
+        <strong>${obtenerEtiquetaSegmento(fase.track_segment_id)}</strong>
+        <p>${fase.curve_id ? "Punto de control en curva" : "Punto de control en recta"}</p>
+      </div>
+    </button>
+  `).join("");
+}
+
+function renderizarPuntoSeleccionado(mensajes) {
+  const fases = obtenerFases(mensajes);
+  const fase = fases[indiceFaseSeleccionado];
+  if (!fase) {
+    descripcionPuntoSeleccionado.textContent = "No hay un punto disponible para analizar.";
+    valoresPuntoSeleccionado.innerHTML = "";
+    return;
+  }
+
+  const mensajesPunto = mensajes.filter((mensaje) => mensaje.timestamp === fase.timestamp);
+  descripcionPuntoSeleccionado.textContent = `Punto ${String(indiceFaseSeleccionado + 1).padStart(2, "0")}: ${obtenerEtiquetaSegmento(fase.track_segment_id)}.`;
+  valoresPuntoSeleccionado.innerHTML = SENALES_OPERATIVAS.map((signalName) => {
+    const mensaje = mensajesPunto.find((item) => item.signal_name === signalName);
     if (!mensaje) {
-      continue;
+      return "";
     }
 
-    const tarjeta = document.createElement("article");
-    tarjeta.className = `tarjeta-senal ${obtenerClaseCalidad(mensaje.quality_flag)}`;
-
-    tarjeta.innerHTML = `
-      <h3>${obtenerEtiquetaSenal(mensaje.signal_name)}</h3>
-      <p class="tarjeta-valor">${formatearValor(mensaje.value_numeric, mensaje.value_boolean, mensaje.value_text)}</p>
-      <p class="tarjeta-unidad">${mensaje.unit ?? "-"}</p>
-      <p class="tarjeta-calidad ${obtenerClaseCalidad(mensaje.quality_flag)}">Calidad: ${mensaje.quality_flag}</p>
+    const unidad = mensaje.value_boolean === null || mensaje.value_boolean === undefined
+      ? mensaje.unit ?? ""
+      : "";
+    return `
+      <article class="tarjeta-punto tarjeta-${signalName}">
+        <p>${obtenerEtiqueta(signalName)}</p>
+        <strong>${formatearValor(mensaje)}</strong>
+        <span>${unidad}</span>
+      </article>
     `;
-
-    contenedorTarjetas.appendChild(tarjeta);
-  }
+  }).join("");
 }
 
-function renderizarTelemetria(mensajes) {
-  limpiarTabla();
-
-  const mensajesOrdenados = [...mensajes].sort((a, b) => {
-    return SENALES_DESTACADAS.indexOf(a.signal_name) - SENALES_DESTACADAS.indexOf(b.signal_name);
-  });
-
-  for (const mensaje of mensajesOrdenados) {
-    const fila = document.createElement("tr");
-    fila.className = obtenerClaseCalidad(mensaje.quality_flag);
-
-    fila.innerHTML = `
-      <td>${obtenerEtiquetaSenal(mensaje.signal_name)}</td>
-      <td>${formatearValor(mensaje.value_numeric, mensaje.value_boolean, mensaje.value_text)}</td>
-      <td>${mensaje.unit ?? "-"}</td>
-      <td>${mensaje.timestamp}</td>
-      <td class="${obtenerClaseCalidad(mensaje.quality_flag)}">${mensaje.quality_flag}</td>
+function renderizarTabla(mensajes) {
+  const faseSeleccionada = obtenerFases(mensajes)[indiceFaseSeleccionado];
+  cuerpoTabla.innerHTML = ordenarCronologicamente(mensajes).map((mensaje) => `
+    <tr class="${mensaje.timestamp === faseSeleccionada?.timestamp ? "fila-seleccionada" : ""}">
+      <td>${obtenerEtiqueta(mensaje.signal_name)}</td>
+      <td>${formatearValor(mensaje)} ${mensaje.unit ?? ""}</td>
+      <td>${formatearHora(mensaje.timestamp)}</td>
+      <td>${mensaje.track_segment_id ?? "-"}</td>
+      <td>${mensaje.curve_id ?? "-"}</td>
+      <td>${mensaje.source_type ?? "-"}</td>
       <td>${mensaje.can_id ?? "-"}</td>
-    `;
-
-    cuerpoTabla.appendChild(fila);
-  }
+    </tr>
+  `).join("");
 }
 
-function dibujarGraficoSenal(mensajes, signalName) {
-  contextoGrafico.clearRect(0, 0, canvasGrafico.width, canvasGrafico.height);
-
-  if (!mensajes.length) {
-    contextoGrafico.fillStyle = "#52606d";
-    contextoGrafico.font = "16px Segoe UI";
-    contextoGrafico.fillText("No hay datos para la senal seleccionada.", 20, 40);
-    return;
-  }
-
-  const valores = mensajes
-    .map((m) => m.value_numeric)
-    .filter((v) => v !== null && v !== undefined);
-
-  if (!valores.length) {
-    contextoGrafico.fillStyle = "#52606d";
-    contextoGrafico.font = "16px Segoe UI";
-    contextoGrafico.fillText("La senal seleccionada no tiene valores numericos graficables.", 20, 40);
-    return;
-  }
+function dibujarGrafico(signalName, canvasGrafico) {
+  const contextoGrafico = canvasGrafico.getContext("2d");
+  const muestras = ordenarCronologicamente(mensajesSesion)
+    .filter((mensaje) => mensaje.signal_name === signalName)
+    .map((mensaje) => ({ ...mensaje, valor: obtenerValor(mensaje) }))
+    .filter((mensaje) => mensaje.valor !== null);
 
   const ancho = canvasGrafico.width;
   const alto = canvasGrafico.height;
-  const padding = 50;
+  const margen = { superior: 42, derecho: 24, inferior: 48, izquierdo: 74 };
+  contextoGrafico.clearRect(0, 0, ancho, alto);
+  contextoGrafico.fillStyle = "#0b1220";
+  contextoGrafico.fillRect(0, 0, ancho, alto);
 
-  const minValor = Math.min(...valores);
-  const maxValor = Math.max(...valores);
-  const rango = maxValor - minValor || 1;
+  if (!muestras.length) {
+    contextoGrafico.fillStyle = "#94a3b8";
+    contextoGrafico.font = "16px Segoe UI";
+    contextoGrafico.fillText("No hay muestras para la senal seleccionada.", margen.izquierdo, alto / 2);
+    return;
+  }
 
-  // Fondo interno del grafico.
-  contextoGrafico.fillStyle = "#f8fafc";
-  contextoGrafico.fillRect(padding, padding, ancho - padding * 2, alto - padding * 2);
+  const valores = muestras.map((muestra) => muestra.valor);
+  const minimo = Math.min(...valores);
+  const maximo = Math.max(...valores);
+  const rango = maximo - minimo || 1;
+  const areaAncho = ancho - margen.izquierdo - margen.derecho;
+  const areaAlto = alto - margen.superior - margen.inferior;
+  const fases = obtenerFases(mensajesSesion);
+  const indiceSeleccionado = Math.min(indiceFaseSeleccionado ?? muestras.length - 1, muestras.length - 1);
+  const muestraSeleccionada = muestras[indiceSeleccionado];
 
-  // Rejilla suave para facilitar lectura visual.
-  contextoGrafico.strokeStyle = "#e2e8f0";
+  contextoGrafico.strokeStyle = "rgba(148, 163, 184, 0.22)";
   contextoGrafico.lineWidth = 1;
-  const lineasHorizontales = 4;
-  for (let i = 0; i <= lineasHorizontales; i += 1) {
-    const y = padding + (i * (alto - padding * 2)) / lineasHorizontales;
+  for (let indice = 0; indice <= 4; indice += 1) {
+    const y = margen.superior + (areaAlto * indice) / 4;
     contextoGrafico.beginPath();
-    contextoGrafico.moveTo(padding, y);
-    contextoGrafico.lineTo(ancho - padding, y);
+    contextoGrafico.moveTo(margen.izquierdo, y);
+    contextoGrafico.lineTo(ancho - margen.derecho, y);
     contextoGrafico.stroke();
   }
 
-  const lineasVerticales = Math.min(valores.length - 1, 5);
-  for (let i = 0; i <= lineasVerticales; i += 1) {
-    const x = padding + (i * (ancho - padding * 2)) / Math.max(lineasVerticales, 1);
-    contextoGrafico.beginPath();
-    contextoGrafico.moveTo(x, padding);
-    contextoGrafico.lineTo(x, alto - padding);
-    contextoGrafico.stroke();
+  contextoGrafico.fillStyle = "#94a3b8";
+  contextoGrafico.font = "11px Segoe UI";
+  if (signalName === "brake_pressed") {
+    contextoGrafico.fillText("ACTIVO", 8, margen.superior + 4);
+    contextoGrafico.fillText("LIBERADO", 8, margen.superior + areaAlto);
+  } else {
+    for (let indice = 0; indice <= 4; indice += 2) {
+      const y = margen.superior + (areaAlto * indice) / 4;
+      const valorEscala = maximo - (rango * indice) / 4;
+      const precision = Math.abs(maximo - minimo) < 10 ? 1 : 0;
+      contextoGrafico.fillText(valorEscala.toFixed(precision), 18, y + 4);
+    }
   }
 
-  // Marco del area de grafico.
-  contextoGrafico.strokeStyle = "#cbd5e1";
-  contextoGrafico.strokeRect(padding, padding, ancho - padding * 2, alto - padding * 2);
+  if (signalName === "steer_angle" && minimo <= 0 && maximo >= 0) {
+    const yCero = margen.superior + areaAlto - ((0 - minimo) / rango) * areaAlto;
+    contextoGrafico.strokeStyle = "rgba(248, 250, 252, 0.58)";
+    contextoGrafico.setLineDash([5, 4]);
+    contextoGrafico.beginPath();
+    contextoGrafico.moveTo(margen.izquierdo, yCero);
+    contextoGrafico.lineTo(ancho - margen.derecho, yCero);
+    contextoGrafico.stroke();
+    contextoGrafico.setLineDash([]);
+  }
 
+  const color = signalName === "brake_pressed" ? "#f97316" : signalName === "steer_angle" ? "#a78bfa" : "#22d3ee";
   contextoGrafico.beginPath();
-  contextoGrafico.strokeStyle = "#0ea5e9";
-  contextoGrafico.lineWidth = 3;
+  contextoGrafico.strokeStyle = color;
+  contextoGrafico.lineWidth = 4;
 
-  const puntos = [];
-
-  valores.forEach((valor, indice) => {
-    const x = padding + (indice * (ancho - padding * 2)) / Math.max(valores.length - 1, 1);
-    const y = alto - padding - ((valor - minValor) / rango) * (alto - padding * 2);
-    puntos.push({ x, y });
-
+  muestras.forEach((muestra, indice) => {
+    const x = margen.izquierdo + (areaAncho * indice) / Math.max(muestras.length - 1, 1);
+    const y = margen.superior + areaAlto - ((muestra.valor - minimo) / rango) * areaAlto;
     if (indice === 0) {
       contextoGrafico.moveTo(x, y);
     } else {
       contextoGrafico.lineTo(x, y);
     }
   });
-
   contextoGrafico.stroke();
 
-  // Puntos de la serie para reforzar lectura.
-  contextoGrafico.fillStyle = "#0284c7";
-  for (const punto of puntos) {
+  muestras.forEach((muestra, indice) => {
+    const x = margen.izquierdo + (areaAncho * indice) / Math.max(muestras.length - 1, 1);
+    const y = margen.superior + areaAlto - ((muestra.valor - minimo) / rango) * areaAlto;
+    contextoGrafico.fillStyle = color;
     contextoGrafico.beginPath();
-    contextoGrafico.arc(punto.x, punto.y, 3, 0, Math.PI * 2);
+    contextoGrafico.arc(x, y, 5, 0, Math.PI * 2);
     contextoGrafico.fill();
+    contextoGrafico.fillStyle = "#cbd5e1";
+    contextoGrafico.font = "12px Segoe UI";
+    contextoGrafico.fillText(String(indice + 1).padStart(2, "0"), x - 7, alto - 20);
+  });
+
+  if (muestraSeleccionada) {
+    const x = margen.izquierdo + (areaAncho * indiceSeleccionado) / Math.max(muestras.length - 1, 1);
+    const y = margen.superior + areaAlto - ((muestraSeleccionada.valor - minimo) / rango) * areaAlto;
+    contextoGrafico.strokeStyle = "#f8fafc";
+    contextoGrafico.lineWidth = 3;
+    contextoGrafico.beginPath();
+    contextoGrafico.arc(x, y, 9, 0, Math.PI * 2);
+    contextoGrafico.stroke();
   }
 
-  contextoGrafico.fillStyle = "#1f2933";
-  contextoGrafico.font = "14px Segoe UI";
-  contextoGrafico.fillText(`Senal: ${obtenerEtiquetaSenal(signalName)}`, padding, 20);
-  contextoGrafico.fillText(`Min: ${minValor.toFixed(3)}`, padding, alto - 12);
-  contextoGrafico.fillText(`Max: ${maxValor.toFixed(3)}`, ancho - 150, alto - 12);
-  contextoGrafico.fillStyle = "#52606d";
-  contextoGrafico.fillText(`Ultimas ${valores.length} muestras`, padding, 38);
+  contextoGrafico.fillStyle = "#e2e8f0";
+  contextoGrafico.font = "600 17px Segoe UI";
+  contextoGrafico.fillText(obtenerEtiqueta(signalName), margen.izquierdo, 25);
+  contextoGrafico.fillStyle = "#94a3b8";
+  contextoGrafico.font = "13px Segoe UI";
+  contextoGrafico.fillText(`Min ${minimo.toFixed(2)} · Max ${maximo.toFixed(2)} · ${muestras.length} muestras`, margen.izquierdo, alto - 5);
+
+  const faseSeleccionada = fases[indiceSeleccionado];
+  detalleGrafico.textContent = `Punto ${String(indiceSeleccionado + 1).padStart(2, "0")}: ${obtenerEtiquetaSegmento(faseSeleccionada?.track_segment_id)}. Las tres series comparten este punto de control.`;
 }
 
-async function cargarSeriePorSenal(signalName) {
-  const respuesta = await fetch(`${ENDPOINT_POR_SENAL}/${signalName}?limit=30`);
-
-  if (!respuesta.ok) {
-    throw new Error(`Error HTTP ${respuesta.status}`);
+function dibujarGraficosCoordinados() {
+  for (const signalName of SENALES_OPERATIVAS) {
+    dibujarGrafico(signalName, GRAFICOS[signalName]);
   }
-
-  return respuesta.json();
 }
 
-async function cargarUltimaMuestraPorSenal() {
-  estadoCarga.textContent = "Cargando telemetria...";
-
+async function cargarSesion() {
+  estadoCarga.textContent = "Cargando sesion demostrativa...";
   try {
-    const respuesta = await fetch(ENDPOINT_ULTIMA_MUESTRA);
-
+    const respuesta = await fetch(ENDPOINT_SESION);
     if (!respuesta.ok) {
       throw new Error(`Error HTTP ${respuesta.status}`);
     }
 
-    const mensajes = await respuesta.json();
-    renderizarTarjetas(mensajes);
-    renderizarTelemetria(mensajes);
-    estadoCarga.textContent = `Telemetria cargada: ${mensajes.length} senales.`;
+    mensajesSesion = await respuesta.json();
+    renderizarContexto(mensajesSesion);
+    renderizarResumenOperativo();
+    renderizarFases(mensajesSesion);
+    renderizarPuntoSeleccionado(mensajesSesion);
+    renderizarTabla(mensajesSesion);
+    dibujarGraficosCoordinados();
+    estadoCarga.textContent = `${mensajesSesion.length} mensajes de ${SESSION_ID}.`;
   } catch (error) {
     console.error(error);
-    estadoCarga.textContent = "No se pudo cargar la telemetria desde la API.";
+    estadoCarga.textContent = "No se pudo cargar la sesion desde la API.";
   }
 }
 
-async function actualizarGrafico() {
-  try {
-    const signalName = selectorSenal.value;
-    const mensajes = await cargarSeriePorSenal(signalName);
-    dibujarGraficoSenal(mensajes.reverse(), signalName);
-  } catch (error) {
-    console.error(error);
-    contextoGrafico.clearRect(0, 0, canvasGrafico.width, canvasGrafico.height);
-    contextoGrafico.fillStyle = "#b91c1c";
-    contextoGrafico.font = "16px Segoe UI";
-    contextoGrafico.fillText("No se pudo cargar la serie temporal de la senal.", 20, 40);
+botonRecargar.addEventListener("click", cargarSesion);
+lineaFases.addEventListener("click", (event) => {
+  const boton = event.target.closest("[data-indice-fase]");
+  if (!boton) {
+    return;
   }
-}
 
-botonRecargar.addEventListener("click", cargarUltimaMuestraPorSenal);
-selectorSenal.addEventListener("change", actualizarGrafico);
+  indiceFaseSeleccionado = Number(boton.dataset.indiceFase);
+  renderizarFases(mensajesSesion);
+  renderizarPuntoSeleccionado(mensajesSesion);
+  renderizarTabla(mensajesSesion);
+  dibujarGraficosCoordinados();
+});
 
-cargarUltimaMuestraPorSenal();
-actualizarGrafico();
-
-setInterval(() => {
-  cargarUltimaMuestraPorSenal();
-  actualizarGrafico();
-}, INTERVALO_RECARGA_MS);
+cargarSesion();
+setInterval(cargarSesion, INTERVALO_RECARGA_MS);
