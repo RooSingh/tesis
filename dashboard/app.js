@@ -1,5 +1,5 @@
 const API_BASE_URL = "http://127.0.0.1:8000";
-const SESSION_ID = "mqtt_phase_test";
+const SESSION_ID = "mqtt_phase_recalibrated_01";
 const ENDPOINT_SESION = `${API_BASE_URL}/telemetry/by-session/${SESSION_ID}?limit=100`;
 const INTERVALO_RECARGA_MS = 3000;
 
@@ -10,6 +10,7 @@ const contextoSesion = document.getElementById("contexto-sesion");
 const lineaFases = document.getElementById("linea-fases");
 const cantidadFases = document.getElementById("cantidad-fases");
 const resumenOperativo = document.getElementById("resumen-operativo");
+const descripcionMapa = document.getElementById("descripcion-mapa");
 const descripcionPuntoSeleccionado = document.getElementById("descripcion-punto-seleccionado");
 const valoresPuntoSeleccionado = document.getElementById("valores-punto-seleccionado");
 const cuerpoTabla = document.querySelector("#tabla-telemetria tbody");
@@ -45,6 +46,14 @@ function obtenerEtiqueta(signalName) {
 
 function obtenerEtiquetaSegmento(segmentId) {
   return ETIQUETAS_SEGMENTOS[segmentId] ?? segmentId ?? "Sin segmento";
+}
+
+function obtenerEtiquetaPunto(fase, indice, cantidadPuntos) {
+  if (fase.track_segment_id === "demo_straight_exit") {
+    return indice === cantidadPuntos - 1 ? "Fin de recta final" : "Inicio de recta final";
+  }
+
+  return obtenerEtiquetaSegmento(fase.track_segment_id);
 }
 
 function obtenerValor(mensaje) {
@@ -143,7 +152,7 @@ function renderizarFases(mensajes) {
     >
       <span class="numero-fase">${String(indice + 1).padStart(2, "0")}</span>
       <div>
-        <strong>${obtenerEtiquetaSegmento(fase.track_segment_id)}</strong>
+        <strong>${obtenerEtiquetaPunto(fase, indice, fases.length)}</strong>
         <p>${fase.curve_id ? "Punto de control en curva" : "Punto de control en recta"}</p>
       </div>
     </button>
@@ -160,7 +169,7 @@ function renderizarPuntoSeleccionado(mensajes) {
   }
 
   const mensajesPunto = mensajes.filter((mensaje) => mensaje.timestamp === fase.timestamp);
-  descripcionPuntoSeleccionado.textContent = `Punto ${String(indiceFaseSeleccionado + 1).padStart(2, "0")}: ${obtenerEtiquetaSegmento(fase.track_segment_id)}.`;
+  descripcionPuntoSeleccionado.textContent = `Punto ${String(indiceFaseSeleccionado + 1).padStart(2, "0")}: ${obtenerEtiquetaPunto(fase, indiceFaseSeleccionado, fases.length)}.`;
   valoresPuntoSeleccionado.innerHTML = SENALES_OPERATIVAS.map((signalName) => {
     const mensaje = mensajesPunto.find((item) => item.signal_name === signalName);
     if (!mensaje) {
@@ -180,19 +189,35 @@ function renderizarPuntoSeleccionado(mensajes) {
   }).join("");
 }
 
+function renderizarMapa(mensajes) {
+  const fase = obtenerFases(mensajes)[indiceFaseSeleccionado];
+  const segmentoSeleccionado = fase?.track_segment_id;
+  document.querySelectorAll(".tramo-mapa").forEach((tramo) => {
+    tramo.classList.toggle("tramo-activo", tramo.dataset.segmento === segmentoSeleccionado);
+  });
+  descripcionMapa.textContent = segmentoSeleccionado
+    ? `Tramo iluminado: ${obtenerEtiquetaSegmento(segmentoSeleccionado)}.`
+    : "Selecciona un punto para iluminar el tramo correspondiente.";
+}
+
 function renderizarTabla(mensajes) {
   const faseSeleccionada = obtenerFases(mensajes)[indiceFaseSeleccionado];
-  cuerpoTabla.innerHTML = ordenarCronologicamente(mensajes).map((mensaje) => `
-    <tr class="${mensaje.timestamp === faseSeleccionada?.timestamp ? "fila-seleccionada" : ""}">
-      <td>${obtenerEtiqueta(mensaje.signal_name)}</td>
-      <td>${formatearValor(mensaje)} ${mensaje.unit ?? ""}</td>
-      <td>${formatearHora(mensaje.timestamp)}</td>
-      <td>${mensaje.track_segment_id ?? "-"}</td>
-      <td>${mensaje.curve_id ?? "-"}</td>
-      <td>${mensaje.source_type ?? "-"}</td>
-      <td>${mensaje.can_id ?? "-"}</td>
-    </tr>
-  `).join("");
+  cuerpoTabla.innerHTML = ordenarCronologicamente(mensajes).map((mensaje) => {
+    const unidad = mensaje.value_boolean === null || mensaje.value_boolean === undefined
+      ? mensaje.unit ?? ""
+      : "";
+    return `
+      <tr class="${mensaje.timestamp === faseSeleccionada?.timestamp ? "fila-seleccionada" : ""}">
+        <td>${obtenerEtiqueta(mensaje.signal_name)}</td>
+        <td>${formatearValor(mensaje)} ${unidad}</td>
+        <td>${formatearHora(mensaje.timestamp)}</td>
+        <td>${mensaje.track_segment_id ?? "-"}</td>
+        <td>${mensaje.curve_id ?? "-"}</td>
+        <td>${mensaje.source_type ?? "-"}</td>
+        <td>${mensaje.can_id ?? "-"}</td>
+      </tr>
+    `;
+  }).join("");
 }
 
 function dibujarGrafico(signalName, canvasGrafico) {
@@ -307,7 +332,7 @@ function dibujarGrafico(signalName, canvasGrafico) {
   contextoGrafico.fillText(`Min ${minimo.toFixed(2)} · Max ${maximo.toFixed(2)} · ${muestras.length} muestras`, margen.izquierdo, alto - 5);
 
   const faseSeleccionada = fases[indiceSeleccionado];
-  detalleGrafico.textContent = `Punto ${String(indiceSeleccionado + 1).padStart(2, "0")}: ${obtenerEtiquetaSegmento(faseSeleccionada?.track_segment_id)}. Las tres series comparten este punto de control.`;
+  detalleGrafico.textContent = `Punto ${String(indiceSeleccionado + 1).padStart(2, "0")}: ${obtenerEtiquetaPunto(faseSeleccionada, indiceSeleccionado, fases.length)}. Las tres series comparten este punto de control.`;
 }
 
 function dibujarGraficosCoordinados() {
@@ -328,6 +353,7 @@ async function cargarSesion() {
     renderizarContexto(mensajesSesion);
     renderizarResumenOperativo();
     renderizarFases(mensajesSesion);
+    renderizarMapa(mensajesSesion);
     renderizarPuntoSeleccionado(mensajesSesion);
     renderizarTabla(mensajesSesion);
     dibujarGraficosCoordinados();
@@ -347,6 +373,7 @@ lineaFases.addEventListener("click", (event) => {
 
   indiceFaseSeleccionado = Number(boton.dataset.indiceFase);
   renderizarFases(mensajesSesion);
+  renderizarMapa(mensajesSesion);
   renderizarPuntoSeleccionado(mensajesSesion);
   renderizarTabla(mensajesSesion);
   dibujarGraficosCoordinados();

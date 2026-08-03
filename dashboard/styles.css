@@ -204,6 +204,83 @@ body {
   font-weight: 800;
 }
 
+.mapa-maniobra {
+  display: block;
+  width: 100%;
+  max-width: 760px;
+  margin: 0 auto;
+  overflow: visible;
+}
+
+.tramo-mapa {
+  fill: none;
+  stroke: #cbd5e1;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 18;
+  transition: stroke 180ms ease, stroke-width 180ms ease;
+}
+
+.tramo-mapa.tramo-activo {
+  stroke: #22d3ee;
+  stroke-width: 22;
+}
+
+.inicio-mapa,
+.fin-mapa {
+  stroke: #0f172a;
+  stroke-width: 3;
+}
+
+.inicio-mapa {
+  fill: #22d3ee;
+}
+
+.fin-mapa {
+  fill: #f97316;
+}
+
+.mapa-maniobra text {
+  fill: #64748b;
+  font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+}
+
+.nota-mapa {
+  margin: 8px 0 0;
+  color: #64748b;
+  font-size: 0.8rem;
+  text-align: center;
+}
+
+.zona-analisis {
+  display: grid;
+  grid-template-columns: minmax(320px, 0.85fr) minmax(0, 1.35fr);
+  gap: 18px;
+  align-items: start;
+  margin-bottom: 18px;
+}
+
+.zona-analisis .panel {
+  margin-bottom: 18px;
+}
+
+.zona-analisis > .panel,
+.columna-contexto .panel:last-child {
+  margin-bottom: 0;
+}
+
+.panel-graficos-laterales .graficos-coordinados {
+  grid-template-columns: 1fr;
+  gap: 10px;
+}
+
+.panel-graficos-laterales .grafico-coordinado h3 {
+  padding-top: 10px;
+}
+
 .grid-punto-seleccionado {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -237,6 +314,10 @@ body {
   color: #0f172a;
   font-size: 1.55rem;
   letter-spacing: -0.04em;
+}
+
+.tarjeta-punto.tarjeta-brake_pressed strong {
+  font-size: clamp(1rem, 1.3vw, 1.3rem);
 }
 
 .tarjeta-punto span {
@@ -353,7 +434,8 @@ body {
 
   .lista-contexto,
   .grid-punto-seleccionado,
-  .graficos-coordinados {
+  .graficos-coordinados,
+  .zona-analisis {
     grid-template-columns: 1fr;
   }
 }

@@ -43,18 +43,44 @@
       <div id="linea-fases" class="linea-fases"></div>
     </section>
 
-    <section class="panel panel-punto-seleccionado">
-      <div class="titulo-seccion">
-        <div>
-          <p class="etiqueta-superior">Analisis puntual</p>
-          <h2>Punto seleccionado</h2>
-          <p id="descripcion-punto-seleccionado" class="resumen-operativo">Selecciona un punto del recorrido.</p>
-        </div>
-      </div>
-      <div id="valores-punto-seleccionado" class="grid-punto-seleccionado"></div>
-    </section>
+    <div class="zona-analisis">
+      <div class="columna-contexto">
+        <section class="panel panel-mapa">
+          <div class="titulo-seccion">
+            <div>
+              <p class="etiqueta-superior">Contexto visual</p>
+              <h2>Esquema de la maniobra</h2>
+              <p id="descripcion-mapa" class="resumen-operativo">Selecciona un punto para iluminar el tramo correspondiente.</p>
+            </div>
+          </div>
+          <svg class="mapa-maniobra" viewBox="0 0 760 250" role="img" aria-label="Esquema de la maniobra simulada">
+            <path class="tramo-mapa" data-segmento="demo_straight_entry" d="M70 185 L225 185" />
+            <path class="tramo-mapa" data-segmento="demo_braking_zone" d="M225 185 L325 168" />
+            <path class="tramo-mapa" data-segmento="demo_corner_entry" d="M325 168 Q385 162 420 115" />
+            <path class="tramo-mapa" data-segmento="demo_corner_apex" d="M420 115 Q458 58 518 84" />
+            <path class="tramo-mapa" data-segmento="demo_corner_exit" d="M518 84 Q568 105 598 150" />
+            <path class="tramo-mapa" data-segmento="demo_straight_exit" d="M598 150 L710 150" />
+            <circle class="inicio-mapa" cx="70" cy="185" r="8" />
+            <circle class="fin-mapa" cx="710" cy="150" r="8" />
+            <text x="55" y="215">INICIO</text>
+            <text x="682" y="180">FINAL</text>
+          </svg>
+          <p class="nota-mapa">Esquema de maniobra simulada: no representa geometria ni distancia real de circuito.</p>
+        </section>
 
-    <section class="panel panel-grafico">
+        <section class="panel panel-punto-seleccionado">
+          <div class="titulo-seccion">
+            <div>
+              <p class="etiqueta-superior">Analisis puntual</p>
+              <h2>Punto seleccionado</h2>
+              <p id="descripcion-punto-seleccionado" class="resumen-operativo">Selecciona un punto del recorrido.</p>
+            </div>
+          </div>
+          <div id="valores-punto-seleccionado" class="grid-punto-seleccionado"></div>
+        </section>
+      </div>
+
+      <section class="panel panel-grafico panel-graficos-laterales">
       <div class="titulo-seccion">
         <div>
           <p class="etiqueta-superior">Series coordinadas</p>
@@ -64,19 +90,20 @@
       <div class="graficos-coordinados">
         <article class="grafico-coordinado">
           <h3>Velocidad <span>km/h</span></h3>
-          <canvas id="grafico-velocidad" width="520" height="260"></canvas>
+          <canvas id="grafico-velocidad" width="760" height="180"></canvas>
         </article>
         <article class="grafico-coordinado">
           <h3>Freno <span>activo / liberado</span></h3>
-          <canvas id="grafico-freno" width="520" height="260"></canvas>
+          <canvas id="grafico-freno" width="760" height="180"></canvas>
         </article>
         <article class="grafico-coordinado">
           <h3>Direccion <span>deg</span></h3>
-          <canvas id="grafico-direccion" width="520" height="260"></canvas>
+          <canvas id="grafico-direccion" width="760" height="180"></canvas>
         </article>
       </div>
       <p id="detalle-grafico" class="detalle-grafico"></p>
-    </section>
+      </section>
+    </div>
 
     <section class="panel panel-trazabilidad">
       <div class="titulo-seccion">

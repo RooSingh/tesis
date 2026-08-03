@@ -11,6 +11,9 @@ from __future__ import annotations
 from telemetry_generator.state import TelemetryState
 
 
+RESISTENCIA_VELOCIDAD_CUADRATICA = 0.00003
+
+
 DEMO_PHASES = (
     {
         "start_ms": 0,
@@ -61,7 +64,7 @@ DEMO_PHASES = (
         "track_segment_id": "demo_straight_exit",
         "gas_pedal": (75.0, 90.0),
         "brake_intensity": (0.0, 0.0),
-        "steer_angle": (-3.0, 0.0),
+        "steer_angle": (-3.0, 0.4),
     },
 )
 
@@ -133,20 +136,22 @@ def actualizar_estado_basico(estado: TelemetryState, paso_ms: int = 10) -> Telem
     paso_s = paso_ms / 1000.0
 
     # --- 1. Dinamica longitudinal --------------------------------------
-    # El acelerador genera empuje positivo. El freno fuerza desaceleracion.
-    # Los factores 3.0 y 4.5 son parametros simulados y revisables del MVP;
-    # no representan una calibracion de un vehiculo real.
+    # El acelerador genera empuje positivo. El freno y una resistencia que crece
+    # con la velocidad fuerzan desaceleracion. Los parametros son simulados y
+    # revisables; no representan una calibracion de un vehiculo real.
     estado.gas_pressed = estado.gas_pedal > 0.0
     empuje_acelerador = (estado.gas_pedal / 100.0) * 3.0
     desaceleracion_freno = (estado.brake_intensity / 100.0) * 4.5
+    resistencia_velocidad = RESISTENCIA_VELOCIDAD_CUADRATICA * estado.speed**2
 
-    # La aceleracion longitudinal resultante combina ambas influencias.
-    estado.accel_x = empuje_acelerador - desaceleracion_freno
+    # La resistencia evita una aceleracion ilimitada sin imponer un tope de
+    # velocidad fijo. Su coeficiente solo produce una trayectoria simulada
+    # cualitativamente plausible; no modela aerodinamica calibrada.
+    estado.accel_x = empuje_acelerador - desaceleracion_freno - resistencia_velocidad
 
     # Actualizamos velocidad global integrando aceleracion en forma simple.
     # speed esta en km/h, por eso la conversion usa 3.6.
-    estado.speed += estado.accel_x * paso_s * 3.6
-    estado.speed = _limitar(estado.speed, 0.0, 320.0)
+    estado.speed = max(0.0, estado.speed + estado.accel_x * paso_s * 3.6)
 
     # --- 2. Dinamica lateral y rotacional -------------------------------
     # El angulo de direccion alimenta una primera aproximacion de yaw y

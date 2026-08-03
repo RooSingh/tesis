@@ -50,12 +50,22 @@ class EscenarioDemostrativoTests(unittest.TestCase):
         """Comprueba que el freno interno afecte la aceleracion longitudinal."""
 
         estado = crear_estado_inicial()
+        estado.speed = 0.0
         estado.gas_pedal = 0.0
         estado.brake_intensity = 50.0
 
         actualizar_estado_basico(estado)
 
         self.assertAlmostEqual(estado.accel_x, -2.25)
+
+    def test_recta_final_con_correccion_suave(self) -> None:
+        """Comprueba que la recta final no termine con direccion exactamente nula."""
+
+        estado = crear_estado_inicial()
+        aplicar_escenario_demostrativo(estado, 59_990)
+
+        self.assertGreater(estado.steer_angle, 0.0)
+        self.assertLess(estado.steer_angle, 0.5)
 
     def test_el_escenario_finaliza(self) -> None:
         """Comprueba que la secuencia no se reinicie a los 60 segundos."""
