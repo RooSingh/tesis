@@ -9,7 +9,7 @@ from telemetry_generator.signals import aplicar_escenario_demostrativo, actualiz
 
 
 class EscenarioDemostrativoTests(unittest.TestCase):
-    """Verifica una fase del escenario por vez."""
+    """Verifica fases, dinamica interna y cierre explicito de la secuencia."""
 
     def test_recta_inicial(self) -> None:
         """Comprueba el estado esperado al comenzar la secuencia."""

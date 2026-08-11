@@ -12,7 +12,9 @@ from __future__ import annotations
 from telemetry_generator.state import TelemetryState
 
 
-# Este diccionario vincula el nombre logico de una senal con:
+# Este catalogo se usa solo al construir mensajes. config.py conserva ademas
+# periodos y obligatoriedad para el scheduler.
+# Vincula el nombre logico de una senal con:
 # - el nombre del campo dentro del estado,
 # - la unidad fisica esperada,
 # - y la referencia CAN preliminar cuando existe.
@@ -56,6 +58,8 @@ def construir_mensaje_senal(estado: TelemetryState, signal_name: str) -> dict:
         "driver_id": estado.driver_id,
         "session_id": estado.session_id,
         "lap_id": estado.lap_id,
+        # El generador representa el modo Nivel C. Un adaptador real debera
+        # construir el mismo contrato con el source_type que corresponda.
         "source_type": "can_simulated",
         "signal_name": signal_name,
         "value": value,

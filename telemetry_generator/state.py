@@ -57,7 +57,7 @@ class TelemetryState:
     # --- Entradas basicas del conductor ---------------------------------
     brake_pressed: bool = False
     # Variable interna continua para calcular una frenada progresiva. No se
-    # emite como CAN: la señal publicada continua siendo brake_pressed.
+    # publica como senal telemetrica: la salida booleana es brake_pressed.
     brake_intensity: float = 0.0
     gas_pedal: float = 0.0
     gas_pressed: bool = False

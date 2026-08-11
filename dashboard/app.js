@@ -22,6 +22,8 @@ const GRAFICOS = {
   steer_angle: document.getElementById("grafico-direccion"),
 };
 
+// La demo usa tres senales representativas para leer la maniobra sin afirmar
+// que el dashboard muestre todo el catalogo del generador.
 const SENALES_OPERATIVAS = ["speed", "brake_pressed", "steer_angle"];
 const ETIQUETAS = {
   speed: "Velocidad",
@@ -103,6 +105,8 @@ function obtenerUltimosPorSenal(mensajes) {
 }
 
 function obtenerFases(mensajes) {
+  // Cada punto de control comparte timestamp entre sus tres senales; un mensaje
+  // por timestamp alcanza para construir el recorrido sincronizado.
   const fases = new Map();
   for (const mensaje of ordenarCronologicamente(mensajes)) {
     if (!fases.has(mensaje.timestamp)) {
@@ -248,6 +252,8 @@ function dibujarGrafico(signalName, canvasGrafico) {
   const areaAncho = ancho - margen.izquierdo - margen.derecho;
   const areaAlto = alto - margen.superior - margen.inferior;
   const fases = obtenerFases(mensajesSesion);
+  // Las tres series tienen una muestra por punto de control, por eso este indice
+  // mantiene alineados graficos, mapa, panel operativo y tabla.
   const indiceSeleccionado = Math.min(indiceFaseSeleccionado ?? muestras.length - 1, muestras.length - 1);
   const muestraSeleccionada = muestras[indiceSeleccionado];
 
@@ -349,6 +355,8 @@ async function cargarSesion() {
       throw new Error(`Error HTTP ${respuesta.status}`);
     }
 
+    // La API ya devuelve filas persistidas; el dashboard solo las representa y
+    // no genera datos ni consulta TimescaleDB de forma directa.
     mensajesSesion = await respuesta.json();
     renderizarContexto(mensajesSesion);
     renderizarResumenOperativo();
@@ -380,4 +388,6 @@ lineaFases.addEventListener("click", (event) => {
 });
 
 cargarSesion();
+// La recarga conserva soporte para una vista actualizable, aunque la demo actual
+// usa una sesion historica y finita.
 setInterval(cargarSesion, INTERVALO_RECARGA_MS);

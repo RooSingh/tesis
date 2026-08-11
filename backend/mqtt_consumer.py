@@ -1,7 +1,6 @@
-"""Consumidor MQTT inicial del backend.
+"""Consumidor MQTT del backend.
 
-Este modulo define una primera version del consumidor MQTT del backend. En esta
-etapa, su objetivo es simple:
+Este modulo se ejecuta como proceso separado de FastAPI. Su objetivo es:
 
 - conectarse al broker local,
 - suscribirse al topic de telemetria del generador,
@@ -71,8 +70,9 @@ def crear_cliente_mqtt() -> mqtt.Client:
 def iniciar_consumidor_mqtt() -> mqtt.Client:
     """Conecta y deja listo el consumidor MQTT del backend.
 
-    Esta funcion no bloquea indefinidamente el hilo principal. Inicia el loop
-    de red en segundo plano para que luego pueda integrarse con FastAPI.
+    Esta funcion no bloquea indefinidamente el hilo principal porque Paho usa un
+    loop de red en segundo plano. Quien la invoque debe mantener vivo su propio
+    proceso; FastAPI no inicia este consumidor automaticamente.
     """
 
     client = crear_cliente_mqtt()

@@ -26,7 +26,7 @@ GAS_RELEASED_BIT = 4
 
 
 def extraer_bit(payload: bytes, bit_dbc: int) -> int:
-    """Extrae una senal DBC de un bit mediante su posicion byte*8 + bit."""
+    """Extrae una senal DBC de un bit; para un bit, el orden no altera el valor."""
     byte_index = bit_dbc // 8
     bit_en_byte = bit_dbc % 8
     return (payload[byte_index] >> bit_en_byte) & 1

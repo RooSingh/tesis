@@ -1,12 +1,12 @@
-"""Configuracion inicial del backend.
+"""Configuracion local del backend.
 
-Este modulo centraliza los parametros minimos que el backend necesita para
-conectarse al broker MQTT y comenzar a recibir telemetria del generador.
+Este modulo centraliza los parametros que usan el consumidor MQTT, la API y la
+capa de persistencia para conectarse a los servicios locales de la tesis.
 
-En esta primera etapa la configuracion es deliberadamente simple y local.
+La configuracion es deliberadamente simple y local. No distingue todavia
+entornos de desarrollo, prueba o despliegue.
 Mas adelante podra ampliarse con:
 
-- base de datos,
 - autenticacion,
 - configuracion por entorno,
 - y despliegue fuera de localhost.

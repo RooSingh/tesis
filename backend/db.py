@@ -1,8 +1,8 @@
-"""Acceso inicial a base de datos para el backend.
+"""Acceso a TimescaleDB para el backend.
 
-Este modulo centraliza una primera capa simple de acceso a PostgreSQL/
-TimescaleDB. En esta etapa no se utiliza ORM; se trabaja con SQL directo para
-mantener visibilidad y control sobre el flujo real de persistencia.
+Este modulo centraliza inserciones y consultas sobre PostgreSQL/TimescaleDB. No
+se utiliza ORM: se trabaja con SQL directo para mantener visibilidad y control
+sobre el flujo real de persistencia.
 """
 
 from __future__ import annotations
@@ -50,7 +50,7 @@ def _separar_valor(value: Any) -> tuple[float | None, bool | None, str | None]:
 
 
 def insertar_telemetria(mensaje: TelemetryMessage) -> None:
-    """Inserta un mensaje telemetrico en la tabla `telemetry_messages`."""
+    """Inserta un mensaje y conserva valor tipado, contexto y trazabilidad."""
 
     value_numeric, value_boolean, value_text = _separar_valor(mensaje.value)
 

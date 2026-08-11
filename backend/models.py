@@ -1,8 +1,8 @@
-"""Modelos internos del backend.
+"""Modelos del contrato interno de telemetria.
 
-Este modulo define las estructuras de datos principales que el backend espera
-recibir o manejar. En esta primera etapa, el foco esta en el mensaje
-telemetrico que llega desde el generador por MQTT.
+Este modulo define las estructuras que el backend recibe por MQTT y valida antes
+de persistir. El mismo contrato puede representar simulacion, CAN adaptado,
+fuentes parciales o senales derivadas.
 """
 
 from __future__ import annotations
@@ -29,7 +29,7 @@ class TelemetryMetadata(BaseModel):
 
 
 class TelemetryMessage(BaseModel):
-    """Modelo base del mensaje telemetrico interno del sistema."""
+    """Formato comun que permite desacoplar la fuente del resto del pipeline."""
 
     timestamp: str
     vehicle_id: str

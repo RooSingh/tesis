@@ -1,3 +1,11 @@
+"""Resume una muestra RAV4 de commaCarSegments para el analisis CAN inicial.
+
+Lee un rlog.zst, cuenta eventos y mensajes CAN, calcula periodicidad y
+variabilidad de IDs frecuentes, y escribe summary.json fuera del control de
+versiones. Es un analizador offline; no participa del generador ni del pipeline
+MQTT en ejecucion.
+"""
+
 from __future__ import annotations
 
 import json
