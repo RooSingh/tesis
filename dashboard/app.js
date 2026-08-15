@@ -2,10 +2,13 @@ const API_BASE_URL = "http://127.0.0.1:8000";
 const SESSION_ID = "mqtt_phase_recalibrated_01";
 const ENDPOINT_SESION = `${API_BASE_URL}/telemetry/by-session/${SESSION_ID}?limit=100`;
 const INTERVALO_RECARGA_MS = 3000;
+const OPENF1_SESSION_KEY = 9947;
 
 const estadoCarga = document.getElementById("estado-carga");
 const resumenSesion = document.getElementById("resumen-sesion");
 const estadoOrigen = document.getElementById("estado-origen");
+const etiquetaCabecera = document.getElementById("etiqueta-cabecera");
+const tituloCabecera = document.getElementById("titulo-cabecera");
 const contextoSesion = document.getElementById("contexto-sesion");
 const lineaFases = document.getElementById("linea-fases");
 const cantidadFases = document.getElementById("cantidad-fases");
@@ -16,6 +19,78 @@ const valoresPuntoSeleccionado = document.getElementById("valores-punto-seleccio
 const cuerpoTabla = document.querySelector("#tabla-telemetria tbody");
 const botonRecargar = document.getElementById("boton-recargar");
 const detalleGrafico = document.getElementById("detalle-grafico");
+const selectorModo = document.getElementById("selector-modo");
+const panelOpenF1 = document.getElementById("panel-openf1");
+const openF1Titulo = document.getElementById("openf1-titulo");
+const openF1Resumen = document.getElementById("openf1-resumen");
+const openF1EstadoCarga = document.getElementById("openf1-estado-carga");
+const openF1Contexto = document.getElementById("openf1-contexto");
+const casillasPilotosComparacion = document.getElementById("casillas-pilotos-comparacion");
+const botonLimpiarPilotos = document.getElementById("boton-limpiar-pilotos");
+const botonTodosPilotos = document.getElementById("boton-todos-pilotos");
+const busquedaPilotosComparacion = document.getElementById("busqueda-pilotos-comparacion");
+const seleccionadosPilotosComparacion = document.getElementById("seleccionados-pilotos-comparacion");
+const cuerpoTablaOpenF1 = document.querySelector("#tabla-openf1 tbody");
+const tarjetasComparacionPilotos = document.getElementById("tarjetas-comparacion-pilotos");
+const PILOTOS_COMPARACION_INICIALES = [1, 4, 81];
+const REPLAY_RUN_ID_ANALISIS_CARRERA = "silverstone_2025_probe_151800_151810_v1";
+const resumenAnalisisCarrera = document.getElementById("resumen-analisis-carrera");
+const estadoAnalisisCarrera = document.getElementById("estado-analisis-carrera");
+const leyendaAnalisisCarrera = document.getElementById("leyenda-analisis-carrera");
+const GRAFICOS_CARRERA = {
+  speed: document.getElementById("grafico-velocidad-carrera"),
+  throttle: document.getElementById("grafico-acelerador-carrera"),
+  brake_applied: document.getElementById("grafico-freno-carrera"),
+};
+const resumenInstanteCarrera = document.getElementById("resumen-instante-carrera");
+const climaInstanteCarrera = document.getElementById("clima-instante-carrera");
+const pilotosInstanteCarrera = document.getElementById("pilotos-instante-carrera");
+const COLORES_PILOTOS_OPENF1 = {
+  1: "#38bdf8",
+  4: "#fb923c",
+  81: "#e879f9",
+};
+const CONFIGURACION_SENALES_CARRERA = {
+  speed: { etiqueta: "Velocidad", unidad: "km/h", minimo: null, maximo: null },
+  throttle: { signalName: "throttle_position", etiqueta: "Acelerador", unidad: "%", minimo: 0, maximo: 100 },
+  brake_applied: { etiqueta: "Freno", unidad: "bool", minimo: 0, maximo: 1, esBooleana: true },
+};
+let ultimaSerieCarrera = null;
+let instanteSeleccionadoCarrera = null;
+let pilotosSeleccionadosEstado = [...PILOTOS_COMPARACION_INICIALES];
+let pilotosConTelemetriaReplay = new Set(PILOTOS_COMPARACION_INICIALES);
+
+function obtenerPilotosSeleccionados() {
+  return pilotosSeleccionadosEstado;
+}
+
+function renderizarCasillasPilotos() {
+  const query = busquedaPilotosComparacion.value.trim().toLowerCase();
+  const grupos = new Map();
+  pilotosOpenF1
+    .filter((piloto) => `${piloto.name_acronym} ${piloto.full_name} ${piloto.team_name}`.toLowerCase().includes(query))
+    .forEach((piloto) => {
+      const grupo = piloto.team_name ?? "Sin grupo";
+      if (!grupos.has(grupo)) {
+        grupos.set(grupo, []);
+      }
+      grupos.get(grupo).push(piloto);
+    });
+  casillasPilotosComparacion.innerHTML = [...grupos.entries()].map(([grupo, pilotos]) => `<section class="grupo-pilotos-comparacion">
+    <h4>${escaparHtml(grupo)}</h4>
+    ${pilotos.map((piloto) => `<label class="casilla-piloto-comparacion">
+      <input type="checkbox" value="${piloto.driver_number}" ${pilotosSeleccionadosEstado.includes(piloto.driver_number) ? "checked" : ""}>
+      <span class="punto-equipo" style="background:#${escaparHtml(piloto.team_colour ?? "64748B")}"></span>
+      ${escaparHtml(piloto.name_acronym)}${pilotosConTelemetriaReplay.has(piloto.driver_number) ? "" : " <small>sin traza</small>"}
+    </label>`).join("")}
+  </section>`).join("");
+  seleccionadosPilotosComparacion.innerHTML = pilotosSeleccionadosEstado.length
+    ? pilotosSeleccionadosEstado.map((numero) => {
+      const piloto = pilotosOpenF1.find((item) => item.driver_number === numero);
+      return `<span>${escaparHtml(piloto?.name_acronym ?? numero)} <button type="button" data-quitar-piloto="${numero}" aria-label="Quitar ${escaparHtml(piloto?.name_acronym ?? numero)}">×</button></span>`;
+    }).join("")
+    : "<em>Sin pilotos seleccionados</em>";
+}
 const GRAFICOS = {
   speed: document.getElementById("grafico-velocidad"),
   brake_pressed: document.getElementById("grafico-freno"),
@@ -41,6 +116,11 @@ const ETIQUETAS_SEGMENTOS = {
 
 let mensajesSesion = [];
 let indiceFaseSeleccionado = null;
+let pilotosOpenF1 = [];
+
+function escaparHtml(valor) {
+  return String(valor ?? "-").replace(/[&<>"]/g, (caracter) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[caracter]);
+}
 
 function obtenerEtiqueta(signalName) {
   return ETIQUETAS[signalName] ?? signalName;
@@ -348,6 +428,9 @@ function dibujarGraficosCoordinados() {
 }
 
 async function cargarSesion() {
+  if (selectorModo.value !== "simulation") {
+    return;
+  }
   estadoCarga.textContent = "Cargando sesion demostrativa...";
   try {
     const respuesta = await fetch(ENDPOINT_SESION);
@@ -372,7 +455,368 @@ async function cargarSesion() {
   }
 }
 
+function valorOpenF1(mensaje) {
+  if (mensaje.value_numeric !== null && mensaje.value_numeric !== undefined) {
+    return Number(mensaje.value_numeric).toFixed(2);
+  }
+  if (mensaje.value_boolean !== null && mensaje.value_boolean !== undefined) {
+    return mensaje.value_boolean ? "ACTIVO" : "LIBERADO";
+  }
+  return mensaje.value_text ?? "-";
+}
+
+function renderizarTablaOpenF1(mensajes) {
+  cuerpoTablaOpenF1.innerHTML = mensajes.map((mensaje) => {
+    const extra = mensaje.metadata?.extra ?? {};
+    return `<tr>
+      <td>${escaparHtml(mensaje.signal_name)}</td>
+      <td>${escaparHtml(valorOpenF1(mensaje))} ${escaparHtml(mensaje.unit)}</td>
+      <td>${escaparHtml(mensaje.timestamp)}</td>
+      <td>${escaparHtml(extra.published_at_utc)}</td>
+      <td>${escaparHtml(extra.source_endpoint)}</td>
+      <td>${escaparHtml(extra.raw_field)}</td>
+    </tr>`;
+  }).join("");
+}
+
+function formatearTiempoVuelta(segundos) {
+  if (segundos === null || segundos === undefined) {
+    return "-";
+  }
+  const minutos = Math.floor(segundos / 60);
+  return `${minutos}:${(segundos % 60).toFixed(3).padStart(6, "0")}`;
+}
+
+function renderizarCompuestos(compuestos) {
+  if (!compuestos) {
+    return "-";
+  }
+  return `<div class="comparacion-compuestos">${compuestos.split(", ").map((compuesto) => `<span class="comparacion-compuesto">${escaparHtml(compuesto)}</span>`).join("")}</div>`;
+}
+
+function renderizarComparacionPilotos(filas) {
+  tarjetasComparacionPilotos.innerHTML = filas.map((fila) => `<article class="tarjeta-comparacion-piloto">
+    <header>
+      <div><span class="punto-equipo" style="background:#${escaparHtml(pilotosOpenF1.find((item) => item.driver_number === fila.driver_number)?.team_colour ?? "64748B")}"></span>${escaparHtml(fila.name_acronym)}</div>
+      <strong class="comparacion-posicion">P${escaparHtml(fila.final_position)}</strong>
+    </header>
+    <p>${escaparHtml(fila.team_name)}</p>
+    <dl>
+      <div><dt>Mejor vuelta</dt><dd class="comparacion-mejor-vuelta">${escaparHtml(formatearTiempoVuelta(fila.best_lap_seconds))}</dd></div>
+      <div><dt>Puntos</dt><dd>${escaparHtml(fila.points)}</dd></div>
+      <div><dt>Estrategia</dt><dd>${escaparHtml(fila.stint_count)} stints · ${escaparHtml(fila.pit_stop_count)} paradas</dd></div>
+    </dl>
+    ${renderizarCompuestos(fila.compounds)}
+  </article>`).join("");
+}
+
+function obtenerNumeroPiloto(driverId) {
+  return Number(driverId.split(":").at(-1));
+}
+
+function dibujarSerieCarrera(mensajes, configuracion, canvas, rangoComun) {
+  const contexto = canvas.getContext("2d");
+  const ancho = canvas.width;
+  const alto = canvas.height;
+  const margen = { superior: 34, derecho: 30, inferior: 48, izquierdo: 66 };
+  const areaAncho = ancho - margen.izquierdo - margen.derecho;
+  const areaAlto = alto - margen.superior - margen.inferior;
+  contexto.clearRect(0, 0, ancho, alto);
+  contexto.fillStyle = "#07101c";
+  contexto.fillRect(0, 0, ancho, alto);
+
+  const puntos = mensajes
+    .filter((mensaje) => (configuracion.esBooleana && mensaje.value_boolean !== null && mensaje.value_boolean !== undefined)
+      || (!configuracion.esBooleana && mensaje.value_numeric !== null && mensaje.value_numeric !== undefined))
+    .map((mensaje) => ({
+      piloto: obtenerNumeroPiloto(mensaje.driver_id),
+      tiempo: new Date(mensaje.timestamp).getTime(),
+      timestamp: mensaje.timestamp,
+      valor: configuracion.esBooleana ? (mensaje.value_boolean ? 1 : 0) : Number(mensaje.value_numeric),
+    }));
+  if (!puntos.length) {
+    estadoAnalisisCarrera.textContent = `No hay puntos numericos para ${configuracion.etiqueta.toLowerCase()}.`;
+    return;
+  }
+
+  const inicio = rangoComun.inicio;
+  const fin = rangoComun.fin;
+  const minimoObservado = Math.min(...puntos.map((punto) => punto.valor));
+  const maximoObservado = Math.max(...puntos.map((punto) => punto.valor));
+  const minimo = configuracion.minimo ?? minimoObservado;
+  const maximo = configuracion.maximo ?? maximoObservado;
+  const rangoTiempo = fin - inicio || 1;
+  const rangoValor = maximo - minimo || 1;
+  const x = (tiempo) => margen.izquierdo + ((tiempo - inicio) / rangoTiempo) * areaAncho;
+  const y = (valor) => margen.superior + areaAlto - ((valor - minimo) / rangoValor) * areaAlto;
+
+  contexto.strokeStyle = "rgba(148, 163, 184, 0.22)";
+  contexto.lineWidth = 1;
+  contexto.fillStyle = "#94a3b8";
+  contexto.font = "12px Segoe UI";
+  const divisionesEscala = configuracion.esBooleana ? 1 : 4;
+  for (let indice = 0; indice <= divisionesEscala; indice += 1) {
+    const posicionY = margen.superior + (areaAlto * indice) / divisionesEscala;
+    const valorEscala = maximo - (rangoValor * indice) / divisionesEscala;
+    contexto.beginPath();
+    contexto.moveTo(margen.izquierdo, posicionY);
+    contexto.lineTo(ancho - margen.derecho, posicionY);
+    contexto.stroke();
+    const etiquetaEscala = configuracion.esBooleana
+      ? (valorEscala >= 0.5 ? "ACTIVO" : "LIBERADO")
+      : `${valorEscala.toFixed(0)} ${configuracion.unidad}`;
+    contexto.fillText(etiquetaEscala, 8, posicionY + 4);
+  }
+  for (let indice = 0; indice <= 4; indice += 1) {
+    const posicionX = margen.izquierdo + (areaAncho * indice) / 4;
+    const segundos = ((rangoTiempo * indice) / 4 / 1000).toFixed(1);
+    contexto.fillText(`${segundos} s`, posicionX - 10, alto - 18);
+  }
+
+  const porPiloto = new Map();
+  puntos.forEach((punto) => {
+    if (!porPiloto.has(punto.piloto)) {
+      porPiloto.set(punto.piloto, []);
+    }
+    porPiloto.get(punto.piloto).push(punto);
+  });
+  porPiloto.forEach((serie, piloto) => {
+    contexto.beginPath();
+    contexto.strokeStyle = COLORES_PILOTOS_OPENF1[piloto] ?? "#f8fafc";
+    contexto.lineWidth = 3;
+    serie.forEach((punto, indice) => {
+      if (indice === 0) {
+        contexto.moveTo(x(punto.tiempo), y(punto.valor));
+      } else {
+        if (configuracion.esBooleana) {
+          contexto.lineTo(x(punto.tiempo), y(serie[indice - 1].valor));
+        }
+        contexto.lineTo(x(punto.tiempo), y(punto.valor));
+      }
+    });
+    contexto.stroke();
+  });
+
+  if (instanteSeleccionadoCarrera !== null) {
+    const posicionX = x(instanteSeleccionadoCarrera);
+    contexto.strokeStyle = "rgba(248, 250, 252, 0.82)";
+    contexto.lineWidth = 1.5;
+    contexto.setLineDash([5, 4]);
+    contexto.beginPath();
+    contexto.moveTo(posicionX, margen.superior);
+    contexto.lineTo(posicionX, margen.superior + areaAlto);
+    contexto.stroke();
+    contexto.setLineDash([]);
+  }
+
+  const pilotos = [...porPiloto.keys()].sort((a, b) => a - b);
+  return { mensajes, configuracion, puntos, inicio, fin, margen, areaAncho };
+}
+
+function formatearFrescura(freshness, ageSeconds) {
+  if (freshness === "current") {
+    return "actual";
+  }
+  if (freshness === "aged") {
+    return `con aviso: ${Number(ageSeconds).toFixed(1)} s`;
+  }
+  return "no disponible para este instante";
+}
+
+function formatearGap(context) {
+  if (context.interval_freshness === "unavailable") {
+    return "Gap: no disponible para este instante";
+  }
+  const value = context.gap_to_leader_seconds ?? context.gap_to_leader_text;
+  return `Gap: ${value ?? "-"} s (${formatearFrescura(context.interval_freshness, context.interval_age_seconds)})`;
+}
+
+function renderizarContextoInstante(contexto, timestamp) {
+  const hora = new Date(timestamp).toISOString().slice(11, 23);
+  resumenInstanteCarrera.textContent = `Instante seleccionado: ${hora} UTC. Los valores muestran la muestra OpenF1 mas cercana y su frescura.`;
+  const weather = contexto.weather;
+  climaInstanteCarrera.innerHTML = weather ? `<div>
+    <strong>Clima</strong>
+    <p>${weather.weather_freshness === "unavailable" ? "No disponible para este instante" : `${weather.rainfall ? "Lluvia" : "Sin lluvia"} · pista ${weather.track_temperature_c} C · aire ${weather.air_temperature_c} C`}<br><span class="contexto-frescura-${weather.weather_freshness}">${formatearFrescura(weather.weather_freshness, weather.weather_age_seconds)}</span></p>
+  </div>` : "";
+  pilotosInstanteCarrera.innerHTML = contexto.drivers.map((driver) => `<article class="contexto-piloto-instante">
+    <strong>${escaparHtml(driver.name_acronym)}</strong>
+    <p>Posicion: ${driver.position === null ? "no disponible" : `P${driver.position}`}<br><span class="contexto-frescura-${driver.position_freshness}">${formatearFrescura(driver.position_freshness, driver.position_age_seconds)}</span></p>
+    <p>${escaparHtml(formatearGap(driver))}</p>
+    <p>Stint ${driver.stint_number ?? "-"} · ${escaparHtml(driver.compound ?? "compuesto no disponible")}</p>
+  </article>`).join("");
+}
+
+async function seleccionarInstanteCarrera(timestamp) {
+  instanteSeleccionadoCarrera = timestamp;
+  if (ultimaSerieCarrera) {
+    Object.entries(ultimaSerieCarrera.series).forEach(([signalName, mensajes]) => {
+      dibujarSerieCarrera(mensajes, CONFIGURACION_SENALES_CARRERA[signalName], GRAFICOS_CARRERA[signalName], ultimaSerieCarrera);
+    });
+  }
+  resumenInstanteCarrera.textContent = "Consultando contexto racing cercano...";
+  const parametros = new URLSearchParams({ timestamp: new Date(timestamp).toISOString() });
+  obtenerPilotosSeleccionados().forEach((driver) => parametros.append("drivers", driver));
+  try {
+    const respuesta = await fetch(`${API_BASE_URL}/racing/sessions/${OPENF1_SESSION_KEY}/context-at?${parametros}`);
+    if (!respuesta.ok) {
+      throw new Error(`Error HTTP ${respuesta.status}`);
+    }
+    renderizarContextoInstante(await respuesta.json(), timestamp);
+  } catch (error) {
+    console.error(error);
+    resumenInstanteCarrera.textContent = "No se pudo cargar el contexto para este instante.";
+  }
+}
+
+async function cargarSerieCarrera() {
+  instanteSeleccionadoCarrera = null;
+  resumenInstanteCarrera.textContent = "Selecciona un punto de la curva para cargar contexto racing sincronizado.";
+  climaInstanteCarrera.innerHTML = "";
+  pilotosInstanteCarrera.innerHTML = "";
+  estadoAnalisisCarrera.textContent = "Cargando telemetria coordinada...";
+  const pilotosSeleccionados = obtenerPilotosSeleccionados();
+  if (!pilotosSeleccionados.length) {
+    estadoAnalisisCarrera.textContent = "Selecciona al menos un piloto para cargar la serie.";
+    Object.values(GRAFICOS_CARRERA).forEach((canvas) => canvas.getContext("2d").clearRect(0, 0, canvas.width, canvas.height));
+    return;
+  }
+  try {
+    const series = await Promise.all(Object.entries(CONFIGURACION_SENALES_CARRERA).map(async ([signalName, configuracion]) => {
+      const parametros = new URLSearchParams({
+        replay_run_id: REPLAY_RUN_ID_ANALISIS_CARRERA,
+        signal: configuracion.signalName ?? signalName,
+      });
+      pilotosSeleccionados.forEach((driver) => parametros.append("drivers", driver));
+      const respuesta = await fetch(`${API_BASE_URL}/racing/sessions/${OPENF1_SESSION_KEY}/replay-series?${parametros}`);
+      if (!respuesta.ok) {
+        throw new Error(`Error HTTP ${respuesta.status}`);
+      }
+      return [signalName, await respuesta.json()];
+    }));
+    const seriesPorSenal = Object.fromEntries(series);
+    const puntosTiempo = seriesPorSenal.speed.map((mensaje) => new Date(mensaje.timestamp).getTime());
+    const rangoComun = { inicio: Math.min(...puntosTiempo), fin: Math.max(...puntosTiempo) };
+    Object.entries(seriesPorSenal).forEach(([signalName, mensajes]) => {
+      dibujarSerieCarrera(mensajes, CONFIGURACION_SENALES_CARRERA[signalName], GRAFICOS_CARRERA[signalName], rangoComun);
+    });
+    const pilotosLeyenda = pilotosSeleccionados.map((numero) => {
+      const piloto = pilotosOpenF1.find((item) => item.driver_number === numero);
+      return `<span><i style="background:${COLORES_PILOTOS_OPENF1[numero] ?? `#${piloto?.team_colour ?? "94a3b8"}`}"></i>${escaparHtml(piloto?.name_acronym ?? numero)}</span>`;
+    });
+    leyendaAnalisisCarrera.innerHTML = pilotosLeyenda.join("");
+    const sinTraza = pilotosSeleccionados.filter((numero) => !pilotosConTelemetriaReplay.has(numero));
+    resumenAnalisisCarrera.textContent = `Velocidad, acelerador y freno durante ${((rangoComun.fin - rangoComun.inicio) / 1000).toFixed(2)} s de reloj deportivo. Los pilotos pueden ocupar puntos distintos del circuito.${sinTraza.length ? ` Sin traza MQTT en esta ejecucion: ${sinTraza.map((numero) => pilotosOpenF1.find((piloto) => piloto.driver_number === numero)?.name_acronym ?? numero).join(", ")}.` : ""}`;
+    estadoAnalisisCarrera.textContent = `${pilotosSeleccionados.length} pilotos · ${seriesPorSenal.speed.length} puntos de velocidad · replay v1`;
+    ultimaSerieCarrera = { ...rangoComun, series: seriesPorSenal, puntos: seriesPorSenal.speed.map((mensaje) => ({ tiempo: new Date(mensaje.timestamp).getTime() })), margen: { izquierdo: 66 }, areaAncho: GRAFICOS_CARRERA.speed.width - 96 };
+  } catch (error) {
+    console.error(error);
+    estadoAnalisisCarrera.textContent = "No se pudieron cargar las series coordinadas.";
+  }
+}
+
+async function cargarReplayOpenF1() {
+  openF1EstadoCarga.textContent = "Consultando replay y contexto...";
+  try {
+    const [sesionRespuesta, pilotosRespuesta] = await Promise.all([
+      fetch(`${API_BASE_URL}/racing/sessions/${OPENF1_SESSION_KEY}`),
+      fetch(`${API_BASE_URL}/racing/sessions/${OPENF1_SESSION_KEY}/drivers`),
+    ]);
+    if (!sesionRespuesta.ok || !pilotosRespuesta.ok) {
+      throw new Error("No se pudo recuperar el contexto OpenF1.");
+    }
+    const sesion = await sesionRespuesta.json();
+    pilotosOpenF1 = await pilotosRespuesta.json();
+    renderizarCasillasPilotos();
+    const pilotosSeleccionados = obtenerPilotosSeleccionados();
+    if (!pilotosSeleccionados.length) {
+      renderizarComparacionPilotos([]);
+      cargarSerieCarrera();
+      openF1EstadoCarga.textContent = "Selecciona al menos un piloto para iniciar la comparacion.";
+      return;
+    }
+    const [replayRespuesta, comparacionRespuesta] = await Promise.all([
+      fetch(`${API_BASE_URL}/racing/sessions/${OPENF1_SESSION_KEY}/replay`),
+      fetch(`${API_BASE_URL}/racing/sessions/${OPENF1_SESSION_KEY}/driver-comparison?${pilotosSeleccionados.map((driver) => `drivers=${driver}`).join("&")}`),
+    ]);
+    if (!replayRespuesta.ok || !comparacionRespuesta.ok) {
+      throw new Error("No se pudo recuperar el lote replay.");
+    }
+    const replay = await replayRespuesta.json();
+    const comparacion = await comparacionRespuesta.json();
+    pilotosConTelemetriaReplay = new Set(replay.map((mensaje) => obtenerNumeroPiloto(mensaje.driver_id)));
+    renderizarCasillasPilotos();
+    const mensajesSeleccionados = replay.filter((mensaje) => pilotosSeleccionados.includes(obtenerNumeroPiloto(mensaje.driver_id)));
+    openF1Titulo.textContent = `${sesion.circuit_short_name} ${sesion.session_name} · Comparador operativo`;
+    openF1Resumen.textContent = `${replay.length} mensajes replay persistidos · ${sesion.laps} vueltas · ${sesion.stints} stints · ${sesion.race_control_events} eventos de control.`;
+    openF1Contexto.innerHTML = [["Sesion", sesion.session_key], ["Meeting", sesion.meeting_key], ["Seleccion", `${pilotosSeleccionados.length} pilotos`], ["Muestras", mensajesSeleccionados.length], ["Granularidad", "car_data ~3.7 Hz"], ["Calidad", "observed_openf1"]].map(([etiqueta, valor]) => `<div><dt>${escaparHtml(etiqueta)}</dt><dd>${escaparHtml(valor)}</dd></div>`).join("");
+    renderizarComparacionPilotos(comparacion);
+    cargarSerieCarrera();
+    renderizarTablaOpenF1(mensajesSeleccionados);
+    openF1EstadoCarga.textContent = `${mensajesSeleccionados.length} mensajes seleccionados para auditoria.`;
+    etiquetaCabecera.textContent = "Analisis historico de carrera";
+    tituloCabecera.textContent = `${sesion.circuit_short_name} ${new Date(sesion.date_start).getUTCFullYear()} · ${sesion.session_name}`;
+    resumenSesion.textContent = `${sesion.country_name} · sesion ${sesion.session_key} · replay historico persistido`;
+    estadoOrigen.textContent = "OPENF1 HISTORICAL REPLAY";
+    estadoOrigen.className = "estado-origen estado-openf1-replay";
+  } catch (error) {
+    console.error(error);
+    openF1EstadoCarga.textContent = "No se pudo cargar el replay desde la API.";
+  }
+}
+
+function cambiarModo() {
+  const openF1Activo = selectorModo.value === "openf1";
+  document.body.classList.toggle("modo-openf1-activo", openF1Activo);
+  document.querySelectorAll(".modo-simulacion").forEach((elemento) => {
+    elemento.hidden = openF1Activo;
+  });
+  panelOpenF1.hidden = !openF1Activo;
+  if (openF1Activo) {
+    cargarReplayOpenF1();
+  } else {
+    etiquetaCabecera.textContent = "Telemetria de conduccion";
+    tituloCabecera.textContent = "Sesion demostrativa";
+    cargarSesion();
+  }
+}
+
 botonRecargar.addEventListener("click", cargarSesion);
+selectorModo.addEventListener("change", cambiarModo);
+casillasPilotosComparacion.addEventListener("change", () => {
+  pilotosSeleccionadosEstado = [...casillasPilotosComparacion.querySelectorAll("input:checked")].map((input) => Number(input.value));
+  cargarReplayOpenF1();
+});
+busquedaPilotosComparacion.addEventListener("input", renderizarCasillasPilotos);
+seleccionadosPilotosComparacion.addEventListener("click", (event) => {
+  const boton = event.target.closest("[data-quitar-piloto]");
+  if (!boton) {
+    return;
+  }
+  pilotosSeleccionadosEstado = pilotosSeleccionadosEstado.filter((numero) => numero !== Number(boton.dataset.quitarPiloto));
+  cargarReplayOpenF1();
+});
+botonLimpiarPilotos.addEventListener("click", () => {
+  pilotosSeleccionadosEstado = [];
+  cargarReplayOpenF1();
+});
+botonTodosPilotos.addEventListener("click", () => {
+  pilotosSeleccionadosEstado = pilotosOpenF1.map((piloto) => piloto.driver_number);
+  cargarReplayOpenF1();
+});
+Object.values(GRAFICOS_CARRERA).forEach((graficoAnalisisCarrera) => graficoAnalisisCarrera.addEventListener("click", (event) => {
+  if (!ultimaSerieCarrera) {
+    return;
+  }
+  const rect = graficoAnalisisCarrera.getBoundingClientRect();
+  const xCanvas = ((event.clientX - rect.left) / rect.width) * graficoAnalisisCarrera.width;
+  const relativeX = Math.min(Math.max(xCanvas, ultimaSerieCarrera.margen.izquierdo), ultimaSerieCarrera.margen.izquierdo + ultimaSerieCarrera.areaAncho);
+  const targetTime = ultimaSerieCarrera.inicio + ((relativeX - ultimaSerieCarrera.margen.izquierdo) / ultimaSerieCarrera.areaAncho) * (ultimaSerieCarrera.fin - ultimaSerieCarrera.inicio);
+  const timestamp = ultimaSerieCarrera.puntos.reduce((nearest, point) => (
+    Math.abs(point.tiempo - targetTime) < Math.abs(nearest.tiempo - targetTime) ? point : nearest
+  )).tiempo;
+  seleccionarInstanteCarrera(timestamp);
+}));
 lineaFases.addEventListener("click", (event) => {
   const boton = event.target.closest("[data-indice-fase]");
   if (!boton) {

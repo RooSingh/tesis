@@ -15,6 +15,7 @@ Mas adelante podra ampliarse con:
 MQTT_HOST = "localhost"
 MQTT_PORT = 1883
 MQTT_TOPIC = "tesis/telemetry/live"
+MQTT_REPLAY_TOPIC = "tesis/telemetry/replay"
 
 BACKEND_APP_NAME = "tesis-telemetry-backend"
 

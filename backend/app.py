@@ -10,6 +10,8 @@ de datos.
 from __future__ import annotations
 
 from fastapi import FastAPI
+from fastapi import HTTPException
+from fastapi import Query
 from fastapi.middleware.cors import CORSMiddleware
 
 from backend.config import BACKEND_APP_NAME
@@ -18,6 +20,12 @@ from backend.db import (
     obtener_mensajes_por_sesion,
     obtener_ultimos_mensajes,
     obtener_ultimos_por_senal,
+    obtener_comparacion_pilotos_racing,
+    obtener_contexto_racing_en_instante,
+    obtener_pilotos_racing,
+    obtener_replay_openf1,
+    obtener_serie_replay_openf1,
+    obtener_sesion_racing,
 )
 
 
@@ -82,3 +90,61 @@ def telemetry_by_session(session_id: str, limit: int = 100) -> list[dict]:
     """Devuelve mensajes persistidos pertenecientes a una sesion concreta."""
 
     return obtener_mensajes_por_sesion(session_id, limit)
+
+
+@app.get("/racing/sessions/{session_key}")
+def racing_session(session_key: int) -> dict:
+    """Expone el contexto de una carrera historica para analisis profesional."""
+
+    session = obtener_sesion_racing(session_key)
+    if session is None:
+        raise HTTPException(status_code=404, detail="Sesion racing no encontrada.")
+    return session
+
+
+@app.get("/racing/sessions/{session_key}/drivers")
+def racing_drivers(session_key: int) -> list[dict]:
+    """Expone pilotos y equipos disponibles para comparar en una sesion."""
+
+    return obtener_pilotos_racing(session_key)
+
+
+@app.get("/racing/sessions/{session_key}/driver-comparison")
+def racing_driver_comparison(
+    session_key: int, drivers: list[int] = Query(..., min_length=1)
+) -> list[dict]:
+    """Expone resultado, ritmo y estrategia para pilotos seleccionados."""
+
+    return obtener_comparacion_pilotos_racing(session_key, drivers)
+
+
+@app.get("/racing/sessions/{session_key}/replay-series")
+def racing_replay_series(
+    session_key: int,
+    replay_run_id: str,
+    drivers: list[int] = Query(..., min_length=1),
+    signal: str = Query(..., min_length=1),
+) -> list[dict]:
+    """Expone una serie temporal OpenF1 filtrada por ejecucion, pilotos y senal."""
+
+    return obtener_serie_replay_openf1(session_key, replay_run_id, drivers, signal)
+
+
+@app.get("/racing/sessions/{session_key}/context-at")
+def racing_context_at(
+    session_key: int,
+    timestamp: str = Query(..., min_length=1),
+    drivers: list[int] = Query(..., min_length=1),
+) -> dict:
+    """Expone contexto racing mas cercano a un instante UTC de telemetria."""
+
+    return obtener_contexto_racing_en_instante(session_key, timestamp, drivers)
+
+
+@app.get("/racing/sessions/{session_key}/replay")
+def racing_replay(
+    session_key: int, driver_number: int | None = None, replay_run_id: str | None = None
+) -> list[dict]:
+    """Expone muestras OpenF1 que atravesaron el pipeline MQTT de replay."""
+
+    return obtener_replay_openf1(session_key, driver_number, replay_run_id)

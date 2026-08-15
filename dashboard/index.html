@@ -8,20 +8,113 @@
 </head>
 <body>
   <main class="dashboard">
+    <nav class="selector-modo" aria-label="Navegacion de analisis">
+      <div class="marca-producto">
+        <p class="etiqueta-superior">Telemetry workspace</p>
+        <strong>Analisis de rendimiento</strong>
+      </div>
+      <label for="selector-modo">Espacio de trabajo</label>
+      <select id="selector-modo">
+        <option value="simulation">Simulacion CAN</option>
+        <option value="openf1">Replay OpenF1</option>
+      </select>
+    </nav>
+
     <header class="cabecera-sesion">
       <div>
-        <p class="etiqueta-superior">Telemetria de conduccion</p>
-        <h1>Sesion demostrativa</h1>
+        <p id="etiqueta-cabecera" class="etiqueta-superior">Telemetria de conduccion</p>
+        <h1 id="titulo-cabecera">Sesion demostrativa</h1>
         <p id="resumen-sesion">Cargando contexto de sesion...</p>
       </div>
       <div id="estado-origen" class="estado-origen">SIN DATOS</div>
     </header>
 
-    <section class="panel panel-contexto" aria-label="Contexto de sesion">
+    <section id="panel-openf1" class="panel panel-openf1" hidden>
+      <div class="titulo-seccion">
+        <div>
+          <p class="etiqueta-superior">Replay historico validado</p>
+          <h2 id="openf1-titulo">Cargando Silverstone...</h2>
+          <p id="openf1-resumen" class="resumen-operativo"></p>
+        </div>
+        <p id="openf1-estado-carga">Esperando consulta...</p>
+      </div>
+      <div id="openf1-contexto" class="lista-contexto tarjetas-openf1"></div>
+      <div class="columna-operativa-openf1">
+        <fieldset class="selector-pilotos-comparacion">
+          <legend>Comparador de pilotos</legend>
+          <p>Selecciona una o varias fuentes para actualizar rendimiento, telemetria y contexto sincronizado.</p>
+          <div class="acciones-selector-pilotos">
+            <button id="boton-limpiar-pilotos" type="button">Limpiar seleccion</button>
+            <button id="boton-todos-pilotos" type="button">Seleccionar todos</button>
+          </div>
+          <label class="busqueda-pilotos" for="busqueda-pilotos-comparacion">Buscar piloto, vehiculo o grupo</label>
+          <input id="busqueda-pilotos-comparacion" type="search" placeholder="Ej. Norris, McLaren, coche 02">
+          <div id="seleccionados-pilotos-comparacion" class="seleccionados-pilotos-comparacion" aria-live="polite"></div>
+          <div id="casillas-pilotos-comparacion" class="casillas-pilotos-comparacion"></div>
+        </fieldset>
+        <section class="comparacion-pilotos" aria-labelledby="titulo-comparacion-pilotos">
+          <div class="titulo-seccion">
+            <div>
+              <p class="etiqueta-superior">Contexto de rendimiento</p>
+              <h3 id="titulo-comparacion-pilotos">Comparacion de pilotos</h3>
+              <p class="resumen-operativo">Resultado, ritmo de vuelta y estrategia de los pilotos seleccionados.</p>
+            </div>
+          </div>
+          <div id="tarjetas-comparacion-pilotos" class="tarjetas-comparacion-pilotos"></div>
+        </section>
+      </div>
+      <section class="analisis-carrera" aria-labelledby="titulo-analisis-carrera">
+        <div class="titulo-seccion">
+          <div>
+            <p class="etiqueta-superior">Estado simultaneo de carrera</p>
+            <h3 id="titulo-analisis-carrera">Telemetria por reloj deportivo</h3>
+            <p id="resumen-analisis-carrera" class="resumen-operativo">Selecciona una senal para comparar el estado de los pilotos en la misma ventana UTC.</p>
+          </div>
+          <p id="estado-analisis-carrera">Sin serie cargada</p>
+        </div>
+        <div id="leyenda-analisis-carrera" class="leyenda-analisis-carrera"></div>
+        <div class="graficos-operativos">
+          <article class="grafico-operativo"><h4>Velocidad <span>km/h</span></h4><canvas id="grafico-velocidad-carrera" width="1120" height="220" aria-label="Velocidad comparativa por reloj deportivo"></canvas></article>
+          <article class="grafico-operativo"><h4>Acelerador <span>%</span></h4><canvas id="grafico-acelerador-carrera" width="1120" height="180" aria-label="Acelerador comparativo por reloj deportivo"></canvas></article>
+          <article class="grafico-operativo"><h4>Freno <span>liberado o activo</span></h4><canvas id="grafico-freno-carrera" width="1120" height="150" aria-label="Freno comparativo por reloj deportivo"></canvas></article>
+        </div>
+        <section id="contexto-instante-carrera" class="contexto-instante-carrera" aria-live="polite">
+          <div>
+            <p class="etiqueta-superior">Contexto sincronizado</p>
+            <h4>Selecciona un punto de la curva</h4>
+            <p id="resumen-instante-carrera">Al seleccionar un instante se mostrara el contexto racing mas cercano y su diferencia temporal.</p>
+          </div>
+          <div id="clima-instante-carrera" class="clima-instante-carrera"></div>
+          <div id="pilotos-instante-carrera" class="pilotos-instante-carrera"></div>
+        </section>
+      </section>
+      <details class="trazabilidad-openf1">
+        <summary>Trazabilidad tecnica del replay</summary>
+        <p>Mensajes persistidos, timestamp deportivo, instante de publicacion y campo original OpenF1.</p>
+        <div class="contenedor-tabla">
+        <table id="tabla-openf1">
+          <thead>
+            <tr>
+              <th>Senal</th>
+              <th>Valor</th>
+              <th>Tiempo deportivo</th>
+              <th>Publicado localmente</th>
+              <th>Endpoint</th>
+              <th>Campo original</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+        </div>
+      </details>
+      <p class="nota-openf1">Replay historico OpenF1: no representa CAN crudo ni streaming live oficial.</p>
+    </section>
+
+    <section class="panel panel-contexto modo-simulacion" aria-label="Contexto de sesion">
       <dl id="contexto-sesion" class="lista-contexto"></dl>
     </section>
 
-    <section class="panel panel-operativo">
+    <section class="panel panel-operativo modo-simulacion">
       <div class="titulo-seccion">
         <div>
           <p class="etiqueta-superior">Lectura operativa</p>
@@ -32,7 +125,7 @@
       </div>
     </section>
 
-    <section class="panel panel-fases">
+    <section class="panel panel-fases modo-simulacion">
       <div class="titulo-seccion">
         <div>
           <p class="etiqueta-superior">Secuencia persistida</p>
@@ -43,7 +136,7 @@
       <div id="linea-fases" class="linea-fases"></div>
     </section>
 
-    <div class="zona-analisis">
+    <div class="zona-analisis modo-simulacion">
       <div class="columna-contexto">
         <section class="panel panel-mapa">
           <div class="titulo-seccion">
@@ -105,7 +198,7 @@
       </section>
     </div>
 
-    <section class="panel panel-trazabilidad">
+    <section class="panel panel-trazabilidad modo-simulacion">
       <div class="titulo-seccion">
         <div>
           <p class="etiqueta-superior">Trazabilidad tecnica</p>
