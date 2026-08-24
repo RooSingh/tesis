@@ -635,6 +635,7 @@ body.modo-openf1-activo {
 .modo-openf1-activo .panel-openf1 > .tarjetas-openf1,
 .modo-openf1-activo .panel-openf1 > .analisis-carrera,
 .modo-openf1-activo .panel-openf1 > .trazabilidad-openf1,
+.modo-openf1-activo .panel-openf1 > .procesamiento-sesiones-openf1,
 .modo-openf1-activo .panel-openf1 > .nota-openf1 {
   margin-left: 28px;
   margin-right: 28px;
@@ -779,6 +780,141 @@ body.modo-openf1-activo {
   grid-column: 1 / -1;
 }
 
+.modo-openf1-activo .procesamiento-sesiones-openf1 {
+  grid-column: 1 / -1;
+  padding: 22px;
+  border: 1px solid rgba(125, 211, 252, 0.16);
+  border-radius: 16px;
+  background: linear-gradient(145deg, #071829, #0b2237);
+}
+
+.tarjetas-procesamiento-sesiones {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+  margin-top: 16px;
+}
+
+.tarjeta-procesamiento-sesion {
+  padding: 18px;
+  border: 1px solid rgba(125, 211, 252, 0.18);
+  border-left: 4px solid #22d3ee;
+  border-radius: 14px;
+  background: #091827;
+}
+
+.tarjeta-procesamiento-sesion.estado-partial {
+  border-left-color: #f59e0b;
+}
+
+.tarjeta-procesamiento-sesion header {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  color: #f8fafc;
+}
+
+.tarjeta-procesamiento-sesion small {
+  display: block;
+  margin-top: 4px;
+  color: #80b9d5;
+}
+
+.tarjeta-procesamiento-sesion span {
+  text-transform: uppercase;
+  color: #93c5fd;
+}
+
+.tarjeta-procesamiento-sesion p,
+.tarjeta-procesamiento-sesion dd,
+.tarjeta-procesamiento-sesion dt,
+.tarjeta-procesamiento-sesion li,
+.tarjeta-procesamiento-sesion h4,
+.tarjeta-procesamiento-sesion em {
+  color: #cbd5e1;
+}
+
+.tarjeta-procesamiento-sesion section {
+  margin-top: 12px;
+}
+
+.tarjeta-procesamiento-sesion h4 {
+  margin: 0 0 7px;
+  font-size: 0.72rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: #80b9d5;
+}
+
+.resumen-procesamiento,
+.telemetria-procesamiento {
+  margin: 12px 0;
+  color: #cbd5e1;
+}
+
+.resultado-espacial {
+  margin: 12px 0;
+  padding: 10px 12px;
+  border: 1px solid rgba(125, 211, 252, 0.16);
+  border-radius: 12px;
+  background: rgba(15, 48, 76, 0.46);
+  color: #cbd5e1;
+}
+
+.resultado-espacial strong {
+  color: #dbeafe;
+}
+
+.resultado-espacial.disponible {
+  border-left: 4px solid #22d3ee;
+}
+
+.resultado-espacial.no-disponible {
+  border-left: 4px solid #f59e0b;
+}
+
+.metricas-procesamiento {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 8px;
+  margin: 14px 0;
+}
+
+.metricas-procesamiento span {
+  padding: 9px;
+  border: 1px solid rgba(125, 211, 252, 0.15);
+  border-radius: 12px;
+  background: rgba(15, 48, 76, 0.56);
+  color: #dbeafe;
+  font-size: 0.86rem;
+}
+
+.metricas-procesamiento strong {
+  display: block;
+  color: #67e8f9;
+  font-size: 1.05rem;
+}
+
+.detalles-procesamiento {
+  margin-top: 10px;
+  color: #cbd5e1;
+}
+
+.detalles-procesamiento summary {
+  cursor: pointer;
+  color: #93c5fd;
+}
+
+.advertencias-procesamiento {
+  margin: 0;
+  padding-left: 18px;
+  color: #fde68a !important;
+}
+
+.advertencias-procesamiento li {
+  color: #fde68a !important;
+}
+
 @media (max-width: 980px) {
   .modo-openf1-activo .panel-openf1 {
     display: block;
@@ -793,6 +929,7 @@ body.modo-openf1-activo {
   .modo-openf1-activo .panel-openf1 > .tarjetas-openf1,
   .modo-openf1-activo .panel-openf1 > .analisis-carrera,
   .modo-openf1-activo .panel-openf1 > .trazabilidad-openf1,
+  .modo-openf1-activo .panel-openf1 > .procesamiento-sesiones-openf1,
   .modo-openf1-activo .panel-openf1 > .nota-openf1 {
     margin-left: 20px;
     margin-right: 20px;
@@ -802,6 +939,14 @@ body.modo-openf1-activo {
 @media (max-width: 640px) {
   .modo-openf1-activo .graficos-operativos {
     grid-template-columns: 1fr;
+  }
+
+  .tarjetas-procesamiento-sesiones {
+    grid-template-columns: 1fr;
+  }
+
+  .metricas-procesamiento {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 

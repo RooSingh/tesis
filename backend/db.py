@@ -620,3 +620,165 @@ def _clasificar_frescura_contexto(context: dict, name: str, age_key: str) -> Non
         context["track_temperature_c"] = None
         context["rainfall"] = None
         context["humidity_percent"] = None
+
+
+def obtener_ejecucion_por_huella(package_fingerprint: str) -> dict | None:
+    """Busca una ejecucion previa para evitar importar dos veces el mismo paquete."""
+
+    with obtener_conexion() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT run_id, package_fingerprint, source_type, session_key, package_path,
+                       processor_version, inventory, status, counts, started_at_utc,
+                       completed_at_utc, error_summary
+                FROM session_processing_runs
+                WHERE package_fingerprint = %s
+                """,
+                (package_fingerprint,),
+            )
+            row = cur.fetchone()
+            if row is None or cur.description is None:
+                return None
+            return dict(zip([description[0] for description in cur.description], row))
+
+
+def crear_ejecucion_validada(
+    package_fingerprint: str,
+    source_type: str,
+    session_key: int,
+    package_path: str,
+    processor_version: str,
+    inventory: dict,
+) -> dict | None:
+    """Registra una validacion previa a la importacion real del paquete."""
+
+    with obtener_conexion() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO session_processing_runs (
+                    package_fingerprint, source_type, session_key, package_path,
+                    processor_version, inventory, status
+                ) VALUES (%s, %s, %s, %s, %s, %s::jsonb, 'validated')
+                ON CONFLICT (package_fingerprint) DO NOTHING
+                RETURNING run_id, package_fingerprint, status, session_key, inventory
+                """,
+                (
+                    package_fingerprint,
+                    source_type,
+                    session_key,
+                    package_path,
+                    processor_version,
+                    json.dumps(inventory),
+                ),
+            )
+            row = cur.fetchone()
+            if row is None:
+                return None
+            return dict(zip([description[0] for description in cur.description], row))
+
+
+def registrar_incidencia_procesamiento(
+    run_id: int,
+    severity: str,
+    issue_code: str,
+    message: str,
+    file_path: str | None = None,
+    context: dict | None = None,
+) -> None:
+    """Conserva advertencias y errores de una corrida sin ocultar su contexto."""
+
+    with obtener_conexion() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO session_processing_issues (
+                    run_id, severity, issue_code, file_path, message, context
+                ) VALUES (%s, %s, %s, %s, %s, %s::jsonb)
+                """,
+                (run_id, severity, issue_code, file_path, message, json.dumps(context or {})),
+            )
+
+
+def actualizar_ejecucion_procesamiento(
+    run_id: int, status: str, counts: dict, error_summary: str | None = None
+) -> None:
+    """Actualiza el estado y los conteos de una corrida de procesamiento."""
+
+    with obtener_conexion() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                UPDATE session_processing_runs
+                SET status = %s,
+                    counts = %s::jsonb,
+                    error_summary = %s,
+                    completed_at_utc = CASE
+                        WHEN %s IN ('completed', 'partial', 'failed') THEN NOW()
+                        ELSE NULL
+                    END
+                WHERE run_id = %s
+                """,
+                (status, json.dumps(counts), error_summary, status, run_id),
+            )
+
+
+def listar_ejecuciones_procesamiento(limite: int = 50) -> list[dict]:
+    """Lista corridas de procesamiento con inventario y conteos persistidos."""
+
+    with obtener_conexion() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT run_id, package_fingerprint, source_type, session_key,
+                       package_path, processor_version, inventory, status, counts,
+                       started_at_utc, completed_at_utc, error_summary
+                FROM session_processing_runs
+                ORDER BY started_at_utc DESC, run_id DESC
+                LIMIT %s
+                """,
+                (limite,),
+            )
+            columns = [desc[0] for desc in cur.description]
+            return [dict(zip(columns, row)) for row in cur.fetchall()]
+
+
+def obtener_ejecucion_procesamiento(run_id: int) -> dict | None:
+    """Devuelve una corrida de procesamiento concreta."""
+
+    with obtener_conexion() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT run_id, package_fingerprint, source_type, session_key,
+                       package_path, processor_version, inventory, status, counts,
+                       started_at_utc, completed_at_utc, error_summary
+                FROM session_processing_runs
+                WHERE run_id = %s
+                """,
+                (run_id,),
+            )
+            row = cur.fetchone()
+            if row is None or cur.description is None:
+                return None
+            return dict(zip([desc[0] for desc in cur.description], row))
+
+
+def listar_incidencias_procesamiento(run_id: int) -> list[dict]:
+    """Lista advertencias y errores registrados para una corrida."""
+
+    with obtener_conexion() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT issue_id, run_id, severity, issue_code, file_path, message,
+                       context, created_at_utc
+                FROM session_processing_issues
+                WHERE run_id = %s
+                ORDER BY issue_id
+                """,
+                (run_id,),
+            )
+            columns = [desc[0] for desc in cur.description]
+            return [dict(zip(columns, row)) for row in cur.fetchall()]

@@ -45,6 +45,8 @@ const GRAFICOS_CARRERA = {
 const resumenInstanteCarrera = document.getElementById("resumen-instante-carrera");
 const climaInstanteCarrera = document.getElementById("clima-instante-carrera");
 const pilotosInstanteCarrera = document.getElementById("pilotos-instante-carrera");
+const estadoProcesamientoSesiones = document.getElementById("estado-procesamiento-sesiones");
+const tarjetasProcesamientoSesiones = document.getElementById("tarjetas-procesamiento-sesiones");
 const COLORES_PILOTOS_OPENF1 = {
   1: "#38bdf8",
   4: "#fb923c",
@@ -765,6 +767,144 @@ async function cargarReplayOpenF1() {
   }
 }
 
+function resumirCapacidadesProcesamiento(run) {
+  const capacidades = run.inventory?.capabilities ?? {};
+  const telemetria = capacidades.telemetry_drivers ?? { car_data: [], location: [] };
+  return { carData: telemetria.car_data?.length ?? 0, location: telemetria.location?.length ?? 0 };
+}
+
+function traducirEstadoProcesamiento(status) {
+  return ({ completed: "COMPLETO", partial: "PARCIAL", validated: "VALIDADO", failed: "FALLIDO", running: "EN PROCESO" })[status] ?? status;
+}
+
+function etiquetaCapacidad(nombre) {
+  return ({
+    drivers: "Pilotos",
+    laps: "Vueltas",
+    stints: "Stints",
+    results: "Resultados",
+    weather: "Clima",
+    intervals: "Intervalos",
+    overtakes: "Adelantamientos",
+    pit_stops: "Pit stops",
+    positions: "Posiciones",
+    team_radio: "Radio",
+    race_control: "Control de carrera",
+  })[nombre] ?? nombre;
+}
+
+function etiquetaConteo(nombre) {
+  return ({
+    drivers: "Pilotos",
+    laps: "Vueltas",
+    stints: "Stints",
+    session_result: "Resultados",
+    weather: "Clima",
+    intervals: "Intervalos",
+    overtakes: "Adelantamientos",
+    pit: "Pits",
+    position: "Posiciones",
+    team_radio: "Radio",
+    race_control: "Control",
+    sessions: "Sesion",
+  })[nombre] ?? nombre;
+}
+
+function tituloSesionProcesada(run, contexto) {
+  if (!contexto) {
+    return `Sesion ${run.session_key}`;
+  }
+  const year = contexto.date_start ? new Date(contexto.date_start).getUTCFullYear() : "s/f";
+  return `${contexto.circuit_short_name ?? contexto.location ?? "Sesion"} ${year} · ${contexto.session_name ?? run.session_key}`;
+}
+
+function obtenerConteo(run, ...keys) {
+  const counts = run.counts ?? {};
+  for (const key of keys) {
+    if (counts[key] !== undefined) {
+      return counts[key];
+    }
+  }
+  return 0;
+}
+
+function resumenEstadoProcesamiento(run, issues, telemetria) {
+  if (run.status === "partial") {
+    return `${issues.length} advertencias · telemetria local no completa · solo contexto disponible.`;
+  }
+  return `Contexto del paquete local completo · telemetria detallada para ${telemetria.carData} pilotos.`;
+}
+
+function resumenEspacialProcesamiento(run) {
+  const capacidades = run.inventory?.capabilities ?? {};
+  const posiciones = capacidades.positions === true;
+  const intervalos = capacidades.intervals === true;
+  if (posiciones && intervalos) {
+    return {
+      estado: "Disponible",
+      clase: "disponible",
+      detalle: "Posiciones e intervalos importados; util para contexto espacial por tiempo.",
+    };
+  }
+  const faltantes = [!posiciones ? "position.json" : null, !intervalos ? "intervals.json" : null].filter(Boolean);
+  return {
+    estado: "No disponible",
+    clase: "no-disponible",
+    detalle: `Faltan ${faltantes.join(" e ")}; no usar para comparacion espacial.`,
+  };
+}
+
+async function cargarProcesamientoSesiones() {
+  try {
+    const respuesta = await fetch(`${API_BASE_URL}/processing/runs`);
+    if (!respuesta.ok) {
+      throw new Error("No se pudieron recuperar las corridas de procesamiento.");
+    }
+    const runs = await respuesta.json();
+    const detalles = await Promise.all(runs.map(async (run) => {
+      const [issuesRespuesta, contextoRespuesta] = await Promise.all([
+        fetch(`${API_BASE_URL}/processing/runs/${run.run_id}/issues`),
+        fetch(`${API_BASE_URL}/racing/sessions/${run.session_key}`),
+      ]);
+      return {
+        issues: issuesRespuesta.ok ? await issuesRespuesta.json() : [],
+        contexto: contextoRespuesta.ok ? await contextoRespuesta.json() : null,
+      };
+    }));
+    tarjetasProcesamientoSesiones.innerHTML = runs.map((run, index) => {
+      const issues = detalles[index].issues;
+      const contexto = detalles[index].contexto;
+      const capacidades = run.inventory?.capabilities ?? {};
+      const capacidadesDisponibles = Object.entries(capacidades)
+        .filter(([nombre, valor]) => nombre !== "telemetry_drivers" && valor === true)
+        .map(([nombre]) => etiquetaCapacidad(nombre));
+      const telemetria = resumirCapacidadesProcesamiento(run);
+      const espacial = resumenEspacialProcesamiento(run);
+      return `<article class="tarjeta-procesamiento-sesion estado-${escaparHtml(run.status)}">
+        <header><div><strong>${escaparHtml(tituloSesionProcesada(run, contexto))}</strong><small>Run ${escaparHtml(run.run_id)} · sesion ${escaparHtml(run.session_key)}</small></div><span>${escaparHtml(traducirEstadoProcesamiento(run.status))}</span></header>
+        <p class="resumen-procesamiento">${escaparHtml(resumenEstadoProcesamiento(run, issues, telemetria))}</p>
+        <p class="resultado-espacial ${escaparHtml(espacial.clase)}"><strong>Resultado espacial: ${escaparHtml(espacial.estado)}</strong><br>${escaparHtml(espacial.detalle)} No implica distancia, trazada ni curvas reales.</p>
+        <div class="metricas-procesamiento">
+          <span><strong>${escaparHtml(obtenerConteo(run, "drivers"))}</strong>Pilotos</span>
+          <span><strong>${escaparHtml(obtenerConteo(run, "laps"))}</strong>Vueltas</span>
+          <span><strong>${escaparHtml(obtenerConteo(run, "stints"))}</strong>Stints</span>
+          <span><strong>${escaparHtml(obtenerConteo(run, "weather"))}</strong>Clima</span>
+          <span><strong>${escaparHtml(issues.length)}</strong>Alertas</span>
+        </div>
+        <p class="telemetria-procesamiento">Telemetria local: car_data ${escaparHtml(telemetria.carData)} pilotos · location ${escaparHtml(telemetria.location)} pilotos</p>
+        <details class="detalles-procesamiento"><summary>Ver capacidades y advertencias</summary>
+          <p>Contexto: ${escaparHtml(capacidadesDisponibles.join(", ") || "sin contexto declarado")}</p>
+          <ul class="advertencias-procesamiento">${issues.length ? issues.map((issue) => `<li>${escaparHtml(issue.message)}</li>`).join("") : "<li>Sin advertencias registradas.</li>"}</ul>
+        </details>
+      </article>`;
+    }).join("");
+    estadoProcesamientoSesiones.textContent = `${runs.length} corridas procesadas disponibles.`;
+  } catch (error) {
+    console.error(error);
+    estadoProcesamientoSesiones.textContent = "No se pudieron cargar las sesiones procesadas.";
+  }
+}
+
 function cambiarModo() {
   const openF1Activo = selectorModo.value === "openf1";
   document.body.classList.toggle("modo-openf1-activo", openF1Activo);
@@ -774,6 +914,7 @@ function cambiarModo() {
   panelOpenF1.hidden = !openF1Activo;
   if (openF1Activo) {
     cargarReplayOpenF1();
+    cargarProcesamientoSesiones();
   } else {
     etiquetaCabecera.textContent = "Telemetria de conduccion";
     tituloCabecera.textContent = "Sesion demostrativa";

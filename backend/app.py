@@ -16,8 +16,11 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from backend.config import BACKEND_APP_NAME
 from backend.db import (
+    listar_ejecuciones_procesamiento,
+    listar_incidencias_procesamiento,
     obtener_mensajes_por_senal,
     obtener_mensajes_por_sesion,
+    obtener_ejecucion_procesamiento,
     obtener_ultimos_mensajes,
     obtener_ultimos_por_senal,
     obtener_comparacion_pilotos_racing,
@@ -90,6 +93,32 @@ def telemetry_by_session(session_id: str, limit: int = 100) -> list[dict]:
     """Devuelve mensajes persistidos pertenecientes a una sesion concreta."""
 
     return obtener_mensajes_por_sesion(session_id, limit)
+
+
+@app.get("/processing/runs")
+def processing_runs(limit: int = 50) -> list[dict]:
+    """Lista paquetes Nivel B procesados o validados."""
+
+    return listar_ejecuciones_procesamiento(limit)
+
+
+@app.get("/processing/runs/{run_id}")
+def processing_run(run_id: int) -> dict:
+    """Expone estado, capacidades, conteos y limites de una corrida."""
+
+    run = obtener_ejecucion_procesamiento(run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="Corrida de procesamiento no encontrada.")
+    return run
+
+
+@app.get("/processing/runs/{run_id}/issues")
+def processing_run_issues(run_id: int) -> list[dict]:
+    """Expone advertencias y errores persistidos para una corrida."""
+
+    if obtener_ejecucion_procesamiento(run_id) is None:
+        raise HTTPException(status_code=404, detail="Corrida de procesamiento no encontrada.")
+    return listar_incidencias_procesamiento(run_id)
 
 
 @app.get("/racing/sessions/{session_key}")
