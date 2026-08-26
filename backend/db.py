@@ -8,12 +8,13 @@ sobre el flujo real de persistencia.
 from __future__ import annotations
 
 import json
+import threading
 from typing import Any
 
 import psycopg
 
 from backend.config import DB_HOST, DB_NAME, DB_PASSWORD, DB_PORT, DB_USER
-from backend.models import TelemetryMessage
+from backend.models import TelemetryMessage, TelemetryMetadata
 
 
 def obtener_conexion() -> psycopg.Connection:
@@ -124,11 +125,33 @@ def insertar_telemetria(mensaje: TelemetryMessage) -> None:
             )
 
 
+def _identidad_replay(metadata: TelemetryMetadata) -> tuple[str | None, int | None]:
+    """Extrae la identidad de replay que habilita idempotencia y reconciliacion.
+
+    El publicador inyecta `replay_run_id` y `replay_seq` en `metadata.extra`. Se
+    promueven a columnas propias porque contar 6,2 millones de filas filtrando
+    por un campo JSONB no es indexable de forma economica, y porque la clave de
+    idempotencia debe poder expresarse como indice unico.
+
+    Los mensajes que no provienen de un replay devuelven `(None, None)` y quedan
+    fuera del indice unico parcial definido en `database/003_*.sql`.
+    """
+    extra = metadata.extra or {}
+    replay_run_id = extra.get("replay_run_id")
+    replay_seq = extra.get("replay_seq")
+    if replay_run_id is None or replay_seq is None:
+        return None, None
+    return str(replay_run_id), int(replay_seq)
+
+
 def _parametros_telemetria(mensaje: TelemetryMessage) -> dict[str, Any]:
     """Normaliza un mensaje para insercion individual o por lote."""
     value_numeric, value_boolean, value_text = _separar_valor(mensaje.value)
     metadata = mensaje.metadata
+    replay_run_id, replay_seq = _identidad_replay(metadata)
     return {
+        "replay_run_id": replay_run_id,
+        "replay_seq": replay_seq,
         "timestamp": mensaje.timestamp,
         "vehicle_id": mensaje.vehicle_id,
         "driver_id": mensaje.driver_id,
@@ -154,24 +177,146 @@ INSERT_TELEMETRY_SQL = """
     INSERT INTO telemetry_messages (
         timestamp, vehicle_id, driver_id, session_id, lap_id, source_type,
         signal_name, value_numeric, value_boolean, value_text, unit,
-        quality_flag, track_segment_id, sector_id, curve_id, can_id, src, metadata
+        quality_flag, track_segment_id, sector_id, curve_id, can_id, src, metadata,
+        replay_run_id, replay_seq
     ) VALUES (
         %(timestamp)s, %(vehicle_id)s, %(driver_id)s, %(session_id)s, %(lap_id)s,
         %(source_type)s, %(signal_name)s, %(value_numeric)s, %(value_boolean)s,
         %(value_text)s, %(unit)s, %(quality_flag)s, %(track_segment_id)s,
-        %(sector_id)s, %(curve_id)s, %(can_id)s, %(src)s, %(metadata)s::jsonb
+        %(sector_id)s, %(curve_id)s, %(can_id)s, %(src)s, %(metadata)s::jsonb,
+        %(replay_run_id)s, %(replay_seq)s
     )
+    ON CONFLICT (replay_run_id, replay_seq, timestamp)
+        WHERE replay_run_id IS NOT NULL AND replay_seq IS NOT NULL
+        DO NOTHING
 """
 
 
+def _filas_insertadas(rowcount: int | None, esperadas: int) -> int:
+    """Interpreta `cur.rowcount` de forma conservadora.
+
+    psycopg 3 acumula en `rowcount` las filas afectadas por todo `executemany`.
+    Con `ON CONFLICT DO NOTHING`, una fila duplicada no se cuenta: por eso el
+    valor devuelto es persistencia real y no intencion. Si el driver no informa
+    un valor utilizable se devuelve el esperado, porque suponer una perdida sin
+    evidencia seria tan incorrecto como suponer un exito.
+    """
+    if rowcount is None or rowcount < 0:
+        return esperadas
+    return rowcount
+
+
 def insertar_telemetria_lote(mensajes: list[TelemetryMessage]) -> int:
-    """Persiste un lote en una sola conexion/transaccion de PostgreSQL."""
+    """Persiste un lote en una sola conexion/transaccion de PostgreSQL.
+
+    Devuelve las filas realmente insertadas segun `cur.rowcount`, no la cantidad
+    de mensajes recibidos. La diferencia entre ambos numeros es exactamente la
+    cantidad de duplicados suprimidos por `ON CONFLICT DO NOTHING`.
+    """
     if not mensajes:
         return 0
+    parametros = [_parametros_telemetria(mensaje) for mensaje in mensajes]
     with obtener_conexion() as conn:
         with conn.cursor() as cur:
-            cur.executemany(INSERT_TELEMETRY_SQL, [_parametros_telemetria(mensaje) for mensaje in mensajes])
-    return len(mensajes)
+            cur.executemany(INSERT_TELEMETRY_SQL, parametros)
+            insertadas = cur.rowcount
+    return _filas_insertadas(insertadas, len(mensajes))
+
+
+class EscritorTelemetria:
+    """Persiste lotes reutilizando una unica conexion PostgreSQL.
+
+    El consumidor abria una conexion nueva por lote. Para la carrera completa de
+    Silverstone eso equivale a unos 6.218 handshakes TCP y de autenticacion. Esta
+    clase conserva la conexion entre lotes y la reabre solo despues de un error.
+
+    Es intencional que un fallo cierre la conexion y vuelva a lanzar la
+    excepcion: `TelemetryBatchBuffer.flush` reencola el lote completo, de modo que
+    ningun mensaje se pierde por un corte transitorio de base de datos.
+    """
+
+    def __init__(self, conexion_factory=obtener_conexion) -> None:
+        self.conexion_factory = conexion_factory
+        self.lock = threading.Lock()
+        self._conexion: psycopg.Connection | None = None
+
+    def _conexion_activa(self) -> psycopg.Connection:
+        if self._conexion is None or self._conexion.closed:
+            self._conexion = self.conexion_factory()
+        return self._conexion
+
+    def __call__(self, mensajes: list[TelemetryMessage]) -> int:
+        if not mensajes:
+            return 0
+        parametros = [_parametros_telemetria(mensaje) for mensaje in mensajes]
+        with self.lock:
+            try:
+                conn = self._conexion_activa()
+                with conn.transaction():
+                    with conn.cursor() as cur:
+                        cur.executemany(INSERT_TELEMETRY_SQL, parametros)
+                        insertadas = cur.rowcount
+            except Exception:
+                self._cerrar_sin_bloquear()
+                raise
+        return _filas_insertadas(insertadas, len(mensajes))
+
+    def _cerrar_sin_bloquear(self) -> None:
+        if self._conexion is not None:
+            try:
+                self._conexion.close()
+            except Exception:
+                pass
+            self._conexion = None
+
+    def cerrar(self) -> None:
+        """Libera la conexion al terminar un proceso consumidor."""
+        with self.lock:
+            self._cerrar_sin_bloquear()
+
+
+CONTAR_REPLAY_SQL = """
+    SELECT
+        count(*) AS filas,
+        count(DISTINCT replay_seq) AS unicos,
+        min(replay_seq) AS seq_min,
+        max(replay_seq) AS seq_max
+    FROM telemetry_messages
+    WHERE replay_run_id = %(replay_run_id)s
+      AND (%(seq_desde)s::bigint IS NULL OR replay_seq >= %(seq_desde)s::bigint)
+      AND (%(seq_hasta)s::bigint IS NULL OR replay_seq <= %(seq_hasta)s::bigint)
+"""
+
+
+def contar_replay_persistido(
+    replay_run_id: str,
+    seq_desde: int | None = None,
+    seq_hasta: int | None = None,
+) -> dict[str, int | None]:
+    """Cuenta filas reales de un replay para reconciliar un bloque.
+
+    Es la unica fuente de verdad admitida para cerrar un bloque: las metricas del
+    publicador y del consumidor pueden coincidir entre si y aun asi no
+    corresponder a lo persistido.
+
+    `unicos` permite detectar duplicados sin recorrer las filas: si `filas` y
+    `unicos` difieren, hay repeticiones que el indice unico deberia haber
+    impedido.
+    """
+    with obtener_conexion() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                CONTAR_REPLAY_SQL,
+                {
+                    "replay_run_id": replay_run_id,
+                    "seq_desde": seq_desde,
+                    "seq_hasta": seq_hasta,
+                },
+            )
+            fila = cur.fetchone()
+    if fila is None:
+        return {"filas": 0, "unicos": 0, "seq_min": None, "seq_max": None}
+    return {"filas": fila[0], "unicos": fila[1], "seq_min": fila[2], "seq_max": fila[3]}
 
 
 def obtener_ultimos_mensajes(limite: int = 20) -> list[dict]:
