@@ -151,8 +151,13 @@ class TelemetryBatchBuffer:
             self.metrics["batches"] += 1
         return persisted
 
-    def _drenar_hasta_sin_avance(self, solo_lotes_completos: bool) -> None:
-        """Vacia la cola mientras siga achicandose.
+    def _drenar_hasta_sin_avance(self) -> None:
+        """Vacia la cola por completo mientras siga achicandose.
+
+        Se drena hasta dejar la cola vacia, incluido el ultimo lote incompleto.
+        Esperar a que se complete un lote dejaria los mensajes finales de una
+        rafaga sin escribir hasta el cierre del proceso: una verificacion por
+        bloque los contaria como faltantes aunque estuvieran intactos en memoria.
 
         El avance se mide por el tamano de `self.pending`, no por las filas
         escritas, por dos motivos:
@@ -168,7 +173,7 @@ class TelemetryBatchBuffer:
         while True:
             with self.lock:
                 antes = len(self.pending)
-            if antes == 0 or (solo_lotes_completos and antes < self.batch_size):
+            if antes == 0:
                 return
             self.flush()
             with self.lock:
@@ -178,20 +183,23 @@ class TelemetryBatchBuffer:
     def _run(self) -> None:
         while not self.stop_event.is_set():
             with self.batch_ready:
+                # Despierta ante un lote completo o, como maximo, tras
+                # `flush_interval`. Ese vencimiento es el que garantiza que una
+                # cola parcial no espere indefinidamente a completarse.
                 self.batch_ready.wait_for(
                     lambda: self.stop_event.is_set() or len(self.pending) >= self.batch_size,
                     timeout=self.flush_interval,
                 )
             if self.stop_event.is_set():
                 return
-            self._drenar_hasta_sin_avance(solo_lotes_completos=True)
+            self._drenar_hasta_sin_avance()
 
     def close(self) -> None:
         self.stop_event.set()
         with self.batch_ready:
             self.batch_ready.notify_all()
         self.worker.join(timeout=self.flush_interval * 2)
-        self._drenar_hasta_sin_avance(solo_lotes_completos=False)
+        self._drenar_hasta_sin_avance()
         if hasattr(self.writer, "cerrar"):
             self.writer.cerrar()
 

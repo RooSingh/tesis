@@ -106,6 +106,37 @@ class TelemetryBatchBufferTests(unittest.TestCase):
             buffer.writer = lambda batch: len(batch)
             buffer.close()
 
+    def test_el_worker_escribe_un_lote_incompleto_dentro_del_intervalo(self) -> None:
+        """Regresion detectada en la validacion D2 contra servicios reales.
+
+        El worker solo drenaba cuando la cola alcanzaba `batch_size`, de modo que
+        los mensajes finales de una rafaga quedaban en memoria hasta el cierre del
+        proceso. La verificacion por bloque los conto como faltantes aunque
+        estuvieran intactos: `received=40740`, `persisted=40000`, `pending=740`.
+
+        El vencimiento de `flush_interval` debe bastar para escribir el resto sin
+        que llegue ningun mensaje nuevo y sin cerrar el consumidor.
+        """
+        escritos = []
+        buffer = TelemetryBatchBuffer(
+            lambda batch: escritos.append(len(batch)) or len(batch),
+            batch_size=1000,
+            flush_interval=0.05,
+        )
+        try:
+            for index in range(740):
+                buffer.enqueue(message(index % 60))
+
+            deadline = monotonic() + 3
+            while buffer.snapshot()["pending"] != 0 and monotonic() < deadline:
+                sleep(0.01)
+
+            self.assertEqual(buffer.snapshot()["pending"], 0)
+            self.assertEqual(buffer.snapshot()["persisted"], 740)
+            self.assertEqual(sum(escritos), 740)
+        finally:
+            buffer.close()
+
     def test_cuenta_duplicados_suprimidos_por_la_base(self) -> None:
         """Un lote parcialmente duplicado no debe leerse como perdida.
 
