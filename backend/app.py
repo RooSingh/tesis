@@ -21,7 +21,6 @@ from backend.db import (
     listar_analisis_sesion,
     obtener_analisis_stints,
     obtener_analisis_vueltas,
-    listar_corridas_replay,
     listar_ejecuciones_procesamiento,
     listar_incidencias_procesamiento,
     obtener_mensajes_por_senal,
@@ -169,15 +168,13 @@ def racing_driver_comparison(
     return obtener_comparacion_pilotos_racing(session_key, drivers)
 
 
-@app.get("/racing/sessions/{session_key}/replay-runs")
-def racing_replay_runs(session_key: int) -> list[dict]:
-    """Lista las corridas de replay disponibles para una sesion, con su volumen.
-
-    La sesion 9947 acumula el replay definitivo de la carrera junto a mas de una
-    decena de sondeos de carga, todos bajo el mismo `session_id`. Sin este listado
-    no habia forma de elegir corrida de manera informada desde la aplicacion.
-    """
-    return listar_corridas_replay(session_key)
+# Nota: no se expone por HTTP el listado de corridas obtenido de
+# `telemetry_messages`. Ese agregado recorre millones de filas y se midio en mas de
+# diecisiete segundos, de modo que publicarlo como ruta reproduciria el defecto que
+# esta misma jornada corrigio en `/replay`. La pregunta practica, que corridas
+# tienen resultados disponibles, la responde `/racing/sessions/{key}/analysis`
+# consultando unas pocas filas indexadas. `listar_corridas_replay` permanece en
+# `backend/db.py` como herramienta de diagnostico.
 
 
 @app.get("/racing/sessions/{session_key}/replay-series")
