@@ -16,7 +16,12 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from backend.config import BACKEND_APP_NAME
 from backend.db import (
+    LIMITE_FILAS_REPLAY,
     calcular_ventanas_vueltas,
+    listar_analisis_sesion,
+    obtener_analisis_stints,
+    obtener_analisis_vueltas,
+    listar_corridas_replay,
     listar_ejecuciones_procesamiento,
     listar_incidencias_procesamiento,
     obtener_mensajes_por_senal,
@@ -49,6 +54,18 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+LIMITE_MUESTRAS_MAXIMO = 200000
+
+
+def _validar_limite(limite: int) -> None:
+    """Rechaza un limite fuera de rango en vez de recortarlo en silencio."""
+    if limite < 1 or limite > LIMITE_MUESTRAS_MAXIMO:
+        raise HTTPException(
+            status_code=400,
+            detail=f"`limite` debe estar entre 1 y {LIMITE_MUESTRAS_MAXIMO}.",
+        )
 
 
 @app.get("/")
@@ -152,16 +169,29 @@ def racing_driver_comparison(
     return obtener_comparacion_pilotos_racing(session_key, drivers)
 
 
+@app.get("/racing/sessions/{session_key}/replay-runs")
+def racing_replay_runs(session_key: int) -> list[dict]:
+    """Lista las corridas de replay disponibles para una sesion, con su volumen.
+
+    La sesion 9947 acumula el replay definitivo de la carrera junto a mas de una
+    decena de sondeos de carga, todos bajo el mismo `session_id`. Sin este listado
+    no habia forma de elegir corrida de manera informada desde la aplicacion.
+    """
+    return listar_corridas_replay(session_key)
+
+
 @app.get("/racing/sessions/{session_key}/replay-series")
 def racing_replay_series(
     session_key: int,
     replay_run_id: str,
     drivers: list[int] = Query(..., min_length=1),
     signal: str = Query(..., min_length=1),
+    limite: int = LIMITE_FILAS_REPLAY,
 ) -> list[dict]:
     """Expone una serie temporal OpenF1 filtrada por ejecucion, pilotos y senal."""
 
-    return obtener_serie_replay_openf1(session_key, replay_run_id, drivers, signal)
+    _validar_limite(limite)
+    return obtener_serie_replay_openf1(session_key, replay_run_id, drivers, signal, limite)
 
 
 @app.get("/racing/sessions/{session_key}/context-at")
@@ -177,11 +207,38 @@ def racing_context_at(
 
 @app.get("/racing/sessions/{session_key}/replay")
 def racing_replay(
-    session_key: int, driver_number: int | None = None, replay_run_id: str | None = None
-) -> list[dict]:
-    """Expone muestras OpenF1 que atravesaron el pipeline MQTT de replay."""
+    session_key: int,
+    replay_run_id: str,
+    driver_number: int | None = None,
+    limite: int = LIMITE_FILAS_REPLAY,
+) -> dict:
+    """Expone muestras OpenF1 que atravesaron el pipeline MQTT de replay.
 
-    return obtener_replay_openf1(session_key, driver_number, replay_run_id)
+    `replay_run_id` pasa a ser obligatorio y la respuesta viene acotada. Antes ambos
+    eran opcionales y sin tope: tras persistir la carrera completa, una llamada sin
+    parametros pedia 10.079.006 filas, del orden de 13 GB de objetos en memoria del
+    backend, mezclando ademas el replay definitivo con mas de una decena de sondeos
+    de carga de la misma carrera.
+
+    La respuesta declara el total real disponible junto a lo devuelto, para que un
+    lote acotado no se confunda con el volumen completo de la corrida.
+    """
+    _validar_limite(limite)
+    muestras, hay_mas = obtener_replay_openf1(session_key, replay_run_id, driver_number, limite)
+    respuesta = {
+        "replay_run_id": replay_run_id,
+        "driver_number": driver_number,
+        "total_devuelto": len(muestras),
+        "truncado": hay_mas,
+        "muestras": muestras,
+    }
+    if hay_mas:
+        respuesta["advertencia_truncado"] = (
+            f"La corrida tiene mas de {limite} muestras para esta seleccion. Acotar "
+            "por piloto o elevar `limite`. El total exacto no se calcula aqui porque "
+            "contar la corrida completa recorre millones de filas."
+        )
+    return respuesta
 
 
 # ---------------------------------------------------------------------------
@@ -202,18 +259,6 @@ def racing_replay(
 # respuesta declara `truncado`: una lista recortada en silencio se leeria como una
 # vuelta incompleta y no como un limite de la consulta.
 LIMITE_MUESTRAS_POR_DEFECTO = 20000
-
-
-LIMITE_MUESTRAS_MAXIMO = 200000
-
-
-def _validar_limite(limite: int) -> None:
-    """Rechaza un limite fuera de rango en vez de recortarlo en silencio."""
-    if limite < 1 or limite > LIMITE_MUESTRAS_MAXIMO:
-        raise HTTPException(
-            status_code=400,
-            detail=f"`limite` debe estar entre 1 y {LIMITE_MUESTRAS_MAXIMO}.",
-        )
 
 
 def _respuesta_telemetria(ventana: dict, muestras: list[dict], limite: int) -> dict:
@@ -328,3 +373,62 @@ def racing_stint_telemetry(
             limite=limite,
         )
     return _respuesta_telemetria(ventana, muestras, limite)
+
+
+# ---------------------------------------------------------------------------
+# Analisis automatico por sesion
+#
+# Agregado el 2026-08-27. Los resultados se leen de `session_lap_analysis` y
+# `session_stint_analysis`, generados por `scripts/generate_session_analysis.py`.
+#
+# Cada respuesta conserva la separacion por nivel de evidencia con la que fue
+# calculada: `metricas_oficiales` proviene de OpenF1 sin transformar,
+# `metricas_derivadas` la calcula el proyecto, y `calidad` declara sobre cuantas
+# muestras se apoya cada resultado. No se aplanan en un unico diccionario porque
+# esa distincion es el aporte metodologico del analisis, no un detalle interno.
+# ---------------------------------------------------------------------------
+
+
+@app.get("/racing/sessions/{session_key}/analysis")
+def racing_session_analysis(session_key: int) -> list[dict]:
+    """Lista los analisis generados para una sesion, con sus conteos y limites.
+
+    Reemplaza al recuento sobre `telemetry_messages` como fuente del listado de
+    corridas disponibles: aquel recorre diez millones de filas y tarda mas de
+    diecisiete segundos medidos, mientras que este consulta unas pocas filas.
+    """
+    return listar_analisis_sesion(session_key)
+
+
+@app.get("/racing/sessions/{session_key}/analysis/{replay_run_id}/laps")
+def racing_analysis_laps(
+    session_key: int, replay_run_id: str, driver_number: int | None = None
+) -> list[dict]:
+    """Expone el analisis por vuelta de una corrida, opcionalmente de un piloto."""
+    filas = obtener_analisis_vueltas(session_key, replay_run_id, driver_number)
+    if not filas:
+        raise HTTPException(
+            status_code=404,
+            detail=(
+                f"No hay analisis generado para la corrida {replay_run_id!r} en la sesion "
+                f"{session_key}. Ejecutar scripts/generate_session_analysis.py."
+            ),
+        )
+    return filas
+
+
+@app.get("/racing/sessions/{session_key}/analysis/{replay_run_id}/stints")
+def racing_analysis_stints(
+    session_key: int, replay_run_id: str, driver_number: int | None = None
+) -> list[dict]:
+    """Expone el analisis por stint de una corrida, opcionalmente de un piloto."""
+    filas = obtener_analisis_stints(session_key, replay_run_id, driver_number)
+    if not filas:
+        raise HTTPException(
+            status_code=404,
+            detail=(
+                f"No hay analisis de stints para la corrida {replay_run_id!r} en la sesion "
+                f"{session_key}. Ejecutar scripts/generate_session_analysis.py."
+            ),
+        )
+    return filas

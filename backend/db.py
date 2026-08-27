@@ -541,33 +541,132 @@ def obtener_pilotos_racing(session_key: int) -> list[dict]:
             return [dict(zip(columns, row)) for row in cur.fetchall()]
 
 
-def obtener_replay_openf1(
-    session_key: int, driver_number: int | None = None, replay_run_id: str | None = None
-) -> list[dict]:
-    """Devuelve el lote replay con trazabilidad para una sesion y piloto opcional."""
+# Filtro de corrida que cubre las dos formas en que quedo registrada la identidad.
+#
+# Desde la migracion 003 el identificador vive en la columna `replay_run_id`. Las
+# corridas anteriores lo guardaron dentro de `metadata->'extra'`. Se consultan
+# ambas porque la tabla contiene las dos generaciones: la rama nueva usa el indice
+# unico de replay y la vieja usa el indice de expresion de la migracion 004, de
+# modo que ninguna de las dos degrada a recorrido completo.
+CONDICION_CORRIDA_REPLAY = """
+    (
+        replay_run_id = %(replay_run_id)s
+        OR (replay_run_id IS NULL AND metadata->'extra'->>'replay_run_id' = %(replay_run_id)s)
+    )
+"""
 
-    session_id = f"openf1:session:{session_key}"
-    query = """
+# Tope de filas de telemetria cruda que una consulta HTTP puede devolver.
+#
+# Sin este tope, `obtener_replay_openf1` devolvia la sesion entera. Tras persistir
+# la carrera completa eso significaba 10.079.006 filas, unos 13,4 GB de objetos
+# Python, en una sola respuesta. El dashboard lo invocaba sin ningun filtro.
+LIMITE_FILAS_REPLAY = 20000
+
+
+def obtener_replay_openf1(
+    session_key: int,
+    replay_run_id: str,
+    driver_number: int | None = None,
+    limite: int = LIMITE_FILAS_REPLAY,
+) -> tuple[list[dict], bool]:
+    """Devuelve un lote replay acotado para una corrida, sesion y piloto opcional.
+
+    `replay_run_id` es obligatorio a proposito. La tabla acumula varias corridas de
+    la misma carrera, incluidas las pruebas de carga: sin filtrar por corrida, una
+    consulta devuelve copias solapadas de las mismas vueltas y cualquier estadistica
+    calculada sobre ese conjunto queda promediada entre repeticiones.
+
+    Devuelve `(muestras, hay_mas)`. Se piden `limite + 1` filas y se descarta la
+    sobrante: eso responde si el lote quedo recortado sin pagar un `count(*)` sobre
+    millones de filas, que medido cuesta segundos.
+    """
+    parametros: dict[str, object] = {
+        "session_id": f"openf1:session:{session_key}",
+        "replay_run_id": replay_run_id,
+        "limite": limite + 1,
+    }
+    condiciones = [
+        "session_id = %(session_id)s",
+        "source_type = 'openf1_historical_replay'",
+        CONDICION_CORRIDA_REPLAY,
+    ]
+    if driver_number is not None:
+        condiciones.append("driver_id = %(driver_id)s")
+        parametros["driver_id"] = f"openf1:driver:{driver_number}"
+
+    consulta = f"""
         SELECT timestamp, vehicle_id, driver_id, session_id, source_type,
                signal_name, value_numeric, value_boolean, value_text, unit,
-               quality_flag, metadata
+               quality_flag, replay_run_id, replay_seq, metadata
         FROM telemetry_messages
-        WHERE session_id = %s
-          AND source_type = 'openf1_historical_replay'
+        WHERE {' AND '.join(condiciones)}
+        ORDER BY timestamp, driver_id, signal_name
+        LIMIT %(limite)s
     """
-    params: list[object] = [session_id]
-    if driver_number is not None:
-        query += " AND driver_id = %s"
-        params.append(f"openf1:driver:{driver_number}")
-    if replay_run_id is not None:
-        query += " AND metadata->'extra'->>'replay_run_id' = %s"
-        params.append(replay_run_id)
-    query += " ORDER BY timestamp, driver_id, signal_name"
     with obtener_conexion() as conn:
         with conn.cursor() as cur:
-            cur.execute(query, params)
+            cur.execute(consulta, parametros)
             columns = [desc[0] for desc in cur.description]
-            return [dict(zip(columns, row)) for row in cur.fetchall()]
+            filas = [dict(zip(columns, row)) for row in cur.fetchall()]
+    hay_mas = len(filas) > limite
+    return filas[:limite], hay_mas
+
+
+def contar_replay_openf1(session_key: int, replay_run_id: str, driver_number: int | None = None) -> int:
+    """Cuenta las filas de una corrida sin traerlas.
+
+    ADVERTENCIA DE COSTO: es un agregado sobre millones de filas y ningun indice lo
+    evita. Medido en 4,7 segundos para un solo piloto de la carrera completa. No
+    debe invocarse desde una ruta HTTP que se ejecute en cada carga de pantalla; se
+    conserva para diagnostico y para la generacion de analisis, donde el costo se
+    paga una sola vez.
+
+    Para saber si una respuesta quedo recortada, `obtener_replay_openf1` pide una
+    fila de mas en lugar de contar: responde la pregunta real sin recorrer todo.
+    """
+    parametros: dict[str, object] = {
+        "session_id": f"openf1:session:{session_key}",
+        "replay_run_id": replay_run_id,
+    }
+    condiciones = [
+        "session_id = %(session_id)s",
+        "source_type = 'openf1_historical_replay'",
+        CONDICION_CORRIDA_REPLAY,
+    ]
+    if driver_number is not None:
+        condiciones.append("driver_id = %(driver_id)s")
+        parametros["driver_id"] = f"openf1:driver:{driver_number}"
+    with obtener_conexion() as conn:
+        with conn.cursor() as cur:
+            cur.execute(f"SELECT count(*) FROM telemetry_messages WHERE {' AND '.join(condiciones)}", parametros)
+            return cur.fetchone()[0]
+
+
+def listar_corridas_replay(session_key: int) -> list[dict]:
+    """Lista las corridas de replay presentes para una sesion, con su volumen.
+
+    Existe para que la eleccion de corrida sea explicita y visible: la sesion 9947
+    acumula el replay definitivo junto a mas de una decena de sondeos de carga, y
+    hasta ahora no habia forma de distinguirlos desde la aplicacion.
+    """
+    with obtener_conexion() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT COALESCE(replay_run_id, metadata->'extra'->>'replay_run_id') AS replay_run_id,
+                       count(*) AS mensajes,
+                       min(timestamp) AS desde,
+                       max(timestamp) AS hasta,
+                       bool_or(replay_run_id IS NOT NULL) AS identidad_en_columna
+                FROM telemetry_messages
+                WHERE session_id = %s AND source_type = 'openf1_historical_replay'
+                GROUP BY 1
+                ORDER BY count(*) DESC
+                """,
+                (f"openf1:session:{session_key}",),
+            )
+            columnas = [desc[0] for desc in cur.description]
+            return [dict(zip(columnas, fila)) for fila in cur.fetchall()]
 
 
 def obtener_comparacion_pilotos_racing(session_key: int, driver_numbers: list[int]) -> list[dict]:
@@ -627,25 +726,44 @@ def obtener_comparacion_pilotos_racing(session_key: int, driver_numbers: list[in
 
 
 def obtener_serie_replay_openf1(
-    session_key: int, replay_run_id: str, driver_numbers: list[int], signal_name: str
+    session_key: int,
+    replay_run_id: str,
+    driver_numbers: list[int],
+    signal_name: str,
+    limite: int = LIMITE_FILAS_REPLAY,
 ) -> list[dict]:
-    """Devuelve una senal temporal replay, ordenada por reloj deportivo."""
+    """Devuelve una senal temporal replay acotada, ordenada por reloj deportivo.
+
+    Una sola senal de la carrera completa son unas 690.000 muestras para los veinte
+    pilotos. Se acota porque el destino es un grafico, no un volcado: sin tope, una
+    vista de comparacion pedia cientos de miles de puntos que ninguna pantalla
+    representa.
+    """
     if not driver_numbers:
         return []
-    query = """
+    consulta = f"""
         SELECT timestamp, driver_id, signal_name, value_numeric, value_boolean, unit
         FROM telemetry_messages
-        WHERE session_id = %s
+        WHERE session_id = %(session_id)s
           AND source_type = 'openf1_historical_replay'
-          AND metadata->'extra'->>'replay_run_id' = %s
-          AND driver_id = ANY(%s)
-          AND signal_name = %s
+          AND {CONDICION_CORRIDA_REPLAY}
+          AND driver_id = ANY(%(driver_ids)s)
+          AND signal_name = %(signal_name)s
         ORDER BY timestamp, driver_id
+        LIMIT %(limite)s
     """
-    driver_ids = [f"openf1:driver:{number}" for number in driver_numbers]
     with obtener_conexion() as conn:
         with conn.cursor() as cur:
-            cur.execute(query, (f"openf1:session:{session_key}", replay_run_id, driver_ids, signal_name))
+            cur.execute(
+                consulta,
+                {
+                    "session_id": f"openf1:session:{session_key}",
+                    "replay_run_id": replay_run_id,
+                    "driver_ids": [f"openf1:driver:{number}" for number in driver_numbers],
+                    "signal_name": signal_name,
+                    "limite": limite,
+                },
+            )
             columns = [desc[0] for desc in cur.description]
             return [dict(zip(columns, row)) for row in cur.fetchall()]
 
@@ -1138,5 +1256,235 @@ def obtener_telemetria_en_ventana(
     with obtener_conexion() as conn:
         with conn.cursor() as cur:
             cur.execute(consulta, parametros)
+            columnas = [desc[0] for desc in cur.description]
+            return [dict(zip(columnas, fila)) for fila in cur.fetchall()]
+
+
+# ---------------------------------------------------------------------------
+# Persistencia y consulta de analisis automatico por sesion
+#
+# Agregado el 2026-08-27 junto con la migracion `005_session_analysis.sql`.
+# ---------------------------------------------------------------------------
+
+
+def obtener_telemetria_corrida_piloto(
+    session_key: int, driver_number: int, replay_run_id: str
+) -> list[tuple]:
+    """Devuelve toda la telemetria de un piloto en una corrida, ordenada por tiempo.
+
+    Se trae de una sola vez por piloto en lugar de una consulta por vuelta. Son
+    unas 310.000 filas por piloto en la carrera completa; repartirlas en Python
+    contra las ventanas ya calculadas evita 1.040 consultas separadas y mantiene el
+    pico de memoria acotado a un piloto por vez.
+    """
+    with obtener_conexion() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                f"""
+                SELECT timestamp, signal_name, value_numeric, value_boolean
+                FROM telemetry_messages
+                WHERE session_id = %(session_id)s
+                  AND source_type = 'openf1_historical_replay'
+                  AND driver_id = %(driver_id)s
+                  AND {CONDICION_CORRIDA_REPLAY}
+                ORDER BY timestamp
+                """,
+                {
+                    "session_id": f"openf1:session:{session_key}",
+                    "driver_id": f"openf1:driver:{driver_number}",
+                    "replay_run_id": replay_run_id,
+                },
+            )
+            return cur.fetchall()
+
+
+def obtener_stints_piloto(session_key: int, driver_number: int) -> list[dict]:
+    """Devuelve los stints de un piloto ordenados por numero."""
+    with obtener_conexion() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT stint_number, compound, lap_start, lap_end, tyre_age_at_start
+                FROM racing_stints
+                WHERE session_key = %s AND driver_number = %s
+                ORDER BY stint_number
+                """,
+                (session_key, driver_number),
+            )
+            columnas = [desc[0] for desc in cur.description]
+            return [dict(zip(columnas, fila)) for fila in cur.fetchall()]
+
+
+def obtener_vueltas_oficiales_piloto(session_key: int, driver_number: int) -> list[dict]:
+    """Devuelve las metricas oficiales de vuelta, incluidos los minisectores.
+
+    Los minisectores viven dentro de `raw_payload` porque la importacion original
+    solo promovio a columnas los campos escalares. Se leen desde alli en lugar de
+    migrarlos: son la fuente de mayor resolucion espacial del proyecto y no
+    conviene copiarlos a una segunda representacion que pueda divergir.
+    """
+    with obtener_conexion() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT lap_number, date_start, lap_duration_seconds,
+                       duration_sector_1_seconds, duration_sector_2_seconds,
+                       duration_sector_3_seconds, i1_speed_kph, i2_speed_kph,
+                       speed_trap_kph, is_pit_out_lap,
+                       raw_payload->'segments_sector_1' AS segments_sector_1,
+                       raw_payload->'segments_sector_2' AS segments_sector_2,
+                       raw_payload->'segments_sector_3' AS segments_sector_3
+                FROM racing_laps
+                WHERE session_key = %s AND driver_number = %s
+                ORDER BY lap_number
+                """,
+                (session_key, driver_number),
+            )
+            columnas = [desc[0] for desc in cur.description]
+            return [dict(zip(columnas, fila)) for fila in cur.fetchall()]
+
+
+def guardar_analisis_sesion(
+    session_key: int,
+    replay_run_id: str,
+    analyzer_version: str,
+    track_length_m: float | None,
+    counts: dict,
+    limits: dict,
+    vueltas: list[dict],
+    stints: list[dict],
+) -> int:
+    """Persiste un analisis completo y devuelve su identificador.
+
+    Regenerar el mismo analisis reemplaza el anterior en lugar de acumular copias:
+    la clave unica es `(session_key, replay_run_id, analyzer_version)`, y el borrado
+    en cascada limpia sus vueltas y stints. Asi el resultado de una version del
+    analizador sobre una corrida es siempre uno solo, que es lo que hace
+    reproducible la consulta.
+    """
+    with obtener_conexion() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                DELETE FROM session_analysis_runs
+                WHERE session_key = %s AND replay_run_id = %s AND analyzer_version = %s
+                """,
+                (session_key, replay_run_id, analyzer_version),
+            )
+            cur.execute(
+                """
+                INSERT INTO session_analysis_runs
+                    (session_key, replay_run_id, analyzer_version, track_length_m, counts, limits)
+                VALUES (%s, %s, %s, %s, %s::jsonb, %s::jsonb)
+                RETURNING analysis_run_id
+                """,
+                (session_key, replay_run_id, analyzer_version, track_length_m,
+                 json.dumps(counts), json.dumps(limits)),
+            )
+            analysis_run_id = cur.fetchone()[0]
+
+            if vueltas:
+                cur.executemany(
+                    """
+                    INSERT INTO session_lap_analysis
+                        (analysis_run_id, driver_number, lap_number, window_start, window_end,
+                         metricas_oficiales, metricas_derivadas, calidad)
+                    VALUES (%(analysis_run_id)s, %(driver_number)s, %(lap_number)s,
+                            %(window_start)s, %(window_end)s,
+                            %(metricas_oficiales)s::jsonb, %(metricas_derivadas)s::jsonb,
+                            %(calidad)s::jsonb)
+                    """,
+                    [{**fila, "analysis_run_id": analysis_run_id} for fila in vueltas],
+                )
+            if stints:
+                cur.executemany(
+                    """
+                    INSERT INTO session_stint_analysis
+                        (analysis_run_id, driver_number, stint_number, compound, lap_start, lap_end,
+                         window_start, window_end, metricas_oficiales, metricas_derivadas, calidad)
+                    VALUES (%(analysis_run_id)s, %(driver_number)s, %(stint_number)s, %(compound)s,
+                            %(lap_start)s, %(lap_end)s, %(window_start)s, %(window_end)s,
+                            %(metricas_oficiales)s::jsonb, %(metricas_derivadas)s::jsonb,
+                            %(calidad)s::jsonb)
+                    """,
+                    [{**fila, "analysis_run_id": analysis_run_id} for fila in stints],
+                )
+    return analysis_run_id
+
+
+def listar_analisis_sesion(session_key: int) -> list[dict]:
+    """Lista los analisis generados para una sesion.
+
+    Reemplaza al agregado sobre `telemetry_messages` como fuente del listado de
+    corridas para la aplicacion: aquel recorre 10 millones de filas y tarda mas de
+    17 segundos medidos, mientras que aqui son unas pocas filas indexadas.
+    """
+    with obtener_conexion() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT analysis_run_id, session_key, replay_run_id, analyzer_version,
+                       generated_at_utc, track_length_m, counts, limits
+                FROM session_analysis_runs
+                WHERE session_key = %s
+                ORDER BY generated_at_utc DESC
+                """,
+                (session_key,),
+            )
+            columnas = [desc[0] for desc in cur.description]
+            return [dict(zip(columnas, fila)) for fila in cur.fetchall()]
+
+
+def obtener_analisis_vueltas(
+    session_key: int, replay_run_id: str, driver_number: int | None = None
+) -> list[dict]:
+    """Devuelve el analisis por vuelta de la version mas reciente de una corrida."""
+    condiciones = ["r.session_key = %(session_key)s", "r.replay_run_id = %(replay_run_id)s"]
+    parametros: dict[str, Any] = {"session_key": session_key, "replay_run_id": replay_run_id}
+    if driver_number is not None:
+        condiciones.append("l.driver_number = %(driver_number)s")
+        parametros["driver_number"] = driver_number
+    with obtener_conexion() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                f"""
+                SELECT l.driver_number, l.lap_number, l.window_start, l.window_end,
+                       l.metricas_oficiales, l.metricas_derivadas, l.calidad,
+                       r.analyzer_version, r.generated_at_utc
+                FROM session_lap_analysis AS l
+                JOIN session_analysis_runs AS r USING (analysis_run_id)
+                WHERE {' AND '.join(condiciones)}
+                ORDER BY l.driver_number, l.lap_number
+                """,
+                parametros,
+            )
+            columnas = [desc[0] for desc in cur.description]
+            return [dict(zip(columnas, fila)) for fila in cur.fetchall()]
+
+
+def obtener_analisis_stints(
+    session_key: int, replay_run_id: str, driver_number: int | None = None
+) -> list[dict]:
+    """Devuelve el analisis por stint de la version mas reciente de una corrida."""
+    condiciones = ["r.session_key = %(session_key)s", "r.replay_run_id = %(replay_run_id)s"]
+    parametros: dict[str, Any] = {"session_key": session_key, "replay_run_id": replay_run_id}
+    if driver_number is not None:
+        condiciones.append("s.driver_number = %(driver_number)s")
+        parametros["driver_number"] = driver_number
+    with obtener_conexion() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                f"""
+                SELECT s.driver_number, s.stint_number, s.compound, s.lap_start, s.lap_end,
+                       s.window_start, s.window_end,
+                       s.metricas_oficiales, s.metricas_derivadas, s.calidad,
+                       r.analyzer_version, r.generated_at_utc
+                FROM session_stint_analysis AS s
+                JOIN session_analysis_runs AS r USING (analysis_run_id)
+                WHERE {' AND '.join(condiciones)}
+                ORDER BY s.driver_number, s.stint_number
+                """,
+                parametros,
+            )
             columnas = [desc[0] for desc in cur.description]
             return [dict(zip(columnas, fila)) for fila in cur.fetchall()]
