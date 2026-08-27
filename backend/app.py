@@ -16,11 +16,13 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from backend.config import BACKEND_APP_NAME
 from backend.db import (
+    calcular_ventanas_vueltas,
     listar_ejecuciones_procesamiento,
     listar_incidencias_procesamiento,
     obtener_mensajes_por_senal,
     obtener_mensajes_por_sesion,
     obtener_ejecucion_procesamiento,
+    obtener_telemetria_en_ventana,
     obtener_ultimos_mensajes,
     obtener_ultimos_por_senal,
     obtener_comparacion_pilotos_racing,
@@ -29,6 +31,9 @@ from backend.db import (
     obtener_replay_openf1,
     obtener_serie_replay_openf1,
     obtener_sesion_racing,
+    obtener_vueltas_piloto,
+    resolver_ventana_stint,
+    resolver_ventana_vuelta,
 )
 
 
@@ -177,3 +182,149 @@ def racing_replay(
     """Expone muestras OpenF1 que atravesaron el pipeline MQTT de replay."""
 
     return obtener_replay_openf1(session_key, driver_number, replay_run_id)
+
+
+# ---------------------------------------------------------------------------
+# Seleccion de telemetria por vuelta y por stint
+#
+# Agregado el 2026-08-27 para completar la tarea del Dia 22 que exige exponer la
+# seleccion por piloto, vuelta y stint.
+#
+# Los tres endpoints devuelven la ventana temporal empleada junto con los datos.
+# No es informacion redundante: la vuelta a la que pertenece una muestra es una
+# derivacion y no un dato de origen, de modo que quien consume la respuesta debe
+# poder auditar como se calculo el recorte en vez de confiar en el a ciegas.
+# ---------------------------------------------------------------------------
+
+# Tope por defecto de muestras devueltas. Una vuelta de unos 90 segundos produce
+# alrededor de 3.000 muestras contando las nueve senales, de modo que el tope
+# holgado para una vuelta puede quedar corto para un stint completo. Por eso toda
+# respuesta declara `truncado`: una lista recortada en silencio se leeria como una
+# vuelta incompleta y no como un limite de la consulta.
+LIMITE_MUESTRAS_POR_DEFECTO = 20000
+
+
+LIMITE_MUESTRAS_MAXIMO = 200000
+
+
+def _validar_limite(limite: int) -> None:
+    """Rechaza un limite fuera de rango en vez de recortarlo en silencio."""
+    if limite < 1 or limite > LIMITE_MUESTRAS_MAXIMO:
+        raise HTTPException(
+            status_code=400,
+            detail=f"`limite` debe estar entre 1 y {LIMITE_MUESTRAS_MAXIMO}.",
+        )
+
+
+def _respuesta_telemetria(ventana: dict, muestras: list[dict], limite: int) -> dict:
+    """Arma la respuesta comun a vuelta y stint, declarando sus limitaciones."""
+    respuesta = {
+        "ventana": ventana,
+        "muestras": muestras,
+        "total_devuelto": len(muestras),
+        "truncado": len(muestras) >= limite,
+    }
+    if not ventana.get("completa"):
+        respuesta["advertencia"] = (
+            "La ventana no pudo determinarse por completo, de modo que no se "
+            "consulto telemetria. Revisar `fin` en la ventana devuelta."
+        )
+    elif ventana.get("fin_estimado"):
+        respuesta["advertencia"] = (
+            "El fin de la ventana es estimado a partir de la duracion declarada, "
+            "porque no existe una vuelta siguiente contigua que lo delimite."
+        )
+    if respuesta["truncado"]:
+        respuesta["advertencia_truncado"] = (
+            f"Se alcanzo el limite de {limite} muestras. Acotar con `signal` o "
+            "elevar `limite` para obtener el recorte completo."
+        )
+    return respuesta
+
+
+@app.get("/racing/sessions/{session_key}/drivers/{driver_number}/laps")
+def racing_driver_laps(session_key: int, driver_number: int) -> list[dict]:
+    """Lista las vueltas de un piloto con la ventana temporal derivada de cada una.
+
+    Permite descubrir que vueltas existen y cuales tienen un fin estimado antes de
+    pedir su telemetria.
+    """
+    vueltas = obtener_vueltas_piloto(session_key, driver_number)
+    if not vueltas:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No hay vueltas registradas para el piloto {driver_number} en la sesion {session_key}.",
+        )
+    return calcular_ventanas_vueltas(vueltas)
+
+
+@app.get("/racing/sessions/{session_key}/drivers/{driver_number}/laps/{lap_number}/telemetry")
+def racing_lap_telemetry(
+    session_key: int,
+    driver_number: int,
+    lap_number: int,
+    signal: str | None = None,
+    replay_run_id: str | None = None,
+    limite: int = LIMITE_MUESTRAS_POR_DEFECTO,
+) -> dict:
+    """Expone la telemetria de replay contenida en una vuelta concreta."""
+    _validar_limite(limite)
+    ventana = resolver_ventana_vuelta(session_key, driver_number, lap_number)
+    if ventana is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No existe la vuelta {lap_number} para el piloto {driver_number} en la sesion {session_key}.",
+        )
+
+    muestras = []
+    if ventana["completa"]:
+        muestras = obtener_telemetria_en_ventana(
+            session_key,
+            driver_number,
+            ventana["inicio"],
+            ventana["fin"],
+            signal_name=signal,
+            replay_run_id=replay_run_id,
+            limite=limite,
+        )
+    return _respuesta_telemetria(ventana, muestras, limite)
+
+
+@app.get("/racing/sessions/{session_key}/drivers/{driver_number}/stints/{stint_number}/telemetry")
+def racing_stint_telemetry(
+    session_key: int,
+    driver_number: int,
+    stint_number: int,
+    signal: str | None = None,
+    replay_run_id: str | None = None,
+    limite: int = LIMITE_MUESTRAS_POR_DEFECTO,
+) -> dict:
+    """Expone la telemetria de replay contenida en un stint completo.
+
+    Un stint abarca decenas de vueltas, de modo que alcanzar `limite` es esperable
+    si no se acota por senal. La respuesta lo declara en vez de recortar en
+    silencio.
+    """
+    _validar_limite(limite)
+    ventana = resolver_ventana_stint(session_key, driver_number, stint_number)
+    if ventana is None:
+        raise HTTPException(
+            status_code=404,
+            detail=(
+                f"No existe el stint {stint_number} para el piloto {driver_number} "
+                f"en la sesion {session_key}, o sus vueltas no tienen ventana resoluble."
+            ),
+        )
+
+    muestras = []
+    if ventana["completa"]:
+        muestras = obtener_telemetria_en_ventana(
+            session_key,
+            driver_number,
+            ventana["inicio"],
+            ventana["fin"],
+            signal_name=signal,
+            replay_run_id=replay_run_id,
+            limite=limite,
+        )
+    return _respuesta_telemetria(ventana, muestras, limite)
