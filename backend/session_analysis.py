@@ -63,9 +63,24 @@ UMBRAL_ACELERADOR_A_FONDO = 95.0
 # un salto de 163 km/h en la velocidad media. Eso identifica el limite sin depender
 # de documentacion externa.
 #
-# La primera implementacion uso el conjunto {10, 12, 14} tomado de documentacion
-# comunitaria, que dejaba los codigos 9 y 11 clasificados como aleron cerrado pese
-# a presentar 289,7 y 276,5 km/h de media. La medicion corrigio ese error.
+# Relacion con la documentacion de origen.
+#
+# La documentacion de OpenF1 (https://openf1.org/docs/) publica una tabla del campo
+# `drs` y aclara que la tomo de FastF1. Esa tabla documenta 0 y 1 como apagado, 8
+# como "Detected, eligible once in activation zone", y 10, 12 y 14 como encendido,
+# pero **deja los valores 2, 3 y 9 marcados con "?"** y no menciona el 11.
+#
+# La medicion realizada aqui resuelve esos cuatro casos:
+#
+#   codigo  2 -> 31,8 km/h de media, mediana 0    => cerrado
+#   codigo  3 ->  3,9 km/h de media, mediana 0    => cerrado
+#   codigo  9 -> 289,7 km/h, mediana 298          => ABIERTO
+#   codigo 11 -> 276,5 km/h, mediana 277          => ABIERTO
+#
+# Por eso el criterio se expresa como umbral y no como el conjunto {10, 12, 14} que
+# figura en la documentacion: ese conjunto habria clasificado los codigos 9 y 11
+# como aleron cerrado pese a su velocidad. El umbral cubre ademas cualquier codigo
+# no documentado que aparezca en otra sesion.
 DRS_CODIGO_MINIMO_ABIERTO = 9
 
 
