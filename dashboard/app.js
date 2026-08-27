@@ -742,6 +742,9 @@ async function cargarReplayOpenF1() {
     const sesion = await sesionRespuesta.json();
     pilotosOpenF1 = await pilotosRespuesta.json();
     renderizarCasillasPilotos();
+    // El analisis por vuelta se apoya en el mismo catalogo de pilotos.
+    poblarSelectorPilotosAnalisis();
+    actualizarAnalisisVuelta();
     const pilotosSeleccionados = obtenerPilotosSeleccionados();
     if (!pilotosSeleccionados.length) {
       renderizarComparacionPilotos([]);
@@ -1005,3 +1008,214 @@ cargarSesion();
 // La recarga conserva soporte para una vista actualizable, aunque la demo actual
 // usa una sesion historica y finita.
 setInterval(cargarSesion, INTERVALO_RECARGA_MS);
+
+
+// ---------------------------------------------------------------------------
+// Analisis automatico por vuelta y por stint
+//
+// Consume `/racing/sessions/{key}/analysis/{run}/laps` y `/stints`, generados por
+// `scripts/generate_session_analysis.py`.
+//
+// La interfaz conserva la separacion en tres bloques con la que el analisis fue
+// calculado y guardado. Aplanar las metricas en una sola tabla borraria la
+// distincion entre dato observado y dato derivado, que es justamente el aporte
+// metodologico del analisis y el motivo por el que la tabla las separa.
+// ---------------------------------------------------------------------------
+
+const selectorPilotoAnalisis = document.getElementById("selector-piloto-analisis");
+const selectorAlcanceAnalisis = document.getElementById("selector-alcance-analisis");
+const selectorVueltaAnalisis = document.getElementById("selector-vuelta-analisis");
+const etiquetaSelectorVuelta = document.getElementById("etiqueta-selector-vuelta");
+const detalleAnalisisVuelta = document.getElementById("detalle-analisis-vuelta");
+const resumenAnalisisVuelta = document.getElementById("resumen-analisis-vuelta");
+const estadoAnalisisVuelta = document.getElementById("estado-analisis-vuelta");
+
+// Cache por piloto y alcance: el analisis de una corrida ya generada no cambia,
+// de modo que volver a pedirlo al cambiar de vuelta seria trafico inutil.
+const cacheAnalisis = new Map();
+
+// Etiquetas legibles de las metricas. Las claves no listadas se muestran con su
+// nombre crudo en vez de ocultarse: preferimos un nombre feo a una metrica que
+// desaparece de la vista sin que nadie lo note.
+const ETIQUETAS_ANALISIS = {
+  lap_duration_seconds: "Duracion de vuelta (s)",
+  duration_sector_1_seconds: "Sector 1 (s)",
+  duration_sector_2_seconds: "Sector 2 (s)",
+  duration_sector_3_seconds: "Sector 3 (s)",
+  i1_speed_kph: "Velocidad intermedio 1 (km/h)",
+  i2_speed_kph: "Velocidad intermedio 2 (km/h)",
+  speed_trap_kph: "Trampa de velocidad (km/h)",
+  is_pit_out_lap: "Vuelta de salida de boxes",
+  minisectores_total: "Minisectores",
+  minisectores_con_dato: "Minisectores con dato",
+  minisectores_sin_dato: "Minisectores sin dato",
+  minisectores_purpura: "Minisectores en purpura",
+  minisectores_verde: "Minisectores en verde",
+  minisectores_amarillo: "Minisectores en amarillo",
+  vueltas: "Vueltas del stint",
+  tyre_age_at_start: "Edad del neumatico al inicio",
+  velocidad_min_kph: "Velocidad minima (km/h)",
+  velocidad_max_kph: "Velocidad maxima (km/h)",
+  velocidad_media_kph: "Velocidad media (km/h)",
+  acelerador_medio_pct: "Acelerador medio (%)",
+  acelerador_a_fondo_pct: "Acelerador a fondo (%)",
+  freno_aplicado_pct: "Freno aplicado (%)",
+  marcha_maxima: "Marcha maxima",
+  marcha_media: "Marcha media",
+  rpm_max: "RPM maximo",
+  rpm_medio: "RPM medio",
+  drs_abierto_pct: "DRS abierto (%)",
+  distancia_m: "Distancia recorrida (m)",
+  distancia_desvio_pct: "Desvio contra longitud oficial (%)",
+  muestras_velocidad: "Muestras de velocidad",
+  hueco_maximo_segundos: "Hueco temporal maximo (s)",
+  ventana_fin_estimado: "Fin de ventana estimado",
+  ventana_completa: "Ventana completa",
+};
+
+// Claves que describen el metodo o su validacion en vez de aportar un valor
+// medido. Se omiten de la grilla y se resumen aparte, para que no compitan
+// visualmente con las metricas.
+const CLAVES_METODOLOGICAS = new Set([
+  "acelerador_umbral_a_fondo",
+  "distancia_metodo",
+  "distancia_referencia_m",
+  "distancia_validada",
+  "drs_codigos",
+  "drs_interpretacion_validada",
+  "longitud_referencia_m",
+  "muestras_por_senal",
+]);
+
+function formatearValorAnalisis(valor) {
+  if (valor === null || valor === undefined) return "sin dato";
+  if (typeof valor === "boolean") return valor ? "si" : "no";
+  if (typeof valor === "number") return Number.isInteger(valor) ? String(valor) : valor.toFixed(2);
+  return String(valor);
+}
+
+function renderizarBloqueMetricas(titulo, nota, metricas) {
+  const filas = Object.entries(metricas ?? {})
+    .filter(([clave]) => !CLAVES_METODOLOGICAS.has(clave))
+    .map(([clave, valor]) => `<div><dt>${escaparHtml(ETIQUETAS_ANALISIS[clave] ?? clave)}</dt><dd>${escaparHtml(formatearValorAnalisis(valor))}</dd></div>`);
+  if (!filas.length) return "";
+  return `<article class="bloque-analisis">
+    <h4>${escaparHtml(titulo)}</h4>
+    <p class="nota-analisis">${escaparHtml(nota)}</p>
+    <dl class="grilla-analisis">${filas.join("")}</dl>
+  </article>`;
+}
+
+function renderizarDetalleAnalisis(fila) {
+  if (!fila) {
+    detalleAnalisisVuelta.innerHTML = "";
+    return;
+  }
+  const derivadas = fila.metricas_derivadas ?? {};
+  const calidad = fila.calidad ?? {};
+
+  // Advertencias que no deben quedar solo en la nota al pie del bloque.
+  const advertencias = [];
+  if (calidad.ventana_completa === false) {
+    advertencias.push("La ventana temporal no pudo determinarse por completo: no hay metricas derivadas para este tramo.");
+  } else if (calidad.ventana_fin_estimado) {
+    advertencias.push("El fin de la ventana es estimado a partir de la duracion declarada, porque no existe una vuelta siguiente contigua.");
+  }
+  if (derivadas.drs_interpretacion_validada === false && derivadas.drs_abierto_pct !== undefined) {
+    advertencias.push("El porcentaje de DRS depende de una interpretacion de los codigos que no fue validada contra estos datos.");
+  }
+
+  const bloques = [
+    renderizarBloqueMetricas(
+      "Medicion oficial",
+      "Proviene de OpenF1 sin transformar. Los minisectores dan 227 m de resolucion espacial.",
+      fila.metricas_oficiales,
+    ),
+    renderizarBloqueMetricas(
+      "Derivado de la telemetria",
+      derivadas.distancia_metodo
+        ? `Calculado por el proyecto. Distancia por ${derivadas.distancia_metodo}, validada contra ${formatearValorAnalisis(derivadas.distancia_referencia_m)} m oficiales.`
+        : "Calculado por el proyecto a partir de la telemetria replicada.",
+      derivadas,
+    ),
+    renderizarBloqueMetricas(
+      "Calidad del resultado",
+      "Cobertura de la muestra sobre la que se apoyan las metricas derivadas.",
+      calidad,
+    ),
+  ].filter(Boolean);
+
+  const avisos = advertencias.length
+    ? `<p class="aviso-analisis">${advertencias.map(escaparHtml).join(" ")}</p>`
+    : "";
+  detalleAnalisisVuelta.innerHTML = avisos + `<div class="bloques-analisis">${bloques.join("")}</div>`;
+}
+
+async function obtenerAnalisis(driverNumber, alcance) {
+  const clave = `${alcance}:${driverNumber}`;
+  if (cacheAnalisis.has(clave)) return cacheAnalisis.get(clave);
+  const ruta = alcance === "stint" ? "stints" : "laps";
+  const parametros = new URLSearchParams({ driver_number: String(driverNumber) });
+  const respuesta = await fetch(
+    `${API_BASE_URL}/racing/sessions/${OPENF1_SESSION_KEY}/analysis/${REPLAY_RUN_ID_ANALISIS_CARRERA}/${ruta}?${parametros}`,
+  );
+  if (respuesta.status === 404) {
+    cacheAnalisis.set(clave, []);
+    return [];
+  }
+  if (!respuesta.ok) throw new Error("No se pudo recuperar el analisis.");
+  const filas = await respuesta.json();
+  cacheAnalisis.set(clave, filas);
+  return filas;
+}
+
+function poblarSelectorPilotosAnalisis() {
+  selectorPilotoAnalisis.innerHTML = pilotosOpenF1
+    .map((piloto) => `<option value="${piloto.driver_number}">${escaparHtml(piloto.name_acronym ?? piloto.driver_number)}</option>`)
+    .join("");
+}
+
+async function actualizarAnalisisVuelta() {
+  const driverNumber = Number(selectorPilotoAnalisis.value);
+  const alcance = selectorAlcanceAnalisis.value;
+  if (!driverNumber) return;
+  etiquetaSelectorVuelta.textContent = alcance === "stint" ? "Stint" : "Vuelta";
+  estadoAnalisisVuelta.textContent = "Cargando analisis...";
+  try {
+    const filas = await obtenerAnalisis(driverNumber, alcance);
+    if (!filas.length) {
+      selectorVueltaAnalisis.innerHTML = "";
+      renderizarDetalleAnalisis(null);
+      estadoAnalisisVuelta.textContent = "Sin analisis generado para esta corrida";
+      resumenAnalisisVuelta.textContent = "Ejecutar scripts/generate_session_analysis.py para generarlo.";
+      return;
+    }
+    const claveNumero = alcance === "stint" ? "stint_number" : "lap_number";
+    const seleccionPrevia = selectorVueltaAnalisis.value;
+    selectorVueltaAnalisis.innerHTML = filas
+      .map((fila) => `<option value="${fila[claveNumero]}">${fila[claveNumero]}</option>`)
+      .join("");
+    if (filas.some((fila) => String(fila[claveNumero]) === seleccionPrevia)) {
+      selectorVueltaAnalisis.value = seleccionPrevia;
+    }
+    const elegida = filas.find((fila) => String(fila[claveNumero]) === selectorVueltaAnalisis.value) ?? filas[0];
+    renderizarDetalleAnalisis(elegida);
+    estadoAnalisisVuelta.textContent = `${filas.length} ${alcance === "stint" ? "stints" : "vueltas"} analizadas · ${escaparHtml(elegida.analyzer_version ?? "")}`;
+    resumenAnalisisVuelta.textContent = "Las metricas se muestran separadas por nivel de evidencia: lo observado, lo derivado y la calidad de la muestra que las sostiene.";
+  } catch (error) {
+    estadoAnalisisVuelta.textContent = "No se pudo cargar el analisis";
+    resumenAnalisisVuelta.textContent = String(error.message ?? error);
+  }
+}
+
+function mostrarDetalleSeleccionado() {
+  const alcance = selectorAlcanceAnalisis.value;
+  const clave = `${alcance}:${Number(selectorPilotoAnalisis.value)}`;
+  const filas = cacheAnalisis.get(clave) ?? [];
+  const claveNumero = alcance === "stint" ? "stint_number" : "lap_number";
+  renderizarDetalleAnalisis(filas.find((fila) => String(fila[claveNumero]) === selectorVueltaAnalisis.value));
+}
+
+selectorPilotoAnalisis?.addEventListener("change", actualizarAnalisisVuelta);
+selectorAlcanceAnalisis?.addEventListener("change", actualizarAnalisisVuelta);
+selectorVueltaAnalisis?.addEventListener("change", mostrarDetalleSeleccionado);

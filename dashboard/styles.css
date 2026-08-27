@@ -1431,3 +1431,96 @@ body.modo-openf1-activo {
     grid-template-columns: 1fr;
   }
 }
+
+/* Analisis automatico por vuelta y por stint.
+   Estilos deliberadamente sobrios: el refinamiento visual integral del dashboard
+   corresponde al Dia 27. Aqui solo se busca que los tres niveles de evidencia se
+   distingan entre si y que las advertencias no pasen desapercibidas. */
+.controles-analisis-vuelta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  margin: 12px 0 18px;
+}
+
+.controles-analisis-vuelta label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  color: #64748b;
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.controles-analisis-vuelta select {
+  min-width: 120px;
+  padding: 7px 10px;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #0f172a;
+  font-size: 0.9rem;
+  font-weight: 700;
+}
+
+.bloques-analisis {
+  display: grid;
+  gap: 18px;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+}
+
+.bloque-analisis {
+  padding: 16px;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  background: #f8fafc;
+}
+
+.bloque-analisis h4 {
+  margin: 0;
+  color: #0f172a;
+  font-size: 0.95rem;
+}
+
+.nota-analisis {
+  margin: 6px 0 14px;
+  color: #64748b;
+  font-size: 0.78rem;
+  line-height: 1.45;
+}
+
+.grilla-analisis {
+  display: grid;
+  gap: 10px 18px;
+  margin: 0;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+}
+
+.grilla-analisis dt {
+  color: #64748b;
+  font-size: 0.68rem;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.grilla-analisis dd {
+  margin: 3px 0 0;
+  color: #0f172a;
+  font-weight: 700;
+}
+
+/* Las advertencias sobre ventanas estimadas o interpretaciones no validadas se
+   destacan porque condicionan como debe leerse el resto del bloque. */
+.aviso-analisis {
+  margin: 0 0 16px;
+  padding: 10px 14px;
+  border-left: 4px solid #f59e0b;
+  border-radius: 6px;
+  background: #fffbeb;
+  color: #92400e;
+  font-size: 0.82rem;
+  line-height: 1.5;
+}

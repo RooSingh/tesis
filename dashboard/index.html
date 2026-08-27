@@ -88,6 +88,36 @@
           <div id="pilotos-instante-carrera" class="pilotos-instante-carrera"></div>
         </section>
       </section>
+      <!-- Analisis automatico por vuelta y stint.
+           Los resultados provienen de `session_lap_analysis` y `session_stint_analysis`,
+           y se muestran separados por nivel de evidencia: la distincion entre dato
+           oficial y dato derivado es el aporte metodologico del analisis, de modo que
+           aplanarla en la interfaz anularia el motivo por el que se guarda asi. -->
+      <section class="analisis-vuelta" aria-labelledby="titulo-analisis-vuelta">
+        <div class="titulo-seccion">
+          <div>
+            <p class="etiqueta-superior">Analisis automatico de la sesion</p>
+            <h3 id="titulo-analisis-vuelta">Metricas por vuelta y por stint</h3>
+            <p id="resumen-analisis-vuelta" class="resumen-operativo">Selecciona un piloto y una vuelta para ver sus metricas separadas por nivel de evidencia.</p>
+          </div>
+          <p id="estado-analisis-vuelta">Sin analisis cargado</p>
+        </div>
+        <div class="controles-analisis-vuelta">
+          <label for="selector-piloto-analisis">Piloto
+            <select id="selector-piloto-analisis"></select>
+          </label>
+          <label for="selector-alcance-analisis">Alcance
+            <select id="selector-alcance-analisis">
+              <option value="vuelta">Vuelta</option>
+              <option value="stint">Stint</option>
+            </select>
+          </label>
+          <label for="selector-vuelta-analisis"><span id="etiqueta-selector-vuelta">Vuelta</span>
+            <select id="selector-vuelta-analisis"></select>
+          </label>
+        </div>
+        <div id="detalle-analisis-vuelta" class="detalle-analisis-vuelta"></div>
+      </section>
       <details class="trazabilidad-openf1">
         <summary>Trazabilidad tecnica del replay</summary>
         <p>Mensajes persistidos, timestamp deportivo, instante de publicacion y campo original OpenF1.</p>
