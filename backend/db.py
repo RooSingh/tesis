@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import threading
+from datetime import timedelta
 from typing import Any
 
 import psycopg
@@ -927,3 +928,215 @@ def listar_incidencias_procesamiento(run_id: int) -> list[dict]:
             )
             columns = [desc[0] for desc in cur.description]
             return [dict(zip(columns, row)) for row in cur.fetchall()]
+
+
+# ---------------------------------------------------------------------------
+# Derivacion de ventanas de vuelta y stint sobre telemetria OpenF1
+#
+# Agregado el 2026-08-27. Permite recortar la telemetria del replay por vuelta o
+# por stint sin escribir esa asignacion en `telemetry_messages`.
+#
+# Por que la asignacion no se persiste: atribuir una vuelta a una muestra es una
+# derivacion, no un dato observado. La columna `lap_id` existe y el adaptador
+# OpenF1 la deja deliberadamente en NULL. Escribir alli el resultado volveria la
+# derivacion indistinguible del origen y la congelaria: si mas adelante se
+# corrigen los limites de vuelta, la columna quedaria desactualizada sin aviso.
+# Derivar en la consulta mantiene la separacion y permite devolver la ventana
+# empleada junto con los datos.
+# ---------------------------------------------------------------------------
+
+SOURCE_TYPE_REPLAY_OPENF1 = "openf1_historical_replay"
+
+
+def identificadores_openf1(session_key: int, driver_number: int) -> tuple[str, str]:
+    """Construye los identificadores canonicos que usa el adaptador OpenF1."""
+    return f"openf1:session:{session_key}", f"openf1:driver:{driver_number}"
+
+
+def obtener_vueltas_piloto(session_key: int, driver_number: int) -> list[dict]:
+    """Devuelve las vueltas de un piloto ordenadas por numero.
+
+    Son unas decenas de filas por piloto, de modo que traerlas completas y
+    calcular las ventanas en Python resulta mas barato y mucho mas auditable que
+    resolver el limite dentro de una consulta sobre millones de muestras.
+    """
+    with obtener_conexion() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT lap_number, date_start, lap_duration_seconds
+                FROM racing_laps
+                WHERE session_key = %s AND driver_number = %s
+                ORDER BY lap_number
+                """,
+                (session_key, driver_number),
+            )
+            columnas = [desc[0] for desc in cur.description]
+            return [dict(zip(columnas, fila)) for fila in cur.fetchall()]
+
+
+def calcular_ventanas_vueltas(vueltas: list[dict]) -> list[dict]:
+    """Calcula la ventana `[inicio, fin)` de cada vuelta. Funcion pura.
+
+    Regla adoptada: **el fin de una vuelta es el inicio de la siguiente**, y no
+    `date_start + lap_duration_seconds`.
+
+    El motivo es empirico. Sobre las 827 vueltas de Silverstone `9947`, 25 vueltas
+    presentan una discrepancia mayor a medio segundo entre la duracion declarada y
+    el inicio de la vuelta siguiente, con un maximo de 11,802 segundos, y 5 vueltas
+    carecen de duracion. Cerrar por duracion dejaria huecos y solapamientos de
+    varios segundos, que a 3,7 Hz por senal y con veinte pilotos equivalen a miles
+    de muestras asignadas a ninguna vuelta o a dos.
+
+    Tomar el inicio de la siguiente garantiza una particion sin huecos ni
+    solapamientos por construccion.
+
+    Excepciones, ambas marcadas en el resultado:
+
+    - la ultima vuelta de un piloto no tiene siguiente: se cierra con la duracion
+      declarada y se marca `fin_estimado`;
+    - si la numeracion salta, la vuelta posterior no es contigua y no puede usarse
+      como limite: se recurre tambien a la duracion y se marca `fin_estimado`.
+
+    Cuando no hay forma de determinar el fin, la ventana se devuelve con
+    `fin = None` y `completa = False`, en vez de inventar un limite.
+    """
+    ventanas = []
+    for indice, vuelta in enumerate(vueltas):
+        inicio = vuelta["date_start"]
+        siguiente = vueltas[indice + 1] if indice + 1 < len(vueltas) else None
+        contigua = (
+            siguiente is not None
+            and siguiente["date_start"] is not None
+            and siguiente["lap_number"] == vuelta["lap_number"] + 1
+        )
+
+        if inicio is None:
+            fin, estimado = None, False
+        elif contigua:
+            fin, estimado = siguiente["date_start"], False
+        elif vuelta["lap_duration_seconds"] is not None:
+            fin = inicio + timedelta(seconds=float(vuelta["lap_duration_seconds"]))
+            estimado = True
+        else:
+            fin, estimado = None, False
+
+        ventanas.append({
+            "lap_number": vuelta["lap_number"],
+            "inicio": inicio,
+            "fin": fin,
+            "fin_estimado": estimado,
+            "completa": inicio is not None and fin is not None,
+        })
+    return ventanas
+
+
+def resolver_ventana_vuelta(session_key: int, driver_number: int, lap_number: int) -> dict | None:
+    """Devuelve la ventana temporal de una vuelta concreta, o None si no existe."""
+    ventanas = calcular_ventanas_vueltas(obtener_vueltas_piloto(session_key, driver_number))
+    for ventana in ventanas:
+        if ventana["lap_number"] == lap_number:
+            return ventana
+    return None
+
+
+def resolver_ventana_stint(session_key: int, driver_number: int, stint_number: int) -> dict | None:
+    """Devuelve la ventana temporal de un stint, compuesta desde sus vueltas.
+
+    El stint declara `lap_start` y `lap_end`, de modo que su ventana va del inicio
+    de la primera vuelta al fin de la ultima. Se reutiliza el mismo criterio de
+    limites que las vueltas, para que ambos recortes sean consistentes entre si.
+    """
+    with obtener_conexion() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT stint_number, compound, lap_start, lap_end, tyre_age_at_start
+                FROM racing_stints
+                WHERE session_key = %s AND driver_number = %s AND stint_number = %s
+                """,
+                (session_key, driver_number, stint_number),
+            )
+            fila = cur.fetchone()
+            if fila is None:
+                return None
+            columnas = [desc[0] for desc in cur.description]
+            stint = dict(zip(columnas, fila))
+
+    ventanas = {v["lap_number"]: v for v in calcular_ventanas_vueltas(obtener_vueltas_piloto(session_key, driver_number))}
+    primera = ventanas.get(stint["lap_start"])
+    ultima = ventanas.get(stint["lap_end"])
+    if primera is None or ultima is None:
+        return None
+
+    return {
+        "stint_number": stint["stint_number"],
+        "compound": stint["compound"],
+        "lap_start": stint["lap_start"],
+        "lap_end": stint["lap_end"],
+        "tyre_age_at_start": stint["tyre_age_at_start"],
+        "inicio": primera["inicio"],
+        "fin": ultima["fin"],
+        "fin_estimado": ultima["fin_estimado"],
+        "completa": primera["inicio"] is not None and ultima["fin"] is not None,
+    }
+
+
+def obtener_telemetria_en_ventana(
+    session_key: int,
+    driver_number: int,
+    inicio,
+    fin,
+    signal_name: str | None = None,
+    replay_run_id: str | None = None,
+    limite: int = 5000,
+) -> list[dict]:
+    """Devuelve la telemetria de replay contenida en una ventana temporal.
+
+    El filtro se ordena para aprovechar
+    `telemetry_messages_source_session_driver_timestamp_idx`, que indexa
+    `(source_type, session_id, driver_id, timestamp)`: los tres primeros campos se
+    fijan por igualdad y el cuarto se recorre por rango, que es el caso optimo de
+    un B-tree. Por eso no se resuelve el limite de vuelta con un join contra la
+    tabla de telemetria.
+
+    El intervalo es `[inicio, fin)`, cerrado al comienzo y abierto al final, de
+    modo que una muestra situada justo en el limite pertenece a una sola vuelta.
+    """
+    session_id, driver_id = identificadores_openf1(session_key, driver_number)
+    condiciones = [
+        "source_type = %(source_type)s",
+        "session_id = %(session_id)s",
+        "driver_id = %(driver_id)s",
+        "timestamp >= %(inicio)s",
+    ]
+    parametros = {
+        "source_type": SOURCE_TYPE_REPLAY_OPENF1,
+        "session_id": session_id,
+        "driver_id": driver_id,
+        "inicio": inicio,
+        "fin": fin,
+        "signal_name": signal_name,
+        "replay_run_id": replay_run_id,
+        "limite": limite,
+    }
+    if fin is not None:
+        condiciones.append("timestamp < %(fin)s")
+    if signal_name is not None:
+        condiciones.append("signal_name = %(signal_name)s")
+    if replay_run_id is not None:
+        condiciones.append("replay_run_id = %(replay_run_id)s")
+
+    consulta = f"""
+        SELECT timestamp, driver_id, signal_name, value_numeric, value_boolean,
+               value_text, unit, quality_flag, replay_run_id, replay_seq
+        FROM telemetry_messages
+        WHERE {' AND '.join(condiciones)}
+        ORDER BY timestamp, signal_name
+        LIMIT %(limite)s
+    """
+    with obtener_conexion() as conn:
+        with conn.cursor() as cur:
+            cur.execute(consulta, parametros)
+            columnas = [desc[0] for desc in cur.description]
+            return [dict(zip(columnas, fila)) for fila in cur.fetchall()]
