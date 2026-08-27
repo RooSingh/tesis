@@ -48,13 +48,25 @@ MINISECTOR_AMARILLO = 2048  # ni uno ni otro
 # exacto de forma sostenida.
 UMBRAL_ACELERADOR_A_FONDO = 95.0
 
-# Codigos de DRS que se interpretan como aleron abierto.
+# Umbral de codigo de DRS a partir del cual el aleron esta abierto.
 #
-# ADVERTENCIA: a diferencia del mapeo de minisectores, esta lectura NO fue
-# validada contra los datos de este proyecto. Proviene de la documentacion
-# comunitaria de OpenF1. Por eso el resultado publica ademas el histograma
-# completo de codigos, que es dato observado y no depende de esta interpretacion.
-CODIGOS_DRS_ABIERTO = frozenset({10, 12, 14})
+# Validado contra los propios datos, cruzando cada muestra de `drs_state_code` con
+# la de `speed` del mismo instante sobre las 683.720 muestras de la carrera:
+#
+#   codigo 0 -> 109,7 km/h de media    codigo  9 -> 289,7 km/h
+#   codigo 1 ->  99,2                  codigo 10 -> 296,0
+#   codigo 2 ->  31,8                  codigo 11 -> 276,5
+#   codigo 3 ->   3,9                  codigo 12 -> 294,3
+#   codigo 8 -> 126,7                  codigo 14 -> 248,8
+#
+# La distribucion es bimodal con una frontera nitida: entre el codigo 8 y el 9 hay
+# un salto de 163 km/h en la velocidad media. Eso identifica el limite sin depender
+# de documentacion externa.
+#
+# La primera implementacion uso el conjunto {10, 12, 14} tomado de documentacion
+# comunitaria, que dejaba los codigos 9 y 11 clasificados como aleron cerrado pese
+# a presentar 289,7 y 276,5 km/h de media. La medicion corrigio ese error.
+DRS_CODIGO_MINIMO_ABIERTO = 9
 
 
 def _valores(muestras: list[tuple[datetime, float | None, bool | None]]) -> list[float]:
@@ -179,13 +191,14 @@ def resumir_telemetria(muestras_por_senal: dict[str, list]) -> dict:
         for valor in drs:
             clave = str(int(valor))
             codigos[clave] = codigos.get(clave, 0) + 1
-        # El histograma es dato observado; el porcentaje de apertura depende de una
-        # interpretacion de los codigos que no fue validada contra estos datos.
+        # Se conserva el histograma completo aunque la interpretacion este validada:
+        # es el dato observado del que se deriva el porcentaje, y permite auditar la
+        # clasificacion sin volver a la telemetria.
         resumen["drs_codigos"] = dict(sorted(codigos.items(), key=lambda par: int(par[0])))
         resumen["drs_abierto_pct"] = round(
-            sum(1 for v in drs if int(v) in CODIGOS_DRS_ABIERTO) / len(drs) * 100, 2
+            sum(1 for v in drs if int(v) >= DRS_CODIGO_MINIMO_ABIERTO) / len(drs) * 100, 2
         )
-        resumen["drs_interpretacion_validada"] = False
+        resumen["drs_interpretacion_validada"] = True
 
     distancia = integrar_distancia_m(muestras_por_senal.get("speed", []))
     if distancia is not None:

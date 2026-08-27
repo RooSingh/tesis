@@ -13,7 +13,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from backend.session_analysis import (
-    CODIGOS_DRS_ABIERTO,
+    DRS_CODIGO_MINIMO_ABIERTO,
     MINISECTOR_AMARILLO,
     MINISECTOR_PURPURA,
     MINISECTOR_VERDE,
@@ -127,20 +127,32 @@ class ResumenTelemetriaTests(unittest.TestCase):
         self.assertEqual(resumen["freno_aplicado_pct"], 50.0)
 
     def test_el_drs_publica_el_histograma_ademas_de_la_interpretacion(self) -> None:
-        """El histograma es dato observado; el porcentaje depende de un mapeo.
-
-        Ese mapeo proviene de documentacion externa y no fue validado contra estos
-        datos, a diferencia del de minisectores. Por eso la respuesta lo declara.
-        """
-        codigo_abierto = sorted(CODIGOS_DRS_ABIERTO)[0]
+        """El histograma es dato observado y permite auditar la clasificacion."""
         resumen = resumir_telemetria({
             "speed": muestras([100.0] * 4),
-            "drs_state_code": muestras([float(codigo_abierto), float(codigo_abierto), 1.0, 1.0]),
+            "drs_state_code": muestras([12.0, 12.0, 1.0, 1.0]),
         })
 
         self.assertEqual(resumen["drs_abierto_pct"], 50.0)
-        self.assertEqual(resumen["drs_codigos"], {"1": 2, str(codigo_abierto): 2})
-        self.assertFalse(resumen["drs_interpretacion_validada"])
+        self.assertEqual(resumen["drs_codigos"], {"1": 2, "12": 2})
+        self.assertTrue(resumen["drs_interpretacion_validada"])
+
+    def test_los_codigos_9_y_11_cuentan_como_aleron_abierto(self) -> None:
+        """Regresion del error corregido el 2026-08-27.
+
+        La primera implementacion uso el conjunto {10, 12, 14} tomado de
+        documentacion comunitaria. Cruzar `drs_state_code` con `speed` sobre las
+        683.720 muestras de la carrera mostro que los codigos 9 y 11 promedian
+        289,7 y 276,5 km/h, es decir el grupo de aleron abierto, mientras que el
+        codigo 8 promedia 126,7. El umbral correcto es 9.
+        """
+        resumen = resumir_telemetria({
+            "speed": muestras([100.0] * 4),
+            "drs_state_code": muestras([9.0, 11.0, 8.0, 1.0]),
+        })
+
+        self.assertEqual(DRS_CODIGO_MINIMO_ABIERTO, 9)
+        self.assertEqual(resumen["drs_abierto_pct"], 50.0)
 
 
 class CalidadTests(unittest.TestCase):

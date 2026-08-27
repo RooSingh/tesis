@@ -186,7 +186,8 @@ def main() -> None:
         "distancia_por_integracion_de_velocidad": True,
         "curvas_y_apices": "no disponible: requiere metadatos curados del circuito",
         "comparacion_por_metros": "no defendible al muestreo disponible",
-        "drs_interpretacion_validada": False,
+        "drs_interpretacion_validada": True,
+        "drs_umbral_abierto": "codigo >= 9, validado contra velocidad",
     }
     analysis_run_id = guardar_analisis_sesion(
         args.session_key, args.replay_run_id, ANALYZER_VERSION,

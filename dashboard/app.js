@@ -1114,15 +1114,17 @@ function renderizarDetalleAnalisis(fila) {
   const derivadas = fila.metricas_derivadas ?? {};
   const calidad = fila.calidad ?? {};
 
-  // Advertencias que no deben quedar solo en la nota al pie del bloque.
+  // Advertencias propias de ESTA vuelta o stint.
+  //
+  // Solo entran aqui las condiciones que varian entre una seleccion y otra. Una
+  // salvedad del metodo, que vale para todas las vueltas por igual, no puede ir en
+  // esta banda: apareceria siempre, dejaria de leerse como advertencia y se
+  // volveria ruido permanente. Esas salvedades se resumen en la nota del bloque.
   const advertencias = [];
   if (calidad.ventana_completa === false) {
     advertencias.push("La ventana temporal no pudo determinarse por completo: no hay metricas derivadas para este tramo.");
   } else if (calidad.ventana_fin_estimado) {
     advertencias.push("El fin de la ventana es estimado a partir de la duracion declarada, porque no existe una vuelta siguiente contigua.");
-  }
-  if (derivadas.drs_interpretacion_validada === false && derivadas.drs_abierto_pct !== undefined) {
-    advertencias.push("El porcentaje de DRS depende de una interpretacion de los codigos que no fue validada contra estos datos.");
   }
 
   const bloques = [
@@ -1133,9 +1135,15 @@ function renderizarDetalleAnalisis(fila) {
     ),
     renderizarBloqueMetricas(
       "Derivado de la telemetria",
-      derivadas.distancia_metodo
-        ? `Calculado por el proyecto. Distancia por ${derivadas.distancia_metodo}, validada contra ${formatearValorAnalisis(derivadas.distancia_referencia_m)} m oficiales.`
-        : "Calculado por el proyecto a partir de la telemetria replicada.",
+      [
+        "Calculado por el proyecto a partir de la telemetria replicada.",
+        derivadas.distancia_metodo
+          ? `Distancia por ${derivadas.distancia_metodo}, validada contra ${formatearValorAnalisis(derivadas.distancia_referencia_m)} m oficiales.`
+          : "",
+        derivadas.drs_interpretacion_validada === false
+          ? "El porcentaje de DRS usa una interpretacion de codigos aun no validada."
+          : "",
+      ].filter(Boolean).join(" "),
       derivadas,
     ),
     renderizarBloqueMetricas(
