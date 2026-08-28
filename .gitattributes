@@ -4,4 +4,5 @@
 *.pptx binary
 *.png  binary
 *.jpg  binary
+*.jpeg binary
 *.zst  binary
