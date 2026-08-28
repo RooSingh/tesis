@@ -28,14 +28,15 @@ from backend.db import (
     calcular_ventanas_vueltas,
     guardar_analisis_sesion,
     obtener_pilotos_racing,
+    obtener_sesion_racing,
     obtener_stints_piloto,
     obtener_telemetria_corrida_piloto,
     obtener_vueltas_oficiales_piloto,
 )
 from backend.session_analysis import (
     ANALYZER_VERSION,
-    LONGITUD_SILVERSTONE_M,
     evaluar_calidad,
+    resolver_referencia_circuito,
     resumir_minisectores,
     resumir_telemetria,
     validar_distancia,
@@ -88,7 +89,7 @@ def metricas_oficiales_vuelta(vuelta: dict) -> dict:
     return {clave: valor for clave, valor in oficiales.items() if valor is not None}
 
 
-def analizar_piloto(session_key: int, replay_run_id: str, driver_number: int, longitud_m: float):
+def analizar_piloto(session_key: int, replay_run_id: str, driver_number: int, referencia_circuito: dict):
     """Devuelve las filas de vuelta y de stint de un piloto."""
     oficiales = obtener_vueltas_oficiales_piloto(session_key, driver_number)
     if not oficiales:
@@ -107,8 +108,8 @@ def analizar_piloto(session_key: int, replay_run_id: str, driver_number: int, lo
         ventana = ventana_por_vuelta[numero]
         senales = por_vuelta.get(numero, {})
         derivadas = resumir_telemetria(senales)
-        derivadas.update(validar_distancia(derivadas.get("distancia_m"), longitud_m))
-        calidad = evaluar_calidad(senales, longitud_m)
+        derivadas.update(validar_distancia(derivadas.get("distancia_m"), referencia_circuito))
+        calidad = evaluar_calidad(senales, referencia_circuito)
         calidad["ventana_fin_estimado"] = ventana["fin_estimado"]
         calidad["ventana_completa"] = ventana["completa"]
         filas_vuelta.append({
@@ -159,9 +160,43 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--session-key", type=int, required=True)
     parser.add_argument("--replay-run-id", required=True, help="Corrida de replay a analizar.")
-    parser.add_argument("--track-length-m", type=float, default=LONGITUD_SILVERSTONE_M)
+    parser.add_argument(
+        "--track-length-m",
+        type=float,
+        default=None,
+        help=(
+            "Longitud del circuito en metros. Solo para circuitos que todavia no "
+            "figuran en la tabla declarada. Sin este argumento la longitud se "
+            "resuelve por circuit_key de la sesion, y si no hay entrada el analisis "
+            "declara que la validacion de distancia no esta disponible."
+        ),
+    )
     parser.add_argument("--drivers", default="all", help="Lista CSV de numeros o 'all'.")
     args = parser.parse_args()
+
+    # La referencia se resuelve una sola vez, a partir de la identidad de la sesion
+    # que ya esta persistida. No hay default de circuito: antes lo habia, y era
+    # Silverstone, de modo que analizar Spa-Francorchamps sin recordar el argumento
+    # producia un desvio calculado contra un circuito 1.113 metros mas corto.
+    sesion = obtener_sesion_racing(args.session_key)
+    if sesion is None:
+        parser.error(f"No hay sesion importada con session_key={args.session_key}.")
+    referencia_circuito = resolver_referencia_circuito(
+        circuit_key=sesion.get("circuit_key"),
+        circuit_short_name=sesion.get("circuit_short_name"),
+        longitud_declarada_m=args.track_length_m,
+    )
+    if referencia_circuito["referencia_disponible"]:
+        print(
+            f"referencia de circuito: {referencia_circuito['longitud_referencia_m']} m "
+            f"({referencia_circuito.get('referencia_circuito')}) "
+            f"fuente={referencia_circuito.get('referencia_fuente')}",
+            flush=True,
+        )
+    else:
+        # No se aborta: el resto del analisis es valido sin esta validacion. Lo que
+        # no se admite es continuar en silencio.
+        print(f"ADVERTENCIA: {referencia_circuito['referencia_motivo']}", flush=True)
 
     pilotos = [p["driver_number"] for p in obtener_pilotos_racing(args.session_key)]
     if args.drivers != "all":
@@ -174,24 +209,37 @@ def main() -> None:
     vueltas: list[dict] = []
     stints: list[dict] = []
     for driver_number in pilotos:
-        fv, fs = analizar_piloto(args.session_key, args.replay_run_id, driver_number, args.track_length_m)
+        fv, fs = analizar_piloto(args.session_key, args.replay_run_id, driver_number, referencia_circuito)
         vueltas += fv
         stints += fs
         print(f"piloto={driver_number} vueltas={len(fv)} stints={len(fs)}", flush=True)
 
+    longitud_m = referencia_circuito.get("longitud_referencia_m")
     counts = {"pilotos": len(pilotos), "vueltas": len(vueltas), "stints": len(stints)}
     limits = {
-        "resolucion_minisector_m": round(args.track_length_m / 26, 1),
         "muestreo_telemetria_hz": 3.7,
         "distancia_por_integracion_de_velocidad": True,
         "curvas_y_apices": "no disponible: requiere metadatos curados del circuito",
         "comparacion_por_metros": "no defendible al muestreo disponible",
         "drs_interpretacion_validada": True,
         "drs_umbral_abierto": "codigo >= 9, validado contra velocidad",
+        # Procedencia completa de la longitud usada. Va en `limits` y no en `counts`
+        # porque es un limite del resultado: dice hasta donde llega la validacion de
+        # distancia y sobre que dato externo se apoya.
+        "longitud_circuito_referencia": referencia_circuito,
     }
+    if longitud_m:
+        # NOTA: el 26 sigue siendo el conteo de minisectores observado en
+        # Silverstone. Queda pendiente derivarlo de `segments_sector_*` de la propia
+        # sesion; hasta entonces este valor solo es exacto para esa sesion.
+        limits["resolucion_minisector_m"] = round(longitud_m / 26, 1)
+    else:
+        limits["validacion_de_distancia"] = (
+            "no disponible: " + referencia_circuito["referencia_motivo"]
+        )
     analysis_run_id = guardar_analisis_sesion(
         args.session_key, args.replay_run_id, ANALYZER_VERSION,
-        args.track_length_m, counts, limits, vueltas, stints,
+        longitud_m, counts, limits, vueltas, stints,
     )
     print(json.dumps({
         "analysis_run_id": analysis_run_id,

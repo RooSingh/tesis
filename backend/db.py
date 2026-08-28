@@ -506,7 +506,11 @@ def obtener_sesion_racing(session_key: int) -> dict | None:
                 """
                 SELECT
                     session_key, meeting_key, session_name, session_type,
-                    circuit_short_name, country_name, location, date_start, date_end,
+                    -- `circuit_key` es el identificador estable del circuito en
+                    -- OpenF1. Se expone porque el analisis resuelve con el la
+                    -- longitud declarada del circuito, y el nombre corto es texto
+                    -- libre que no sirve como clave.
+                    circuit_key, circuit_short_name, country_name, location, date_start, date_end,
                     (SELECT count(*) FROM racing_laps WHERE racing_laps.session_key = racing_sessions.session_key) AS laps,
                     (SELECT count(*) FROM racing_stints WHERE racing_stints.session_key = racing_sessions.session_key) AS stints,
                     (SELECT count(*) FROM racing_pit_stops WHERE racing_pit_stops.session_key = racing_sessions.session_key) AS pit_stops,

@@ -20,10 +20,12 @@ from backend.session_analysis import (
     UMBRAL_ACELERADOR_A_FONDO,
     evaluar_calidad,
     integrar_distancia_m,
+    resolver_referencia_circuito,
     resumir_minisectores,
     resumir_telemetria,
     validar_distancia,
 )
+from backend.track_reference import LONGITUDES_CIRCUITO
 
 ROOT = Path(__file__).resolve().parents[1]
 SPEC = importlib.util.spec_from_file_location(
@@ -95,7 +97,99 @@ class DistanciaTests(unittest.TestCase):
         self.assertAlmostEqual(resultado["distancia_desvio_pct"], -1.0, places=1)
 
     def test_sin_distancia_la_validacion_se_declara_no_realizada(self) -> None:
-        self.assertFalse(validar_distancia(None, 5891.0)["distancia_validada"])
+        resultado = validar_distancia(None, 5891.0)
+
+        self.assertFalse(resultado["distancia_validada"])
+        self.assertIn("distancia_validacion_motivo", resultado)
+
+    def test_la_validacion_arrastra_la_fuente_de_la_referencia(self) -> None:
+        """El desvio sin decir contra que se midio no es defendible."""
+        referencia = resolver_referencia_circuito(circuit_key=2)
+
+        resultado = validar_distancia(5832.0, referencia)
+
+        self.assertTrue(resultado["distancia_validada"])
+        self.assertEqual(resultado["distancia_referencia_m"], 5891.0)
+        self.assertIn("formula1.com", resultado["distancia_referencia_fuente"])
+        self.assertIn("no medida", resultado["distancia_referencia_tipo"])
+
+    def test_cada_circuito_se_valida_contra_su_propia_longitud(self) -> None:
+        """Regresion del defecto corregido el 2026-08-28.
+
+        La referencia era la constante `LONGITUD_SILVERSTONE_M`. Una vuelta de
+        Spa-Francorchamps de 6.950 m se comparaba contra 5.891 m y salia con un
+        desvio de +18 % que no describia nada real.
+        """
+        spa = resolver_referencia_circuito(circuit_key=7)
+        silverstone = resolver_referencia_circuito(circuit_key=2)
+
+        contra_spa = validar_distancia(6950.0, spa)
+        contra_silverstone = validar_distancia(6950.0, silverstone)
+
+        self.assertEqual(spa["longitud_referencia_m"], 7004.0)
+        self.assertAlmostEqual(contra_spa["distancia_desvio_pct"], -0.77, places=2)
+        self.assertAlmostEqual(contra_silverstone["distancia_desvio_pct"], 17.98, places=2)
+
+
+class ReferenciaCircuitoTests(unittest.TestCase):
+    """La longitud del circuito es dato externo declarado, no medido aqui."""
+
+    def test_resuelve_por_circuit_key_las_sesiones_importadas(self) -> None:
+        esperado = {2: 5891.0, 7: 7004.0, 46: 5807.0}
+
+        for circuit_key, longitud in esperado.items():
+            with self.subTest(circuit_key=circuit_key):
+                referencia = resolver_referencia_circuito(circuit_key=circuit_key)
+
+                self.assertTrue(referencia["referencia_disponible"])
+                self.assertEqual(referencia["longitud_referencia_m"], longitud)
+
+    def test_toda_entrada_declara_su_fuente_citable(self) -> None:
+        """Una referencia externa sin fuente no se puede defender."""
+        for circuit_key, entrada in LONGITUDES_CIRCUITO.items():
+            with self.subTest(circuit_key=circuit_key):
+                self.assertTrue(entrada["fuente"].startswith("https://"))
+                self.assertEqual(entrada["temporada"], 2025)
+                self.assertGreater(entrada["longitud_m"], 0)
+
+    def test_resuelve_por_nombre_cuando_falta_la_clave(self) -> None:
+        referencia = resolver_referencia_circuito(circuit_short_name="Spa-Francorchamps")
+
+        self.assertEqual(referencia["longitud_referencia_m"], 7004.0)
+
+    def test_un_circuito_sin_longitud_conocida_no_se_inventa(self) -> None:
+        """El analisis declara la ausencia en vez de asumir una longitud."""
+        referencia = resolver_referencia_circuito(circuit_key=99999, circuit_short_name="Nuevo")
+
+        self.assertFalse(referencia["referencia_disponible"])
+        self.assertIsNone(referencia["longitud_referencia_m"])
+        self.assertIn("no hay longitud de circuito declarada", referencia["referencia_motivo"])
+
+    def test_sin_referencia_la_distancia_no_se_valida_y_se_dice_por_que(self) -> None:
+        referencia = resolver_referencia_circuito(circuit_key=99999)
+
+        resultado = validar_distancia(6950.0, referencia)
+
+        self.assertFalse(resultado["distancia_validada"])
+        self.assertNotIn("distancia_desvio_pct", resultado)
+        self.assertIn(
+            "no hay longitud de circuito declarada", resultado["distancia_validacion_motivo"]
+        )
+
+    def test_la_longitud_indicada_a_mano_queda_marcada_como_tal(self) -> None:
+        """Un valor del operador no puede confundirse con la tabla declarada."""
+        referencia = resolver_referencia_circuito(
+            circuit_key=99999, circuit_short_name="Nuevo", longitud_declarada_m=4000.0
+        )
+
+        self.assertTrue(referencia["referencia_disponible"])
+        self.assertEqual(referencia["longitud_referencia_m"], 4000.0)
+        self.assertEqual(referencia["referencia_origen"], "operador")
+
+    def test_una_longitud_a_mano_no_positiva_no_habilita_la_validacion(self) -> None:
+        referencia = resolver_referencia_circuito(circuit_key=2, longitud_declarada_m=0.0)
+
+        self.assertFalse(referencia["referencia_disponible"])
 
 
 class ResumenTelemetriaTests(unittest.TestCase):
@@ -172,6 +266,25 @@ class CalidadTests(unittest.TestCase):
         calidad = evaluar_calidad({"speed": muestras([1.0, 2.0]), "engine_speed": muestras([1.0])})
 
         self.assertEqual(calidad["muestras_por_senal"], {"engine_speed": 1, "speed": 2})
+
+    def test_guarda_la_referencia_de_circuito_con_su_fuente(self) -> None:
+        referencia = resolver_referencia_circuito(circuit_key=7)
+
+        calidad = evaluar_calidad({"speed": muestras([1.0, 2.0])}, referencia)
+
+        self.assertEqual(calidad["longitud_referencia_m"], 7004.0)
+        self.assertEqual(calidad["longitud_referencia"]["referencia_circuito"], "Spa-Francorchamps")
+        self.assertIn("formula1.com", calidad["longitud_referencia"]["referencia_fuente"])
+
+    def test_declara_la_ausencia_de_referencia_en_vez_de_omitirla(self) -> None:
+        """Un campo faltante se confunde con un descuido; la ausencia se dice."""
+        referencia = resolver_referencia_circuito(circuit_key=99999)
+
+        calidad = evaluar_calidad({"speed": muestras([1.0, 2.0])}, referencia)
+
+        self.assertNotIn("longitud_referencia_m", calidad)
+        self.assertFalse(calidad["longitud_referencia"]["referencia_disponible"])
+        self.assertIn("referencia_motivo", calidad["longitud_referencia"])
 
 
 class RepartoPorVentanaTests(unittest.TestCase):

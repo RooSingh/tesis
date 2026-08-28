@@ -25,12 +25,21 @@ from __future__ import annotations
 
 from datetime import datetime
 
-ANALYZER_VERSION = "day22-session-analysis-v1"
+from backend.track_reference import (  # noqa: F401  (reexportado a proposito)
+    REFERENCIA_TIPO,
+    referencia_no_disponible,
+    resolver_referencia_circuito,
+)
 
-# Longitud oficial del circuito de Silverstone, usada como referencia para validar
-# la distancia derivada. Se guarda junto al resultado porque otra sesion tendria
-# otra referencia y la validacion dejaria de tener sentido.
-LONGITUD_SILVERSTONE_M = 5891.0
+ANALYZER_VERSION = "day23-session-analysis-v2"
+
+# La longitud del circuito contra la que se valida la distancia derivada ya no es
+# una constante de este modulo. Vive en `backend/track_reference.py`, indexada por
+# `circuit_key`, porque es un dato externo declarado y no una medicion del
+# proyecto: una constante unica ataba el analisis a Silverstone y habria validado
+# Spa-Francorchamps, 1.113 metros mas largo, contra la referencia equivocada.
+# Se reexporta el resolvedor para que quien importe el analisis encuentre aqui la
+# puerta de entrada.
 
 # Codigos de estado de minisector de la senal de cronometraje oficial.
 #
@@ -140,12 +149,18 @@ def integrar_distancia_m(muestras_velocidad: list[tuple[datetime, float | None, 
     return metros
 
 
-def evaluar_calidad(muestras_por_senal: dict[str, list], longitud_referencia_m: float | None = None) -> dict:
+def evaluar_calidad(muestras_por_senal: dict[str, list], referencia_circuito: dict | None = None) -> dict:
     """Describe la cobertura de la muestra y el hueco temporal mayor.
 
     Existe para que ninguna metrica pueda leerse sin saber sobre cuantas muestras
     se apoya. Una vuelta con la mitad de los datos produce agregados con la misma
     forma que una completa, y sin esta declaracion resultarian indistinguibles.
+
+    `referencia_circuito` es el bloque que devuelve
+    `resolver_referencia_circuito`. Se copia entero, incluida la fuente, para que
+    el resultado guarde contra que se valido y de donde salio esa cifra. Cuando la
+    referencia no esta disponible tambien se copia: la ausencia se declara en vez
+    de omitirse, porque un campo faltante se confunde con un descuido.
     """
     velocidad = muestras_por_senal.get("speed", [])
     tiempos = [t for t, _, _ in velocidad]
@@ -157,8 +172,10 @@ def evaluar_calidad(muestras_por_senal: dict[str, list], longitud_referencia_m: 
         "muestras_velocidad": len(velocidad),
         "hueco_maximo_segundos": round(hueco_max, 3),
     }
-    if longitud_referencia_m:
-        calidad["longitud_referencia_m"] = longitud_referencia_m
+    if referencia_circuito is not None:
+        calidad["longitud_referencia"] = dict(referencia_circuito)
+        if referencia_circuito.get("referencia_disponible"):
+            calidad["longitud_referencia_m"] = referencia_circuito.get("longitud_referencia_m")
     return calidad
 
 
@@ -222,19 +239,59 @@ def resumir_telemetria(muestras_por_senal: dict[str, list]) -> dict:
     return resumen
 
 
-def validar_distancia(distancia_m: float | None, longitud_referencia_m: float) -> dict:
-    """Compara la distancia derivada contra la longitud conocida del circuito.
+def validar_distancia(
+    distancia_m: float | None,
+    referencia_circuito: dict | float | None,
+) -> dict:
+    """Compara la distancia derivada contra la longitud declarada del circuito.
 
     Es la validacion "contra si misma" que recomienda la documentacion de FastF1:
     en vez de presentar la distancia como exacta, se publica su desvio respecto de
     una referencia independiente. Una vuelta de boxes o interrumpida se apartara, y
     ese desvio es informacion util y no un error a ocultar.
+
+    `referencia_circuito` es el bloque de `resolver_referencia_circuito`. Se acepta
+    tambien un numero suelto por comodidad de las pruebas.
+
+    Cuando no hay longitud declarada para el circuito, la validacion **no se hace y
+    se dice por que**. Antes bastaba con un `distancia_validada: False` mudo, que
+    no distingue una vuelta sin muestras de un circuito sin referencia. Inventar
+    una longitud seria peor todavia: el desvio saldria numerico y creible sobre una
+    base falsa.
     """
-    if distancia_m is None or not longitud_referencia_m:
-        return {"distancia_validada": False}
+    if isinstance(referencia_circuito, (int, float)):
+        referencia_circuito = {
+            "referencia_disponible": bool(referencia_circuito),
+            "longitud_referencia_m": float(referencia_circuito) or None,
+            "referencia_fuente": None,
+        }
+    referencia = referencia_circuito or referencia_no_disponible(
+        "no se resolvio ninguna referencia de circuito para esta sesion"
+    )
+
+    if not referencia.get("referencia_disponible") or not referencia.get("longitud_referencia_m"):
+        return {
+            "distancia_validada": False,
+            "distancia_validacion_motivo": referencia.get(
+                "referencia_motivo", "longitud de circuito no declarada para esta sesion"
+            ),
+        }
+    if distancia_m is None:
+        return {
+            "distancia_validada": False,
+            "distancia_validacion_motivo": "sin distancia derivada en esta ventana",
+        }
+
+    longitud_referencia_m = referencia["longitud_referencia_m"]
     desvio = (distancia_m - longitud_referencia_m) / longitud_referencia_m * 100
-    return {
+    resultado = {
         "distancia_validada": True,
         "distancia_referencia_m": longitud_referencia_m,
         "distancia_desvio_pct": round(desvio, 2),
     }
+    # La fuente viaja con el desvio: un porcentaje sin decir contra que se midio no
+    # es defendible, y quien lea solo `metricas_derivadas` no vera la `calidad`.
+    if referencia.get("referencia_fuente"):
+        resultado["distancia_referencia_fuente"] = referencia["referencia_fuente"]
+        resultado["distancia_referencia_tipo"] = referencia.get("referencia_tipo", REFERENCIA_TIPO)
+    return resultado
