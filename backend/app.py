@@ -21,8 +21,10 @@ from backend.db import (
     listar_analisis_sesion,
     obtener_analisis_stints,
     obtener_analisis_vueltas,
+    listar_corridas_replay_acotado,
     listar_ejecuciones_procesamiento,
     listar_incidencias_procesamiento,
+    listar_sesiones_racing,
     obtener_mensajes_por_senal,
     obtener_mensajes_por_sesion,
     obtener_ejecucion_procesamiento,
@@ -142,6 +144,58 @@ def processing_run_issues(run_id: int) -> list[dict]:
     return listar_incidencias_procesamiento(run_id)
 
 
+def _telemetria_declarada(inventario: dict | None) -> dict:
+    """Traduce el inventario de un paquete a la disponibilidad de telemetria.
+
+    La declaracion sale del inventario que ya persiste el procesador de sesiones y
+    no de una consulta nueva: el paquete de Spa-Francorchamps y el de Suzuka se
+    importaron sin `car_data`, y eso ya esta registrado como capacidad ausente. La
+    interfaz necesita esa ausencia dicha, no deducida de un panel vacio.
+    """
+    capacidades = (inventario or {}).get("capabilities") or {}
+    pilotos = capacidades.get("telemetry_drivers") or {}
+    car_data = len(pilotos.get("car_data") or [])
+    location = len(pilotos.get("location") or [])
+    declaracion = {
+        "disponible": car_data > 0,
+        "pilotos_car_data": car_data,
+        "pilotos_location": location,
+        "origen": "inventario del paquete procesado (session_processing_runs)",
+    }
+    if not car_data:
+        declaracion["motivo"] = (
+            "el paquete importado de esta sesion no incluye car_data: hay contexto "
+            "oficial (vueltas, stints, clima, control de carrera) pero no hay "
+            "telemetria que replicar ni analizar"
+        )
+    return declaracion
+
+
+@app.get("/racing/sessions")
+def racing_sessions() -> list[dict]:
+    """Lista las sesiones importadas con su circuito, tipo, fecha y capacidades.
+
+    Existe para que la aplicacion deje de llevar una clave de sesion escrita a
+    mano. El dashboard tenia `9947` fijo, de modo que Spa-Francorchamps y Suzuka
+    estaban en la base y eran invisibles desde la interfaz, lo que contradecia la
+    reutilizacion multicircuito que el trabajo sostiene.
+
+    Cada sesion viaja con su telemetria declarada, disponible o ausente. Una sesion
+    sin `car_data` no es un error de consulta y la respuesta lo dice, para que la
+    interfaz pueda declararlo en vez de mostrar paneles vacios.
+    """
+    inventarios: dict[int, dict] = {}
+    for run in listar_ejecuciones_procesamiento():
+        # `listar_ejecuciones_procesamiento` ordena de la mas reciente a la mas
+        # antigua, de modo que la primera que aparece de cada sesion es la vigente.
+        inventarios.setdefault(run["session_key"], run.get("inventory") or {})
+
+    sesiones = listar_sesiones_racing()
+    for sesion in sesiones:
+        sesion["telemetria"] = _telemetria_declarada(inventarios.get(sesion["session_key"]))
+    return sesiones
+
+
 @app.get("/racing/sessions/{session_key}")
 def racing_session(session_key: int) -> dict:
     """Expone el contexto de una carrera historica para analisis profesional."""
@@ -168,13 +222,26 @@ def racing_driver_comparison(
     return obtener_comparacion_pilotos_racing(session_key, drivers)
 
 
-# Nota: no se expone por HTTP el listado de corridas obtenido de
-# `telemetry_messages`. Ese agregado recorre millones de filas y se midio en mas de
-# diecisiete segundos, de modo que publicarlo como ruta reproduciria el defecto que
-# esta misma jornada corrigio en `/replay`. La pregunta practica, que corridas
-# tienen resultados disponibles, la responde `/racing/sessions/{key}/analysis`
-# consultando unas pocas filas indexadas. `listar_corridas_replay` permanece en
-# `backend/db.py` como herramienta de diagnostico.
+@app.get("/racing/sessions/{session_key}/replay-runs")
+def racing_replay_runs(session_key: int) -> list[dict]:
+    """Lista las corridas de replay persistidas para una sesion.
+
+    POR QUE ESTA RUTA EXISTE AHORA Y NO ANTES. El listado de corridas se dejo
+    deliberadamente fuera de HTTP porque `listar_corridas_replay` agrupa millones
+    de filas: se volvio a medir el 2026-08-28 y sigue costando 23,2 segundos. Lo
+    que se expone aca no es esa consulta sino `listar_corridas_replay_acotado`, que
+    enumera las corridas por saltos de indice y lee una fila por corrida. Medido en
+    milisegundos, y su costo no crece con el volumen persistido.
+
+    Hacia falta porque el dashboard llevaba `d7_silverstone_full_001` escrito en el
+    codigo, y ya habia tenido que cambiarse a mano una vez. Elegir corrida no es
+    opcional: una misma sesion acumula el replay definitivo junto a sondeos de
+    carga de las mismas vueltas.
+
+    La respuesta puede ser una lista vacia, y eso es una respuesta valida: la
+    sesion existe pero no tiene telemetria replicada.
+    """
+    return listar_corridas_replay_acotado(session_key)
 
 
 @app.get("/racing/sessions/{session_key}/replay-series")

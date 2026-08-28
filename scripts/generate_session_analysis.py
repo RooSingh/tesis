@@ -35,8 +35,10 @@ from backend.db import (
 )
 from backend.session_analysis import (
     ANALYZER_VERSION,
+    contar_minisectores_vuelta,
     evaluar_calidad,
     resolver_referencia_circuito,
+    resolver_resolucion_minisector,
     resumir_minisectores,
     resumir_telemetria,
     validar_distancia,
@@ -90,10 +92,17 @@ def metricas_oficiales_vuelta(vuelta: dict) -> dict:
 
 
 def analizar_piloto(session_key: int, replay_run_id: str, driver_number: int, referencia_circuito: dict):
-    """Devuelve las filas de vuelta y de stint de un piloto."""
+    """Devuelve las filas de vuelta y de stint de un piloto, y sus conteos de minisector.
+
+    El tercer valor son los minisectores que declara cada vuelta del piloto. Se
+    devuelve desde aca porque las vueltas oficiales ya estan leidas: recolectarlas
+    de nuevo en `main` duplicaria una consulta por piloto para un dato que este
+    recorrido tiene a mano.
+    """
     oficiales = obtener_vueltas_oficiales_piloto(session_key, driver_number)
     if not oficiales:
-        return [], []
+        return [], [], []
+    conteos_minisectores = [contar_minisectores_vuelta(vuelta) for vuelta in oficiales]
     ventanas = calcular_ventanas_vueltas(
         [{"lap_number": v["lap_number"], "date_start": v["date_start"],
           "lap_duration_seconds": v["lap_duration_seconds"]} for v in oficiales]
@@ -153,7 +162,7 @@ def analizar_piloto(session_key: int, replay_run_id: str, driver_number: int, re
             "metricas_derivadas": json.dumps(derivadas, default=float),
             "calidad": json.dumps(evaluar_calidad(senales), default=float),
         })
-    return filas_vuelta, filas_stint
+    return filas_vuelta, filas_stint, conteos_minisectores
 
 
 def main() -> None:
@@ -208,10 +217,14 @@ def main() -> None:
     inicio = time.monotonic()
     vueltas: list[dict] = []
     stints: list[dict] = []
+    conteos_minisectores: list[int | None] = []
     for driver_number in pilotos:
-        fv, fs = analizar_piloto(args.session_key, args.replay_run_id, driver_number, referencia_circuito)
+        fv, fs, cm = analizar_piloto(
+            args.session_key, args.replay_run_id, driver_number, referencia_circuito
+        )
         vueltas += fv
         stints += fs
+        conteos_minisectores += cm
         print(f"piloto={driver_number} vueltas={len(fv)} stints={len(fs)}", flush=True)
 
     longitud_m = referencia_circuito.get("longitud_referencia_m")
@@ -228,15 +241,33 @@ def main() -> None:
         # distancia y sobre que dato externo se apoya.
         "longitud_circuito_referencia": referencia_circuito,
     }
-    if longitud_m:
-        # NOTA: el 26 sigue siendo el conteo de minisectores observado en
-        # Silverstone. Queda pendiente derivarlo de `segments_sector_*` de la propia
-        # sesion; hasta entonces este valor solo es exacto para esa sesion.
-        limits["resolucion_minisector_m"] = round(longitud_m / 26, 1)
-    else:
+    # Resolucion espacial derivada de la propia sesion, con su procedencia completa.
+    # Antes era `longitud / 26`, y el 26 era el conteo de Silverstone aplicado a
+    # cualquier circuito. El bloque entero se guarda para que el numero pueda
+    # auditarse: dice cuantos minisectores se detectaron, sobre cuantas vueltas y
+    # con que distribucion.
+    resolucion = resolver_resolucion_minisector(conteos_minisectores, longitud_m)
+    limits["resolucion_minisector"] = resolucion
+    if resolucion["disponible"]:
+        # Copia plana del valor. Es redundante con el bloque de arriba a proposito:
+        # `resolucion_minisector_m` es la llave que ya consumen los analisis
+        # anteriores y la interfaz, y romperla obligaria a releer corridas viejas.
+        limits["resolucion_minisector_m"] = resolucion["resolucion_m"]
+    if not longitud_m:
         limits["validacion_de_distancia"] = (
             "no disponible: " + referencia_circuito["referencia_motivo"]
         )
+    print(
+        "resolucion de minisector: "
+        + (
+            f"{resolucion['resolucion_m']} m "
+            f"({resolucion['minisectores_por_vuelta']} minisectores por vuelta, "
+            f"moda sobre {resolucion['vueltas_consideradas']} vueltas)"
+            if resolucion["disponible"]
+            else f"no disponible: {resolucion['motivo']}"
+        ),
+        flush=True,
+    )
     analysis_run_id = guardar_analisis_sesion(
         args.session_key, args.replay_run_id, ANALYZER_VERSION,
         longitud_m, counts, limits, vueltas, stints,

@@ -33,11 +33,29 @@
       <div class="titulo-seccion">
         <div>
           <p class="etiqueta-superior">Replay historico validado</p>
-          <h2 id="openf1-titulo">Cargando Silverstone...</h2>
+          <h2 id="openf1-titulo">Cargando sesion...</h2>
           <p id="openf1-resumen" class="resumen-operativo"></p>
         </div>
         <p id="openf1-estado-carga">Esperando consulta...</p>
       </div>
+      <!-- Seleccion de sesion y de corrida.
+           Ambas eran constantes en `app.js` (`9947` y `d7_silverstone_full_001`), de
+           modo que Spa-Francorchamps y Suzuka estaban importadas en la base y eran
+           invisibles desde la interfaz. La corrida importa tanto como la sesion: una
+           misma carrera acumula el replay definitivo junto a sondeos de carga de las
+           mismas vueltas, y mezclarlos no se ve pero cambia el resultado. -->
+      <fieldset class="selector-sesion-replay">
+        <legend>Sesion y corrida</legend>
+        <div class="controles-sesion-replay">
+          <label for="selector-sesion-openf1">Sesion importada
+            <select id="selector-sesion-openf1"></select>
+          </label>
+          <label for="selector-corrida-replay">Corrida de replay
+            <select id="selector-corrida-replay"></select>
+          </label>
+        </div>
+        <p id="declaracion-telemetria-sesion" class="declaracion-telemetria" aria-live="polite">Cargando sesiones disponibles...</p>
+      </fieldset>
       <div id="openf1-contexto" class="lista-contexto tarjetas-openf1"></div>
       <div class="columna-operativa-openf1">
         <fieldset class="selector-pilotos-comparacion">
@@ -63,7 +81,7 @@
           <div id="tarjetas-comparacion-pilotos" class="tarjetas-comparacion-pilotos"></div>
         </section>
       </div>
-      <section class="analisis-carrera" aria-labelledby="titulo-analisis-carrera">
+      <section id="seccion-analisis-carrera" class="analisis-carrera" aria-labelledby="titulo-analisis-carrera">
         <div class="titulo-seccion">
           <div>
             <p class="etiqueta-superior">Estado simultaneo de carrera</p>
@@ -93,7 +111,7 @@
            y se muestran separados por nivel de evidencia: la distincion entre dato
            oficial y dato derivado es el aporte metodologico del analisis, de modo que
            aplanarla en la interfaz anularia el motivo por el que se guarda asi. -->
-      <section class="analisis-vuelta" aria-labelledby="titulo-analisis-vuelta">
+      <section id="seccion-analisis-vuelta" class="analisis-vuelta" aria-labelledby="titulo-analisis-vuelta">
         <div class="titulo-seccion">
           <div>
             <p class="etiqueta-superior">Analisis automatico de la sesion</p>
@@ -118,7 +136,7 @@
         </div>
         <div id="detalle-analisis-vuelta" class="detalle-analisis-vuelta"></div>
       </section>
-      <details class="trazabilidad-openf1">
+      <details id="seccion-trazabilidad-openf1" class="trazabilidad-openf1">
         <summary>Trazabilidad tecnica del replay</summary>
         <p>Mensajes persistidos, timestamp deportivo, instante de publicacion y campo original OpenF1.</p>
         <div class="contenedor-tabla">

@@ -18,9 +18,11 @@ from backend.session_analysis import (
     MINISECTOR_PURPURA,
     MINISECTOR_VERDE,
     UMBRAL_ACELERADOR_A_FONDO,
+    contar_minisectores_vuelta,
     evaluar_calidad,
     integrar_distancia_m,
     resolver_referencia_circuito,
+    resolver_resolucion_minisector,
     resumir_minisectores,
     resumir_telemetria,
     validar_distancia,
@@ -333,6 +335,95 @@ class RepartoPorVentanaTests(unittest.TestCase):
         reparto = generador.repartir_por_ventana(filas, ventanas)
 
         self.assertNotIn(2, reparto)
+
+
+
+class ResolucionMinisectorTests(unittest.TestCase):
+    """Cuantos minisectores tiene una vuelta es un dato de cada circuito.
+
+    Estaba fijo en 26, que es el conteo de Silverstone. Contado sobre los propios
+    `laps.json` importados, Spa-Francorchamps declara 28: con la longitud ya
+    parametrizada pero el 26 en el denominador, Spa habria persistido 269,4 m de
+    resolucion cuando su valor real es 250,1 m.
+    """
+
+    def _vuelta(self, s1: int, s2: int, s3: int) -> dict:
+        return {
+            "segments_sector_1": [MINISECTOR_AMARILLO] * s1,
+            "segments_sector_2": [MINISECTOR_AMARILLO] * s2,
+            "segments_sector_3": [MINISECTOR_AMARILLO] * s3,
+        }
+
+    def test_cuenta_los_tres_sectores_de_una_vuelta(self) -> None:
+        self.assertEqual(contar_minisectores_vuelta(self._vuelta(7, 11, 10)), 28)
+
+    def test_una_vuelta_sin_alguno_de_los_tres_sectores_no_aporta_conteo(self) -> None:
+        """Sumar los sectores presentes daria un total menor y creible.
+
+        Una vuelta a la que le falta el sector 3 se leeria como un circuito mas
+        corto, y ese numero entraria en la moda como si fuera una observacion.
+        """
+        vuelta = self._vuelta(7, 11, 10)
+        vuelta["segments_sector_3"] = None
+        self.assertIsNone(contar_minisectores_vuelta(vuelta))
+        vuelta["segments_sector_3"] = []
+        self.assertIsNone(contar_minisectores_vuelta(vuelta))
+
+    def test_usa_la_moda_y_no_la_primera_vuelta(self) -> None:
+        """La primera vuelta puede ser una de las incompletas."""
+        conteos = [24] + [26] * 40 + [25] * 3
+        resolucion = resolver_resolucion_minisector(conteos, 5891.0)
+
+        self.assertTrue(resolucion["disponible"])
+        self.assertEqual(resolucion["minisectores_por_vuelta"], 26)
+        self.assertEqual(resolucion["resolucion_m"], 226.6)
+
+    def test_usa_la_moda_y_no_el_maximo(self) -> None:
+        """Una sola vuelta anomala no debe fijar la resolucion de la sesion."""
+        resolucion = resolver_resolucion_minisector([28] * 50 + [31], 7004.0)
+
+        self.assertEqual(resolucion["minisectores_por_vuelta"], 28)
+        self.assertEqual(resolucion["resolucion_m"], 250.1)
+
+    def test_cada_circuito_da_su_propia_resolucion(self) -> None:
+        """Los tres circuitos importados, con sus conteos observados."""
+        silverstone = resolver_resolucion_minisector([26] * 760 + [25] * 58 + [24] * 6, 5891.0)
+        spa = resolver_resolucion_minisector([28] * 862 + [27] * 17, 7004.0)
+        suzuka = resolver_resolucion_minisector([26] * 1030 + [25] * 29, 5807.0)
+
+        self.assertEqual(silverstone["resolucion_m"], 226.6)
+        self.assertEqual(spa["resolucion_m"], 250.1)
+        self.assertEqual(suzuka["resolucion_m"], 223.3)
+        # El 26 aplicado a Spa daba 269,4 m: casi 8 % de error persistido como si
+        # fuera un hecho medido de la sesion.
+        self.assertNotEqual(spa["resolucion_m"], round(7004.0 / 26, 1))
+
+    def test_el_resultado_declara_sobre_cuantas_vueltas_se_derivo(self) -> None:
+        """Sin esto el numero no es auditable: se sabria el cuanto y no el sobre que."""
+        resolucion = resolver_resolucion_minisector([28] * 862 + [27] * 17 + [None], 7004.0)
+
+        self.assertEqual(resolucion["vueltas_consideradas"], 879)
+        self.assertEqual(resolucion["vueltas_en_la_moda"], 862)
+        self.assertEqual(resolucion["vueltas_descartadas_sin_tres_sectores"], 1)
+        self.assertEqual(resolucion["distribucion_observada"], {"27": 17, "28": 862})
+        self.assertIn("moda", resolucion["derivacion"])
+
+    def test_sin_vueltas_completas_no_se_inventa_una_resolucion(self) -> None:
+        resolucion = resolver_resolucion_minisector([None, None], 5891.0)
+
+        self.assertFalse(resolucion["disponible"])
+        self.assertIsNone(resolucion["resolucion_m"])
+        self.assertIn("tres sectores completos", resolucion["motivo"])
+
+    def test_sin_longitud_declarada_se_conserva_el_conteo_y_se_declara_el_faltante(self) -> None:
+        """El circuito sin longitud no borra lo que si se pudo observar."""
+        resolucion = resolver_resolucion_minisector([26] * 10, None)
+
+        self.assertFalse(resolucion["disponible"])
+        self.assertIsNone(resolucion["resolucion_m"])
+        self.assertEqual(resolucion["minisectores_por_vuelta"], 26)
+        self.assertIn("longitud de circuito", resolucion["motivo"])
+
 
 
 if __name__ == "__main__":

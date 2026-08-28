@@ -527,6 +527,37 @@ def obtener_sesion_racing(session_key: int) -> dict | None:
             return dict(zip([desc[0] for desc in cur.description], row))
 
 
+def listar_sesiones_racing() -> list[dict]:
+    """Lista las sesiones importadas con su identidad de circuito y su volumen.
+
+    Existe para que la aplicacion pueda ofrecer las sesiones disponibles en vez de
+    llevar una clave escrita a mano. El dashboard tenia `9947` fijo en el codigo, de
+    modo que Spa-Francorchamps y Suzuka estaban importadas pero eran invisibles.
+
+    Devuelve el circuito, el tipo de sesion y la fecha ademas de la clave: un
+    numero de sesion no le dice nada a quien elige, y la eleccion tiene que poder
+    hacerse sin consultar la base.
+    """
+
+    with obtener_conexion() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT s.session_key, s.meeting_key, s.session_name, s.session_type,
+                       s.circuit_key, s.circuit_short_name, s.country_name, s.location,
+                       s.date_start, s.date_end,
+                       (SELECT count(*) FROM racing_drivers d WHERE d.session_key = s.session_key) AS drivers,
+                       (SELECT count(*) FROM racing_laps l WHERE l.session_key = s.session_key) AS laps,
+                       (SELECT count(*) FROM racing_stints t WHERE t.session_key = s.session_key) AS stints,
+                       (SELECT count(*) FROM session_analysis_runs a WHERE a.session_key = s.session_key) AS analisis_generados
+                FROM racing_sessions AS s
+                ORDER BY s.date_start DESC, s.session_key DESC
+                """
+            )
+            columnas = [desc[0] for desc in cur.description]
+            return [dict(zip(columnas, fila)) for fila in cur.fetchall()]
+
+
 def obtener_pilotos_racing(session_key: int) -> list[dict]:
     """Devuelve pilotos/equipos de la sesion para seleccionar comparaciones."""
 
@@ -671,6 +702,180 @@ def listar_corridas_replay(session_key: int) -> list[dict]:
             )
             columnas = [desc[0] for desc in cur.description]
             return [dict(zip(columnas, fila)) for fila in cur.fetchall()]
+
+
+# Tope de corridas distintas que se enumeran para una sesion. La tabla tiene unas
+# pocas por sesion; el tope existe para que la consulta siga siendo acotada si
+# alguna vez dejan de serlo.
+LIMITE_CORRIDAS_REPLAY = 50
+
+# Enumeracion de corridas sin recorrer la tabla ("skip scan" recursivo).
+#
+# POR QUE NO SE USA `GROUP BY`. `listar_corridas_replay` agrupa las 7,6 millones de
+# filas de `telemetry_messages` para contar cada corrida. Se volvio a medir el
+# 2026-08-28 y sigue costando 23,2 segundos, de modo que exponerla como ruta HTTP
+# reproduciria el defecto que ya se corrigio en `/replay`.
+#
+# Lo que la interfaz necesita no es el conteo sino QUE corridas existen, y eso son
+# tres o cuatro valores distintos. La consulta recursiva salta de un valor de
+# `replay_run_id` al siguiente apoyandose en el indice unico de replay, leyendo una
+# fila por corrida en vez de todas las filas de la tabla. Medido en 31 ms.
+_CORRIDAS_POR_SALTOS = """
+WITH RECURSIVE corridas AS (
+    (SELECT replay_run_id
+       FROM telemetry_messages
+      WHERE replay_run_id IS NOT NULL AND replay_seq IS NOT NULL
+      ORDER BY replay_run_id
+      LIMIT 1)
+    UNION ALL
+    SELECT (SELECT t.replay_run_id
+              FROM telemetry_messages AS t
+             WHERE t.replay_run_id > c.replay_run_id AND t.replay_seq IS NOT NULL
+             ORDER BY t.replay_run_id
+             LIMIT 1)
+      FROM corridas AS c
+     WHERE c.replay_run_id IS NOT NULL
+)
+SELECT replay_run_id FROM corridas WHERE replay_run_id IS NOT NULL LIMIT %(limite)s
+"""
+
+# Mismo salto sobre las corridas anteriores a la migracion 003, que guardaron su
+# identidad dentro de `metadata->'extra'`. Se apoya en el indice de expresion de la
+# migracion 004. Medido en 16 ms.
+_CORRIDAS_LEGADAS_POR_SALTOS = """
+WITH RECURSIVE corridas AS (
+    (SELECT metadata->'extra'->>'replay_run_id' AS replay_run_id
+       FROM telemetry_messages
+      WHERE replay_run_id IS NULL AND metadata->'extra'->>'replay_run_id' IS NOT NULL
+      ORDER BY 1
+      LIMIT 1)
+    UNION ALL
+    SELECT (SELECT t.metadata->'extra'->>'replay_run_id'
+              FROM telemetry_messages AS t
+             WHERE t.replay_run_id IS NULL
+               AND t.metadata->'extra'->>'replay_run_id' > c.replay_run_id
+             ORDER BY 1
+             LIMIT 1)
+      FROM corridas AS c
+     WHERE c.replay_run_id IS NOT NULL
+)
+SELECT replay_run_id FROM corridas WHERE replay_run_id IS NOT NULL LIMIT %(limite)s
+"""
+
+VOLUMEN_POR_SECUENCIA = (
+    "ultimo replay_seq mas uno: son los mensajes que la corrida publico. No se "
+    "cuentan las filas persistidas porque ese agregado recorre millones de filas."
+)
+VOLUMEN_NO_DISPONIBLE = (
+    "no disponible: la corrida es anterior a la columna replay_seq y contar sus "
+    "filas exigiria el agregado lento"
+)
+
+
+def _session_key_de(session_id: str | None) -> int | None:
+    """Extrae la clave de sesion de un `session_id` con forma `openf1:session:N`."""
+    if not session_id:
+        return None
+    ultimo = session_id.rsplit(":", 1)[-1]
+    return int(ultimo) if ultimo.isdigit() else None
+
+
+def listar_corridas_replay_acotado(
+    session_key: int, limite: int = LIMITE_CORRIDAS_REPLAY
+) -> list[dict]:
+    """Lista las corridas de replay de una sesion sin recorrer la tabla entera.
+
+    Es la version que puede exponerse por HTTP. Enumera las corridas por saltos de
+    indice y luego lee una sola fila por corrida para saber a que sesion pertenece
+    y por donde empieza y termina. El costo no depende del volumen persistido sino
+    de la cantidad de corridas distintas, que son unas pocas.
+
+    Cada fila declara **de donde sale su volumen**: las corridas con `replay_seq`
+    lo derivan del ultimo numero de secuencia, y las anteriores a esa columna lo
+    dejan en `None` con su motivo. Es preferible a devolver un conteo exacto que
+    costaria veintitres segundos, y a inventar un numero.
+
+    LIMITACION CONOCIDA: `limite` acota la enumeracion por orden alfabetico de
+    identificador, no por relevancia. Si la tabla llegara a tener mas corridas que
+    el tope, el listado quedaria recortado sin decirlo. Hoy tiene cuatro contra un
+    tope de cincuenta, de modo que el caso no se da; si alguna vez se acerca, hay
+    que elevar el tope o declarar el recorte como hace `/replay`.
+    """
+    filas: list[dict] = []
+    with obtener_conexion() as conn:
+        with conn.cursor() as cur:
+            cur.execute(_CORRIDAS_POR_SALTOS, {"limite": limite})
+            identificadores = [fila[0] for fila in cur.fetchall()]
+            cur.execute(_CORRIDAS_LEGADAS_POR_SALTOS, {"limite": limite})
+            legadas = [fila[0] for fila in cur.fetchall()]
+
+            for replay_run_id in identificadores:
+                cur.execute(
+                    """
+                    SELECT session_id, timestamp, replay_seq
+                    FROM telemetry_messages
+                    WHERE replay_run_id = %s AND replay_seq IS NOT NULL
+                    ORDER BY replay_seq
+                    LIMIT 1
+                    """,
+                    (replay_run_id,),
+                )
+                primera = cur.fetchone()
+                cur.execute(
+                    """
+                    SELECT session_id, timestamp, replay_seq
+                    FROM telemetry_messages
+                    WHERE replay_run_id = %s AND replay_seq IS NOT NULL
+                    ORDER BY replay_seq DESC
+                    LIMIT 1
+                    """,
+                    (replay_run_id,),
+                )
+                ultima = cur.fetchone()
+                if primera is None or ultima is None:
+                    continue
+                filas.append({
+                    "replay_run_id": replay_run_id,
+                    "session_key": _session_key_de(primera[0]),
+                    "identidad_en_columna": True,
+                    "desde": primera[1],
+                    "hasta": ultima[1],
+                    "mensajes_estimados": (ultima[2] or 0) + 1,
+                    "volumen_metodo": VOLUMEN_POR_SECUENCIA,
+                })
+
+            for replay_run_id in legadas:
+                cur.execute(
+                    """
+                    SELECT session_id, timestamp
+                    FROM telemetry_messages
+                    WHERE replay_run_id IS NULL
+                      AND metadata->'extra'->>'replay_run_id' = %s
+                    LIMIT 1
+                    """,
+                    (replay_run_id,),
+                )
+                muestra = cur.fetchone()
+                if muestra is None:
+                    continue
+                filas.append({
+                    "replay_run_id": replay_run_id,
+                    "session_key": _session_key_de(muestra[0]),
+                    "identidad_en_columna": False,
+                    "desde": None,
+                    "hasta": None,
+                    "mensajes_estimados": None,
+                    "volumen_metodo": VOLUMEN_NO_DISPONIBLE,
+                })
+
+    de_la_sesion = [fila for fila in filas if fila["session_key"] == session_key]
+    # Primero las corridas mas grandes, que son las que sostienen un analisis; las
+    # de volumen no derivable quedan al final en vez de simular ser las menores.
+    de_la_sesion.sort(
+        key=lambda fila: (fila["mensajes_estimados"] is None, -(fila["mensajes_estimados"] or 0),
+                          fila["replay_run_id"])
+    )
+    return de_la_sesion
 
 
 def obtener_comparacion_pilotos_racing(session_key: int, driver_numbers: list[int]) -> list[dict]:
@@ -1439,11 +1644,30 @@ def listar_analisis_sesion(session_key: int) -> list[dict]:
             return [dict(zip(columnas, fila)) for fila in cur.fetchall()]
 
 
+# Seleccion de la version mas reciente del analisis de una corrida.
+#
+# La clave unica de `session_analysis_runs` incluye `analyzer_version`, de modo que
+# una misma corrida puede tener el resultado de varias versiones del analizador
+# conviviendo, que es justamente lo que se busca al versionar. Filtrar solo por
+# sesion y corrida devolvia las vueltas de TODAS esas versiones mezcladas: 827
+# vueltas se leian como 1.654, con dos filas por vuelta y valores distintos. Aca se
+# resuelve primero cual es la corrida de analisis vigente y se leen solo sus filas.
+_ANALISIS_VIGENTE = """
+    r.analysis_run_id = (
+        SELECT analysis_run_id
+        FROM session_analysis_runs
+        WHERE session_key = %(session_key)s AND replay_run_id = %(replay_run_id)s
+        ORDER BY generated_at_utc DESC, analysis_run_id DESC
+        LIMIT 1
+    )
+"""
+
+
 def obtener_analisis_vueltas(
     session_key: int, replay_run_id: str, driver_number: int | None = None
 ) -> list[dict]:
     """Devuelve el analisis por vuelta de la version mas reciente de una corrida."""
-    condiciones = ["r.session_key = %(session_key)s", "r.replay_run_id = %(replay_run_id)s"]
+    condiciones = [_ANALISIS_VIGENTE]
     parametros: dict[str, Any] = {"session_key": session_key, "replay_run_id": replay_run_id}
     if driver_number is not None:
         condiciones.append("l.driver_number = %(driver_number)s")
@@ -1470,7 +1694,7 @@ def obtener_analisis_stints(
     session_key: int, replay_run_id: str, driver_number: int | None = None
 ) -> list[dict]:
     """Devuelve el analisis por stint de la version mas reciente de una corrida."""
-    condiciones = ["r.session_key = %(session_key)s", "r.replay_run_id = %(replay_run_id)s"]
+    condiciones = [_ANALISIS_VIGENTE]
     parametros: dict[str, Any] = {"session_key": session_key, "replay_run_id": replay_run_id}
     if driver_number is not None:
         condiciones.append("s.driver_number = %(driver_number)s")

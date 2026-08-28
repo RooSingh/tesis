@@ -2,7 +2,27 @@ const API_BASE_URL = "http://127.0.0.1:8000";
 const SESSION_ID = "mqtt_phase_recalibrated_01";
 const ENDPOINT_SESION = `${API_BASE_URL}/telemetry/by-session/${SESSION_ID}?limit=100`;
 const INTERVALO_RECARGA_MS = 3000;
-const OPENF1_SESSION_KEY = 9947;
+
+// Sesion y corrida elegidas desde la interfaz.
+//
+// Eran dos constantes escritas en el codigo, `9947` y `d7_silverstone_full_001`.
+// La base tiene tres sesiones importadas -Silverstone, Spa-Francorchamps y
+// Suzuka- y dos de ellas no tenian forma de mostrarse, lo que contradecia de
+// frente la reutilizacion multicircuito que el trabajo sostiene. Ahora son estado:
+// se pueblan desde `/racing/sessions` y `/racing/sessions/{key}/replay-runs`.
+//
+// La corrida no es un detalle menor de la sesion: una misma carrera acumula el
+// replay definitivo junto a mas de una decena de sondeos de carga de las mismas
+// vueltas, de modo que sin elegir corrida se mezclan repeticiones. El literal
+// anterior ya habia tenido que cambiarse a mano una vez.
+let sesionesOpenF1 = [];
+let sesionOpenF1Seleccionada = null;
+let corridasReplaySesion = [];
+let corridaReplaySeleccionada = null;
+// Limites persistidos por corrida de analisis, indexados por `replay_run_id`.
+// Es de donde salen la resolucion de minisector y la granularidad de muestreo, que
+// antes eran textos fijos con los valores de Silverstone.
+let limitesPorCorrida = new Map();
 
 const estadoCarga = document.getElementById("estado-carga");
 const resumenSesion = document.getElementById("resumen-sesion");
@@ -33,14 +53,17 @@ const seleccionadosPilotosComparacion = document.getElementById("seleccionados-p
 const cuerpoTablaOpenF1 = document.querySelector("#tabla-openf1 tbody");
 const tarjetasComparacionPilotos = document.getElementById("tarjetas-comparacion-pilotos");
 const PILOTOS_COMPARACION_INICIALES = [1, 4, 81];
-// Corrida de replay que analiza el dashboard.
-//
-// Apuntaba a `silverstone_2025_probe_151800_151810_v1`, un sondeo de 963 mensajes
-// que abarca 9,9 segundos de carrera. La sesion contiene ademas una decena larga de
-// sondeos de carga bajo el mismo `session_id`, de modo que elegir corrida de forma
-// explicita no es opcional: sin ese filtro se mezclan repeticiones de las mismas
-// vueltas. `d7_silverstone_full_001` es la carrera completa verificada.
-const REPLAY_RUN_ID_ANALISIS_CARRERA = "d7_silverstone_full_001";
+const selectorSesionOpenF1 = document.getElementById("selector-sesion-openf1");
+const selectorCorridaReplay = document.getElementById("selector-corrida-replay");
+const declaracionTelemetriaSesion = document.getElementById("declaracion-telemetria-sesion");
+// Secciones que solo tienen sentido con una corrida de replay persistida. Se
+// ocultan cuando no la hay, y la ausencia se declara arriba: un panel vacio no
+// distingue "no hay dato" de "la consulta fallo".
+const SECCIONES_DEPENDIENTES_DE_TELEMETRIA = [
+  document.getElementById("seccion-analisis-carrera"),
+  document.getElementById("seccion-trazabilidad-openf1"),
+  document.getElementById("seccion-analisis-vuelta"),
+];
 
 // Tope de muestras crudas que se piden por piloto para la tabla de auditoria.
 // La tabla existe para inspeccionar el formato de los mensajes, no para volcarlos:
@@ -672,7 +695,7 @@ async function seleccionarInstanteCarrera(timestamp) {
   const parametros = new URLSearchParams({ timestamp: new Date(timestamp).toISOString() });
   obtenerPilotosSeleccionados().forEach((driver) => parametros.append("drivers", driver));
   try {
-    const respuesta = await fetch(`${API_BASE_URL}/racing/sessions/${OPENF1_SESSION_KEY}/context-at?${parametros}`);
+    const respuesta = await fetch(`${API_BASE_URL}/racing/sessions/${sesionOpenF1Seleccionada}/context-at?${parametros}`);
     if (!respuesta.ok) {
       throw new Error(`Error HTTP ${respuesta.status}`);
     }
@@ -688,6 +711,11 @@ async function cargarSerieCarrera() {
   resumenInstanteCarrera.textContent = "Selecciona un punto de la curva para cargar contexto racing sincronizado.";
   climaInstanteCarrera.innerHTML = "";
   pilotosInstanteCarrera.innerHTML = "";
+  if (!corridaReplaySeleccionada) {
+    estadoAnalisisCarrera.textContent = "Esta sesion no tiene ninguna corrida de replay persistida: no hay serie que cargar.";
+    Object.values(GRAFICOS_CARRERA).forEach((canvas) => canvas.getContext("2d").clearRect(0, 0, canvas.width, canvas.height));
+    return;
+  }
   estadoAnalisisCarrera.textContent = "Cargando telemetria coordinada...";
   const pilotosSeleccionados = obtenerPilotosSeleccionados();
   if (!pilotosSeleccionados.length) {
@@ -698,11 +726,11 @@ async function cargarSerieCarrera() {
   try {
     const series = await Promise.all(Object.entries(CONFIGURACION_SENALES_CARRERA).map(async ([signalName, configuracion]) => {
       const parametros = new URLSearchParams({
-        replay_run_id: REPLAY_RUN_ID_ANALISIS_CARRERA,
+        replay_run_id: corridaReplaySeleccionada,
         signal: configuracion.signalName ?? signalName,
       });
       pilotosSeleccionados.forEach((driver) => parametros.append("drivers", driver));
-      const respuesta = await fetch(`${API_BASE_URL}/racing/sessions/${OPENF1_SESSION_KEY}/replay-series?${parametros}`);
+      const respuesta = await fetch(`${API_BASE_URL}/racing/sessions/${sesionOpenF1Seleccionada}/replay-series?${parametros}`);
       if (!respuesta.ok) {
         throw new Error(`Error HTTP ${respuesta.status}`);
       }
@@ -721,7 +749,9 @@ async function cargarSerieCarrera() {
     leyendaAnalisisCarrera.innerHTML = pilotosLeyenda.join("");
     const sinTraza = pilotosSeleccionados.filter((numero) => !pilotosConTelemetriaReplay.has(numero));
     resumenAnalisisCarrera.textContent = `Velocidad, acelerador y freno durante ${((rangoComun.fin - rangoComun.inicio) / 1000).toFixed(2)} s de reloj deportivo. Los pilotos pueden ocupar puntos distintos del circuito.${sinTraza.length ? ` Sin traza MQTT en esta ejecucion: ${sinTraza.map((numero) => pilotosOpenF1.find((piloto) => piloto.driver_number === numero)?.name_acronym ?? numero).join(", ")}.` : ""}`;
-    estadoAnalisisCarrera.textContent = `${pilotosSeleccionados.length} pilotos · ${seriesPorSenal.speed.length} puntos de velocidad · replay v1`;
+    // La corrida se nombra en vez de un "replay v1" generico: es el filtro que
+    // decide que muestras entran en el grafico.
+    estadoAnalisisCarrera.textContent = `${pilotosSeleccionados.length} pilotos · ${seriesPorSenal.speed.length} puntos de velocidad · corrida ${corridaReplaySeleccionada}`;
     ultimaSerieCarrera = { ...rangoComun, series: seriesPorSenal, puntos: seriesPorSenal.speed.map((mensaje) => ({ tiempo: new Date(mensaje.timestamp).getTime() })), margen: { izquierdo: 66 }, areaAncho: GRAFICOS_CARRERA.speed.width - 96 };
   } catch (error) {
     console.error(error);
@@ -729,22 +759,251 @@ async function cargarSerieCarrera() {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Seleccion de sesion y de corrida
+//
+// Las tres sesiones importadas se leen de `/racing/sessions`, que declara ademas
+// si el paquete de cada una trae `car_data`. Las corridas se leen de
+// `/racing/sessions/{key}/replay-runs`, que enumera por saltos de indice en vez de
+// agregar millones de filas: el listado exhaustivo cuesta 23 segundos medidos y por
+// eso no se expone.
+// ---------------------------------------------------------------------------
+
+function sesionSeleccionada() {
+  return sesionesOpenF1.find((sesion) => sesion.session_key === sesionOpenF1Seleccionada) ?? null;
+}
+
+function limitesCorridaActual() {
+  if (!corridaReplaySeleccionada) {
+    return null;
+  }
+  return limitesPorCorrida.get(corridaReplaySeleccionada) ?? null;
+}
+
+function etiquetaSesion(sesion) {
+  const fecha = sesion.date_start ? new Date(sesion.date_start).toISOString().slice(0, 10) : "sin fecha";
+  const anio = sesion.date_start ? new Date(sesion.date_start).getUTCFullYear() : "s/f";
+  const circuito = sesion.circuit_short_name ?? sesion.location ?? `Sesion ${sesion.session_key}`;
+  const tipo = sesion.session_type ?? sesion.session_name ?? "sesion";
+  // La ausencia de telemetria se anuncia ya en el propio selector: elegir una
+  // sesion sin traza no deberia ser una sorpresa que se descubre al ver un panel
+  // vacio.
+  const sinTelemetria = sesion.telemetria?.disponible ? "" : " · solo contexto";
+  return `${circuito} ${anio} · ${tipo} · ${fecha}${sinTelemetria}`;
+}
+
+function etiquetaCorrida(corrida) {
+  const volumen = corrida.mensajes_estimados === null || corrida.mensajes_estimados === undefined
+    ? "volumen no derivable"
+    : `${corrida.mensajes_estimados.toLocaleString("es-AR")} mensajes`;
+  const duracion = corrida.desde && corrida.hasta
+    ? `${((new Date(corrida.hasta) - new Date(corrida.desde)) / 60000).toFixed(1)} min`
+    : "duracion no derivable";
+  const conAnalisis = limitesPorCorrida.has(corrida.replay_run_id) ? " · con analisis" : "";
+  return `${corrida.replay_run_id} · ${volumen} · ${duracion}${conAnalisis}`;
+}
+
+async function cargarAnalisisDisponibles(sessionKey) {
+  limitesPorCorrida = new Map();
+  try {
+    const respuesta = await fetch(`${API_BASE_URL}/racing/sessions/${sessionKey}/analysis`);
+    if (!respuesta.ok) {
+      return;
+    }
+    // La respuesta viene de la mas reciente a la mas antigua, de modo que la
+    // primera entrada de cada corrida es la version vigente de su analisis.
+    for (const analisis of await respuesta.json()) {
+      if (!limitesPorCorrida.has(analisis.replay_run_id)) {
+        limitesPorCorrida.set(analisis.replay_run_id, analisis.limits ?? {});
+      }
+    }
+  } catch (error) {
+    console.error(error);
+  }
+}
+
+async function cargarCorridasReplay() {
+  corridasReplaySesion = [];
+  corridaReplaySeleccionada = null;
+  cacheAnalisis.clear();
+  await cargarAnalisisDisponibles(sesionOpenF1Seleccionada);
+  try {
+    const respuesta = await fetch(`${API_BASE_URL}/racing/sessions/${sesionOpenF1Seleccionada}/replay-runs`);
+    if (!respuesta.ok) {
+      throw new Error(`Error HTTP ${respuesta.status}`);
+    }
+    corridasReplaySesion = await respuesta.json();
+  } catch (error) {
+    console.error(error);
+  }
+  if (!corridasReplaySesion.length) {
+    selectorCorridaReplay.innerHTML = "<option value=\"\">Sin corridas de replay persistidas</option>";
+    selectorCorridaReplay.disabled = true;
+    return;
+  }
+  selectorCorridaReplay.disabled = false;
+  selectorCorridaReplay.innerHTML = corridasReplaySesion
+    .map((corrida) => `<option value="${escaparHtml(corrida.replay_run_id)}">${escaparHtml(etiquetaCorrida(corrida))}</option>`)
+    .join("");
+  // Se prefiere una corrida que ya tenga analisis generado, y en su defecto la de
+  // mayor volumen. Los sondeos de carga abarcan segundos de carrera y elegir uno
+  // por descuido fue justamente el defecto que motivo fijar la corrida a mano.
+  const preferida = corridasReplaySesion.find((corrida) => limitesPorCorrida.has(corrida.replay_run_id))
+    ?? corridasReplaySesion[0];
+  corridaReplaySeleccionada = preferida.replay_run_id;
+  selectorCorridaReplay.value = corridaReplaySeleccionada;
+}
+
+async function cargarSesionesDisponibles() {
+  try {
+    const respuesta = await fetch(`${API_BASE_URL}/racing/sessions`);
+    if (!respuesta.ok) {
+      throw new Error(`Error HTTP ${respuesta.status}`);
+    }
+    sesionesOpenF1 = await respuesta.json();
+  } catch (error) {
+    console.error(error);
+    declaracionTelemetriaSesion.textContent = "No se pudo recuperar la lista de sesiones importadas desde la API.";
+    return false;
+  }
+  if (!sesionesOpenF1.length) {
+    selectorSesionOpenF1.innerHTML = "<option value=\"\">Sin sesiones importadas</option>";
+    declaracionTelemetriaSesion.textContent = "No hay ninguna sesion importada en la base.";
+    return false;
+  }
+  selectorSesionOpenF1.innerHTML = sesionesOpenF1
+    .map((sesion) => `<option value="${sesion.session_key}">${escaparHtml(etiquetaSesion(sesion))}</option>`)
+    .join("");
+  // Arranca en la primera sesion con telemetria declarada para que la vista por
+  // defecto siga siendo una con datos, sin por eso esconder las demas.
+  const inicial = sesionesOpenF1.find((sesion) => sesion.telemetria?.disponible) ?? sesionesOpenF1[0];
+  sesionOpenF1Seleccionada = inicial.session_key;
+  selectorSesionOpenF1.value = String(sesionOpenF1Seleccionada);
+  await cargarCorridasReplay();
+  return true;
+}
+
+function aplicarDisponibilidadTelemetria() {
+  const sesion = sesionSeleccionada();
+  const hayCorrida = Boolean(corridaReplaySeleccionada);
+  SECCIONES_DEPENDIENTES_DE_TELEMETRIA.forEach((seccion) => {
+    if (seccion) {
+      seccion.hidden = !hayCorrida;
+    }
+  });
+  declaracionTelemetriaSesion.classList.toggle("declaracion-ausente", !hayCorrida);
+  if (!sesion) {
+    return;
+  }
+  if (hayCorrida) {
+    declaracionTelemetriaSesion.textContent = `Telemetria disponible: ${sesion.telemetria?.pilotos_car_data ?? 0} pilotos con car_data en el paquete importado y ${corridasReplaySesion.length} corrida(s) de replay persistida(s). Se analiza ${corridaReplaySeleccionada}.`;
+    return;
+  }
+  // Declaracion de ausencia, no panel vacio. Es la diferencia entre decir "esta
+  // sesion no tiene telemetria replicada" y dejar que el lector concluya que la
+  // aplicacion se rompio.
+  const motivo = sesion.telemetria?.motivo
+    ?? "no hay corridas de replay persistidas para esta sesion";
+  declaracionTelemetriaSesion.textContent = `Sin telemetria para esta sesion: ${motivo}. Se muestra el contexto oficial importado (${sesion.laps} vueltas, ${sesion.stints} stints, ${sesion.drivers} pilotos). Los paneles de telemetria por reloj deportivo, analisis por vuelta y trazabilidad del replay quedan ocultos porque no hay dato que mostrar, no porque la consulta haya fallado.`;
+}
+
+// Granularidad de muestreo y resolucion espacial.
+//
+// Las dos estaban escritas a mano con los valores de Silverstone: "car_data
+// ~3.7 Hz" y "227 m de resolucion espacial", que es `5891 / 26`. Spa da 250 m y
+// Suzuka 223 m, de modo que en cualquier otra sesion el texto afirmaba un numero
+// ajeno. Ambas se leen ahora de los limites que el analisis persiste para la
+// corrida elegida, y si no estan se declara la ausencia en vez de mostrar el
+// numero de otra sesion.
+
+function textoGranularidad() {
+  const hz = limitesCorridaActual()?.muestreo_telemetria_hz;
+  return typeof hz === "number"
+    ? `car_data ~${hz} Hz`
+    : "no declarada para esta corrida";
+}
+
+function textoResolucionMinisector() {
+  const limites = limitesCorridaActual();
+  const bloque = limites?.resolucion_minisector;
+  if (bloque?.disponible) {
+    return `Los minisectores dan ${bloque.resolucion_m} m de resolucion espacial: ${bloque.minisectores_por_vuelta} por vuelta, moda sobre ${bloque.vueltas_consideradas} vueltas de esta misma sesion.`;
+  }
+  if (bloque && !bloque.disponible) {
+    return `Resolucion espacial de los minisectores no disponible: ${bloque.motivo}.`;
+  }
+  if (typeof limites?.resolucion_minisector_m === "number") {
+    // Analisis anteriores a la derivacion por sesion: publican el valor pero no
+    // sobre cuantas vueltas se apoya. Se muestra lo que hay, sin atribuirle una
+    // procedencia que ese analisis no guardo.
+    return `Los minisectores dan ${limites.resolucion_minisector_m} m de resolucion espacial segun los limites persistidos de esta corrida, que no declaran sobre cuantas vueltas se derivo.`;
+  }
+  return "El analisis de esta corrida no declara la resolucion espacial de los minisectores.";
+}
+
+async function obtenerComparacionPilotos(pilotosSeleccionados) {
+  const parametros = pilotosSeleccionados.map((driver) => `drivers=${driver}`).join("&");
+  const respuesta = await fetch(`${API_BASE_URL}/racing/sessions/${sesionOpenF1Seleccionada}/driver-comparison?${parametros}`);
+  if (!respuesta.ok) {
+    throw new Error("No se pudo recuperar la comparacion de pilotos.");
+  }
+  return respuesta.json();
+}
+
+function renderizarIdentidadSesion(sesion) {
+  openF1Titulo.textContent = `${sesion.circuit_short_name} ${sesion.session_name} · Comparador operativo`;
+  etiquetaCabecera.textContent = "Analisis historico de carrera";
+  tituloCabecera.textContent = `${sesion.circuit_short_name} ${new Date(sesion.date_start).getUTCFullYear()} · ${sesion.session_name}`;
+  resumenSesion.textContent = corridaReplaySeleccionada
+    ? `${sesion.country_name} · sesion ${sesion.session_key} · replay historico persistido`
+    : `${sesion.country_name} · sesion ${sesion.session_key} · contexto oficial sin telemetria replicada`;
+  estadoOrigen.textContent = corridaReplaySeleccionada ? "OPENF1 HISTORICAL REPLAY" : "OPENF1 SOLO CONTEXTO";
+  estadoOrigen.className = "estado-origen estado-openf1-replay";
+}
+
+function renderizarContextoOpenF1(sesion, pilotosSeleccionados, mensajesSeleccionados) {
+  const muestras = mensajesSeleccionados === null
+    ? "sin telemetria replicada para esta sesion"
+    : `${mensajesSeleccionados.length} (max ${LIMITE_MUESTRAS_AUDITORIA_POR_PILOTO} por piloto)`;
+  return [
+    ["Sesion", sesion.session_key],
+    ["Meeting", sesion.meeting_key],
+    ["Seleccion", `${pilotosSeleccionados.length} pilotos`],
+    ["Muestras", muestras],
+    ["Granularidad", textoGranularidad()],
+    ["Calidad", "observed_openf1"],
+  ].map(([etiqueta, valor]) => `<div><dt>${escaparHtml(etiqueta)}</dt><dd>${escaparHtml(valor)}</dd></div>`).join("");
+}
+
 async function cargarReplayOpenF1() {
+  if (!sesionOpenF1Seleccionada) {
+    return;
+  }
+  aplicarDisponibilidadTelemetria();
   openF1EstadoCarga.textContent = "Consultando replay y contexto...";
   try {
     const [sesionRespuesta, pilotosRespuesta] = await Promise.all([
-      fetch(`${API_BASE_URL}/racing/sessions/${OPENF1_SESSION_KEY}`),
-      fetch(`${API_BASE_URL}/racing/sessions/${OPENF1_SESSION_KEY}/drivers`),
+      fetch(`${API_BASE_URL}/racing/sessions/${sesionOpenF1Seleccionada}`),
+      fetch(`${API_BASE_URL}/racing/sessions/${sesionOpenF1Seleccionada}/drivers`),
     ]);
     if (!sesionRespuesta.ok || !pilotosRespuesta.ok) {
       throw new Error("No se pudo recuperar el contexto OpenF1.");
     }
     const sesion = await sesionRespuesta.json();
     pilotosOpenF1 = await pilotosRespuesta.json();
+    // La seleccion de pilotos pertenece a la sesion: al cambiar de sesion se
+    // descartan los numeros que no corren en ella, en vez de arrastrarlos y pedir
+    // comparaciones de un piloto ausente.
+    pilotosSeleccionadosEstado = pilotosSeleccionadosEstado.filter(
+      (numero) => pilotosOpenF1.some((piloto) => piloto.driver_number === numero),
+    );
     renderizarCasillasPilotos();
     // El analisis por vuelta se apoya en el mismo catalogo de pilotos.
     poblarSelectorPilotosAnalisis();
-    actualizarAnalisisVuelta();
+    if (corridaReplaySeleccionada) {
+      actualizarAnalisisVuelta();
+    }
+    renderizarIdentidadSesion(sesion);
     const pilotosSeleccionados = obtenerPilotosSeleccionados();
     if (!pilotosSeleccionados.length) {
       renderizarComparacionPilotos([]);
@@ -752,28 +1011,38 @@ async function cargarReplayOpenF1() {
       openF1EstadoCarga.textContent = "Selecciona al menos un piloto para iniciar la comparacion.";
       return;
     }
+    if (!corridaReplaySeleccionada) {
+      // Sesion importada sin telemetria replicada. El contexto oficial se muestra
+      // igual porque existe y es util; lo que no hay es traza. La ausencia ya quedo
+      // declarada en el selector, de modo que aca solo se evita pedir una corrida
+      // que no existe y se deja de afirmar un volumen de muestras que no hubo.
+      pilotosConTelemetriaReplay = new Set();
+      renderizarCasillasPilotos();
+      renderizarComparacionPilotos(await obtenerComparacionPilotos(pilotosSeleccionados));
+      renderizarTablaOpenF1([]);
+      openF1Resumen.textContent = `Sin corrida de replay · ${sesion.laps} vueltas · ${sesion.stints} stints · ${sesion.race_control_events} eventos de control.`;
+      openF1Contexto.innerHTML = renderizarContextoOpenF1(sesion, pilotosSeleccionados, null);
+      openF1EstadoCarga.textContent = "Sesion sin telemetria replicada: se muestra el contexto oficial importado.";
+      return;
+    }
     // Se pide una muestra acotada por piloto seleccionado en vez de la sesion
     // completa. La llamada anterior no filtraba por corrida ni por piloto y no
     // tenia tope: con la carrera persistida pedia 10.079.006 filas al backend.
-    const [replayPorPiloto, comparacionRespuesta] = await Promise.all([
+    const [replayPorPiloto, comparacion] = await Promise.all([
       Promise.all(pilotosSeleccionados.map(async (numero) => {
         const parametros = new URLSearchParams({
-          replay_run_id: REPLAY_RUN_ID_ANALISIS_CARRERA,
+          replay_run_id: corridaReplaySeleccionada,
           driver_number: String(numero),
           limite: String(LIMITE_MUESTRAS_AUDITORIA_POR_PILOTO),
         });
-        const respuesta = await fetch(`${API_BASE_URL}/racing/sessions/${OPENF1_SESSION_KEY}/replay?${parametros}`);
+        const respuesta = await fetch(`${API_BASE_URL}/racing/sessions/${sesionOpenF1Seleccionada}/replay?${parametros}`);
         if (!respuesta.ok) {
           throw new Error("No se pudo recuperar el lote replay.");
         }
         return { numero, cuerpo: await respuesta.json() };
       })),
-      fetch(`${API_BASE_URL}/racing/sessions/${OPENF1_SESSION_KEY}/driver-comparison?${pilotosSeleccionados.map((driver) => `drivers=${driver}`).join("&")}`),
+      obtenerComparacionPilotos(pilotosSeleccionados),
     ]);
-    if (!comparacionRespuesta.ok) {
-      throw new Error("No se pudo recuperar la comparacion de pilotos.");
-    }
-    const comparacion = await comparacionRespuesta.json();
     // Un piloto tiene traza si su propia consulta devolvio muestras. Antes esto se
     // deducia descargando la sesion entera y agrupando en el navegador.
     pilotosConTelemetriaReplay = new Set(
@@ -781,18 +1050,12 @@ async function cargarReplayOpenF1() {
     );
     renderizarCasillasPilotos();
     const mensajesSeleccionados = replayPorPiloto.flatMap(({ cuerpo }) => cuerpo.muestras);
-    openF1Titulo.textContent = `${sesion.circuit_short_name} ${sesion.session_name} · Comparador operativo`;
-    openF1Resumen.textContent = `Corrida ${REPLAY_RUN_ID_ANALISIS_CARRERA} · ${sesion.laps} vueltas · ${sesion.stints} stints · ${sesion.race_control_events} eventos de control.`;
-    openF1Contexto.innerHTML = [["Sesion", sesion.session_key], ["Meeting", sesion.meeting_key], ["Seleccion", `${pilotosSeleccionados.length} pilotos`], ["Muestras", `${mensajesSeleccionados.length} (max ${LIMITE_MUESTRAS_AUDITORIA_POR_PILOTO} por piloto)`], ["Granularidad", "car_data ~3.7 Hz"], ["Calidad", "observed_openf1"]].map(([etiqueta, valor]) => `<div><dt>${escaparHtml(etiqueta)}</dt><dd>${escaparHtml(valor)}</dd></div>`).join("");
+    openF1Resumen.textContent = `Corrida ${corridaReplaySeleccionada} · ${sesion.laps} vueltas · ${sesion.stints} stints · ${sesion.race_control_events} eventos de control.`;
+    openF1Contexto.innerHTML = renderizarContextoOpenF1(sesion, pilotosSeleccionados, mensajesSeleccionados);
     renderizarComparacionPilotos(comparacion);
     cargarSerieCarrera();
     renderizarTablaOpenF1(mensajesSeleccionados);
     openF1EstadoCarga.textContent = `${mensajesSeleccionados.length} mensajes de muestra para auditoria de formato. No es el total de la corrida.`;
-    etiquetaCabecera.textContent = "Analisis historico de carrera";
-    tituloCabecera.textContent = `${sesion.circuit_short_name} ${new Date(sesion.date_start).getUTCFullYear()} · ${sesion.session_name}`;
-    resumenSesion.textContent = `${sesion.country_name} · sesion ${sesion.session_key} · replay historico persistido`;
-    estadoOrigen.textContent = "OPENF1 HISTORICAL REPLAY";
-    estadoOrigen.className = "estado-origen estado-openf1-replay";
   } catch (error) {
     console.error(error);
     openF1EstadoCarga.textContent = "No se pudo cargar el replay desde la API.";
@@ -937,7 +1200,7 @@ async function cargarProcesamientoSesiones() {
   }
 }
 
-function cambiarModo() {
+async function cambiarModo() {
   const openF1Activo = selectorModo.value === "openf1";
   document.body.classList.toggle("modo-openf1-activo", openF1Activo);
   document.querySelectorAll(".modo-simulacion").forEach((elemento) => {
@@ -945,6 +1208,12 @@ function cambiarModo() {
   });
   panelOpenF1.hidden = !openF1Activo;
   if (openF1Activo) {
+    // El catalogo de sesiones se pide una sola vez: no cambia mientras la
+    // aplicacion esta abierta, y la eleccion del usuario debe sobrevivir a ir y
+    // volver del espacio de trabajo de simulacion.
+    if (!sesionesOpenF1.length) {
+      await cargarSesionesDisponibles();
+    }
     cargarReplayOpenF1();
     cargarProcesamientoSesiones();
   } else {
@@ -956,6 +1225,18 @@ function cambiarModo() {
 
 botonRecargar.addEventListener("click", cargarSesion);
 selectorModo.addEventListener("change", cambiarModo);
+selectorSesionOpenF1.addEventListener("change", async () => {
+  sesionOpenF1Seleccionada = Number(selectorSesionOpenF1.value);
+  // Las corridas pertenecen a la sesion, de modo que cambiar de sesion obliga a
+  // rehacer el listado antes de pedir cualquier dato.
+  await cargarCorridasReplay();
+  cargarReplayOpenF1();
+});
+selectorCorridaReplay.addEventListener("change", () => {
+  corridaReplaySeleccionada = selectorCorridaReplay.value || null;
+  cacheAnalisis.clear();
+  cargarReplayOpenF1();
+});
 casillasPilotosComparacion.addEventListener("change", () => {
   pilotosSeleccionadosEstado = [...casillasPilotosComparacion.querySelectorAll("input:checked")].map((input) => Number(input.value));
   cargarReplayOpenF1();
@@ -1130,7 +1411,7 @@ function renderizarDetalleAnalisis(fila) {
   const bloques = [
     renderizarBloqueMetricas(
       "Medicion oficial",
-      "Proviene de OpenF1 sin transformar. Los minisectores dan 227 m de resolucion espacial.",
+      `Proviene de OpenF1 sin transformar. ${textoResolucionMinisector()}`,
       fila.metricas_oficiales,
     ),
     renderizarBloqueMetricas(
@@ -1165,7 +1446,7 @@ async function obtenerAnalisis(driverNumber, alcance) {
   const ruta = alcance === "stint" ? "stints" : "laps";
   const parametros = new URLSearchParams({ driver_number: String(driverNumber) });
   const respuesta = await fetch(
-    `${API_BASE_URL}/racing/sessions/${OPENF1_SESSION_KEY}/analysis/${REPLAY_RUN_ID_ANALISIS_CARRERA}/${ruta}?${parametros}`,
+    `${API_BASE_URL}/racing/sessions/${sesionOpenF1Seleccionada}/analysis/${corridaReplaySeleccionada}/${ruta}?${parametros}`,
   );
   if (respuesta.status === 404) {
     cacheAnalisis.set(clave, []);
@@ -1187,6 +1468,15 @@ async function actualizarAnalisisVuelta() {
   const driverNumber = Number(selectorPilotoAnalisis.value);
   const alcance = selectorAlcanceAnalisis.value;
   if (!driverNumber) return;
+  if (!corridaReplaySeleccionada) {
+    // Sin corrida no hay analisis posible, y decirlo es preferible a pedir una
+    // ruta con la corrida en `null` y mostrar el error de red resultante.
+    selectorVueltaAnalisis.innerHTML = "";
+    renderizarDetalleAnalisis(null);
+    estadoAnalisisVuelta.textContent = "Sin corrida de replay para esta sesion";
+    resumenAnalisisVuelta.textContent = "El analisis por vuelta se calcula sobre una corrida de replay, y esta sesion no tiene ninguna persistida.";
+    return;
+  }
   etiquetaSelectorVuelta.textContent = alcance === "stint" ? "Stint" : "Vuelta";
   estadoAnalisisVuelta.textContent = "Cargando analisis...";
   try {

@@ -102,8 +102,10 @@ def resumir_minisectores(segmentos: list[int | None]) -> dict:
 
     Los minisectores son la unica fuente espacial de resolucion fina disponible:
     26 por vuelta en Silverstone, es decir unos 227 metros cada uno, informados por
-    el cronometraje oficial. No se derivan de las coordenadas, cuyo muestreo a
-    3,7 Hz deja huecos de decenas de metros.
+    el cronometraje oficial. Ese numero es propio de cada circuito y no una
+    constante del proyecto; `resolver_resolucion_minisector` lo deriva de la propia
+    sesion. No se derivan de las coordenadas, cuyo muestreo a 3,7 Hz deja huecos de
+    decenas de metros.
 
     Los valores nulos se cuentan aparte en vez de descartarse: un minisector sin
     dato no es un minisector amarillo.
@@ -116,6 +118,112 @@ def resumir_minisectores(segmentos: list[int | None]) -> dict:
         "minisectores_purpura": sum(1 for s in presentes if s == MINISECTOR_PURPURA),
         "minisectores_verde": sum(1 for s in presentes if s == MINISECTOR_VERDE),
         "minisectores_amarillo": sum(1 for s in presentes if s == MINISECTOR_AMARILLO),
+    }
+
+
+# Resolucion espacial de los minisectores
+# ---------------------------------------
+# Cuantos minisectores tiene una vuelta NO es una constante del proyecto: es un
+# dato de cada circuito. Contando los propios `laps.json` importados, Silverstone
+# declara 26 minisectores por vuelta, Suzuka tambien 26 y Spa-Francorchamps 28.
+# Fijar el 26 dejaba a Spa con 7004/26 = 269,4 m de resolucion declarada cuando su
+# valor real es 7004/28 = 250,1 m: un 7,7 % de error persistido como si fuera un
+# hecho medido de la sesion.
+#
+# A diferencia de la longitud del circuito, este dato no necesita tabla externa
+# alguna: la propia sesion lo publica en `segments_sector_1..3` de cada vuelta.
+# Por eso vive aca, junto al analisis, y no en `track_reference`, que reune lo que
+# el proyecto tuvo que declarar desde fuera.
+
+
+def contar_minisectores_vuelta(vuelta: dict) -> int | None:
+    """Cuenta los minisectores que declara una vuelta oficial.
+
+    Devuelve `None` cuando alguno de los tres sectores no trae su lista de
+    segmentos. Sumar solo los sectores presentes daria un total menor y creible:
+    una vuelta a la que le falta el sector 3 se leeria como un circuito mas corto.
+    """
+    total = 0
+    for sector in (1, 2, 3):
+        segmentos = vuelta.get(f"segments_sector_{sector}")
+        if not isinstance(segmentos, (list, tuple)) or not segmentos:
+            return None
+        total += len(segmentos)
+    return total
+
+
+def resolucion_minisector_no_disponible(motivo: str) -> dict:
+    """Arma la declaracion de ausencia de resolucion espacial.
+
+    Misma forma que el caso disponible, igual que hace `track_reference` con la
+    longitud: quien lee el analisis encuentra siempre las mismas llaves y la
+    ausencia se declara en vez de omitirse.
+    """
+    return {"disponible": False, "resolucion_m": None, "motivo": motivo}
+
+
+def resolver_resolucion_minisector(
+    conteos_por_vuelta: list[int | None],
+    longitud_referencia_m: float | None,
+) -> dict:
+    """Deriva la resolucion espacial de los minisectores de la propia sesion.
+
+    Se usa la MODA de los conteos por vuelta y no la primera vuelta ni el maximo.
+    Los datos muestran vueltas con menos segmentos de los que tiene el circuito
+    (Silverstone tiene 58 vueltas con 25 y 6 con 24 sobre 824 utiles), que son
+    vueltas incompletas o con incidentes. La moda es robusta frente a esa cola; la
+    primera vuelta puede caer justo en ella y el maximo se dispararia con cualquier
+    vuelta anomala.
+
+    El resultado publica el conteo detectado, cuantas vueltas se consideraron,
+    cuantas sostienen la moda y la distribucion completa observada, para que el
+    numero sea auditable sin volver a la base.
+
+    Nunca se estima: sin vueltas con los tres sectores completos, o sin longitud de
+    circuito declarada, se devuelve la declaracion de ausencia con su motivo.
+    """
+    utiles = [conteo for conteo in conteos_por_vuelta if conteo]
+    if not utiles:
+        return resolucion_minisector_no_disponible(
+            "no hay vueltas con los tres sectores completos en esta sesion; "
+            "no se puede derivar cuantos minisectores tiene el circuito"
+        )
+
+    distribucion: dict[int, int] = {}
+    for conteo in utiles:
+        distribucion[conteo] = distribucion.get(conteo, 0) + 1
+    # Desempate determinista por el conteo menor. Un empate es patologico y queda
+    # visible en `distribucion_observada`, que se publica entera.
+    moda, vueltas_en_la_moda = sorted(
+        distribucion.items(), key=lambda par: (-par[1], par[0])
+    )[0]
+
+    detalle = {
+        "minisectores_por_vuelta": moda,
+        "vueltas_consideradas": len(utiles),
+        "vueltas_en_la_moda": vueltas_en_la_moda,
+        "vueltas_descartadas_sin_tres_sectores": len(conteos_por_vuelta) - len(utiles),
+        "distribucion_observada": {str(k): distribucion[k] for k in sorted(distribucion)},
+        "derivacion": (
+            "moda de len(segments_sector_1)+len(segments_sector_2)+len(segments_sector_3) "
+            "sobre las vueltas de la propia sesion"
+        ),
+    }
+
+    if not longitud_referencia_m:
+        return {
+            **resolucion_minisector_no_disponible(
+                "hay minisectores detectados pero no hay longitud de circuito "
+                "declarada para esta sesion; la resolucion en metros no se calcula"
+            ),
+            **detalle,
+        }
+
+    return {
+        "disponible": True,
+        "resolucion_m": round(longitud_referencia_m / moda, 1),
+        "longitud_referencia_m": longitud_referencia_m,
+        **detalle,
     }
 
 
