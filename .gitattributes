@@ -1,0 +1,7 @@
+# Archivos binarios: Git no debe convertir finales de linea en ellos.
+# Sin esta regla, un checkout en Windows corrompe el contenido.
+*.pdf  binary
+*.pptx binary
+*.png  binary
+*.jpg  binary
+*.zst  binary
