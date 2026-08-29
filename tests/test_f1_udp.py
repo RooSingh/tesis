@@ -442,3 +442,23 @@ class DanoYDinamicaTests(unittest.TestCase):
         esperados = {f1_udp.PAQUETES[i]["nombre"] for i in implementados} | {"cabecera"}
         nombres = {f["estructura"] for f in f1_udp.verificar_estructuras()}
         self.assertEqual(nombres, esperados)
+
+
+class EjesDelVehiculoTests(unittest.TestCase):
+    """La guinada es la rotacion alrededor del eje vertical.
+
+    Una version anterior la atribuia al eje longitudinal. El error se detecto
+    integrando cada eje sobre una captura real y no por lectura del codigo: es
+    un error de interpretacion semantica, no de desplazamiento de bytes, de modo
+    que ninguna verificacion aritmetica podia detectarlo.
+    """
+
+    def test_expone_la_guinada_como_campo_propio(self):
+        v = f1_udp.decodificar(_datagrama_relleno(13))["sesion"]
+        self.assertIn("yaw_rate_rads", v)
+
+    def test_la_guinada_corresponde_al_eje_vertical(self):
+        """Debe ser el mismo valor que el componente vertical, no otro eje."""
+
+        v = f1_udp.decodificar(_datagrama_relleno(13))["sesion"]
+        self.assertEqual(v["yaw_rate_rads"], v["angular_velocity_rads"]["y"])

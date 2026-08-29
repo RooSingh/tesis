@@ -466,9 +466,25 @@ def _desempaquetar_motion_ex(b: tuple) -> dict[str, Any]:
         "wheel_lat_force": _por_rueda(b[24:28]),
         "wheel_long_force": _por_rueda(b[28:32]),
         "height_of_cog_above_ground_m": b[32],
+        # Ejes del vehiculo, identificados por medicion sobre captura real:
+        # x lateral, de -19,1 a +12,6 m/s; y vertical, de -0,4 a +0,6 m/s;
+        # z longitudinal, hasta +91,3 m/s, es decir 328 km/h.
         "local_velocity_ms": {"x": b[33], "y": b[34], "z": b[35]},
-        # El componente en z es la velocidad de guinada, equivalente de `yaw_rate`.
         "angular_velocity_rads": {"x": b[36], "y": b[37], "z": b[38]},
+        # La guinada es la rotacion alrededor del eje vertical, y por lo tanto
+        # esta en el componente `y`.
+        #
+        # Una version anterior de este modulo la atribuia al componente `z`. El
+        # error se detecto integrando cada eje sobre una captura de 120 s en la
+        # que el vehiculo recorrio casi una vuelta completa: el eje `y` acumulo
+        # 275,5 grados, mientras `x` y `z` acumularon 8,1 y 26,9. Un vehiculo
+        # que da una vuelta a un circuito rota unos 360 grados, de modo que solo
+        # `y` es compatible con el recorrido observado.
+        #
+        # Importa porque este es el campo equivalente a la senal `yaw_rate`
+        # validada sobre el bus CAN real: mapearlo al eje equivocado habria
+        # construido esa correspondencia sobre un canal casi constante.
+        "yaw_rate_rads": b[37],
         "angular_acceleration_rads2": {"x": b[39], "y": b[40], "z": b[41]},
         "front_wheels_angle_rad": b[42],
         "wheel_vert_force": _por_rueda(b[43:47]),
