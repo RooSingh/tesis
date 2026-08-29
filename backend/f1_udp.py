@@ -228,6 +228,146 @@ def _desempaquetar_lap_data(bruto: tuple) -> dict[str, Any]:
         "speed_trap_fastest_lap": bruto[32],  # 255 si no hay
     }
 
+# --------------------------------------------------------------------------- #
+# Session, paquete 1
+# --------------------------------------------------------------------------- #
+
+# Contexto de la sesion, no del vehiculo: un solo bloque, no un arreglo de 22.
+#
+# Es la estructura mas compleja del protocolo: dos arreglos anidados —21 zonas de
+# comisarios y 64 muestras de pronostico— suman 617 de sus 753 bytes. Se arma por
+# tramos para que el conteo sea auditable; la prueba de tamano verifica el total.
+#
+# Su valor esta en que declara lo que el operador tendria que anotar a mano:
+# circuito, longitud, tipo de sesion, clima, temperaturas y las diez ayudas de
+# conduccion. Un metadato leido del flujo no puede contradecir a los datos; uno
+# tipeado a mano si.
+SESSION_CABEZA_FMT = "BbbBHBbBHHBBBBBB"
+MARSHAL_FMT = "fb"
+SESSION_MEDIO_FMT = "BBB"
+PRONOSTICO_FMT = "BBBbbbbB"
+SESSION_COLA_FMT = "BB" "III" "BBB" "BBBBBBBBB" "BB" "I" "B" "BBBB" "BBB" + "B" * 25 + "12B" "ff"
+
+ZONAS_COMISARIO = 21
+MUESTRAS_PRONOSTICO = 64
+
+SESSION_FMT = ("<"
+               + SESSION_CABEZA_FMT
+               + MARSHAL_FMT * ZONAS_COMISARIO
+               + SESSION_MEDIO_FMT
+               + PRONOSTICO_FMT * MUESTRAS_PRONOSTICO
+               + SESSION_COLA_FMT)
+SESSION_TAMANO = struct.calcsize(SESSION_FMT)
+
+
+def _desempaquetar_session(bruto: tuple) -> dict[str, Any]:
+    """Nombra los campos del paquete de sesion.
+
+    Se nombran los que el trabajo usa. Las zonas de comisarios y las muestras de
+    pronostico se resumen por cantidad: existen en el crudo y pueden leerse
+    despues, pero normalizarlas hoy no sostiene ninguna afirmacion.
+    """
+
+    fin_cabeza = len(SESSION_CABEZA_FMT)
+    ini_medio = fin_cabeza + ZONAS_COMISARIO * 2       # cada zona aporta 2 valores
+    ini_pronostico = ini_medio + 3
+    ini_cola = ini_pronostico + MUESTRAS_PRONOSTICO * 8
+
+    c = bruto[:fin_cabeza]
+    medio = bruto[ini_medio:ini_pronostico]
+    cola = bruto[ini_cola:]
+
+    return {
+        "weather": c[0],
+        "track_temperature_c": c[1],
+        "air_temperature_c": c[2],
+        "total_laps": c[3],
+        "track_length_m": c[4],
+        "session_type": c[5],
+        "track_id": c[6],
+        "formula": c[7],
+        "session_time_left_s": c[8],
+        "session_duration_s": c[9],
+        "pit_speed_limit_kmh": c[10],
+        "game_paused": c[11],
+        "is_spectating": c[12],
+        "num_marshal_zones": c[15],
+        "safety_car_status": medio[0],
+        "network_game": medio[1],
+        "num_weather_forecast_samples": medio[2],
+        "forecast_accuracy": cola[0],
+        "ai_difficulty": cola[1],
+        "season_link_id": cola[2],
+        "weekend_link_id": cola[3],
+        "session_link_id": cola[4],
+        # Las diez ayudas de conduccion. Que esten en el flujo convierte
+        # "sesion sin ayudas" de una afirmacion del operador en un hecho
+        # verificable contra el propio archivo.
+        "steering_assist": cola[8],
+        "braking_assist": cola[9],
+        "gearbox_assist": cola[10],
+        "pit_assist": cola[11],
+        "pit_release_assist": cola[12],
+        "ers_assist": cola[13],
+        "drs_assist": cola[14],
+        "dynamic_racing_line": cola[15],
+        "dynamic_racing_line_type": cola[16],
+        "game_mode": cola[17],
+        "rule_set": cola[18],
+        "time_of_day_min": cola[19],
+        "session_length": cola[20],
+        "num_safety_car_periods": cola[25],
+        "num_virtual_safety_car_periods": cola[26],
+        "num_red_flag_periods": cola[27],
+        "equal_car_performance": cola[28],
+        "car_damage_setting": cola[37],
+        "car_damage_rate": cola[38],
+        "safety_car_setting": cola[45],
+        "sector2_lap_distance_start_m": cola[-2],
+        "sector3_lap_distance_start_m": cola[-1],
+    }
+
+
+# --------------------------------------------------------------------------- #
+# Car Status, paquete 7
+# --------------------------------------------------------------------------- #
+
+# Una entrada por vehiculo. 55 bytes.
+CAR_STATUS_FMT = "<BBBBBfffHHBBHBBBbfffBfffB"
+CAR_STATUS_TAMANO = struct.calcsize(CAR_STATUS_FMT)
+
+
+def _desempaquetar_car_status(bruto: tuple) -> dict[str, Any]:
+    """Nombra los campos de estado de un vehiculo."""
+
+    return {
+        "traction_control": bruto[0],       # 0 nulo, 1 medio, 2 completo
+        "anti_lock_brakes": bruto[1],
+        "fuel_mix": bruto[2],               # 0 pobre a 3 maximo
+        "front_brake_bias_pct": bruto[3],
+        "pit_limiter": bruto[4],
+        "fuel_in_tank_kg": bruto[5],
+        "fuel_capacity_kg": bruto[6],
+        "fuel_remaining_laps": bruto[7],
+        "max_rpm": bruto[8],
+        "idle_rpm": bruto[9],
+        "max_gears": bruto[10],
+        "drs_allowed": bruto[11],
+        "drs_activation_distance_m": bruto[12],
+        "actual_tyre_compound": bruto[13],
+        "visual_tyre_compound": bruto[14],
+        "tyres_age_laps": bruto[15],
+        "vehicle_fia_flags": bruto[16],     # -1 desconocido, 0 ninguna, 1 verde...
+        "engine_power_ice_w": bruto[17],
+        "engine_power_mguk_w": bruto[18],
+        "ers_store_energy_j": bruto[19],
+        "ers_deploy_mode": bruto[20],
+        "ers_harvested_this_lap_mguk_j": bruto[21],
+        "ers_harvested_this_lap_mguh_j": bruto[22],
+        "ers_deployed_this_lap_j": bruto[23],
+        "network_paused": bruto[24],
+    }
+
 
 # Decodificadores disponibles, por identificador de paquete.
 #
@@ -235,7 +375,15 @@ def _desempaquetar_lap_data(bruto: tuple) -> dict[str, Any]:
 # se decodifican: el trabajo solo necesita telemetria y datos de vuelta, y
 # escribir estructuras que nadie consume es codigo que hay que mantener sin
 # obtener nada a cambio.
+# Paquetes de bloque unico: describen la sesion, no a cada vehiculo, de modo
+# que no llevan arreglo de 22 entradas y se decodifican de una sola vez.
+_DECODIFICADORES_UNICOS = {
+    1: (SESSION_FMT, _desempaquetar_session),
+}
+
+# Paquetes con un arreglo de una entrada por vehiculo.
 _DECODIFICADORES = {
+    7: (CAR_STATUS_FMT, CAR_STATUS_TAMANO, 0, _desempaquetar_car_status),
     2: (LAP_DATA_FMT, LAP_DATA_TAMANO, LAP_DATA_COLA_TAMANO, _desempaquetar_lap_data),
     6: (CAR_TELEMETRY_FMT, CAR_TELEMETRY_TAMANO, CAR_TELEMETRY_COLA_TAMANO,
         _desempaquetar_car_telemetry),
@@ -265,6 +413,17 @@ def verificar_estructuras() -> list[dict[str, Any]]:
         "declarado": 29,
         "coincide": CABECERA_TAMANO == 29,
     }]
+
+    for packet_id, (formato, _) in _DECODIFICADORES_UNICOS.items():
+        declarado = PAQUETES[packet_id]["tamano"]
+        calculado = CABECERA_TAMANO + struct.calcsize(formato)
+        filas.append({
+            "estructura": PAQUETES[packet_id]["nombre"],
+            "bloque_unico": True,
+            "calculado": calculado,
+            "declarado": declarado,
+            "coincide": calculado == declarado,
+        })
 
     for packet_id, (_, por_vehiculo, cola, _) in _DECODIFICADORES.items():
         declarado = PAQUETES[packet_id]["tamano"]
@@ -339,6 +498,12 @@ def decodificar(datos: bytes) -> dict[str, Any]:
         "paquete": descripcion["nombre"],
         "packet_id": packet_id,
     }
+
+    if packet_id in _DECODIFICADORES_UNICOS:
+        formato, nombrar = _DECODIFICADORES_UNICOS[packet_id]
+        resultado["decodificado"] = True
+        resultado["sesion"] = nombrar(struct.unpack_from(formato, datos, CABECERA_TAMANO))
+        return resultado
 
     if packet_id not in _DECODIFICADORES:
         resultado["decodificado"] = False

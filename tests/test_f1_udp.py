@@ -107,11 +107,18 @@ def datagrama_vueltas(indice_propio: int = 0) -> bytes:
 
 
 def datagrama_sin_decodificador() -> bytes:
-    """Paquete 1, Session: reconocido y validado por tamano, no decodificado."""
+    """Un paquete valido de un tipo que este trabajo no decodifica.
 
-    tamano = f1_udp.PAQUETES[1]["tamano"]
-    relleno = b"\x00" * (tamano - f1_udp.CABECERA_TAMANO)
-    return _cabecera(1) + relleno
+    El tipo se elige dinamicamente entre los que no tienen decodificador, para
+    que la prueba no envejezca cada vez que se implementa uno nuevo: al agregar
+    Session, esta funcion lo seguia usando como ejemplo de lo no decodificado.
+    """
+
+    implementados = set(f1_udp._DECODIFICADORES) | set(f1_udp._DECODIFICADORES_UNICOS)
+    packet_id = next(i for i in sorted(f1_udp.PAQUETES) if i not in implementados)
+    tamano = f1_udp.PAQUETES[packet_id]["tamano"]
+    relleno = bytes(tamano - f1_udp.CABECERA_TAMANO)
+    return _cabecera(packet_id) + relleno
 
 
 # --------------------------------------------------------------------------- #
@@ -258,12 +265,12 @@ class PaquetesNoDecodificadosTests(unittest.TestCase):
 
     def test_paquete_sin_decodificador_queda_contabilizado(self):
         r = f1_udp.decodificar(datagrama_sin_decodificador())
-        self.assertEqual(r["paquete"], "session")
         self.assertFalse(r["decodificado"])
         self.assertIn("motivo", r)
         self.assertNotIn("vehiculos", r)
-        # La cabecera si se decodifica: permite contabilizarlo por sesion y marco.
-        self.assertEqual(r["cabecera"]["packet_id"], 1)
+        self.assertNotIn("sesion", r)
+        # Se reconoce por su nombre aunque no se interprete su contenido.
+        self.assertEqual(r["paquete"], f1_udp.PAQUETES[r["packet_id"]]["nombre"])
         self.assertEqual(r["cabecera"]["session_uid"], 0xDEADBEEF)
 
 
@@ -282,3 +289,84 @@ class TrazabilidadTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+# --------------------------------------------------------------------------- #
+# Grupo 6: paquetes de contexto y estado
+# --------------------------------------------------------------------------- #
+
+def _datagrama_relleno(packet_id: int) -> bytes:
+    """Paquete valido en tamano, con carga util en cero.
+
+    Sirve para ejercitar el despacho y la aritmetica sin fijar ningun valor
+    concreto: las pruebas verifican el mecanismo, no un circuito ni una sesion.
+    """
+
+    tamano = f1_udp.PAQUETES[packet_id]["tamano"]
+    return _cabecera(packet_id) + b"\x00" * (tamano - f1_udp.CABECERA_TAMANO)
+
+
+class SessionYEstadoTests(unittest.TestCase):
+    """Session describe la sesion; Car Status describe cada vehiculo."""
+
+    def test_session_cierra_en_el_tamano_declarado(self):
+        total = f1_udp.CABECERA_TAMANO + f1_udp.SESSION_TAMANO
+        self.assertEqual(total, f1_udp.PAQUETES[1]["tamano"])
+        self.assertEqual(total, 753)
+
+    def test_car_status_cierra_en_el_tamano_declarado(self):
+        self.assertEqual(f1_udp.CAR_STATUS_TAMANO, 55)
+        total = f1_udp.CABECERA_TAMANO + f1_udp.VEHICULOS * f1_udp.CAR_STATUS_TAMANO
+        self.assertEqual(total, f1_udp.PAQUETES[7]["tamano"])
+        self.assertEqual(total, 1239)
+
+    def test_session_se_decodifica_como_bloque_unico(self):
+        """No lleva arreglo por vehiculo: describe la sesion, no a los autos."""
+
+        r = f1_udp.decodificar(_datagrama_relleno(1))
+        self.assertTrue(r["decodificado"])
+        self.assertIn("sesion", r)
+        self.assertNotIn("vehiculos", r)
+        self.assertNotIn("vehiculo_propio", r)
+
+    def test_session_nombra_los_campos_de_contexto(self):
+        """Verifica que los campos existan, sin fijar ningun valor concreto."""
+
+        s = f1_udp.decodificar(_datagrama_relleno(1))["sesion"]
+        for campo in ("track_id", "track_length_m", "session_type", "game_mode",
+                      "weather", "track_temperature_c", "air_temperature_c",
+                      "sector2_lap_distance_start_m", "sector3_lap_distance_start_m"):
+            self.assertIn(campo, s)
+
+    def test_session_declara_las_diez_ayudas(self):
+        """Permite verificar contra el archivo si una sesion corrio sin ayudas."""
+
+        s = f1_udp.decodificar(_datagrama_relleno(1))["sesion"]
+        ayudas = ("steering_assist", "braking_assist", "gearbox_assist",
+                  "pit_assist", "pit_release_assist", "ers_assist", "drs_assist",
+                  "dynamic_racing_line", "dynamic_racing_line_type")
+        for ayuda in ayudas:
+            self.assertIn(ayuda, s)
+
+    def test_car_status_decodifica_los_veintidos_vehiculos(self):
+        """Se decodifican todos; normalizar solo el propio es decision del adaptador."""
+
+        r = f1_udp.decodificar(_datagrama_relleno(7))
+        self.assertTrue(r["decodificado"])
+        self.assertEqual(len(r["vehiculos"]), f1_udp.VEHICULOS)
+        self.assertIn("fuel_in_tank_kg", r["vehiculo_propio"])
+        self.assertIn("actual_tyre_compound", r["vehiculo_propio"])
+        self.assertIn("ers_store_energy_j", r["vehiculo_propio"])
+
+    def test_verificar_estructuras_cubre_los_cuatro_paquetes(self):
+        nombres = {f["estructura"] for f in f1_udp.verificar_estructuras()}
+        self.assertEqual(nombres,
+                         {"cabecera", "session", "car_status", "lap_data", "car_telemetry"})
+
+    def test_ningun_paquete_decodificable_queda_sin_verificar(self):
+        """Toda estructura implementada debe tener su comprobacion de tamano."""
+
+        implementados = set(f1_udp._DECODIFICADORES) | set(f1_udp._DECODIFICADORES_UNICOS)
+        verificados = {f1_udp.PAQUETES[i]["nombre"] for i in implementados}
+        nombres = {f["estructura"] for f in f1_udp.verificar_estructuras()}
+        self.assertTrue(verificados <= nombres)
