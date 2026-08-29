@@ -48,6 +48,11 @@ SENALES_TELEMETRIA: dict[str, tuple[str, str, float]] = {
     "gear": ("gear_selected", "gear", 1.0),
     "engine_rpm": ("engine_speed", "rpm", 1.0),
     "engine_temperature_c": ("engine_temperature", "celsius", 1.0),
+    # Booleano documentado. Su contraste con la fuente deportiva es un
+    # resultado del trabajo: alli el mismo concepto llega como un codigo
+    # de estado con valores indeterminados que hubo que resolver por
+    # medicion, y aqui como un booleano documentado.
+    "drs": ("drs_open", "bool", 1.0),
 }
 
 # Senales del paquete de datos de vuelta.
@@ -176,7 +181,11 @@ def mensajes_desde_paquete(
                         "campo_origen": campo,
                         # Se declara por senal y no por mensaje uniforme: algunas
                         # se convierten y otras no.
-                        "transformation": "identity" if factor == 1.0 else f"escala_x{factor:g}",
+                        "transformation": (
+                            "cast_bool" if unidad == "bool"
+                            else "identity" if factor == 1.0
+                            else f"escala_x{factor:g}"
+                        ),
                         "captura_sha256": captura_sha256,
                     },
                 },
@@ -187,36 +196,3 @@ def mensajes_desde_paquete(
             f"El paquete {paquete} no aporto ninguna senal conocida."
         )
     return mensajes
-
-
-# El estado del alerón móvil se normaliza aparte porque es booleano y su
-# contraste con la fuente deportiva es un resultado del trabajo: alli el mismo
-# concepto llega como un codigo de estado con valores indeterminados que hubo
-# que resolver por medicion, y aqui como un booleano documentado.
-def mensaje_drs(
-    decodificado: dict[str, Any],
-    inicio_captura_utc: str,
-    origen: str = ORIGEN_EN_VIVO,
-) -> dict[str, Any]:
-    """Construye el mensaje del estado del aleron movil del vehiculo propio."""
-
-    if decodificado.get("paquete") != "car_telemetry":
-        raise ErrorNormalizacion("El estado del aleron solo esta en car_telemetry.")
-
-    base = mensajes_desde_paquete(decodificado, inicio_captura_utc, origen)[0]
-    vehiculo = decodificado["vehiculo_propio"]
-    mensaje = {
-        **base,
-        "signal_name": "drs_open",
-        "value": bool(vehiculo["drs"]),
-        "unit": "bool",
-    }
-    mensaje["metadata"] = {
-        **base["metadata"],
-        "extra": {
-            **base["metadata"]["extra"],
-            "campo_origen": "drs",
-            "transformation": "bool",
-        },
-    }
-    return mensaje

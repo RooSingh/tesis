@@ -90,12 +90,17 @@ class SenalesTests(unittest.TestCase):
         self.assertEqual(senales["lap_distance"]["unit"], "m")
 
     def test_el_aleron_movil_se_normaliza_como_booleano(self):
-        """Contrasta con la fuente deportiva, donde es un codigo de estado."""
+        """Contrasta con la fuente deportiva, donde es un codigo de estado.
 
-        mensaje = f1_25.mensaje_drs(_telemetria(), INICIO)
-        self.assertEqual(mensaje["signal_name"], "drs_open")
+        Sale del mismo mapa de senales que el resto: no hay un camino especial
+        para este campo.
+        """
+
+        senales = self._por_senal(f1_25.mensajes_desde_paquete(_telemetria(), INICIO))
+        mensaje = senales["drs_open"]
         self.assertIs(mensaje["value"], True)
         self.assertEqual(mensaje["unit"], "bool")
+        self.assertEqual(mensaje["metadata"]["extra"]["campo_origen"], "drs")
         TelemetryMessage(**mensaje)
 
 
@@ -120,6 +125,9 @@ class ProcedenciaTests(unittest.TestCase):
         self.assertEqual(por_senal["gear_selected"], "identity")
         self.assertEqual(por_senal["throttle_position"], "escala_x100")
         self.assertEqual(por_senal["brake_position"], "escala_x100")
+        # Convertir a booleano tambien es una transformacion: declararla
+        # como identidad seria el mismo defecto que se evita mas arriba.
+        self.assertEqual(por_senal["drs_open"], "cast_bool")
 
     def test_distingue_adquisicion_en_vivo_de_reproduccion(self):
         """Un dato reproducido no sostiene las mismas afirmaciones de latencia."""
