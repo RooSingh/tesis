@@ -358,10 +358,11 @@ class SessionYEstadoTests(unittest.TestCase):
         self.assertIn("actual_tyre_compound", r["vehiculo_propio"])
         self.assertIn("ers_store_energy_j", r["vehiculo_propio"])
 
-    def test_verificar_estructuras_cubre_los_cuatro_paquetes(self):
+    def test_la_verificacion_incluye_siempre_la_cabecera(self):
+        """La cabecera se verifica aparte porque no pertenece a ningun paquete."""
+
         nombres = {f["estructura"] for f in f1_udp.verificar_estructuras()}
-        self.assertEqual(nombres,
-                         {"cabecera", "session", "car_status", "lap_data", "car_telemetry"})
+        self.assertIn("cabecera", nombres)
 
     def test_ningun_paquete_decodificable_queda_sin_verificar(self):
         """Toda estructura implementada debe tener su comprobacion de tamano."""
@@ -370,3 +371,74 @@ class SessionYEstadoTests(unittest.TestCase):
         verificados = {f1_udp.PAQUETES[i]["nombre"] for i in implementados}
         nombres = {f["estructura"] for f in f1_udp.verificar_estructuras()}
         self.assertTrue(verificados <= nombres)
+
+
+class DanoYDinamicaTests(unittest.TestCase):
+    """Car Damage describe el estado mecanico; Motion Ex la dinamica del vehiculo."""
+
+    def test_car_damage_cierra_en_el_tamano_declarado(self):
+        self.assertEqual(f1_udp.CAR_DAMAGE_TAMANO, 46)
+        total = f1_udp.CABECERA_TAMANO + f1_udp.VEHICULOS * f1_udp.CAR_DAMAGE_TAMANO
+        self.assertEqual(total, f1_udp.PAQUETES[10]["tamano"])
+        self.assertEqual(total, 1041)
+
+    def test_motion_ex_cierra_en_el_tamano_declarado(self):
+        """Sesenta y un flotantes consecutivos, solo del vehiculo propio."""
+
+        self.assertEqual(f1_udp.MOTION_EX_TAMANO, 244)
+        total = f1_udp.CABECERA_TAMANO + f1_udp.MOTION_EX_TAMANO
+        self.assertEqual(total, f1_udp.PAQUETES[13]["tamano"])
+        self.assertEqual(total, 273)
+
+    def test_el_orden_de_ruedas_es_el_que_declara_la_especificacion(self):
+        """Leerlas al reves intercambia el eje sin alterar el tamano.
+
+        Es el mismo tipo de error que el campo de marcha con signo: la
+        verificacion aritmetica no puede detectarlo.
+        """
+
+        self.assertEqual(f1_udp.ORDEN_RUEDAS,
+                         ("trasera_izquierda", "trasera_derecha",
+                          "delantera_izquierda", "delantera_derecha"))
+
+    def test_car_damage_nombra_las_ruedas_en_lugar_de_indices(self):
+        v = f1_udp.decodificar(_datagrama_relleno(10))["vehiculo_propio"]
+        for campo in ("tyres_wear_pct", "brakes_damage_pct", "tyre_blisters_pct"):
+            self.assertEqual(set(v[campo]), set(f1_udp.ORDEN_RUEDAS))
+
+    def test_car_damage_cubre_el_desgaste_del_motor_por_componente(self):
+        v = f1_udp.decodificar(_datagrama_relleno(10))["vehiculo_propio"]
+        for campo in ("engine_ice_wear_pct", "engine_mguk_wear_pct",
+                      "engine_mguh_wear_pct", "engine_es_wear_pct",
+                      "engine_ce_wear_pct", "engine_tc_wear_pct"):
+            self.assertIn(campo, v)
+
+    def test_motion_ex_se_decodifica_como_bloque_unico(self):
+        """La especificacion lo declara como datos del vehiculo propio unicamente."""
+
+        r = f1_udp.decodificar(_datagrama_relleno(13))
+        self.assertTrue(r["decodificado"])
+        self.assertIn("sesion", r)
+        self.assertNotIn("vehiculos", r)
+
+    def test_motion_ex_expone_las_senales_equivalentes_al_bus_can(self):
+        """Es el puente con el conjunto minimo derivado del analisis CAN real."""
+
+        v = f1_udp.decodificar(_datagrama_relleno(13))["sesion"]
+        self.assertEqual(set(v["wheel_speed"]), set(f1_udp.ORDEN_RUEDAS))
+        self.assertIn("z", v["angular_velocity_rads"])   # equivalente de yaw_rate
+        self.assertIn("front_wheels_angle_rad", v)       # equivalente de steer_angle
+        self.assertEqual(set(v["wheel_slip_ratio"]), set(f1_udp.ORDEN_RUEDAS))
+
+    def test_la_verificacion_no_cubre_paquetes_no_implementados(self):
+        """Complementa la invariante inversa: no debe verificar lo que no decodifica.
+
+        Junto con `test_ningun_paquete_decodificable_queda_sin_verificar`, fija la
+        correspondencia exacta sin enumerar nombres, de modo que agregar un
+        decodificador nuevo no invalide la prueba.
+        """
+
+        implementados = set(f1_udp._DECODIFICADORES) | set(f1_udp._DECODIFICADORES_UNICOS)
+        esperados = {f1_udp.PAQUETES[i]["nombre"] for i in implementados} | {"cabecera"}
+        nombres = {f["estructura"] for f in f1_udp.verificar_estructuras()}
+        self.assertEqual(nombres, esperados)

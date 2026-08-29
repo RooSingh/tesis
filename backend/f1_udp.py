@@ -375,15 +375,125 @@ def _desempaquetar_car_status(bruto: tuple) -> dict[str, Any]:
 # se decodifican: el trabajo solo necesita telemetria y datos de vuelta, y
 # escribir estructuras que nadie consume es codigo que hay que mantener sin
 # obtener nada a cambio.
+
+# --------------------------------------------------------------------------- #
+# Orden de las ruedas
+# --------------------------------------------------------------------------- #
+
+# La especificacion lo declara textualmente para los arreglos de Motion Ex:
+# "All wheel arrays have the following order: RL, RR, FL, FR".
+#
+# No es el orden intuitivo. Leerlos como delantera izquierda primero intercambia
+# el eje entero sin alterar el tamano, de modo que ninguna prueba aritmetica lo
+# detectaria: es el mismo tipo de error que el campo de marcha con signo.
+ORDEN_RUEDAS = ("trasera_izquierda", "trasera_derecha",
+                "delantera_izquierda", "delantera_derecha")
+
+
+def _por_rueda(valores) -> dict[str, Any]:
+    """Nombra un arreglo de cuatro valores segun el orden del protocolo."""
+
+    return dict(zip(ORDEN_RUEDAS, valores))
+
+
+# --------------------------------------------------------------------------- #
+# Car Damage, paquete 10
+# --------------------------------------------------------------------------- #
+
+# Una entrada por vehiculo. 46 bytes.
+#
+# Aporta los canales de estado mecanico que el trabajo habia declarado fuera de
+# alcance por falta de fuente: desgaste y dano por rueda, y desgaste del motor
+# por componente. No los convierte en medicion real, pero permite construir y
+# demostrar la vista de salud del vehiculo.
+CAR_DAMAGE_FMT = "<4f4B4B4B" + "B" * 18
+CAR_DAMAGE_TAMANO = struct.calcsize(CAR_DAMAGE_FMT)
+
+
+def _desempaquetar_car_damage(bruto: tuple) -> dict[str, Any]:
+    """Nombra los campos de dano y desgaste de un vehiculo."""
+
+    return {
+        "tyres_wear_pct": _por_rueda(bruto[0:4]),
+        "tyres_damage_pct": _por_rueda(bruto[4:8]),
+        "brakes_damage_pct": _por_rueda(bruto[8:12]),
+        "tyre_blisters_pct": _por_rueda(bruto[12:16]),
+        "front_left_wing_damage_pct": bruto[16],
+        "front_right_wing_damage_pct": bruto[17],
+        "rear_wing_damage_pct": bruto[18],
+        "floor_damage_pct": bruto[19],
+        "diffuser_damage_pct": bruto[20],
+        "sidepod_damage_pct": bruto[21],
+        "drs_fault": bruto[22],
+        "ers_fault": bruto[23],
+        "gearbox_damage_pct": bruto[24],
+        "engine_damage_pct": bruto[25],
+        "engine_mguh_wear_pct": bruto[26],
+        "engine_es_wear_pct": bruto[27],
+        "engine_ce_wear_pct": bruto[28],
+        "engine_ice_wear_pct": bruto[29],
+        "engine_mguk_wear_pct": bruto[30],
+        "engine_tc_wear_pct": bruto[31],
+        "engine_blown": bruto[32],
+        "engine_seized": bruto[33],
+    }
+
+
+# --------------------------------------------------------------------------- #
+# Motion Ex, paquete 13
+# --------------------------------------------------------------------------- #
+
+# Solo el vehiculo propio. 244 bytes: sesenta y un flotantes consecutivos.
+#
+# Es el paquete mas rico del protocolo y el que tiende el puente con el analisis
+# CAN del trabajo: `m_wheelSpeed` es la misma senal que se identifico y valido
+# sobre el bus real, y la velocidad angular en el eje vertical es la guinada.
+MOTION_EX_FMT = "<" + "f" * 61
+MOTION_EX_TAMANO = struct.calcsize(MOTION_EX_FMT)
+
+
+def _desempaquetar_motion_ex(b: tuple) -> dict[str, Any]:
+    """Nombra los campos de dinamica del vehiculo propio."""
+
+    return {
+        "suspension_position": _por_rueda(b[0:4]),
+        "suspension_velocity": _por_rueda(b[4:8]),
+        "suspension_acceleration": _por_rueda(b[8:12]),
+        # Equivalente de la senal `wheel_speeds` validada sobre el bus CAN real.
+        "wheel_speed": _por_rueda(b[12:16]),
+        "wheel_slip_ratio": _por_rueda(b[16:20]),
+        "wheel_slip_angle": _por_rueda(b[20:24]),
+        "wheel_lat_force": _por_rueda(b[24:28]),
+        "wheel_long_force": _por_rueda(b[28:32]),
+        "height_of_cog_above_ground_m": b[32],
+        "local_velocity_ms": {"x": b[33], "y": b[34], "z": b[35]},
+        # El componente en z es la velocidad de guinada, equivalente de `yaw_rate`.
+        "angular_velocity_rads": {"x": b[36], "y": b[37], "z": b[38]},
+        "angular_acceleration_rads2": {"x": b[39], "y": b[40], "z": b[41]},
+        "front_wheels_angle_rad": b[42],
+        "wheel_vert_force": _por_rueda(b[43:47]),
+        "front_aero_height_m": b[47],
+        "rear_aero_height_m": b[48],
+        "front_roll_angle_rad": b[49],
+        "rear_roll_angle_rad": b[50],
+        "chassis_yaw_rad": b[51],
+        "chassis_pitch_rad": b[52],
+        "wheel_camber_rad": _por_rueda(b[53:57]),
+        "wheel_camber_gain_rad": _por_rueda(b[57:61]),
+    }
+
+
 # Paquetes de bloque unico: describen la sesion, no a cada vehiculo, de modo
 # que no llevan arreglo de 22 entradas y se decodifican de una sola vez.
 _DECODIFICADORES_UNICOS = {
     1: (SESSION_FMT, _desempaquetar_session),
+    13: (MOTION_EX_FMT, _desempaquetar_motion_ex),
 }
 
 # Paquetes con un arreglo de una entrada por vehiculo.
 _DECODIFICADORES = {
     7: (CAR_STATUS_FMT, CAR_STATUS_TAMANO, 0, _desempaquetar_car_status),
+    10: (CAR_DAMAGE_FMT, CAR_DAMAGE_TAMANO, 0, _desempaquetar_car_damage),
     2: (LAP_DATA_FMT, LAP_DATA_TAMANO, LAP_DATA_COLA_TAMANO, _desempaquetar_lap_data),
     6: (CAR_TELEMETRY_FMT, CAR_TELEMETRY_TAMANO, CAR_TELEMETRY_COLA_TAMANO,
         _desempaquetar_car_telemetry),
