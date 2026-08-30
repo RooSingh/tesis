@@ -1200,13 +1200,172 @@ async function cargarProcesamientoSesiones() {
   }
 }
 
+
+// ---------------------------------------------------------------------------
+// Camino en vivo
+// ---------------------------------------------------------------------------
+//
+// No consulta la base. Abre una conexion de eventos enviados por el servidor y
+// recibe cada mensaje al llegar, sin volver a preguntar. La telemetria va en una
+// sola direccion, de modo que un canal bidireccional resolveria un problema que
+// no existe.
+//
+// Que sea un camino distinto del historico es lo que vuelve significativa la
+// comparacion entre operacion en vivo y post-sesion.
+
+const panelVivo = document.getElementById("panel-vivo");
+const vivoEstado = document.getElementById("vivo-estado");
+const vivoTarjetas = document.getElementById("vivo-tarjetas");
+const vivoDiagnostico = document.getElementById("vivo-diagnostico");
+
+// Ultimo valor de cada senal. El flujo trae un mensaje por senal, de modo que la
+// vista se arma acumulando y no esperando un paquete completo.
+const ultimoPorSenal = new Map();
+let fuenteEnVivo = null;
+let mensajesEnVivo = 0;
+let latenciaMs = null;
+let pintadoPendiente = false;
+
+const TARJETAS_VIVO = {
+  speed: { elemento: "vivo-velocidad", formato: (v) => Math.round(v) },
+  gear_selected: {
+    elemento: "vivo-marcha",
+    // La marcha atras llega como -1 y el punto muerto como 0. Mostrarlos como
+    // numeros seria ilegible para quien mira la pantalla.
+    formato: (v) => (v === -1 ? "R" : v === 0 ? "N" : String(v)),
+  },
+  engine_speed: { elemento: "vivo-rpm", formato: (v) => Math.round(v).toLocaleString("es-AR") },
+  throttle_position: { elemento: "vivo-acelerador", formato: (v) => v.toFixed(0) },
+  brake_position: { elemento: "vivo-freno", formato: (v) => v.toFixed(0) },
+  drs_open: { elemento: "vivo-drs", formato: (v) => (v ? "ABIERTO" : "cerrado") },
+  lap_number: { elemento: "vivo-vuelta", formato: (v) => String(v) },
+  lap_distance: { elemento: "vivo-distancia", formato: (v) => v.toFixed(0) },
+};
+
+function registrarMensajeEnVivo(mensaje) {
+  ultimoPorSenal.set(mensaje.signal_name, mensaje);
+  mensajesEnVivo += 1;
+
+  // La latencia se mide, no se estima: ambos instantes viajan en el mensaje.
+  const publicado = mensaje?.metadata?.extra?.published_at_utc;
+  if (publicado && mensaje._recibido_utc) {
+    const delta = Date.parse(mensaje._recibido_utc) - Date.parse(publicado);
+    if (Number.isFinite(delta)) {
+      latenciaMs = latenciaMs === null ? delta : latenciaMs * 0.9 + delta * 0.1;
+    }
+  }
+
+  // Se pinta una vez por cuadro y no una vez por mensaje: a veinte hercios y con
+  // ocho senales llegan ciento sesenta mensajes por segundo, y redibujar en cada
+  // uno gastaria mas tiempo en la pantalla que en los datos.
+  if (!pintadoPendiente) {
+    pintadoPendiente = true;
+    requestAnimationFrame(pintarEnVivo);
+  }
+}
+
+function pintarEnVivo() {
+  pintadoPendiente = false;
+  if (!ultimoPorSenal.size) {
+    return;
+  }
+  vivoTarjetas.hidden = false;
+  vivoDiagnostico.hidden = false;
+
+  for (const [senal, config] of Object.entries(TARJETAS_VIVO)) {
+    const elemento = document.getElementById(config.elemento);
+    if (!elemento) continue;
+    const mensaje = ultimoPorSenal.get(senal);
+    elemento.textContent = mensaje === undefined ? "—" : config.formato(mensaje.value);
+  }
+
+  const cualquiera = ultimoPorSenal.values().next().value;
+  document.getElementById("vivo-mensajes").textContent = mensajesEnVivo.toLocaleString("es-AR");
+  document.getElementById("vivo-latencia").textContent =
+    latenciaMs === null ? "no declarada" : `${Math.round(latenciaMs)} ms`;
+  document.getElementById("vivo-ultimo").textContent =
+    cualquiera?.timestamp ? new Date(cualquiera.timestamp).toLocaleTimeString("es-AR") : "—";
+
+  const sesion = cualquiera?.session_id;
+  if (sesion) {
+    document.getElementById("vivo-titulo").textContent = `F1 25 en vivo — ${sesion}`;
+  }
+  vivoEstado.hidden = true;
+}
+
+function declararEstadoEnVivo(estado) {
+  document.getElementById("vivo-camino").textContent = estado.camino ?? "—";
+  if (estado.conectado) {
+    vivoEstado.hidden = false;
+    vivoEstado.textContent =
+      "Conectado al flujo. Esperando telemetria: entre a pista para que el juego emita.";
+    vivoEstado.classList.remove("aviso-error");
+  } else {
+    // Se declara el motivo en lugar de mostrar una pantalla vacia: no es lo
+    // mismo que no haya datos a que no haya conexion.
+    vivoEstado.hidden = false;
+    vivoEstado.classList.add("aviso-error");
+    vivoEstado.textContent =
+      `Sin conexion con el broker (${estado.motivo ?? "motivo no declarado"}). ` +
+      "La captura y la persistencia no dependen de este camino.";
+  }
+}
+
+function conectarFlujoEnVivo() {
+  if (fuenteEnVivo) {
+    return;
+  }
+  fuenteEnVivo = new EventSource(`${API_BASE_URL}/live/stream`);
+
+  fuenteEnVivo.addEventListener("estado", (evento) => {
+    declararEstadoEnVivo(JSON.parse(evento.data));
+  });
+  fuenteEnVivo.addEventListener("telemetria", (evento) => {
+    registrarMensajeEnVivo(JSON.parse(evento.data));
+  });
+  fuenteEnVivo.addEventListener("latido", () => {
+    // Distingue "sin datos" de "conexion cortada": sin el latido, un
+    // intermediario podria cerrar la conexion inactiva sin que se note.
+    if (!ultimoPorSenal.size) {
+      vivoEstado.textContent =
+        "Conectado al flujo. Todavia no llego telemetria: entre a pista.";
+    }
+  });
+  fuenteEnVivo.onerror = () => {
+    vivoEstado.hidden = false;
+    vivoEstado.classList.add("aviso-error");
+    vivoEstado.textContent =
+      "Se corto el flujo en vivo. El navegador reintenta la conexion solo.";
+  };
+}
+
+function desconectarFlujoEnVivo() {
+  if (fuenteEnVivo) {
+    fuenteEnVivo.close();
+    fuenteEnVivo = null;
+  }
+}
+
 async function cambiarModo() {
-  const openF1Activo = selectorModo.value === "openf1";
+  const modo = selectorModo.value;
+  const openF1Activo = modo === "openf1";
+  const vivoActivo = modo === "vivo";
   document.body.classList.toggle("modo-openf1-activo", openF1Activo);
+  document.body.classList.toggle("modo-vivo-activo", vivoActivo);
   document.querySelectorAll(".modo-simulacion").forEach((elemento) => {
-    elemento.hidden = openF1Activo;
+    elemento.hidden = modo !== "simulation";
   });
   panelOpenF1.hidden = !openF1Activo;
+  panelVivo.hidden = !vivoActivo;
+
+  // La conexion en vivo se abre solo al entrar al espacio de trabajo y se cierra
+  // al salir: mantenerla abierta en segundo plano consumiria un suscriptor y
+  // ancho de banda sin que nadie mire la pantalla.
+  if (vivoActivo) {
+    conectarFlujoEnVivo();
+  } else {
+    desconectarFlujoEnVivo();
+  }
   if (openF1Activo) {
     // El catalogo de sesiones se pide una sola vez: no cambia mientras la
     // aplicacion esta abierta, y la eleccion del usuario debe sobrevivir a ir y

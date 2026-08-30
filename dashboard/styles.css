@@ -1596,3 +1596,110 @@ body.modo-openf1-activo {
   background: rgba(245, 158, 11, 0.1);
   color: #fcd9a0;
 }
+
+/* --------------------------------------------------------------------------
+   Camino en vivo
+   --------------------------------------------------------------------------
+   El dato es simulado y la interfaz lo declara de forma permanente, no solo en
+   los metadatos: un valor suelto en pantalla debe seguir siendo atribuible. */
+
+.panel-vivo {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+}
+
+.cabecera-vivo {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.marca-simulado {
+  align-self: center;
+  padding: 0.35rem 0.85rem;
+  border: 1px solid #b8860b;
+  border-radius: 999px;
+  color: #d9a441;
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  white-space: nowrap;
+}
+
+.aviso-vivo {
+  margin: 0;
+  padding: 0.75rem 1rem;
+  border-left: 3px solid #4a6fa5;
+  background: rgba(74, 111, 165, 0.08);
+  font-size: 0.9rem;
+}
+
+.aviso-vivo.aviso-error {
+  border-left-color: #b8860b;
+  background: rgba(184, 134, 11, 0.1);
+}
+
+.tarjetas-vivo {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr));
+  gap: 0.75rem;
+}
+
+.tarjeta-vivo {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  padding: 0.85rem 1rem;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 0.5rem;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.tarjeta-vivo .rotulo {
+  font-size: 0.7rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  opacity: 0.7;
+}
+
+.tarjeta-vivo strong {
+  /* Cifras tabulares: sin esto los numeros bailan al cambiar veinte veces por
+     segundo y la lectura se vuelve imposible. */
+  font-variant-numeric: tabular-nums;
+  font-size: 1.6rem;
+  line-height: 1.1;
+}
+
+.tarjeta-vivo.destacada strong {
+  font-size: 2.4rem;
+}
+
+.tarjeta-vivo .unidad {
+  font-size: 0.75rem;
+  opacity: 0.6;
+}
+
+.diagnostico-vivo {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr));
+  gap: 0.75rem 1.5rem;
+  margin: 0;
+  padding-top: 0.75rem;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  font-size: 0.8rem;
+}
+
+.diagnostico-vivo dt {
+  opacity: 0.65;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  font-size: 0.7rem;
+}
+
+.diagnostico-vivo dd {
+  margin: 0.15rem 0 0;
+  font-variant-numeric: tabular-nums;
+}

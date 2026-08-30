@@ -17,6 +17,7 @@
       <select id="selector-modo">
         <option value="simulation">Simulacion CAN</option>
         <option value="openf1">Replay OpenF1</option>
+        <option value="vivo">F1 25 en vivo</option>
       </select>
     </nav>
 
@@ -28,6 +29,69 @@
       </div>
       <div id="estado-origen" class="estado-origen">SIN DATOS</div>
     </header>
+
+
+    <!-- Camino en vivo. No consulta la base: recibe del broker por eventos
+         enviados por el servidor. Que sea un camino distinto del historico es lo
+         que vuelve significativa la comparacion entre operacion en vivo y
+         post-sesion. -->
+    <section id="panel-vivo" class="panel panel-vivo" hidden>
+      <header class="cabecera-vivo">
+        <div>
+          <p class="etiqueta-superior">Fuente de simulacion en vivo</p>
+          <h2 id="vivo-titulo">F1 25 &mdash; esperando telemetria</h2>
+        </div>
+        <div class="marca-simulado" title="Los valores provienen de un simulador">
+          DATO SIMULADO
+        </div>
+      </header>
+
+      <p id="vivo-estado" class="aviso-vivo">Conectando con el flujo en vivo...</p>
+
+      <div id="vivo-tarjetas" class="tarjetas-vivo" hidden>
+        <article class="tarjeta-vivo destacada">
+          <span class="rotulo">Velocidad</span>
+          <strong id="vivo-velocidad">&mdash;</strong><span class="unidad">km/h</span>
+        </article>
+        <article class="tarjeta-vivo">
+          <span class="rotulo">Marcha</span>
+          <strong id="vivo-marcha">&mdash;</strong>
+        </article>
+        <article class="tarjeta-vivo">
+          <span class="rotulo">Revoluciones</span>
+          <strong id="vivo-rpm">&mdash;</strong><span class="unidad">rpm</span>
+        </article>
+        <article class="tarjeta-vivo">
+          <span class="rotulo">Acelerador</span>
+          <strong id="vivo-acelerador">&mdash;</strong><span class="unidad">%</span>
+        </article>
+        <article class="tarjeta-vivo">
+          <span class="rotulo">Freno</span>
+          <strong id="vivo-freno">&mdash;</strong><span class="unidad">%</span>
+        </article>
+        <article class="tarjeta-vivo">
+          <span class="rotulo">DRS</span>
+          <strong id="vivo-drs">&mdash;</strong>
+        </article>
+        <article class="tarjeta-vivo">
+          <span class="rotulo">Vuelta</span>
+          <strong id="vivo-vuelta">&mdash;</strong>
+        </article>
+        <article class="tarjeta-vivo">
+          <span class="rotulo">Distancia en vuelta</span>
+          <strong id="vivo-distancia">&mdash;</strong><span class="unidad">m</span>
+        </article>
+      </div>
+
+      <!-- La latencia se muestra porque es medible y porque es lo que este
+           camino existe para poder medir. -->
+      <dl id="vivo-diagnostico" class="diagnostico-vivo" hidden>
+        <div><dt>Mensajes recibidos</dt><dd id="vivo-mensajes">0</dd></div>
+        <div><dt>Latencia de publicacion a recepcion</dt><dd id="vivo-latencia">&mdash;</dd></div>
+        <div><dt>Ultimo dato</dt><dd id="vivo-ultimo">&mdash;</dd></div>
+        <div><dt>Camino</dt><dd id="vivo-camino">&mdash;</dd></div>
+      </dl>
+    </section>
 
     <section id="panel-openf1" class="panel panel-openf1" hidden>
       <div class="titulo-seccion">

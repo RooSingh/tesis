@@ -9,10 +9,15 @@ de datos.
 
 from __future__ import annotations
 
+import asyncio
+
 from fastapi import FastAPI
 from fastapi import HTTPException
 from fastapi import Query
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
+
+from backend import live_stream
 
 from backend.config import BACKEND_APP_NAME
 from backend.db import (
@@ -496,3 +501,80 @@ def racing_analysis_stints(
             ),
         )
     return filas
+
+
+# --------------------------------------------------------------------------- #
+# Camino en vivo
+# --------------------------------------------------------------------------- #
+#
+# Coexiste con el historico y no lo reemplaza. El historico consulta la base; este
+# recibe del broker y empuja al navegador. Que sean caminos distintos es lo que
+# vuelve significativa la comparacion entre operacion en vivo y post-sesion.
+
+
+@app.on_event("startup")
+async def _iniciar_difusor() -> None:
+    """Conecta al broker al arrancar. Un fallo no impide servir el historico."""
+
+    live_stream.difusor.iniciar(asyncio.get_running_loop())
+
+
+@app.on_event("shutdown")
+async def _detener_difusor() -> None:
+    live_stream.difusor.detener()
+
+
+@app.get("/live/status")
+def live_status() -> dict:
+    """Estado del camino en vivo, para distinguir 'sin datos' de 'sin conexion'."""
+
+    return live_stream.difusor.estado()
+
+
+@app.get("/live/recent")
+def live_recent(limite: int = Query(50, ge=1, le=100)) -> list[dict]:
+    """Ventana corta de lo ultimo recibido.
+
+    Permite que un navegador que abre la pagina vea algo de inmediato en lugar de
+    esperar al proximo mensaje. No sustituye al flujo: es su punto de partida.
+    """
+
+    recientes = list(live_stream.difusor.recientes)
+    return recientes[-limite:]
+
+
+@app.get("/live/stream")
+async def live_stream_endpoint() -> StreamingResponse:
+    """Flujo de eventos enviados por el servidor con la telemetria en vivo.
+
+    El navegador abre esta conexion una vez y recibe cada mensaje al llegar, sin
+    volver a preguntar. La telemetria va en una sola direccion, de modo que un
+    canal bidireccional resolveria un problema que no existe.
+    """
+
+    cola = live_stream.difusor.suscribir()
+    if cola is None:
+        raise HTTPException(
+            status_code=503,
+            detail=(f"Se alcanzo el maximo de {live_stream.MAX_SUSCRIPTORES} "
+                    "suscriptores simultaneos al flujo en vivo."),
+        )
+
+    async def generar():
+        try:
+            async for evento in live_stream.flujo_de_eventos(cola):
+                yield evento
+        finally:
+            live_stream.difusor.desuscribir(cola)
+
+    return StreamingResponse(
+        generar(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            # Evita que un proxy inverso acumule la respuesta antes de enviarla,
+            # que anularia el proposito del flujo.
+            "X-Accel-Buffering": "no",
+        },
+    )
