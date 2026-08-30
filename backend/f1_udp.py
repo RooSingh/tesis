@@ -498,6 +498,54 @@ def _desempaquetar_motion_ex(b: tuple) -> dict[str, Any]:
         "wheel_camber_gain_rad": _por_rueda(b[57:61]),
     }
 
+# --------------------------------------------------------------------------- #
+# Car Setups, paquete 5
+# --------------------------------------------------------------------------- #
+
+# Una entrada por vehiculo. 50 bytes, mas un flotante final del paquete.
+#
+# Hace que el reglaje forme parte del registro. Cualquier ajuste del vehiculo
+# —aerodinamica, diferencial, suspension, presiones, lastre— queda declarado por
+# el propio flujo, de modo que una captura no necesita que el operador anote con
+# que configuracion se corrio.
+#
+# No convierte al reglaje en realista ni pretende hacerlo: lo vuelve **declarado**,
+# que es lo que el trabajo necesita para que una condicion sea trazable.
+CAR_SETUP_FMT = "<BBBB" + "ffff" + "B" * 9 + "ffff" + "B" + "f"
+CAR_SETUP_TAMANO = struct.calcsize(CAR_SETUP_FMT)
+CAR_SETUP_COLA_FMT = "<f"
+CAR_SETUP_COLA_TAMANO = struct.calcsize(CAR_SETUP_COLA_FMT)
+
+
+def _desempaquetar_car_setup(b: tuple) -> dict[str, Any]:
+    """Nombra el reglaje de un vehiculo."""
+
+    return {
+        "front_wing": b[0],
+        "rear_wing": b[1],
+        "differential_on_throttle_pct": b[2],
+        "differential_off_throttle_pct": b[3],
+        "front_camber_deg": b[4],
+        "rear_camber_deg": b[5],
+        "front_toe_deg": b[6],
+        "rear_toe_deg": b[7],
+        "front_suspension": b[8],
+        "rear_suspension": b[9],
+        "front_anti_roll_bar": b[10],
+        "rear_anti_roll_bar": b[11],
+        "front_ride_height": b[12],
+        "rear_ride_height": b[13],
+        "brake_pressure_pct": b[14],
+        "brake_bias_pct": b[15],
+        "engine_braking_pct": b[16],
+        # El protocolo entrega las presiones en orden trasera izquierda, trasera
+        # derecha, delantera izquierda, delantera derecha, igual que el resto de
+        # los arreglos por rueda.
+        "tyre_pressure_psi": _por_rueda(b[17:21]),
+        "ballast": b[21],
+        "fuel_load_kg": b[22],
+    }
+
 
 # Paquetes de bloque unico: describen la sesion, no a cada vehiculo, de modo
 # que no llevan arreglo de 22 entradas y se decodifican de una sola vez.
@@ -508,6 +556,7 @@ _DECODIFICADORES_UNICOS = {
 
 # Paquetes con un arreglo de una entrada por vehiculo.
 _DECODIFICADORES = {
+    5: (CAR_SETUP_FMT, CAR_SETUP_TAMANO, CAR_SETUP_COLA_TAMANO, _desempaquetar_car_setup),
     7: (CAR_STATUS_FMT, CAR_STATUS_TAMANO, 0, _desempaquetar_car_status),
     10: (CAR_DAMAGE_FMT, CAR_DAMAGE_TAMANO, 0, _desempaquetar_car_damage),
     2: (LAP_DATA_FMT, LAP_DATA_TAMANO, LAP_DATA_COLA_TAMANO, _desempaquetar_lap_data),

@@ -462,3 +462,31 @@ class EjesDelVehiculoTests(unittest.TestCase):
 
         v = f1_udp.decodificar(_datagrama_relleno(13))["sesion"]
         self.assertEqual(v["yaw_rate_rads"], v["angular_velocity_rads"]["y"])
+
+
+class ReglajeTests(unittest.TestCase):
+    """El reglaje del vehiculo forma parte del registro, no de una anotacion."""
+
+    def test_car_setups_cierra_en_el_tamano_declarado(self):
+        self.assertEqual(f1_udp.CAR_SETUP_TAMANO, 50)
+        total = (f1_udp.CABECERA_TAMANO
+                 + f1_udp.VEHICULOS * f1_udp.CAR_SETUP_TAMANO
+                 + f1_udp.CAR_SETUP_COLA_TAMANO)
+        self.assertEqual(total, f1_udp.PAQUETES[5]["tamano"])
+        self.assertEqual(total, 1133)
+
+    def test_declara_la_aerodinamica_y_el_diferencial(self):
+        v = f1_udp.decodificar(_datagrama_relleno(5))["vehiculo_propio"]
+        for campo in ("front_wing", "rear_wing",
+                      "differential_on_throttle_pct", "differential_off_throttle_pct"):
+            self.assertIn(campo, v)
+
+    def test_declara_la_geometria_de_suspension(self):
+        v = f1_udp.decodificar(_datagrama_relleno(5))["vehiculo_propio"]
+        for campo in ("front_camber_deg", "rear_camber_deg", "front_toe_deg",
+                      "rear_toe_deg", "front_anti_roll_bar", "front_ride_height"):
+            self.assertIn(campo, v)
+
+    def test_las_presiones_van_nombradas_por_rueda(self):
+        v = f1_udp.decodificar(_datagrama_relleno(5))["vehiculo_propio"]
+        self.assertEqual(set(v["tyre_pressure_psi"]), set(f1_udp.ORDEN_RUEDAS))
