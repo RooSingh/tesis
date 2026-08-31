@@ -10,6 +10,7 @@ de datos.
 from __future__ import annotations
 
 import asyncio
+import time
 
 from fastapi import FastAPI
 from fastapi import HTTPException
@@ -17,6 +18,8 @@ from fastapi import Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 
+from adapters import f1_25 as f1_25_adapter
+from backend import db
 from backend import live_stream
 
 from backend.config import BACKEND_APP_NAME
@@ -529,6 +532,110 @@ def live_status() -> dict:
     """Estado del camino en vivo, para distinguir 'sin datos' de 'sin conexion'."""
 
     return live_stream.difusor.estado()
+
+
+# Cuanto vale una respuesta antes de volver a preguntarle a la base. La vista
+# consulta cada pocos segundos y el indicador cambia despacio: sin vigencia,
+# mirar la persistencia le costaria a la base mas que guardarla.
+VIGENCIA_PERSISTENCIA_S = 5.0
+_CACHE_PERSISTENCIA: tuple[float, dict] | None = None
+
+
+@app.get("/live/senales")
+def live_senales() -> dict:
+    """Catalogo completo de senales que la fuente puede producir.
+
+    La vista en vivo arma su catalogo con lo que va llegando, y eso deja un
+    hueco: **con el flujo detenido no hay nada que elegir**, aunque la sesion
+    tenga ochenta y nueve canales. Quien abre la pagina fuera de una sesion
+    veria un catalogo vacio, que dice algo falso: no es que no haya canales, es
+    que en ese instante no llega ninguno.
+
+    El catalogo se le pide al adaptador y no a la base. La base solo sabe que
+    senales **llegaron a guardarse**, que es exactamente lo que fallaba cuando
+    el capturador publicaba dos paquetes de cuatro: preguntarle habria devuelto
+    el alcance incompleto como si fuera el alcance real.
+    """
+
+    return {"disponible": True, "senales": f1_25_adapter.catalogo_de_senales()}
+
+
+@app.get("/live/persistencia")
+def live_persistencia() -> dict:
+    """Evidencia de que la base esta recibiendo mientras la vista corre.
+
+    Existe porque la vista en vivo declara que no pasa por la base, y esa frase
+    —cierta— se lee como que el dato no se guarda. En lugar de explicarlo con
+    una aclaracion, la vista muestra **el estado real de la persistencia**: la
+    ultima marca temporal almacenada y cuantas filas entraron en el ultimo
+    minuto de datos.
+
+    El conteo se acota a una ventana en lugar de contar la sesion entera: una
+    sesion de carrera supera los dos millones de filas y contarlas en cada
+    consulta convertiria un indicador en una carga.
+    """
+
+    global _CACHE_PERSISTENCIA
+    ahora = time.monotonic()
+    if _CACHE_PERSISTENCIA and ahora - _CACHE_PERSISTENCIA[0] < VIGENCIA_PERSISTENCIA_S:
+        return {**_CACHE_PERSISTENCIA[1],
+                "edad_del_dato_s": round(ahora - _CACHE_PERSISTENCIA[0], 1)}
+
+    # La sesion se toma del propio flujo en vivo. No es una comodidad: el indice
+    # de la tabla empieza por fuente y sesion, de modo que preguntar sin la
+    # sesion obliga a recorrer todas y la consulta pasa de 260 ms a 3,5 s.
+    sesion = None
+    if live_stream.difusor.recientes:
+        sesion = live_stream.difusor.recientes[-1].get("session_id")
+
+    ventana_s = 60
+    try:
+        with db.obtener_conexion() as conexion, conexion.cursor() as cursor:
+            if sesion is None:
+                cursor.execute(
+                    """select session_id from telemetry_messages
+                       where source_type = %s
+                       order by timestamp desc limit 1""",
+                    (f1_25_adapter.SOURCE_TYPE,),
+                )
+                fila = cursor.fetchone()
+                sesion = fila[0] if fila else None
+            if sesion is None:
+                respuesta = {"disponible": True, "filas_recientes": 0,
+                             "ultimo_dato": None, "ventana_s": ventana_s,
+                             "motivo": "todavia no hay datos de esta fuente en la base"}
+                _CACHE_PERSISTENCIA = (ahora, respuesta)
+                return respuesta
+
+            cursor.execute(
+                """select max(timestamp) from telemetry_messages
+                   where source_type = %s and session_id = %s""",
+                (f1_25_adapter.SOURCE_TYPE, sesion),
+            )
+            ultima = cursor.fetchone()[0]
+            cursor.execute(
+                """select count(*), count(distinct signal_name)
+                   from telemetry_messages
+                   where source_type = %s and session_id = %s
+                     and timestamp > %s - make_interval(secs => %s)""",
+                (f1_25_adapter.SOURCE_TYPE, sesion, ultima, ventana_s),
+            )
+            filas, senales = cursor.fetchone()
+    except Exception as error:
+        # Que la base no responda no debe romper la vista en vivo: son caminos
+        # independientes, y mostrarlo asi es justamente lo que se quiere decir.
+        return {"disponible": False, "motivo": f"{type(error).__name__}: {error}"}
+
+    respuesta = {
+        "disponible": True,
+        "sesion": sesion,
+        "ultimo_dato": ultima.isoformat() if ultima else None,
+        "ventana_s": ventana_s,
+        "filas_recientes": filas,
+        "senales_distintas": senales,
+    }
+    _CACHE_PERSISTENCIA = (ahora, respuesta)
+    return respuesta
 
 
 @app.get("/live/recent")

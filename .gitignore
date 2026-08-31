@@ -4,3 +4,12 @@ external/
 __pycache__/
 *.pyc
 session-*.md
+
+# Cuadros de validacion semantica. Se versionan solo los dos que el informe
+# imprime como figura; los otros diecinueve son reproducibles con
+# scripts/extraer_cuadros_validacion.py a partir de la captura y el video, y el
+# manifiesto JSON declara que instante y que valor contrasta cada uno. Son 29 MB
+# de material derivado que no aporta nada que el manifiesto no diga.
+informe/tesis/figuras/carrera_silverstone_*.png
+!informe/tesis/figuras/carrera_silverstone_14_velocidad-maxima.png
+!informe/tesis/figuras/carrera_silverstone_16_panel-motor.png

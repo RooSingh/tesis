@@ -1,4 +1,4 @@
-"""Camino en vivo: del broker al navegador, sin pasar por la base.
+"""Camino en vivo: del broker al navegador, en paralelo a la persistencia.
 
 Por que un camino distinto del historico
 ----------------------------------------
@@ -168,7 +168,15 @@ class DifusorEnVivo:
             "maximo_suscriptores": MAX_SUSCRIPTORES,
             "mensajes_recibidos": self.recibidos,
             "mensajes_descartados": self.descartados,
-            "camino": "broker -> difusor -> navegador, sin pasar por la base",
+            # Se declaran los dos caminos y no solo este. Anunciar unicamente
+            # "sin pasar por la base" es cierto y a la vez enganoso: leido solo,
+            # dice que el dato no se guarda. Lo que no pasa por la base es
+            # **esta vista**; la persistencia corre en paralelo y no depende de
+            # ella.
+            "camino_vista": ("broker -> difusor -> navegador "
+                             "(solo esta vista, no pasa por la base)"),
+            "camino_persistencia": ("broker -> consumidor -> base de datos "
+                                    "(en paralelo, independiente de esta vista)"),
         }
 
 

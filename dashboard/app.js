@@ -1244,6 +1244,9 @@ const TARJETAS_VIVO = {
 
 function registrarMensajeEnVivo(mensaje) {
   ultimoPorSenal.set(mensaje.signal_name, mensaje);
+  registrarEnCatalogo(mensaje);
+  acumularEnTraza(mensaje);
+  instanteUltimoMensaje = performance.now();
   mensajesEnVivo += 1;
 
   // La latencia se mide, no se estima: ambos instantes viajan en el mensaje.
@@ -1271,6 +1274,7 @@ function pintarEnVivo() {
   }
   vivoTarjetas.hidden = false;
   vivoDiagnostico.hidden = false;
+  dibujarTrazas();
 
   for (const [senal, config] of Object.entries(TARJETAS_VIVO)) {
     const elemento = document.getElementById(config.elemento);
@@ -1286,15 +1290,556 @@ function pintarEnVivo() {
   document.getElementById("vivo-ultimo").textContent =
     cualquiera?.timestamp ? new Date(cualquiera.timestamp).toLocaleTimeString("es-AR") : "—";
 
+  // El origen se lee del mensaje, no se asume por el canal. Los dos viajan por
+  // el mismo topico: la consola en vivo y la reproduccion de una captura. Que la
+  // vista diga "en vivo" mientras muestra una grabacion seria el mismo defecto
+  // de procedencia que este trabajo le reclama a las fuentes ajenas.
+  const origen = cualquiera?.metadata?.extra?.origen_adquisicion;
+  const reproducido = origen === "captura_reproducida";
+  const marcaOrigen = document.getElementById("vivo-origen");
+  if (marcaOrigen) {
+    marcaOrigen.hidden = origen === undefined;
+    marcaOrigen.textContent = reproducido ? "CAPTURA REPRODUCIDA" : "CONSOLA EN VIVO";
+    marcaOrigen.classList.toggle("marca-origen-reproducido", reproducido);
+  }
+
   const sesion = cualquiera?.session_id;
   if (sesion) {
-    document.getElementById("vivo-titulo").textContent = `F1 25 en vivo — ${sesion}`;
+    const encabezado = reproducido ? "F1 25 reproducido" : "F1 25 en vivo";
+    document.getElementById("vivo-titulo").textContent = `${encabezado} — ${sesion}`;
   }
   vivoEstado.hidden = true;
 }
 
+// ---------------------------------------------------------------------------
+// Trazas en vivo
+// ---------------------------------------------------------------------------
+//
+// Una tarjeta muestra el instante; una traza muestra el gesto. Una frenada, una
+// salida de curva o un cambio de marcha no se leen en un numero suelto: se leen
+// como forma.
+//
+// El catalogo **no esta escrito aca**. Se arma con las senales que efectivamente
+// llegan, y de cada una se toman la unidad y el paquete de origen que el propio
+// mensaje declara. Una lista fija obligaria a tocar esta pagina cada vez que el
+// adaptador aprende un canal nuevo, que es exactamente la duplicacion que dejo
+// la energia y el dano fuera de la base.
+//
+// Se dibuja sobre lienzo y no con una biblioteca de graficos: son lineas sobre
+// una ventana movil, y una dependencia nueva costaria mas de lo que resuelve.
+
+// Cuantas muestras conserva cada traza. A la frecuencia declarada por el juego
+// —veinte por segundo— son unos treinta segundos de historia, que es lo que dura
+// una secuencia completa de frenada, curva y salida.
+const MUESTRAS_POR_TRAZA = 600;
+
+// Los 4 MJ **no son la capacidad** del acumulador: el reglamento no fija ninguna.
+// Son el maximo admitido de diferencia entre la carga maxima y la minima
+// mientras el vehiculo esta en pista. El porcentaje que se muestra es sobre esa
+// franja utilizable, no sobre un deposito, y es tambien como lo lee el tablero
+// del propio juego.
+const ERS_FRANJA_UTIL_J = 4000000;
+
+// Nombre legible de cada paquete, para agrupar el catalogo por familia.
+const FAMILIAS = {
+  car_telemetry: "Conduccion y motor",
+  lap_data: "Vuelta, posicion y boxes",
+  car_status: "Energia, combustible y neumatico",
+  car_damage: "Dano y desgaste",
+};
+
+// Las cuatro ruedas, en el orden del protocolo. Se usa para reconocer que
+// cuatro senales son la misma magnitud medida en distintos lugares y dibujarlas
+// juntas: comparar ruedas entre si es el uso normal de esos canales.
+const RUEDAS = [
+  { sufijo: "rear_left", nombre: "trasera izq.", color: "#4ea8ff" },
+  { sufijo: "rear_right", nombre: "trasera der.", color: "#4ade80" },
+  { sufijo: "front_left", nombre: "delantera izq.", color: "#fbbf24" },
+  { sufijo: "front_right", nombre: "delantera der.", color: "#f87171" },
+];
+
+// Combinaciones que se dibujan juntas porque solo tienen sentido comparadas.
+// Es la unica parte escrita a mano, y se justifica: que acelerador y freno vayan
+// en el mismo lienzo no se deduce de los datos, se sabe de como se lee una
+// telemetria.
+const COMBINACIONES = {
+  pedales: {
+    etiqueta: "Acelerador y freno",
+    familia: "car_telemetry",
+    unidad: "%",
+    series: [
+      { senal: "throttle_position", nombre: "acelerador", color: "#4ade80" },
+      { senal: "brake_position", nombre: "freno", color: "#f87171" },
+    ],
+  },
+};
+
+// Seleccion inicial. Son las que se miran mientras se maneja; el resto esta a un
+// clic. Guardar la seleccion en el navegador evita rearmarla en cada recarga.
+const SELECCION_POR_DEFECTO = ["speed", "pedales", "engine_speed", "ers_stored_energy"];
+const CLAVE_SELECCION = "tesis.trazas.seleccion";
+
+const graficasVivo = document.getElementById("vivo-graficas");
+const catalogoVivo = document.getElementById("vivo-catalogo");
+const grillaTrazas = document.getElementById("vivo-trazas");
+
+const historiaPorSenal = new Map();
+// Lo que cada senal declara de si misma: unidad y paquete de origen.
+const catalogoSenales = new Map();
+let seleccionTrazas = cargarSeleccion();
+let catalogoDibujado = "";
+
+function cargarSeleccion() {
+  try {
+    const guardada = window.localStorage.getItem(CLAVE_SELECCION);
+    if (guardada) return new Set(JSON.parse(guardada));
+  } catch (error) {
+    // Un navegador que bloquea el almacenamiento no debe romper la vista: se
+    // pierde la comodidad de recordar la seleccion, nada mas.
+  }
+  return new Set(SELECCION_POR_DEFECTO);
+}
+
+function guardarSeleccion() {
+  try {
+    window.localStorage.setItem(CLAVE_SELECCION, JSON.stringify([...seleccionTrazas]));
+  } catch (error) {
+    /* sin persistencia, la seleccion vale solo para esta sesion */
+  }
+}
+
+// Convierte "tyre_wear_front_left" en {base: "tyre_wear", sufijo: "front_left"}.
+function separarRueda(senal) {
+  for (const rueda of RUEDAS) {
+    const cola = `_${rueda.sufijo}`;
+    if (senal.endsWith(cola)) {
+      return { base: senal.slice(0, -cola.length), sufijo: rueda.sufijo };
+    }
+  }
+  return null;
+}
+
+function etiquetaLegible(clave) {
+  return clave.replace(/_/g, " ");
+}
+
+function registrarEnCatalogo(mensaje) {
+  const senal = mensaje.signal_name;
+  if (catalogoSenales.has(senal)) return;
+  catalogoSenales.set(senal, {
+    unidad: mensaje.unit,
+    familia: mensaje?.metadata?.extra?.paquete ?? "otros",
+  });
+  // El catalogo se redibuja solo cuando aparece una senal nueva.
+  catalogoDibujado = "";
+}
+
+// Arma las entradas del catalogo: combinaciones, grupos por rueda y senales
+// individuales. Cada entrada sabe que series dibujar y en que rango.
+function entradasDelCatalogo() {
+  const entradas = new Map();
+  const consumidas = new Set();
+
+  for (const [clave, combinacion] of Object.entries(COMBINACIONES)) {
+    const presentes = combinacion.series.filter((s) => catalogoSenales.has(s.senal));
+    if (presentes.length < 2) continue;
+    entradas.set(clave, { ...combinacion, series: presentes });
+    presentes.forEach((s) => consumidas.add(s.senal));
+  }
+
+  // Las cuatro ruedas de una misma magnitud van juntas: se reconocen por el
+  // sufijo, sin necesidad de enumerarlas.
+  const porBase = new Map();
+  for (const senal of catalogoSenales.keys()) {
+    const partes = separarRueda(senal);
+    if (!partes) continue;
+    if (!porBase.has(partes.base)) porBase.set(partes.base, []);
+    porBase.get(partes.base).push(senal);
+  }
+  for (const [base, senales] of porBase) {
+    if (senales.length < 2) continue;
+    const referencia = catalogoSenales.get(senales[0]);
+    entradas.set(base, {
+      etiqueta: etiquetaLegible(base),
+      familia: referencia.familia,
+      unidad: referencia.unidad,
+      series: RUEDAS.filter((r) => catalogoSenales.has(`${base}_${r.sufijo}`)).map((r) => ({
+        senal: `${base}_${r.sufijo}`,
+        nombre: r.nombre,
+        color: r.color,
+      })),
+    });
+    senales.forEach((s) => consumidas.add(s));
+  }
+
+  for (const [senal, info] of catalogoSenales) {
+    if (consumidas.has(senal)) continue;
+    entradas.set(senal, {
+      etiqueta: etiquetaLegible(senal),
+      familia: info.familia,
+      unidad: info.unidad,
+      series: [{ senal, nombre: etiquetaLegible(senal), color: "#4ea8ff" }],
+    });
+  }
+  return entradas;
+}
+
+// El rango sale de la unidad, no de una tabla por senal. Un porcentaje va de
+// cero a cien por definicion; escalarlo a lo observado haria que un toque leve
+// de freno se viera como una frenada a fondo. Lo demas se ajusta a lo observado,
+// porque un eje fijo aplastaria un circuito lento contra uno rapido.
+function rangoDe(entrada) {
+  if (entrada.unidad === "%") return [0, 100];
+  if (entrada.unidad === "bool") return [-0.1, 1.1];
+  return "observado";
+}
+
+// La energia se declara en joules y se lee en porcentaje de carga.
+function conversionDe(senal) {
+  if (senal === "ers_stored_energy") return (j) => (j / ERS_FRANJA_UTIL_J) * 100;
+  return (v) => v;
+}
+
+function acumularEnTraza(mensaje) {
+  const valor = typeof mensaje.value === "boolean" ? Number(mensaje.value) : mensaje.value;
+  if (typeof valor !== "number" || !Number.isFinite(valor)) return;
+  let serie = historiaPorSenal.get(mensaje.signal_name);
+  if (serie === undefined) {
+    serie = [];
+    historiaPorSenal.set(mensaje.signal_name, serie);
+  }
+  serie.push(valor);
+  // Ventana movil: lo viejo se descarta en lugar de acumularse. Una carrera son
+  // treinta mil muestras por senal, y conservarlas todas para mostrar los
+  // ultimos treinta segundos seria memoria gastada sin uso.
+  if (serie.length > MUESTRAS_POR_TRAZA) serie.shift();
+}
+
+function dibujarCatalogo() {
+  const entradas = entradasDelCatalogo();
+  const firma = [...entradas.keys()].sort().join("|");
+  if (firma === catalogoDibujado) {
+    actualizarMarcasDelCatalogo();
+    return;
+  }
+  catalogoDibujado = firma;
+
+  const porFamilia = new Map();
+  for (const [clave, entrada] of entradas) {
+    if (!porFamilia.has(entrada.familia)) porFamilia.set(entrada.familia, []);
+    porFamilia.get(entrada.familia).push([clave, entrada]);
+  }
+
+  catalogoVivo.replaceChildren();
+  for (const [familia, lista] of porFamilia) {
+    const grupo = document.createElement("div");
+    grupo.className = "grupo-catalogo";
+    const titulo = document.createElement("span");
+    titulo.className = "titulo-grupo";
+    titulo.textContent = FAMILIAS[familia] ?? familia;
+    grupo.append(titulo);
+
+    lista.sort((a, b) => a[1].etiqueta.localeCompare(b[1].etiqueta));
+    for (const [clave, entrada] of lista) {
+      const boton = document.createElement("button");
+      boton.type = "button";
+      boton.className = "chip-senal";
+      boton.dataset.clave = clave;
+      boton.textContent = entrada.etiqueta;
+      boton.title = `${entrada.etiqueta} (${entrada.unidad})`;
+      boton.addEventListener("click", () => alternarTraza(clave));
+      grupo.append(boton);
+    }
+    catalogoVivo.append(grupo);
+  }
+  actualizarMarcasDelCatalogo();
+}
+
+function actualizarMarcasDelCatalogo() {
+  for (const boton of catalogoVivo.querySelectorAll(".chip-senal")) {
+    boton.classList.toggle("chip-elegido", seleccionTrazas.has(boton.dataset.clave));
+  }
+  const conteo = document.getElementById("vivo-conteo-senales");
+  if (conteo) {
+    conteo.textContent =
+      `${seleccionTrazas.size} de ${catalogoSenales.size} senales`;
+  }
+}
+
+function alternarTraza(clave) {
+  if (seleccionTrazas.has(clave)) seleccionTrazas.delete(clave);
+  else seleccionTrazas.add(clave);
+  guardarSeleccion();
+  actualizarMarcasDelCatalogo();
+  sincronizarLienzos();
+  dibujarTrazas();
+}
+
+// Crea o quita lienzos para que haya exactamente uno por traza elegida.
+function sincronizarLienzos() {
+  const entradas = entradasDelCatalogo();
+  const elegidas = [...seleccionTrazas].filter((clave) => entradas.has(clave));
+
+  const existentes = new Map(
+    [...grillaTrazas.children].map((figura) => [figura.dataset.clave, figura]),
+  );
+  for (const [clave, figura] of existentes) {
+    if (!elegidas.includes(clave)) figura.remove();
+  }
+
+  for (const clave of elegidas) {
+    if (existentes.has(clave)) continue;
+    const entrada = entradas.get(clave);
+    const figura = document.createElement("figure");
+    figura.className = "grafica-vivo";
+    figura.dataset.clave = clave;
+
+    const pie = document.createElement("figcaption");
+    const nombre = document.createElement("span");
+    nombre.textContent = entrada.etiqueta;
+    const unidad = document.createElement("span");
+    unidad.className = "unidad";
+    unidad.textContent = clave === "ers_stored_energy" ? "%" : entrada.unidad;
+    pie.append(nombre, unidad);
+
+    if (entrada.series.length > 1) {
+      const leyenda = document.createElement("span");
+      leyenda.className = "leyenda";
+      for (const serie of entrada.series) {
+        const marca = document.createElement("i");
+        marca.style.background = serie.color;
+        const texto = document.createElement("span");
+        texto.textContent = serie.nombre;
+        leyenda.append(marca, texto);
+      }
+      pie.append(leyenda);
+    }
+
+    const lienzo = document.createElement("canvas");
+    lienzo.height = 110;
+    figura.append(pie, lienzo);
+    grillaTrazas.append(figura);
+  }
+
+  if (!elegidas.length) {
+    const vacio = document.createElement("p");
+    vacio.className = "aviso-vacio";
+    vacio.textContent = "Ninguna senal elegida. Toque una del catalogo para verla.";
+    grillaTrazas.append(vacio);
+  }
+}
+
+function dibujarUnaTraza(figura, entrada, clave) {
+  const lienzo = figura.querySelector("canvas");
+  if (!lienzo) return;
+
+  // El lienzo se ajusta al ancho real y a la densidad de la pantalla: sin esto
+  // la linea se ve borrosa en pantallas de alta densidad.
+  const densidad = window.devicePixelRatio || 1;
+  const ancho = lienzo.clientWidth;
+  const alto = 110;
+  if (!ancho) return;
+  if (lienzo.width !== Math.round(ancho * densidad)) {
+    lienzo.width = Math.round(ancho * densidad);
+    lienzo.height = Math.round(alto * densidad);
+  }
+  const ctx = lienzo.getContext("2d");
+  ctx.setTransform(densidad, 0, 0, densidad, 0, 0);
+  ctx.clearRect(0, 0, ancho, alto);
+
+  // El color del texto y de la referencia se lee del tema en lugar de fijarse
+  // aca. El guion asumia fondo oscuro y esta vista es clara: la escala quedaba
+  // ilegible y la linea de referencia, invisible.
+  const tinta = getComputedStyle(lienzo).color;
+  ctx.fillStyle = tinta;
+  ctx.strokeStyle = tinta;
+
+  const series = entrada.series
+    .map((s) => ({
+      color: s.color,
+      valores: (historiaPorSenal.get(s.senal) ?? []).map(conversionDe(s.senal)),
+    }))
+    .filter((s) => s.valores.length > 1);
+
+  if (!series.length) {
+    // Una traza elegida y todavia sin muestras se declara. Dejarla en blanco
+    // no distinguiria "este canal no llego" de "este canal vale cero".
+    ctx.globalAlpha = 0.4;
+    ctx.font = "11px system-ui, sans-serif";
+    ctx.fillText("sin muestras todavia", 8, alto / 2);
+    ctx.globalAlpha = 1;
+    return;
+  }
+
+  let minimo;
+  let maximo;
+  const rango = rangoDe(entrada);
+  if (rango === "observado") {
+    const todos = series.flatMap((s) => s.valores);
+    minimo = Math.min(...todos);
+    maximo = Math.max(...todos);
+    // Un margen del cinco por ciento evita que la traza toque el borde y que una
+    // senal constante quede dibujada encima del eje.
+    const margen = (maximo - minimo) * 0.05 || 1;
+    minimo -= margen;
+    maximo += margen;
+  } else {
+    minimo = rango[0];
+    maximo = rango[1];
+  }
+
+  const escalaY = (valor) => alto - ((valor - minimo) / (maximo - minimo || 1)) * alto;
+
+  ctx.globalAlpha = 0.18;
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(0, alto / 2);
+  ctx.lineTo(ancho, alto / 2);
+  ctx.stroke();
+  ctx.globalAlpha = 1;
+
+  const paso = ancho / (MUESTRAS_POR_TRAZA - 1);
+  for (const serie of series) {
+    // Las muestras se alinean a la derecha: el dato mas nuevo queda siempre en
+    // el mismo lugar, de modo que la traza avanza en vez de reescalarse.
+    const desplazamiento = ancho - (serie.valores.length - 1) * paso;
+    ctx.strokeStyle = serie.color;
+    ctx.lineWidth = 1.6;
+    ctx.beginPath();
+    serie.valores.forEach((valor, i) => {
+      const x = desplazamiento + i * paso;
+      const y = escalaY(valor);
+      if (i === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    });
+    ctx.stroke();
+  }
+
+  // El extremo de la escala se escribe: una traza sin numeros muestra la forma
+  // pero no permite decir cuanto.
+  ctx.globalAlpha = 0.55;
+  ctx.font = "10px system-ui, sans-serif";
+  ctx.fillText(maximo.toFixed(maximo >= 100 ? 0 : 1), 4, 11);
+  ctx.fillText(minimo.toFixed(minimo >= 100 ? 0 : 1), 4, alto - 3);
+}
+
+function dibujarTrazas() {
+  if (!catalogoSenales.size) return;
+  graficasVivo.hidden = false;
+  dibujarCatalogo();
+  if (!grillaTrazas.children.length) sincronizarLienzos();
+  const entradas = entradasDelCatalogo();
+  for (const figura of grillaTrazas.querySelectorAll(".grafica-vivo")) {
+    const entrada = entradas.get(figura.dataset.clave);
+    if (entrada) dibujarUnaTraza(figura, entrada, figura.dataset.clave);
+  }
+}
+
+// El lienzo se dimensiona al ancho real, de modo que un cambio de tamano lo
+// deja estirado hasta el proximo mensaje. Con el flujo detenido, para siempre.
+window.addEventListener("resize", () => dibujarTrazas());
+
+const botonLimpiar = document.getElementById("vivo-limpiar-trazas");
+if (botonLimpiar) {
+  botonLimpiar.addEventListener("click", () => {
+    seleccionTrazas.clear();
+    guardarSeleccion();
+    actualizarMarcasDelCatalogo();
+    sincronizarLienzos();
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Deteccion de flujo detenido
+// ---------------------------------------------------------------------------
+//
+// Sin esto la vista conserva los ultimos valores en pantalla cuando el flujo se
+// corta, y quien mira no distingue una sesion en curso de una terminada hace
+// media hora. Un tablero que muestra un numero viejo sin decir que es viejo
+// afirma algo falso: que eso esta pasando ahora.
+
+// Cuanto puede pasar sin un mensaje antes de considerar detenido el flujo. A
+// veinte hercios, tres segundos son sesenta muestras perdidas: ya no es una
+// demora, es una interrupcion.
+const SILENCIO_PARA_DETENIDO_MS = 3000;
+const REVISION_SILENCIO_MS = 1000;
+
+let instanteUltimoMensaje = null;
+
+function revisarSilencio() {
+  const aviso = document.getElementById("vivo-silencio");
+  if (!aviso) return;
+  if (instanteUltimoMensaje === null) return;
+  const silencio = performance.now() - instanteUltimoMensaje;
+  const detenido = silencio > SILENCIO_PARA_DETENIDO_MS;
+  aviso.hidden = !detenido;
+  panelVivo.classList.toggle("flujo-detenido", detenido);
+  if (detenido) {
+    const segundos = Math.round(silencio / 1000);
+    const texto =
+      segundos < 90
+        ? `${segundos} s`
+        : `${Math.round(segundos / 60)} min`;
+    aviso.textContent =
+      `Flujo detenido: no llega telemetria desde hace ${texto}. ` +
+      "Los valores en pantalla son los ultimos recibidos, no el estado actual.";
+  }
+}
+
+setInterval(revisarSilencio, REVISION_SILENCIO_MS);
+
+// ---------------------------------------------------------------------------
+// Evidencia de persistencia
+// ---------------------------------------------------------------------------
+//
+// La vista declara que no pasa por la base. Es cierto, y leido solo dice que el
+// dato no se guarda. En lugar de aclararlo con una nota, se muestra el estado
+// real de la persistencia, que corre en paralelo y no depende de esta vista.
+
+const INTERVALO_PERSISTENCIA_MS = 5000;
+let temporizadorPersistencia = null;
+
+async function consultarPersistencia() {
+  const destino = document.getElementById("vivo-persistencia");
+  if (!destino) return;
+  try {
+    const respuesta = await fetch(API + "/live/persistencia");
+    const estado = await respuesta.json();
+    if (!estado.disponible) {
+      destino.textContent =
+        "sin respuesta de la base (" + (estado.motivo ?? "motivo no declarado") + ")";
+      return;
+    }
+    if (!estado.filas_recientes) {
+      destino.textContent = "conectada, sin escrituras recientes";
+      return;
+    }
+    destino.textContent =
+      estado.filas_recientes.toLocaleString("es-AR") +
+      " filas y " +
+      estado.senales_distintas +
+      " senales en los ultimos " +
+      estado.ventana_s +
+      " s de datos";
+  } catch (error) {
+    destino.textContent = "no se pudo consultar (" + error.message + ")";
+  }
+}
+
+function ajustarTemporizadorPersistencia(activo) {
+  if (activo && temporizadorPersistencia === null) {
+    consultarPersistencia();
+    temporizadorPersistencia = setInterval(consultarPersistencia, INTERVALO_PERSISTENCIA_MS);
+  } else if (!activo && temporizadorPersistencia !== null) {
+    clearInterval(temporizadorPersistencia);
+    temporizadorPersistencia = null;
+  }
+}
+
 function declararEstadoEnVivo(estado) {
-  document.getElementById("vivo-camino").textContent = estado.camino ?? "—";
+  document.getElementById("vivo-camino").textContent = estado.camino_vista ?? "—";
+  document.getElementById("vivo-camino-base").textContent =
+    estado.camino_persistencia ?? "—";
   if (estado.conectado) {
     vivoEstado.hidden = false;
     vivoEstado.textContent =
@@ -1307,7 +1852,36 @@ function declararEstadoEnVivo(estado) {
     vivoEstado.classList.add("aviso-error");
     vivoEstado.textContent =
       `Sin conexion con el broker (${estado.motivo ?? "motivo no declarado"}). ` +
-      "La captura y la persistencia no dependen de este camino.";
+      "La captura y la persistencia no dependen de este camino: siguen corriendo.";
+  }
+}
+
+// Pide el catalogo completo antes de que llegue el primer mensaje. Sin esto,
+// abrir la pagina fuera de una sesion mostraria un catalogo vacio, que dice algo
+// falso: no es que no haya canales, es que en ese instante no llega ninguno.
+async function pedirCatalogoDeSenales() {
+  try {
+    const respuesta = await fetch(`${API_BASE_URL}/live/senales`);
+    const cuerpo = await respuesta.json();
+    if (!cuerpo.disponible) return;
+    for (const senal of cuerpo.senales) {
+      if (catalogoSenales.has(senal.signal_name)) continue;
+      catalogoSenales.set(senal.signal_name, {
+        unidad: senal.unit,
+        familia: senal.paquete,
+      });
+    }
+    catalogoDibujado = "";
+    graficasVivo.hidden = false;
+    dibujarCatalogo();
+    sincronizarLienzos();
+    // Se dibuja aunque todavia no haya llegado nada. El dibujo estaba atado a la
+    // llegada de mensajes, de modo que sin flujo los lienzos quedaban en blanco
+    // sin decir por que: no se distinguia "todavia no llega" de "esto esta roto".
+    dibujarTrazas();
+  } catch (error) {
+    // Sin catalogo previo la vista sigue funcionando: se arma con lo que
+    // llegue, que es el comportamiento anterior.
   }
 }
 
@@ -1315,6 +1889,7 @@ function conectarFlujoEnVivo() {
   if (fuenteEnVivo) {
     return;
   }
+  pedirCatalogoDeSenales();
   fuenteEnVivo = new EventSource(`${API_BASE_URL}/live/stream`);
 
   fuenteEnVivo.addEventListener("estado", (evento) => {
@@ -1366,6 +1941,9 @@ async function cambiarModo() {
   // al salir: mantenerla abierta en segundo plano consumiria un suscriptor y
   // ancho de banda sin que nadie mire la pantalla.
   ajustarTemporizadorSimulacion(modo === "simulation");
+  // La consulta de persistencia sigue la misma regla: solo corre en el espacio
+  // de trabajo que la muestra.
+  ajustarTemporizadorPersistencia(vivoActivo);
 
   if (vivoActivo) {
     conectarFlujoEnVivo();

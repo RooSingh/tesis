@@ -1682,6 +1682,219 @@ body.modo-openf1-activo {
   opacity: 0.6;
 }
 
+/* Trazas en vivo -----------------------------------------------------------
+   El catalogo se arma solo con las senales que llegan, de modo que estos
+   estilos no pueden depender de cuantas haya ni de cuales sean. */
+
+.graficas-vivo {
+  margin-top: 1rem;
+}
+
+/* Los fondos usan gris neutro con transparencia y no blanco: el dashboard
+   tiene hoy una vista clara y otra oscura, y un valor pensado para una de las
+   dos desaparece en la otra. */
+.selector-trazas {
+  padding: 0.75rem 0.9rem;
+  background: rgba(127, 127, 127, 0.06);
+  border: 1px solid rgba(127, 127, 127, 0.22);
+  border-radius: 0.6rem;
+}
+
+.cabecera-selector {
+  display: flex;
+  align-items: baseline;
+  gap: 0.75rem;
+  margin-bottom: 0.6rem;
+}
+
+.cabecera-selector .rotulo {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  opacity: 0.7;
+}
+
+.conteo-senales {
+  font-size: 0.72rem;
+  opacity: 0.5;
+  font-variant-numeric: tabular-nums;
+}
+
+.boton-tenue {
+  margin-left: auto;
+  padding: 0.2rem 0.6rem;
+  font-size: 0.7rem;
+  color: inherit;
+  background: transparent;
+  border: 1px solid rgba(127, 127, 127, 0.35);
+  border-radius: 0.3rem;
+  cursor: pointer;
+  opacity: 0.7;
+}
+
+.boton-tenue:hover {
+  opacity: 1;
+  border-color: rgba(127, 127, 127, 0.6);
+}
+
+.catalogo-trazas {
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+  max-height: 13rem;
+  overflow-y: auto;
+}
+
+.grupo-catalogo {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+.titulo-grupo {
+  width: 100%;
+  font-size: 0.65rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  opacity: 0.45;
+}
+
+/* Un boton por senal. Elegido y no elegido se distinguen por relleno y no solo
+   por color, para que la diferencia se vea sin depender de la vista de color. */
+.chip-senal {
+  padding: 0.2rem 0.55rem;
+  font-size: 0.72rem;
+  color: inherit;
+  background: transparent;
+  border: 1px solid rgba(127, 127, 127, 0.35);
+  border-radius: 1rem;
+  cursor: pointer;
+  opacity: 0.65;
+  white-space: nowrap;
+}
+
+.chip-senal:hover {
+  opacity: 0.9;
+}
+
+.chip-elegido {
+  opacity: 1;
+  color: #0b1120;
+  background: #4ea8ff;
+  border-color: #4ea8ff;
+  font-weight: 600;
+}
+
+.grilla-trazas {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(20rem, 1fr));
+  gap: 1rem;
+  margin-top: 1rem;
+}
+
+.grafica-vivo {
+  margin: 0;
+  padding: 0.75rem 0.9rem 0.5rem;
+  background: rgba(127, 127, 127, 0.06);
+  border: 1px solid rgba(127, 127, 127, 0.22);
+  border-radius: 0.6rem;
+}
+
+.grafica-vivo figcaption {
+  display: flex;
+  align-items: baseline;
+  gap: 0.45rem;
+  margin-bottom: 0.4rem;
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  opacity: 0.7;
+}
+
+.grafica-vivo canvas {
+  display: block;
+  width: 100%;
+  height: 110px;
+}
+
+.grafica-vivo .leyenda {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  text-transform: none;
+  letter-spacing: 0;
+  font-size: 0.68rem;
+}
+
+/* El cuadrito de color ata cada nombre a su traza: sin el, varias lineas en el
+   mismo lienzo obligan a adivinar cual es cual. */
+.grafica-vivo .leyenda i {
+  display: inline-block;
+  width: 0.55rem;
+  height: 0.55rem;
+  border-radius: 0.15rem;
+  margin-left: 0.35rem;
+}
+
+.aviso-vacio {
+  grid-column: 1 / -1;
+  margin: 0;
+  padding: 1.5rem;
+  text-align: center;
+  font-size: 0.8rem;
+  opacity: 0.5;
+}
+
+/* Flujo detenido ----------------------------------------------------------
+   Los valores se atenuan ademas de mostrarse el aviso: el texto explica, la
+   atenuacion impide leerlos de reojo como si fueran actuales. */
+
+.aviso-detenido {
+  border-left: 3px solid #fbbf24;
+  color: #fbbf24;
+  background: rgba(251, 191, 36, 0.08);
+  padding: 0.5rem 0.75rem;
+  border-radius: 0.3rem;
+}
+
+.flujo-detenido .tarjetas-vivo,
+.flujo-detenido .grilla-trazas {
+  opacity: 0.45;
+  transition: opacity 0.3s ease;
+}
+
+/* Marcas de la vista en vivo ---/* Marcas de la vista en vivo ----------------------------------------------
+   La de simulacion nunca cambia; la de origen si, porque el mismo canal
+   transporta la consola y la reproduccion de una captura. */
+
+.marcas-vivo {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.35rem;
+}
+
+.marca-origen {
+  padding: 0.2rem 0.55rem;
+  border-radius: 0.3rem;
+  font-size: 0.62rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  border: 1px solid rgba(74, 222, 128, 0.45);
+  color: #4ade80;
+  background: rgba(74, 222, 128, 0.08);
+}
+
+/* La reproduccion se distingue por color: leerla como si estuviera ocurriendo
+   es el error que la marca existe para impedir. */
+.marca-origen-reproducido {
+  border-color: rgba(251, 191, 36, 0.5);
+  color: #fbbf24;
+  background: rgba(251, 191, 36, 0.08);
+}
+
 .diagnostico-vivo {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr));

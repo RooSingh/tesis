@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import unittest
 
+import scripts.capturar_f1_25 as capturar_f1_25
+
 from backend import f1_udp
 from scripts.capturar_f1_25 import AYUDAS, derivar_procedencia, nombre_derivado
 from tests.test_f1_udp import _cabecera
@@ -71,11 +73,36 @@ class ProcedenciaDerivadaTests(unittest.TestCase):
         p = derivar_procedencia(_sesion(gearbox_assist=3), None, None)
         self.assertIn("gearbox_assist", p["ayudas_activas"])
 
-    def test_declara_si_el_dano_estaba_activado(self):
-        """En contrarreloj el dano viene apagado y los canales quedan en cero."""
+    def test_declara_el_dano_con_su_valor_y_su_nombre(self):
+        """En contrarreloj el dano viene apagado y los canales quedan en cero.
 
-        self.assertEqual(derivar_procedencia(_sesion(car_damage_setting=0), None, None)["dano_activado"], 0)
-        self.assertEqual(derivar_procedencia(_sesion(car_damage_setting=3), None, None)["dano_activado"], 3)
+        Se comprueba tambien el nombre, porque el valor crudo solo no distingue
+        una captura util de una en la que los 34 canales de desgaste estan
+        congelados: eso es lo que separa "3" de "simulacion".
+        """
+
+        apagado = derivar_procedencia(_sesion(car_damage_setting=0), None, None)
+        self.assertEqual(apagado["ajustes"]["car_damage_setting"]["valor"], 0)
+        self.assertEqual(apagado["ajustes"]["car_damage_setting"]["nombre"], "desactivado")
+
+        simulacion = derivar_procedencia(_sesion(car_damage_setting=3), None, None)
+        self.assertEqual(simulacion["ajustes"]["car_damage_setting"]["valor"], 3)
+        self.assertEqual(simulacion["ajustes"]["car_damage_setting"]["nombre"], "simulacion")
+
+    def test_los_tipos_de_sesion_siguen_a_la_especificacion(self):
+        """Fija la tabla contra el apendice, no contra lo que se recuerde.
+
+        La version anterior nombraba "sprint-2" al tipo 15, que es Carrera. El
+        error no se veia en el dato —era correcto— sino en como se lo archivaba,
+        de modo que solo una prueba escrita contra la especificacion lo atrapa.
+        """
+
+        esperado = {5: "clasificacion-1", 10: "sprint-shootout-1",
+                    15: "carrera", 16: "carrera-2", 18: "contrarreloj"}
+        for identificador, nombre in esperado.items():
+            with self.subTest(tipo=identificador):
+                p = derivar_procedencia(_sesion(session_type=identificador), None, None)
+                self.assertEqual(p["tipo_sesion"], nombre)
 
     def test_arrastra_el_inicio_de_cada_sector(self):
         """Es un dato que la fuente deportiva no entrega."""
@@ -100,6 +127,44 @@ class ProcedenciaDerivadaTests(unittest.TestCase):
         self.assertNotIn("anti_lock_brakes", p["ayudas"])
 
 
+class SinListaDuplicadaTests(unittest.TestCase):
+    """El capturador no puede tener su propia idea de que se normaliza.
+
+    El defecto que esta prueba impide ya ocurrio: el capturador llevaba escrita
+    a mano la lista `("car_telemetry", "lap_data")`. Cuando el adaptador aprendio
+    a normalizar energia y dano, esos canales quedaron sin publicar. Existian en
+    el registro crudo y no llegaban a la base, de modo que la persistencia
+    guardaba **que** el vehiculo freno y no **por que**.
+
+    Ninguna prueba lo detectaba porque cada mitad era correcta por separado. Lo
+    que estaba mal era que hubiera dos mitades.
+    """
+
+    def test_el_capturador_publica_todo_lo_que_el_adaptador_normaliza(self):
+        import inspect
+
+        from adapters import f1_25
+
+        fuente = inspect.getsource(capturar_f1_25.Publicador.publicar)
+        # No se compara contra una lista escrita aca —seria una tercera copia—
+        # sino que se verifica que el capturador consulte al adaptador.
+        self.assertIn("f1_25.PAQUETES_NORMALIZABLES", fuente)
+        for paquete in f1_25.PAQUETES_NORMALIZABLES:
+            with self.subTest(paquete=paquete):
+                self.assertNotIn(f'"{paquete}"', fuente)
+
+    def test_el_adaptador_declara_un_mapa_por_paquete(self):
+        """Cada paquete normalizable tiene sus senales, y ninguno sobra."""
+
+        from adapters import f1_25
+
+        self.assertEqual(set(f1_25.PAQUETES_NORMALIZABLES),
+                         set(f1_25.MAPAS_POR_PAQUETE))
+        for paquete, mapa in f1_25.MAPAS_POR_PAQUETE.items():
+            with self.subTest(paquete=paquete):
+                self.assertTrue(mapa, f"{paquete} no declara ninguna senal")
+
+
 if __name__ == "__main__":
     unittest.main()
 
@@ -116,7 +181,7 @@ class NombreDerivadoTests(unittest.TestCase):
         self.momento = datetime(2026, 8, 29, 17, 12)
 
     def test_incluye_circuito_y_tipo_de_sesion(self):
-        p = derivar_procedencia(_sesion(track_id=7, session_type=10), None, None)
+        p = derivar_procedencia(_sesion(track_id=7, session_type=15), None, None)
         nombre = nombre_derivado(p, self.momento)
         self.assertIn("silverstone", nombre)
         self.assertIn("carrera", nombre)
@@ -168,3 +233,26 @@ class SegundoConductorTests(unittest.TestCase):
                     "game_major_version": 1, "game_minor_version": 24}
         p = derivar_procedencia(_sesion(game_mode=5), None, cabecera)
         self.assertFalse(p["pantalla_dividida"])
+
+
+class DescarteDeNoSesionTests(unittest.TestCase):
+    """Navegar por los menus no es una sesion, dure lo que dure.
+
+    El filtro original era por duracion, y dejo pasar diez capturas de entre
+    diez y setenta y tres segundos: todas mas largas que el minimo, ninguna con
+    un solo paquete de sesion. El criterio por reloj no podia distinguirlas.
+    """
+
+    def test_una_captura_sin_sesion_no_es_conservable(self):
+        p = derivar_procedencia(None, None, None)
+        self.assertFalse(p["disponible"])
+        self.assertIn("motivo", p)
+
+    def test_el_nombre_derivado_declara_que_no_hubo_sesion(self):
+        """Aunque se conservara, el archivo diria que no sabe de que es."""
+
+        from datetime import datetime
+
+        p = derivar_procedencia(None, None, None)
+        nombre = nombre_derivado(p, datetime(2026, 8, 30, 21, 8))
+        self.assertIn("sesion-no-declarada", nombre)

@@ -109,7 +109,20 @@ class DifusorTests(unittest.TestCase):
         estado = self.d.estado()
         self.assertIn("conectado", estado)
         self.assertIn("mensajes_recibidos", estado)
-        self.assertIn("camino", estado)
+
+    def test_el_estado_declara_los_dos_caminos(self):
+        """Anunciar solo este camino se lee como que el dato no se guarda.
+
+        La frase "sin pasar por la base" es cierta sobre la vista y enganosa
+        sobre el sistema: la persistencia corre en paralelo. Declarar los dos
+        caminos es lo que evita que una decision de diseno se lea como una
+        perdida de datos.
+        """
+
+        estado = self.d.estado()
+        self.assertIn("camino_vista", estado)
+        self.assertIn("camino_persistencia", estado)
+        self.assertIn("base de datos", estado["camino_persistencia"])
 
     def test_sin_bucle_no_falla(self):
         """El difusor puede recibir antes de que la aplicacion este lista."""

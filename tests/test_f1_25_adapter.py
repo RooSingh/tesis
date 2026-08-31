@@ -169,5 +169,165 @@ class AlcanceTests(unittest.TestCase):
             f1_25.mensajes_desde_paquete(decodificado, INICIO)
 
 
+class EnergiaYDanoTests(unittest.TestCase):
+    """Los canales que explican el rendimiento tienen que llegar a la base.
+
+    Sin ellos la persistencia guarda que el vehiculo freno y no por que: una
+    parada en boxes, una neutralizacion y una bajada de ritmo por bateria vacia
+    se ven todas igual, como una caida de velocidad sin causa.
+    """
+
+    def _mensajes(self, packet_id: int) -> dict[str, object]:
+        from tests.test_f1_udp import _datagrama_relleno
+        decodificado = f1_udp.decodificar(_datagrama_relleno(packet_id))
+        mensajes = f1_25.mensajes_desde_paquete(decodificado, INICIO)
+        return {m["signal_name"]: m for m in mensajes}
+
+    def test_la_unidad_de_potencia_se_normaliza(self):
+        senales = self._mensajes(7)
+        for nombre in ("ers_stored_energy", "ers_deployed_lap",
+                       "ers_harvested_mguk_lap", "ers_harvested_mguh_lap",
+                       "ers_deploy_mode", "fuel_mass"):
+            with self.subTest(senal=nombre):
+                self.assertIn(nombre, senales)
+        self.assertEqual(senales["ers_stored_energy"]["unit"], "J")
+
+    def test_el_dano_llega_desglosado_por_rueda(self):
+        senales = self._mensajes(10)
+        for rueda in ("rear_left", "rear_right", "front_left", "front_right"):
+            with self.subTest(rueda=rueda):
+                self.assertIn(f"tyre_wear_{rueda}", senales)
+                self.assertIn(f"brake_damage_{rueda}", senales)
+
+    def test_la_rueda_queda_en_el_nombre_y_no_en_un_indice(self):
+        """Un indice obligaria a cada consulta a recordar el orden RL, RR, FL, FR."""
+
+        senales = self._mensajes(10)
+        self.assertNotIn("tyre_wear_0", senales)
+        self.assertNotIn("tyre_wear", senales)
+
+    def test_el_estado_de_boxes_viaja_con_los_datos_de_vuelta(self):
+        senales = {m["signal_name"] for m in f1_25.mensajes_desde_paquete(
+            f1_udp.decodificar(datagrama_vueltas(0)), INICIO)}
+        for nombre in ("pit_status", "pit_stops_completed", "safety_car_delta",
+                       "penalty_time", "lap_invalid"):
+            with self.subTest(senal=nombre):
+                self.assertIn(nombre, senales)
+
+    def test_toda_senal_declara_su_transformacion(self):
+        """Es la regla que este trabajo le reclama a la fuente deportiva."""
+
+        for packet_id in (6, 7, 10):
+            for m in f1_25.mensajes_desde_paquete(
+                    f1_udp.decodificar(
+                        __import__("tests.test_f1_udp", fromlist=["x"])
+                        ._datagrama_relleno(packet_id)), INICIO):
+                with self.subTest(senal=m["signal_name"]):
+                    self.assertIn("transformation", m["metadata"]["extra"])
+
+
+class CatalogoDeSenalesTests(unittest.TestCase):
+    """Lo que el adaptador dice que produce y lo que produce tienen que coincidir.
+
+    El catalogo lo consume la vista para ofrecer las senales antes de que llegue
+    la primera muestra. Si prometiera una senal que la normalizacion no emite,
+    la vista mostraria una traza que nunca se llena; si omitiera una, esa senal
+    seria invisible aunque estuviera guardada.
+
+    No se compara contra una lista escrita en esta prueba —seria una tercera
+    copia, que es el defecto que se viene corrigiendo— sino contra lo que sale
+    de normalizar un paquete de cada clase.
+    """
+
+    def _emitidas(self) -> set[str]:
+        from tests.test_f1_udp import _datagrama_relleno
+
+        emitidas: set[str] = set()
+        for packet_id in (6, 2, 7, 10):
+            decodificado = f1_udp.decodificar(_datagrama_relleno(packet_id))
+            for mensaje in f1_25.mensajes_desde_paquete(decodificado, INICIO):
+                emitidas.add(mensaje["signal_name"])
+        return emitidas
+
+    def test_el_catalogo_es_exactamente_lo_que_se_emite(self):
+        declaradas = {s["signal_name"] for s in f1_25.catalogo_de_senales()}
+        self.assertEqual(declaradas, self._emitidas())
+
+    def test_cada_entrada_declara_unidad_y_paquete(self):
+        """La vista decide el rango por la unidad y agrupa por el paquete."""
+
+        for entrada in f1_25.catalogo_de_senales():
+            with self.subTest(senal=entrada["signal_name"]):
+                self.assertTrue(entrada["unit"])
+                self.assertIn(entrada["paquete"], f1_25.PAQUETES_NORMALIZABLES)
+
+    def test_no_hay_nombres_repetidos(self):
+        """Dos senales con el mismo nombre serian indistinguibles en la base."""
+
+        nombres = [s["signal_name"] for s in f1_25.catalogo_de_senales()]
+        self.assertEqual(len(nombres), len(set(nombres)))
+
+    def test_las_unidades_del_catalogo_son_las_de_los_mensajes(self):
+        """Un rango mal elegido por unidad equivocada deformaria la traza."""
+
+        from tests.test_f1_udp import _datagrama_relleno
+
+        declarada = {s["signal_name"]: s["unit"] for s in f1_25.catalogo_de_senales()}
+        for packet_id in (6, 2, 7, 10):
+            decodificado = f1_udp.decodificar(_datagrama_relleno(packet_id))
+            for mensaje in f1_25.mensajes_desde_paquete(decodificado, INICIO):
+                with self.subTest(senal=mensaje["signal_name"]):
+                    self.assertEqual(mensaje["unit"],
+                                     declarada[mensaje["signal_name"]])
+
+
+class DosRelojesTests(unittest.TestCase):
+    """El reloj de sesion y el de la captura viajan juntos.
+
+    El reloj de sesion del juego **se detiene mientras los marcos siguen
+    avanzando**: en la carrera capturada duro 1.377,86 s sobre 1.537 s reales, y
+    207 marcos comparten su marca con el anterior. Eso lo vuelve inservible como
+    clave y como medida de tiempo transcurrido, y sigue siendo el unico que
+    alinea con el juego.
+
+    Sustituir uno por otro cambiaria un punto ciego por el opuesto, de modo que
+    el mensaje transporta los dos y declara cual es cual.
+    """
+
+    def test_el_mensaje_declara_el_desplazamiento_de_captura(self):
+        mensajes = f1_25.mensajes_desde_paquete(
+            _telemetria(), INICIO, desplazamiento_captura_us=1_234_567)
+        for mensaje in mensajes:
+            with self.subTest(senal=mensaje["signal_name"]):
+                self.assertEqual(
+                    mensaje["metadata"]["extra"]["desplazamiento_captura_us"],
+                    1_234_567)
+
+    def test_los_dos_relojes_son_campos_distintos(self):
+        """Confundirlos es lo que haria pasar uno por el otro."""
+
+        extra = f1_25.mensajes_desde_paquete(
+            _telemetria(), INICIO,
+            desplazamiento_captura_us=9_000_000)[0]["metadata"]["extra"]
+        self.assertIn("session_time_s", extra)
+        self.assertIn("desplazamiento_captura_us", extra)
+        self.assertNotEqual(extra["session_time_s"],
+                            extra["desplazamiento_captura_us"])
+
+    def test_sin_desplazamiento_el_campo_se_declara_vacio(self):
+        """Ausente y cero son cosas distintas: cero es un instante valido."""
+
+        extra = f1_25.mensajes_desde_paquete(
+            _telemetria(), INICIO)[0]["metadata"]["extra"]
+        self.assertIsNone(extra["desplazamiento_captura_us"])
+
+    def test_un_desplazamiento_cero_no_se_confunde_con_ausente(self):
+        extra = f1_25.mensajes_desde_paquete(
+            _telemetria(), INICIO,
+            desplazamiento_captura_us=0)[0]["metadata"]["extra"]
+        self.assertEqual(extra["desplazamiento_captura_us"], 0)
+        self.assertIsNotNone(extra["desplazamiento_captura_us"])
+
+
 if __name__ == "__main__":
     unittest.main()

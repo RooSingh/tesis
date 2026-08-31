@@ -131,6 +131,26 @@ VEHICULOS = 22
 
 
 # --------------------------------------------------------------------------- #
+# Orden de las ruedas
+# --------------------------------------------------------------------------- #
+
+# La especificacion lo declara textualmente para los arreglos de Motion Ex:
+# "All wheel arrays have the following order: RL, RR, FL, FR".
+#
+# No es el orden intuitivo. Leerlos como delantera izquierda primero intercambia
+# el eje entero sin alterar el tamano, de modo que ninguna prueba aritmetica lo
+# detectaria: es el mismo tipo de error que el campo de marcha con signo.
+ORDEN_RUEDAS = ("trasera_izquierda", "trasera_derecha",
+                "delantera_izquierda", "delantera_derecha")
+
+
+def _por_rueda(valores) -> dict[str, Any]:
+    """Nombra un arreglo de cuatro valores segun el orden del protocolo."""
+
+    return dict(zip(ORDEN_RUEDAS, valores))
+
+
+# --------------------------------------------------------------------------- #
 # Car Telemetry, paquete 6
 # --------------------------------------------------------------------------- #
 
@@ -185,12 +205,15 @@ def _desempaquetar_car_telemetry(bruto: tuple) -> dict[str, Any]:
         "drs": bruto[7],                 # 0 cerrado, 1 abierto
         "rev_lights_percent": bruto[8],
         "rev_lights_bit_value": bruto[9],
-        "brakes_temperature_c": list(bruto[10:14]),
-        "tyres_surface_temperature_c": list(bruto[14:18]),
-        "tyres_inner_temperature_c": list(bruto[18:22]),
+        # Nombradas por rueda, igual que en el paquete de dano. Que el mismo
+        # concepto fisico viajara como lista aca y como diccionario alla dejaba
+        # el orden implicito justo en los canales donde ya se equivoco una vez.
+        "brakes_temperature_c": _por_rueda(bruto[10:14]),
+        "tyres_surface_temperature_c": _por_rueda(bruto[14:18]),
+        "tyres_inner_temperature_c": _por_rueda(bruto[18:22]),
         "engine_temperature_c": bruto[22],
-        "tyres_pressure_psi": list(bruto[23:27]),
-        "surface_type": list(bruto[27:31]),
+        "tyres_pressure_psi": _por_rueda(bruto[23:27]),
+        "surface_type": _por_rueda(bruto[27:31]),
     }
 
 
@@ -343,12 +366,133 @@ def _desempaquetar_session(bruto: tuple) -> dict[str, Any]:
         "num_virtual_safety_car_periods": cola[26],
         "num_red_flag_periods": cola[27],
         "equal_car_performance": cola[28],
-        "car_damage_setting": cola[37],
-        "car_damage_rate": cola[38],
+        # Los indices de este bloque se contaron uno a uno contra la
+        # especificacion: un desplazamiento de una sola posicion aca leia la
+        # tasa de dano y la publicaba como el nivel de dano, sin que ninguna
+        # prueba de tamano pudiera notarlo.
+        "car_damage_setting": cola[36],
+        "car_damage_rate": cola[37],
+        "collisions": cola[38],
+        # Ajustes de realismo. Se nombran porque son las perillas que el
+        # protocolo de capturas manipula: sin leerlas del flujo, la condicion
+        # experimental de cada captura seria una afirmacion del operador.
+        "recovery_mode": cola[29],
+        "surface_type": cola[31],
+        "low_fuel_mode": cola[32],
+        "tyre_temperature_model": cola[34],
+        "pit_lane_tyre_sim": cola[35],
+        "corner_cutting_stringency": cola[42],
+        "parc_ferme_rules": cola[43],
+        "pit_stop_experience": cola[44],
         "safety_car_setting": cola[45],
+        "formation_lap": cola[47],
+        "red_flags_setting": cola[49],
+        "speed_units_lead": cola[21],
+        "num_sessions_in_weekend": cola[52],
         "sector2_lap_distance_start_m": cola[-2],
         "sector3_lap_distance_start_m": cola[-1],
     }
+
+
+# --------------------------------------------------------------------------- #
+# Event, paquete 3
+# --------------------------------------------------------------------------- #
+
+# Es el unico paquete del protocolo que **no tiene una estructura fija**: los
+# cuatro primeros bytes son un codigo de texto que decide como leer los doce
+# siguientes. Interpretarlos con la estructura equivocada no falla ni cambia el
+# tamano; simplemente devuelve numeros creibles y falsos.
+#
+# Su valor es que aca esta lo que ningun canal continuo dice: cuando salio el
+# coche de seguridad, quien adelanto a quien, que penalizacion se aplico y por
+# que. Un canal de telemetria muestra que el vehiculo bajo la velocidad; solo
+# este paquete dice que fue por bandera amarilla y no por un error de conduccion.
+EVENTO_TAMANO_DETALLE = 12
+
+MOTIVOS_ABANDONO = {
+    0: "invalido", 1: "abandono", 2: "termino", 3: "dano-terminal",
+    4: "inactivo", 5: "vueltas-insuficientes", 6: "bandera-negra",
+    7: "bandera-roja", 8: "falla-mecanica", 9: "sesion-salteada",
+    10: "sesion-simulada",
+}
+MOTIVOS_DRS_DESACTIVADO = {
+    0: "pista-mojada", 1: "coche-de-seguridad", 2: "bandera-roja",
+    3: "vuelta-minima-no-alcanzada",
+}
+TIPOS_COCHE_SEGURIDAD = {
+    0: "ninguno", 1: "coche-de-seguridad", 2: "coche-de-seguridad-virtual",
+    3: "vuelta-de-formacion",
+}
+FASES_COCHE_SEGURIDAD = {
+    0: "desplegado", 1: "regresando", 2: "regreso", 3: "carrera-reanudada",
+}
+
+# Cada codigo con el formato de su detalle y los nombres de sus campos. Los
+# codigos ausentes no llevan detalle: el hecho de que ocurrieron es todo el dato.
+_EVENTOS = {
+    "FTLP": ("<Bf", ("vehiculo", "tiempo_vuelta_s")),
+    "RTMT": ("<BB", ("vehiculo", "motivo")),
+    "DRSD": ("<B", ("motivo",)),
+    "TMPT": ("<B", ("vehiculo",)),
+    "RCWN": ("<B", ("vehiculo",)),
+    "PENA": ("<BBBBBBB", ("tipo_penalizacion", "tipo_infraccion", "vehiculo",
+                          "otro_vehiculo", "tiempo_s", "vuelta", "puestos_ganados")),
+    "SPTP": ("<BfBBBf", ("vehiculo", "velocidad_kmh", "es_mejor_de_la_sesion",
+                         "es_mejor_del_piloto", "vehiculo_mas_rapido",
+                         "mejor_velocidad_sesion_kmh")),
+    "STLG": ("<B", ("luces",)),
+    "DTSV": ("<B", ("vehiculo",)),
+    "SGSV": ("<Bf", ("vehiculo", "tiempo_detenido_s")),
+    "FLBK": ("<If", ("marco", "tiempo_sesion_s")),
+    "BUTN": ("<I", ("botones",)),
+    "OVTK": ("<BB", ("vehiculo_que_adelanta", "vehiculo_adelantado")),
+    "SCAR": ("<BB", ("tipo", "fase")),
+    "COLL": ("<BB", ("vehiculo_1", "vehiculo_2")),
+}
+
+NOMBRES_EVENTO = {
+    "SSTA": "sesion-iniciada", "SEND": "sesion-terminada",
+    "FTLP": "vuelta-rapida", "RTMT": "abandono",
+    "DRSE": "drs-habilitado", "DRSD": "drs-deshabilitado",
+    "TMPT": "companero-en-boxes", "CHQF": "bandera-a-cuadros",
+    "RCWN": "ganador", "PENA": "penalizacion", "SPTP": "radar-de-velocidad",
+    "STLG": "luces-de-largada", "LGOT": "largada",
+    "DTSV": "paso-por-boxes-cumplido", "SGSV": "detencion-cumplida",
+    "FLBK": "retroceso", "BUTN": "botones", "RDFL": "bandera-roja",
+    "OVTK": "adelantamiento", "SCAR": "coche-de-seguridad",
+    "COLL": "colision",
+}
+
+
+def _desempaquetar_event(datos: bytes) -> dict[str, Any]:
+    """Lee el codigo de evento y, segun cual sea, el detalle que le corresponde."""
+
+    codigo = datos[CABECERA_TAMANO:CABECERA_TAMANO + 4].decode("ascii", "replace")
+    evento: dict[str, Any] = {
+        "codigo": codigo,
+        "evento": NOMBRES_EVENTO.get(codigo, f"desconocido-{codigo}"),
+    }
+
+    if codigo not in _EVENTOS:
+        # No es un vacio a completar: estos codigos no llevan detalle.
+        evento["detalle"] = {}
+        return evento
+
+    formato, campos = _EVENTOS[codigo]
+    valores = struct.unpack_from(formato, datos, CABECERA_TAMANO + 4)
+    detalle = dict(zip(campos, valores))
+
+    # Se traduce solo lo que sin traducir no se entiende.
+    if codigo == "SCAR":
+        detalle["tipo_nombre"] = TIPOS_COCHE_SEGURIDAD.get(detalle["tipo"], "desconocido")
+        detalle["fase_nombre"] = FASES_COCHE_SEGURIDAD.get(detalle["fase"], "desconocida")
+    elif codigo == "RTMT":
+        detalle["motivo_nombre"] = MOTIVOS_ABANDONO.get(detalle["motivo"], "desconocido")
+    elif codigo == "DRSD":
+        detalle["motivo_nombre"] = MOTIVOS_DRS_DESACTIVADO.get(detalle["motivo"], "desconocido")
+
+    evento["detalle"] = detalle
+    return evento
 
 
 # --------------------------------------------------------------------------- #
@@ -398,26 +542,6 @@ def _desempaquetar_car_status(bruto: tuple) -> dict[str, Any]:
 # se decodifican: el trabajo solo necesita telemetria y datos de vuelta, y
 # escribir estructuras que nadie consume es codigo que hay que mantener sin
 # obtener nada a cambio.
-
-# --------------------------------------------------------------------------- #
-# Orden de las ruedas
-# --------------------------------------------------------------------------- #
-
-# La especificacion lo declara textualmente para los arreglos de Motion Ex:
-# "All wheel arrays have the following order: RL, RR, FL, FR".
-#
-# No es el orden intuitivo. Leerlos como delantera izquierda primero intercambia
-# el eje entero sin alterar el tamano, de modo que ninguna prueba aritmetica lo
-# detectaria: es el mismo tipo de error que el campo de marcha con signo.
-ORDEN_RUEDAS = ("trasera_izquierda", "trasera_derecha",
-                "delantera_izquierda", "delantera_derecha")
-
-
-def _por_rueda(valores) -> dict[str, Any]:
-    """Nombra un arreglo de cuatro valores segun el orden del protocolo."""
-
-    return dict(zip(ORDEN_RUEDAS, valores))
-
 
 # --------------------------------------------------------------------------- #
 # Car Damage, paquete 10
@@ -703,6 +827,13 @@ def decodificar(datos: bytes) -> dict[str, Any]:
         "paquete": descripcion["nombre"],
         "packet_id": packet_id,
     }
+
+    # El evento se resuelve aparte: su forma depende del contenido, no del
+    # identificador, de modo que no puede entrar en un registro de formatos.
+    if packet_id == 3:
+        resultado["decodificado"] = True
+        resultado.update(_desempaquetar_event(datos))
+        return resultado
 
     if packet_id in _DECODIFICADORES_UNICOS:
         formato, nombrar = _DECODIFICADORES_UNICOS[packet_id]

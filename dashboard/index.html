@@ -41,12 +41,24 @@
           <p class="etiqueta-superior">Fuente de simulacion en vivo</p>
           <h2 id="vivo-titulo">F1 25 &mdash; esperando telemetria</h2>
         </div>
-        <div class="marca-simulado" title="Los valores provienen de un simulador">
-          DATO SIMULADO
+        <div class="marcas-vivo">
+          <div class="marca-simulado" title="Los valores provienen de un simulador">
+            DATO SIMULADO
+          </div>
+          <!-- El mismo canal transporta la consola en vivo y la reproduccion de
+               una captura. El mensaje declara cual de las dos es; no mostrarlo
+               presentaria una grabacion como si estuviera ocurriendo. -->
+          <div id="vivo-origen" class="marca-origen" hidden></div>
         </div>
       </header>
 
       <p id="vivo-estado" class="aviso-vivo">Conectando con el flujo en vivo...</p>
+
+      <!-- Sin este aviso la vista conserva los ultimos valores cuando el flujo
+           se corta, y quien mira no distingue una sesion en curso de una
+           terminada hace media hora. Un tablero que muestra un numero viejo sin
+           decir que es viejo afirma algo falso: que eso esta pasando ahora. -->
+      <p id="vivo-silencio" class="aviso-vivo aviso-detenido" hidden></p>
 
       <div id="vivo-tarjetas" class="tarjetas-vivo" hidden>
         <article class="tarjeta-vivo destacada">
@@ -83,13 +95,39 @@
         </article>
       </div>
 
+      <!-- Trazas en vivo. Una tarjeta muestra el instante; una traza muestra
+           el gesto: una frenada, una salida de curva o un cambio de marcha solo
+           se leen como forma, no como numero suelto.
+
+           El catalogo no esta escrito aca: se arma con las senales que
+           efectivamente llegan. Fijar una lista obligaria a tocar la pagina
+           cada vez que el adaptador aprende un canal nuevo, que es la misma
+           duplicacion que dejo la energia y el dano fuera de la base. -->
+      <div id="vivo-graficas" class="graficas-vivo" hidden>
+        <div class="selector-trazas">
+          <div class="cabecera-selector">
+            <span class="rotulo">Senales en pantalla</span>
+            <span id="vivo-conteo-senales" class="conteo-senales"></span>
+            <button type="button" id="vivo-limpiar-trazas" class="boton-tenue">
+              Quitar todas
+            </button>
+          </div>
+          <div id="vivo-catalogo" class="catalogo-trazas"></div>
+        </div>
+        <div id="vivo-trazas" class="grilla-trazas"></div>
+      </div>
+
       <!-- La latencia se muestra porque es medible y porque es lo que este
-           camino existe para poder medir. -->
+           camino existe para poder medir. La persistencia se muestra porque sin
+           ella el aviso de que esta vista no pasa por la base se lee como que el
+           dato no se guarda. -->
       <dl id="vivo-diagnostico" class="diagnostico-vivo" hidden>
         <div><dt>Mensajes recibidos</dt><dd id="vivo-mensajes">0</dd></div>
         <div><dt>Latencia de publicacion a recepcion</dt><dd id="vivo-latencia">&mdash;</dd></div>
         <div><dt>Ultimo dato</dt><dd id="vivo-ultimo">&mdash;</dd></div>
-        <div><dt>Camino</dt><dd id="vivo-camino">&mdash;</dd></div>
+        <div><dt>Camino de esta vista</dt><dd id="vivo-camino">&mdash;</dd></div>
+        <div><dt>Camino de la persistencia</dt><dd id="vivo-camino-base">&mdash;</dd></div>
+        <div><dt>Guardado en la base</dt><dd id="vivo-persistencia">&mdash;</dd></div>
       </dl>
     </section>
 

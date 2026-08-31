@@ -61,13 +61,46 @@ CIRCUITOS = {
     17: "spielberg", 19: "mexico", 20: "baku", 26: "zandvoort", 29: "miami",
     30: "las-vegas", 31: "lusail", 32: "jeddah",
 }
-MODOS_JUEGO = {5: "contrarreloj", 6: "pantalla-dividida"}
+# Transcritos del apendice "Game Mode IDs".
+MODOS_JUEGO = {
+    4: "gran-premio", 5: "contrarreloj", 6: "pantalla-dividida",
+    7: "online-personalizado", 15: "evento-semanal-online",
+    17: "modo-historia", 27: "carrera-mi-equipo", 28: "carrera-piloto",
+    29: "carrera-online", 30: "carrera-desafio", 75: "modo-historia-apxgp",
+    127: "banco-de-pruebas",
+}
+
+# Transcrita del apendice "Session types" de la especificacion, no de memoria.
+# La version anterior de esta tabla estaba corrida: nombraba "sprint-2" al 15,
+# que es Carrera. El dato capturado era correcto; el nombre que se le ponia, no.
 TIPOS_SESION = {
+    0: "desconocida",
     1: "practica-1", 2: "practica-2", 3: "practica-3", 4: "practica-corta",
     5: "clasificacion-1", 6: "clasificacion-2", 7: "clasificacion-3",
-    8: "clasificacion-corta", 9: "clasificacion-unica", 10: "carrera",
-    11: "carrera-2", 12: "carrera-3", 13: "vuelta-de-instalacion",
-    14: "sprint", 15: "sprint-2", 16: "sprint-3", 18: "contrarreloj",
+    8: "clasificacion-corta", 9: "clasificacion-unica",
+    10: "sprint-shootout-1", 11: "sprint-shootout-2", 12: "sprint-shootout-3",
+    13: "sprint-shootout-corto", 14: "sprint-shootout-unico",
+    15: "carrera", 16: "carrera-2", 17: "carrera-3", 18: "contrarreloj",
+}
+
+# Ajustes de realismo, con el nombre de cada valor. Se traducen porque la
+# condicion experimental de una captura tiene que poder leerse sin la tabla al
+# lado: lo que define a una captura no es el numero 3, es "simulacion".
+AJUSTES = {
+    "car_damage_setting": {0: "desactivado", 1: "reducido", 2: "estandar", 3: "simulacion"},
+    "car_damage_rate": {0: "reducido", 1: "estandar", 2: "simulacion"},
+    "collisions": {0: "desactivadas", 1: "sin-piloto-a-piloto", 2: "activadas"},
+    "recovery_mode": {0: "ninguno", 1: "retrocesos", 2: "recuperacion-automatica"},
+    "surface_type": {0: "simplificada", 1: "realista"},
+    "low_fuel_mode": {0: "facil", 1: "dificil"},
+    "tyre_temperature_model": {0: "solo-superficie", 1: "superficie-y-carcasa"},
+    "pit_lane_tyre_sim": {0: "activada", 1: "desactivada"},
+    "corner_cutting_stringency": {0: "regular", 1: "estricta"},
+    "parc_ferme_rules": {0: "desactivadas", 1: "activadas"},
+    "safety_car_setting": {0: "desactivado", 1: "reducido", 2: "estandar", 3: "aumentado"},
+    "formation_lap": {0: "desactivada", 1: "activada"},
+    "red_flags_setting": {0: "desactivadas", 1: "reducidas", 2: "estandar", 3: "aumentadas"},
+    "equal_car_performance": {0: "cada-auto-como-es", 1: "rendimiento-igualado"},
 }
 CLIMA = {0: "despejado", 1: "nubes ligeras", 2: "cubierto",
          3: "lluvia ligera", 4: "lluvia fuerte", 5: "tormenta"}
@@ -113,7 +146,11 @@ def derivar_procedencia(sesion: dict | None, estado: dict | None,
         "vueltas_totales": sesion["total_laps"],
         "dificultad_ia": sesion["ai_difficulty"],
         "juego_en_red": sesion["network_game"],
-        "dano_activado": sesion["car_damage_setting"],
+        # Cada ajuste con su valor crudo y su nombre, para que la condicion
+        # experimental quede legible en el archivo de metadatos.
+        "ajustes": {nombre: {"valor": sesion.get(nombre),
+                             "nombre": tabla.get(sesion.get(nombre), "desconocido")}
+                    for nombre, tabla in AJUSTES.items()},
         "inicio_sector2_m": sesion["sector2_lap_distance_start_m"],
         "inicio_sector3_m": sesion["sector3_lap_distance_start_m"],
         "ayudas": ayudas,
@@ -169,10 +206,18 @@ class Publicador:
     def activa(self) -> bool:
         return self.cliente is not None
 
-    def publicar(self, decodificado: dict, inicio_utc: str) -> None:
-        if self.cliente is None or decodificado["paquete"] not in ("car_telemetry", "lap_data"):
+    def publicar(self, decodificado: dict, inicio_utc: str,
+                 desplazamiento_us: int | None = None) -> None:
+        # La lista de paquetes la declara el adaptador, no este archivo. Cuando
+        # estaba escrita aca, ampliar el adaptador dejaba los canales nuevos sin
+        # publicar: la energia y el dano existian en el crudo y no llegaban a la
+        # base, de modo que la persistencia guardaba que el vehiculo freno y no
+        # por que.
+        if self.cliente is None or decodificado["paquete"] not in f1_25.PAQUETES_NORMALIZABLES:
             return
-        for mensaje in f1_25.mensajes_desde_paquete(decodificado, inicio_utc):
+        for mensaje in f1_25.mensajes_desde_paquete(
+                decodificado, inicio_utc,
+                desplazamiento_captura_us=desplazamiento_us):
             self.cliente.publish(MQTT_TOPIC, json.dumps(mensaje), qos=1)
             self.mensajes += 1
 
@@ -180,6 +225,18 @@ class Publicador:
         if self.cliente is not None:
             self.cliente.loop_stop()
             self.cliente.disconnect()
+
+
+def _perfil_declarado(sesion: dict) -> tuple:
+    """Los campos que describen la condicion experimental de la captura.
+
+    Sirve para detectar el instante a partir del cual el flujo se describe a si
+    mismo de forma estable: mientras estos valores todavia cambian, cualquier
+    metadato leido seria provisional.
+    """
+
+    return tuple(sesion.get(nombre) for nombre in
+                 (*AJUSTES, *AYUDAS, "track_id", "session_type", "total_laps"))
 
 
 def capturar_sesion(sock: socket.socket, primer_datagrama: bytes,
@@ -193,13 +250,26 @@ def capturar_sesion(sock: socket.socket, primer_datagrama: bytes,
     provisional = destino / f".captura_en_curso_{inicio_dt.strftime('%H%M%S')}.f1raw"
     conteo: dict[int, int] = {}
     sesion = estado = cabecera = None
+    # El primer paquete de sesion llega antes de que el juego tenga cargada la
+    # configuracion: declara todo en cero. Tomar ese es lo que hacia que una
+    # carrera con dano en simulacion se archivara como "dano desactivado".
+    # Se conserva el ultimo que declara un tipo de sesion conocido, y se mide
+    # cuanto tardo el flujo en describirse de forma estable.
+    sesion_inicial = None
+    sesiones_vistas = 0
+    estable_desde_s: float | None = None
+    ultimo_perfil = None
     descartados = 0
     motivo = "silencio: se dejo de recibir"
 
     with f1_capture.EscritorCaptura(provisional) as escritor:
         datos = primer_datagrama
         while True:
-            escritor.escribir(int((time.perf_counter() - inicio) * 1_000_000), datos)
+            # El mismo desplazamiento que se graba en el crudo viaja en el
+            # mensaje, de modo que el dato en vivo y el reproducido comparten
+            # referencia temporal y son comparables entre si.
+            desplazamiento = int((time.perf_counter() - inicio) * 1_000_000)
+            escritor.escribir(desplazamiento, datos)
             conteo[len(datos)] = conteo.get(len(datos), 0) + 1
 
             try:
@@ -211,11 +281,23 @@ def capturar_sesion(sock: socket.socket, primer_datagrama: bytes,
             if decodificado is not None:
                 if cabecera is None:
                     cabecera = decodificado["cabecera"]
-                if sesion is None and decodificado["paquete"] == "session":
-                    sesion = decodificado["sesion"]
-                elif estado is None and decodificado["paquete"] == "car_status":
+                if decodificado["paquete"] == "session":
+                    candidata = decodificado["sesion"]
+                    sesiones_vistas += 1
+                    if sesion_inicial is None:
+                        sesion_inicial = candidata
+                    if candidata["session_type"] != 0:
+                        sesion = candidata
+                        perfil = _perfil_declarado(candidata)
+                        if perfil != ultimo_perfil:
+                            ultimo_perfil = perfil
+                            estable_desde_s = time.perf_counter() - inicio
+                elif decodificado["paquete"] == "car_status":
+                    # Tambien el ultimo, por el mismo motivo que la sesion: en el
+                    # menu el control de traccion y el antibloqueo llegan en cero
+                    # y se archivarian como desactivados.
                     estado = decodificado["vehiculo_propio"]
-                publicador.publicar(decodificado, inicio_utc)
+                publicador.publicar(decodificado, inicio_utc, desplazamiento)
 
             try:
                 datos, _ = sock.recvfrom(4096)
@@ -230,6 +312,19 @@ def capturar_sesion(sock: socket.socket, primer_datagrama: bytes,
         return {"conservada": False, "duracion_s": round(transcurrido, 2),
                 "motivo": f"menos de {MINIMO_UTIL_S:.0f} s: no es una sesion"}
 
+    # El minimo por duracion no alcanza. Navegar por los menus emite telemetria
+    # durante minutos sin que haya sesion alguna: la primera version del filtro
+    # dejo pasar diez capturas de entre diez y setenta y tres segundos, cada una
+    # de ellas mas larga que el minimo y ninguna con dato util.
+    #
+    # El criterio correcto no es cuanto duro sino **si el flujo declaro una
+    # sesion**. Es el mismo principio que rige el resto del capturador: se le
+    # pregunta al dato, no al reloj.
+    if not procedencia.get("disponible"):
+        provisional.unlink(missing_ok=True)
+        return {"conservada": False, "duracion_s": round(transcurrido, 2),
+                "motivo": "el flujo no declaro ninguna sesion: navegacion de menus"}
+
     ruta = destino / f"{nombre_derivado(procedencia, inicio_dt)}.f1raw"
     sufijo = 1
     while ruta.exists():
@@ -241,6 +336,13 @@ def capturar_sesion(sock: socket.socket, primer_datagrama: bytes,
         "inicio_utc": inicio_utc,
         "duracion_s": round(transcurrido, 3),
         "motivo_corte": motivo,
+        "paquetes_sesion": sesiones_vistas,
+        # Evidencia de que el metadato no se leyo antes de tiempo.
+        "metadatos_desde": "ultimo paquete de sesion con tipo declarado",
+        "metadatos_estables_desde_s": (round(estable_desde_s, 3)
+                                       if estable_desde_s is not None else None),
+        "primer_paquete_sesion_vacio": (
+            sesion_inicial is not None and sesion_inicial["session_type"] == 0),
         "tasa_total_por_s": round(sum(conteo.values()) / transcurrido, 2),
         # La frecuencia se mide, no se declara.
         "frecuencia_telemetria_hz_medida": round(

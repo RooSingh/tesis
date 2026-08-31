@@ -19,6 +19,7 @@ entonces el decodificador esta **verificado pero no validado**.
 
 from __future__ import annotations
 
+import re
 import struct
 import unittest
 
@@ -490,3 +491,176 @@ class ReglajeTests(unittest.TestCase):
     def test_las_presiones_van_nombradas_por_rueda(self):
         v = f1_udp.decodificar(_datagrama_relleno(5))["vehiculo_propio"]
         self.assertEqual(set(v["tyre_pressure_psi"]), set(f1_udp.ORDEN_RUEDAS))
+
+
+class EventoTests(unittest.TestCase):
+    """El unico paquete cuya forma depende del contenido, no del identificador.
+
+    Es la clase de estructura donde una prueba de tamano no protege nada: los
+    cuarenta y cinco bytes cierran igual se lea el detalle como corresponde o
+    con la estructura de otro evento. La proteccion tiene que venir de leer un
+    codigo y comprobar que salieron los campos de **ese** codigo.
+    """
+
+    @staticmethod
+    def _evento(codigo: str, detalle: bytes = b"") -> bytes:
+        cuerpo = codigo.encode("ascii") + detalle
+        # El detalle ocupa siempre doce bytes; el resto va en cero.
+        relleno = f1_udp.EVENTO_TAMANO_DETALLE - len(detalle)
+        return _cabecera(3) + cuerpo + b"\x00" * relleno
+
+    def test_el_paquete_mide_lo_que_declara_la_especificacion(self):
+        self.assertEqual(len(self._evento("SSTA")), 45)
+        self.assertEqual(f1_udp.PAQUETES[3]["tamano"], 45)
+
+    def test_un_codigo_sin_detalle_no_inventa_campos(self):
+        """Que no lleve detalle es un hecho, no un dato faltante."""
+
+        r = f1_udp.decodificar(self._evento("CHQF"))
+        self.assertEqual(r["codigo"], "CHQF")
+        self.assertEqual(r["evento"], "bandera-a-cuadros")
+        self.assertEqual(r["detalle"], {})
+
+    def test_el_coche_de_seguridad_declara_tipo_y_fase(self):
+        r = f1_udp.decodificar(self._evento("SCAR", struct.pack("<BB", 1, 0)))
+        self.assertEqual(r["detalle"]["tipo_nombre"], "coche-de-seguridad")
+        self.assertEqual(r["detalle"]["fase_nombre"], "desplegado")
+
+    def test_distingue_el_coche_de_seguridad_de_la_vuelta_de_formacion(self):
+        """Confundirlos contaria como neutralizacion el arranque de la carrera."""
+
+        formacion = f1_udp.decodificar(self._evento("SCAR", struct.pack("<BB", 3, 0)))
+        self.assertEqual(formacion["detalle"]["tipo_nombre"], "vuelta-de-formacion")
+
+    def test_cada_codigo_lee_su_propia_estructura(self):
+        """La prueba que el tamano no puede dar.
+
+        Se arma un adelantamiento y se comprueba que no salgan los campos del
+        radar de velocidad, que ocupa los mismos doce bytes.
+        """
+
+        r = f1_udp.decodificar(self._evento("OVTK", struct.pack("<BB", 4, 9)))
+        self.assertEqual(r["detalle"], {"vehiculo_que_adelanta": 4,
+                                        "vehiculo_adelantado": 9})
+        self.assertNotIn("velocidad_kmh", r["detalle"])
+
+    def test_el_radar_de_velocidad_lee_sus_seis_campos(self):
+        detalle = struct.pack("<BfBBBf", 7, 312.5, 1, 1, 7, 312.5)
+        r = f1_udp.decodificar(self._evento("SPTP", detalle))
+        self.assertEqual(r["detalle"]["vehiculo"], 7)
+        self.assertAlmostEqual(r["detalle"]["velocidad_kmh"], 312.5, places=3)
+
+    def test_un_codigo_desconocido_no_se_descarta_en_silencio(self):
+        """Un evento nuevo de una version futura debe quedar contabilizado."""
+
+        r = f1_udp.decodificar(self._evento("ZZZZ"))
+        self.assertTrue(r["decodificado"])
+        self.assertIn("desconocido", r["evento"])
+
+
+class OrdenDeRuedasUniformeTests(unittest.TestCase):
+    """El mismo concepto fisico se nombra igual en todos los paquetes.
+
+    Mientras la temperatura de neumatico viajaba como lista y el desgaste como
+    diccionario, el orden quedaba implicito justo en los canales donde este
+    trabajo ya se equivoco una vez.
+    """
+
+    def test_la_telemetria_nombra_sus_ruedas(self):
+        v = f1_udp.decodificar(_datagrama_relleno(6))["vehiculo_propio"]
+        for campo in ("brakes_temperature_c", "tyres_surface_temperature_c",
+                      "tyres_inner_temperature_c", "tyres_pressure_psi",
+                      "surface_type"):
+            with self.subTest(campo=campo):
+                self.assertEqual(tuple(v[campo]), f1_udp.ORDEN_RUEDAS)
+
+    def test_el_dano_usa_el_mismo_orden_que_la_telemetria(self):
+        telemetria = f1_udp.decodificar(_datagrama_relleno(6))["vehiculo_propio"]
+        dano = f1_udp.decodificar(_datagrama_relleno(10))["vehiculo_propio"]
+        self.assertEqual(tuple(telemetria["tyres_pressure_psi"]),
+                         tuple(dano["tyres_wear_pct"]))
+
+
+class IndicesDeLaColaDeSesionTests(unittest.TestCase):
+    """Fija cada campo de la cola de sesion a su posicion.
+
+    Es la prueba que faltaba cuando el nivel de dano se leia una posicion
+    corrida y publicaba la **tasa** de dano en su lugar. El tamano del paquete
+    cerraba, el valor era un entero creible, y ninguna prueba existente lo
+    tocaba: el defecto solo se vio contrastando contra lo que la autora habia
+    configurado en el juego.
+
+    El metodo evita la circularidad de las demas pruebas de estructura: en vez
+    de comparar contra la misma cadena de formato que usa el decodificador, se
+    arma la cola con **un valor distinto por posicion** y se comprueba que cada
+    campo nombrado devuelva su propio marcador. Un desplazamiento de una sola
+    posicion cambia el valor y la prueba cae.
+    """
+
+    # Posicion de cada campo en la cola, contada del apendice de la
+    # especificacion. Cambiar el decodificador sin cambiar la especificacion
+    # rompe esta tabla, que es lo que se busca.
+    POSICIONES = {
+        "forecast_accuracy": 0, "ai_difficulty": 1,
+        "season_link_id": 2, "weekend_link_id": 3, "session_link_id": 4,
+        "steering_assist": 8, "braking_assist": 9, "gearbox_assist": 10,
+        "pit_assist": 11, "pit_release_assist": 12, "ers_assist": 13,
+        "drs_assist": 14, "dynamic_racing_line": 15, "dynamic_racing_line_type": 16,
+        "game_mode": 17, "rule_set": 18, "time_of_day_min": 19,
+        "session_length": 20, "speed_units_lead": 21,
+        "num_safety_car_periods": 25, "num_virtual_safety_car_periods": 26,
+        "num_red_flag_periods": 27, "equal_car_performance": 28,
+        "recovery_mode": 29, "surface_type": 31, "low_fuel_mode": 32,
+        "tyre_temperature_model": 34, "pit_lane_tyre_sim": 35,
+        "car_damage_setting": 36, "car_damage_rate": 37, "collisions": 38,
+        "corner_cutting_stringency": 42, "parc_ferme_rules": 43,
+        "pit_stop_experience": 44, "safety_car_setting": 45,
+        "formation_lap": 47, "red_flags_setting": 49,
+        "num_sessions_in_weekend": 52,
+    }
+
+    def _sesion_con_marcadores(self) -> dict:
+        """Arma un paquete de sesion donde cada posicion de la cola vale distinto."""
+
+        # Cuantos valores hay antes de la cola.
+        antes = (len(f1_udp.SESSION_CABEZA_FMT) + f1_udp.ZONAS_COMISARIO * 2
+                 + 3 + f1_udp.MUESTRAS_PRONOSTICO * 8)
+        # El formato admite repeticiones como "12B": se expanden para que cada
+        # valor tenga su propia posicion.
+        letras = []
+        for repeticion, letra in re.findall(r"(\d*)([a-zA-Z])", f1_udp.SESSION_FMT[1:]):
+            letras.extend([letra] * int(repeticion or 1))
+        # Se recorre el formato completo asignando a cada valor su indice, de
+        # modo que el valor que devuelva un campo delate su posicion real.
+        valores = []
+        indice_cola = 0
+        for i, letra in enumerate(letras):
+            if i < antes:
+                valores.append(0.0 if letra == "f" else 0)
+            else:
+                # Los enteros de un byte no pueden pasar de 255: se usa el
+                # indice acotado, que igual distingue posiciones vecinas.
+                marcador = indice_cola % 251 + 1
+                valores.append(float(marcador) if letra == "f" else marcador)
+                indice_cola += 1
+
+        datos = _cabecera(1) + struct.pack(f1_udp.SESSION_FMT, *valores)
+        self.assertEqual(len(datos), f1_udp.PAQUETES[1]["tamano"])
+        return f1_udp.decodificar(datos)["sesion"]
+
+    def test_cada_campo_de_la_cola_lee_su_propia_posicion(self):
+        sesion = self._sesion_con_marcadores()
+        for campo, posicion in self.POSICIONES.items():
+            with self.subTest(campo=campo):
+                self.assertEqual(
+                    sesion[campo], posicion % 251 + 1,
+                    f"{campo} deberia leer la posicion {posicion} de la cola",
+                )
+
+    def test_el_nivel_de_dano_y_su_tasa_son_campos_distintos(self):
+        """El defecto concreto: publicar la tasa como si fuera el nivel."""
+
+        sesion = self._sesion_con_marcadores()
+        self.assertNotEqual(sesion["car_damage_setting"], sesion["car_damage_rate"])
+        self.assertEqual(sesion["car_damage_rate"],
+                         sesion["car_damage_setting"] + 1)

@@ -46,10 +46,32 @@ from backend import f1_capture, f1_udp
 VIDEOS = ROOT / "datasets" / "f1_25" / "validacion"
 FIGURAS = ROOT / "informe" / "tesis" / "figuras"
 
+# Los nombres son los de la especificacion, que los declara **para partida de un
+# solo jugador en carrera** y advierte que pueden variar segun el modo de juego.
+#
+# La validacion contra el video mostro que varian: en la carrera capturada, el
+# indice 3 —documentado como motor— aparece en pantalla como el panel de
+# desgaste de neumaticos. Se conserva el nombre de la especificacion y se
+# declara la discrepancia, porque el dato util es **el cambio de panel**, que es
+# lo que ancla el video, y no el nombre que se le ponga.
 PANELES = {
     0: "configuracion", 1: "boxes", 2: "danos", 3: "motor", 4: "temperaturas",
     255: "ninguno",
 }
+
+# Precision alcanzable con este metodo, medida sobre tres anclas independientes
+# del mismo video: el desfase resulto -26,853, -26,804 y -26,251 segundos, o sea
+# una dispersion de seis decimas.
+#
+# Alcanza de sobra para los canales de estado —panel abierto, marcha, vuelta,
+# posicion, desgaste, carga de bateria— que se sostienen segundos enteros. **No
+# alcanza para velocidad ni revoluciones**, que a 255 km/h cambian lo suficiente
+# en seis decimas como para que el contraste no signifique nada.
+#
+# Para esos canales el contraste tiene que anclarse **en el propio cuadro**: se
+# lee el tiempo de vuelta que la pantalla muestra, se lo busca en el dato, y el
+# instante queda determinado sin depender del desfase global.
+DISPERSION_DESFASE_S = 0.6
 
 
 def buscar_ffmpeg() -> str | None:
