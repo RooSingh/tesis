@@ -1357,10 +1357,16 @@ async function cambiarModo() {
   });
   panelOpenF1.hidden = !openF1Activo;
   panelVivo.hidden = !vivoActivo;
+  // La cabecera describe la sesion demostrativa: en los otros espacios de
+  // trabajo anunciaba una sesion que la pantalla no esta mostrando.
+  const cabecera = document.querySelector(".cabecera-sesion");
+  if (cabecera) cabecera.hidden = modo !== "simulation";
 
   // La conexion en vivo se abre solo al entrar al espacio de trabajo y se cierra
   // al salir: mantenerla abierta en segundo plano consumiria un suscriptor y
   // ancho de banda sin que nadie mire la pantalla.
+  ajustarTemporizadorSimulacion(modo === "simulation");
+
   if (vivoActivo) {
     conectarFlujoEnVivo();
   } else {
@@ -1447,7 +1453,21 @@ lineaFases.addEventListener("click", (event) => {
 cargarSesion();
 // La recarga conserva soporte para una vista actualizable, aunque la demo actual
 // usa una sesion historica y finita.
-setInterval(cargarSesion, INTERVALO_RECARGA_MS);
+// El temporizador solo corre en el espacio de trabajo que lo necesita. Antes
+// consultaba en los tres modos: en vivo generaba una consulta por segundo a una
+// sesion que la pantalla no mostraba, y en modo historico lo mismo.
+let temporizadorSimulacion = null;
+
+function ajustarTemporizadorSimulacion(activo) {
+  if (activo && temporizadorSimulacion === null) {
+    temporizadorSimulacion = setInterval(cargarSesion, INTERVALO_RECARGA_MS);
+  } else if (!activo && temporizadorSimulacion !== null) {
+    clearInterval(temporizadorSimulacion);
+    temporizadorSimulacion = null;
+  }
+}
+
+ajustarTemporizadorSimulacion(selectorModo.value === "simulation");
 
 
 // ---------------------------------------------------------------------------
