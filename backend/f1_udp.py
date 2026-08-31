@@ -143,9 +143,32 @@ VEHICULOS = 22
 CAR_TELEMETRY_FMT = "<HfffBbHBBH4H4B4BH4f4B"
 CAR_TELEMETRY_TAMANO = struct.calcsize(CAR_TELEMETRY_FMT)
 
-# Tres campos finales del paquete, despues del arreglo de vehiculos.
+# Tres campos finales del paquete, despues del arreglo de vehiculos. Describen la
+# pantalla del juego y no al vehiculo.
+#
+# `m_mfdPanelIndex` es el que permite **alinear un video con los datos sin
+# sincronizar relojes**: el datagrama declara que panel estaba abierto, de modo
+# que el instante en que cambia se lee del propio flujo. Es lo que vuelve
+# practicable la validacion semantica del decodificador.
 CAR_TELEMETRY_COLA_FMT = "<BBb"
 CAR_TELEMETRY_COLA_TAMANO = struct.calcsize(CAR_TELEMETRY_COLA_FMT)
+
+# Paneles que el juego puede mostrar sobre el estado del vehiculo.
+PANELES_MFD = {
+    0: "configuracion", 1: "boxes", 2: "danos", 3: "motor", 4: "temperaturas",
+    255: "ninguno",
+}
+
+
+def _desempaquetar_cola_car_telemetry(bruto: tuple) -> dict[str, Any]:
+    """Nombra los campos finales del paquete de telemetria."""
+
+    return {
+        "mfd_panel": bruto[0],
+        "mfd_panel_nombre": PANELES_MFD.get(bruto[0], f"id-{bruto[0]}"),
+        "mfd_panel_segundo_jugador": bruto[1],
+        "marcha_sugerida": bruto[2],
+    }
 
 
 def _desempaquetar_car_telemetry(bruto: tuple) -> dict[str, Any]:
@@ -547,6 +570,13 @@ def _desempaquetar_car_setup(b: tuple) -> dict[str, Any]:
     }
 
 
+# Colas de paquete que aportan informacion. La mayoria son relleno o campos que
+# el trabajo no consume; solo se decodifica la que tiene uso.
+_COLAS = {
+    6: (CAR_TELEMETRY_COLA_FMT, _desempaquetar_cola_car_telemetry),
+}
+
+
 # Paquetes de bloque unico: describen la sesion, no a cada vehiculo, de modo
 # que no llevan arreglo de 22 entradas y se decodifican de una sola vez.
 _DECODIFICADORES_UNICOS = {
@@ -694,4 +724,9 @@ def decodificar(datos: bytes) -> dict[str, Any]:
     resultado["decodificado"] = True
     resultado["vehiculos"] = vehiculos
     resultado["vehiculo_propio"] = vehiculos[cabecera["player_car_index"]]
+
+    if packet_id in _COLAS:
+        formato_cola, nombrar_cola = _COLAS[packet_id]
+        desplazamiento = CABECERA_TAMANO + VEHICULOS * por_vehiculo
+        resultado.update(nombrar_cola(struct.unpack_from(formato_cola, datos, desplazamiento)))
     return resultado
