@@ -13,3 +13,6 @@ session-*.md
 informe/tesis/figuras/carrera_silverstone_*.png
 !informe/tesis/figuras/carrera_silverstone_14_velocidad-maxima.png
 !informe/tesis/figuras/carrera_silverstone_16_panel-motor.png
+
+# Registro del capturador permanente. Es salida de ejecucion, no fuente.
+logs/
