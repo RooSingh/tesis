@@ -1222,6 +1222,187 @@ def _desempaquetar_lap_positions(datos: bytes) -> dict[str, Any]:
     }
 
 
+
+
+#: Juegos de neumaticos disponibles y su estado. Veinte por vehiculo.
+#:
+#: El paquete describe **un** vehiculo, como el historial de sesion, y el juego
+#: rota entre los veintidos. `car_idx` dice a cual.
+#:
+#: El tamano lo determina: 231 declarados, menos 29 de cabecera y dos bytes de
+#: cabeza propia, dan 200 para veinte juegos, o sea diez bytes cada uno. Con
+#: diecinueve o veintiuno no cerraria.
+TYRE_SET_FMT = "<7BhB"
+TYRE_SET_TAMANO = struct.calcsize(TYRE_SET_FMT)
+TYRE_SETS_MAXIMO = 20
+
+#: Resultado de un vehiculo al terminar la sesion. Veintidos por paquete.
+#:
+#: 1042 declarados, menos 29 de cabecera y uno de cantidad, dan 1012 para
+#: veintidos vehiculos: cuarenta y seis bytes cada uno.
+FINAL_CLASSIFICATION_FMT = "<7BIdBBB8B8B8B"
+FINAL_CLASSIFICATION_TAMANO = struct.calcsize(FINAL_CLASSIFICATION_FMT)
+TANDAS_MAXIMO = 8
+
+#: Por que un juego de neumaticos puede no estar disponible.
+#:
+#: No es un booleano invertido: el reglamento deportivo limita cuantos juegos de
+#: cada compuesto se pueden usar en un fin de semana, de modo que "no disponible"
+#: y "gastado" son dos estados distintos y el paquete los distingue.
+RECOMENDADO_PARA = {
+    0: "ninguna", 1: "practica-1", 2: "practica-2", 3: "practica-3",
+    4: "practica-corta", 5: "clasificacion-1", 6: "clasificacion-2",
+    7: "clasificacion-3", 8: "clasificacion-corta", 9: "clasificacion-unica",
+    10: "sprint-shootout-1", 11: "sprint-shootout-2", 12: "sprint-shootout-3",
+    13: "sprint-shootout-corto", 14: "sprint-shootout-unico",
+    15: "carrera", 16: "carrera-2", 17: "carrera-3", 18: "contrarreloj",
+}
+
+#: Como termino un vehiculo, transcrito de la especificacion.
+ESTADOS_RESULTADO = {
+    0: "invalido", 1: "inactivo", 2: "activo", 3: "termino",
+    4: "no-termino", 5: "descalificado", 6: "no-clasificado",
+    7: "retirado",
+}
+
+# El segundo campo, `result_reason`, **queda sin nombrar a proposito**.
+#
+# Existe: el tamano del paquete no cierra sin el, y se desempaqueta como un byte
+# distinto del estado. Pero sobre **442 vehiculos clasificados de todas las
+# capturas del trabajo** vale siempre exactamente lo mismo que el estado:
+#
+#     estado 3, motivo 3   x416      estado 4, motivo 4   x25
+#     estado 7, motivo 7   x1
+#
+# Con esa evidencia **no se puede determinar que significa por su cuenta**, y una
+# primera version le puso nombres que parecian razonables y no lo eran: los
+# veinte vehiculos de una carrera terminada figuraban como
+# "termino-y-descalificado". El valor se publica crudo hasta que aparezca una
+# sesion donde los dos campos difieran.
+
+
+def _desempaquetar_tyre_sets(datos: bytes) -> dict[str, Any]:
+    """Los veinte juegos de neumaticos de **un** vehiculo, con su estado.
+
+    Es el paquete que sostiene el analisis de estrategia: dice que compuestos
+    quedan, cuanta vida les queda y cual esta montado. Sin el, la degradacion por
+    tanda se infiere del tiempo por vuelta, que mezcla el neumatico con todo lo
+    demas.
+
+    **La vida util no es el desgaste.** El paquete trae las dos: `wear_pct` es lo
+    gastado, y `usable_life_vueltas` es cuantas vueltas el fabricante considera
+    que le quedan de rendimiento. Un juego puede estar poco gastado y aun asi no
+    ser recomendable para la sesion que viene, y por eso el paquete declara
+    tambien para cual lo recomienda.
+    """
+
+    # **Un solo byte antes del arreglo, y el indice montado despues.**
+    #
+    # La primera version leyo dos bytes de cabeza y corrio todo el arreglo un
+    # byte. El tamano seguia cerrando ---231 exactos--- y los valores eran
+    # legibles: compuestos 55 y 20, vida util de 248 vueltas sobre una total de
+    # 7. Ninguna verificacion de formato lo habria detectado; lo delata que los
+    # numeros no significan nada.
+    (car_idx,) = struct.unpack_from("<B", datos, CABECERA_TAMANO)
+    inicio = CABECERA_TAMANO + 1
+    (montado,) = struct.unpack_from(
+        "<B", datos, inicio + TYRE_SETS_MAXIMO * TYRE_SET_TAMANO)
+
+    juegos = []
+    for i in range(TYRE_SETS_MAXIMO):
+        b = struct.unpack_from(TYRE_SET_FMT, datos, inicio + i * TYRE_SET_TAMANO)
+        juegos.append({
+            "indice": i,
+            "compuesto_real": b[0],
+            "compuesto_visual": b[1],
+            "wear_pct": b[2],
+            # 1 disponible, 0 ya no. Se nombra en vez de dejar el entero porque
+            # un cero aca significa "consumido o no permitido", no "cero".
+            "disponible": bool(b[3]),
+            "recomendado_para": RECOMENDADO_PARA.get(b[4], b[4]),
+            # Los dos campos de vida **no son el mismo dato al reves**, y el
+            # orden se comprobo contra el desgaste: un juego con 6 % gastado
+            # declara 6 restantes sobre 7 recomendadas, y uno sin usar 10 de 10.
+            # Nombrarlos al reves daba juegos con mas vueltas restantes que el
+            # maximo, que es imposible y es lo que delato el error.
+            "vueltas_restantes": b[5],
+            "vida_util_maxima_vueltas": b[6],
+            # Diferencia de tiempo por vuelta contra el juego mas rapido, en
+            # milisegundos. Va con signo: la especificacion la declara entera con
+            # signo y un juego mas rapido que la referencia daria negativo.
+            "delta_por_vuelta_ms": b[7],
+            "montado": bool(b[8]),
+        })
+
+    return {
+        "car_idx": car_idx,
+        "montado_indice": montado,
+        "juegos": juegos,
+        # Se expone aparte porque es lo que casi todo consumidor quiere, y
+        # buscarlo por el indice en cada uso invita a equivocarse.
+        "montado_actual": (juegos[montado] if 0 <= montado < len(juegos)
+                           else None),
+    }
+
+
+def _desempaquetar_final_classification(datos: bytes) -> dict[str, Any]:
+    """El resultado de la sesion: dos datagramas y se acabo.
+
+    Es el unico paquete que cierra una sesion en lugar de describirla mientras
+    ocurre. Trae por vehiculo la posicion, las vueltas, los puntos, las paradas,
+    las penalizaciones y **las tandas de neumatico con la vuelta en que
+    terminaron**, que es lo que permite reconstruir la estrategia sin haber
+    seguido la carrera.
+
+    **El estado y el motivo son dos campos.** Un vehiculo puede figurar como no
+    clasificado por razones que el reglamento distingue ---dano terminal, fallo
+    mecanico, abandono---, y colapsarlos en uno perderia justamente lo que hace
+    utilizable el registro de un abandono.
+    """
+
+    (cantidad,) = struct.unpack_from("<B", datos, CABECERA_TAMANO)
+    inicio = CABECERA_TAMANO + 1
+
+    vehiculos = []
+    for i in range(VEHICULOS):
+        b = struct.unpack_from(FINAL_CLASSIFICATION_FMT, datos,
+                               inicio + i * FINAL_CLASSIFICATION_TAMANO)
+        # Los tres arreglos de tandas arrancan en el indice 12, despues del
+        # contador. La primera version los corrio uno y el ultimo se salia del
+        # rango: ahi el error **si** fallo, en vez de devolver un numero
+        # plausible, que es la unica clase de error comoda de encontrar.
+        cuantas = b[11]
+        tandas = b[12:12 + TANDAS_MAXIMO]
+        visuales = b[12 + TANDAS_MAXIMO:12 + 2 * TANDAS_MAXIMO]
+        finales = b[12 + 2 * TANDAS_MAXIMO:12 + 3 * TANDAS_MAXIMO]
+        vehiculos.append({
+            "position": b[0],
+            "num_laps": b[1],
+            # Empieza en cero, como en el paquete de vuelta. La comparacion
+            # directa contra `position` da un puesto de diferencia.
+            "grid_position": b[2],
+            "points": b[3],
+            "num_pit_stops": b[4],
+            "result_status": b[5],
+            "result_status_nombre": ESTADOS_RESULTADO.get(b[5], b[5]),
+            # Sin nombrar: ver la nota junto a ESTADOS_RESULTADO.
+            "result_reason": b[6],
+            "best_lap_time_ms": b[7],
+            "total_race_time_s": b[8],
+            "penalties_time_s": b[9],
+            "num_penalties": b[10],
+            "num_tyre_stints": cuantas,
+            "tandas": [
+                {"compuesto_real": tandas[j],
+                 "compuesto_visual": visuales[j],
+                 "vuelta_final": finales[j]}
+                for j in range(min(cuantas, TANDAS_MAXIMO))
+            ],
+        })
+
+    return {"num_cars": cantidad, "vehiculos": vehiculos}
+
+
 # Paquetes de bloque unico: describen la sesion, no a cada vehiculo, de modo
 # que no llevan arreglo de 22 entradas y se decodifican de una sola vez.
 _DECODIFICADORES_UNICOS = {
@@ -1232,7 +1413,9 @@ _DECODIFICADORES_UNICOS = {
 # Paquetes con su propia forma: ni un instante por vehiculo ni un bloque de
 # sesion, sino hechos cerrados con arreglos internos.
 _DECODIFICADORES_PROPIOS = {
+    8: ("clasificacion", _desempaquetar_final_classification),
     11: ("historial", _desempaquetar_session_history),
+    12: ("juegos_de_neumaticos", _desempaquetar_tyre_sets),
     15: ("posiciones", _desempaquetar_lap_positions),
 }
 
