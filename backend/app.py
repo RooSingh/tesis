@@ -10,7 +10,9 @@ de datos.
 from __future__ import annotations
 
 import asyncio
+import json
 import time
+from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi import HTTPException
@@ -21,6 +23,11 @@ from fastapi.responses import StreamingResponse
 from adapters import f1_25 as f1_25_adapter
 from backend import db
 from backend import live_stream
+from backend import matriz_fuentes
+from backend import anotador_vivo
+from adapters import can_rav4
+from backend import recorrido
+from backend import resumen_sesion
 
 from backend.config import BACKEND_APP_NAME
 from backend.db import (
@@ -124,6 +131,62 @@ def telemetry_by_session(session_id: str, limit: int = 100) -> list[dict]:
     """Devuelve mensajes persistidos pertenecientes a una sesion concreta."""
 
     return obtener_mensajes_por_sesion(session_id, limit)
+
+
+@app.get("/can/recorrido/{session_id}")
+def can_recorrido(session_id: str, limite: int = 80000) -> dict:
+    """Recorrido reconstruido de un segmento de bus vehicular.
+
+    El registro del vehiculo de calle **no trae coordenadas**: la forma del
+    recorrido se obtiene integrando velocidad y velocidad de guinada. Es una
+    derivacion declarada y no una medicion de posicion, y la respuesta lo dice
+    en su propio contenido para que ningun consumidor pueda usarla como si
+    fuera lo otro.
+
+    Se devuelve tambien el ancho de via que se deduce de la guinada y las cuatro
+    ruedas. No es un adorno: es la comprobacion, por una via independiente, de
+    que la senal sobre la que se integra esta bien decodificada.
+    """
+
+    # El tope cuenta filas, no muestras: seis senales de un segmento de un minuto
+    # suman unas veintiseis mil. Un tope de veinte mil truncaba el recorrido a un
+    # tercio sin avisar, que es de las peores formas de equivocarse porque el
+    # resultado sigue pareciendo un recorrido.
+    series = db.obtener_series_de_senales(
+        session_id,
+        ("speed", "yaw_rate") + recorrido.RUEDAS,
+        can_rav4.SOURCE_TYPE,
+        limite)
+    if not series.get("speed") or not series.get("yaw_rate"):
+        raise HTTPException(
+            status_code=404,
+            detail=f"La sesion {session_id} no tiene velocidad y guinada juntas.")
+
+    trazado = recorrido.reconstruir(series)
+    validacion = recorrido.validar_contra_ruedas(series)
+    return {
+        "session_id": session_id,
+        "puntos": [{"x": round(x, 2), "y": round(y, 2)}
+                   for x, y in zip(trazado["x"], trazado["y"])],
+        "recorrido_m": round(trazado["recorrido_m"], 1),
+        "extension_x_m": round(trazado["extension_x_m"], 1),
+        "extension_y_m": round(trazado["extension_y_m"], 1),
+        "rumbo_final_deg": round(trazado["rumbo_final_deg"], 1),
+        "huecos_saltados": trazado["huecos_saltados"],
+        "validacion_guinada": {
+            "muestras": validacion["muestras"],
+            "ancho_de_via_m": (round(validacion["ancho_de_via_m"], 3)
+                               if validacion["muestras"] else None),
+            "correlacion": (round(validacion["correlacion"], 3)
+                            if validacion["muestras"] else None),
+        },
+        # Va en la respuesta y no solo en la documentacion: quien consuma esto
+        # tiene que poder saber que no es una posicion medida sin leer nada mas.
+        "naturaleza": "derivado",
+        "advertencia": ("Forma reconstruida por integracion, sin coordenadas. "
+                        "La orientacion absoluta y la ubicacion en el mundo no "
+                        "son recuperables."),
+    }
 
 
 @app.get("/processing/runs")
@@ -521,6 +584,17 @@ async def _iniciar_difusor() -> None:
 
     live_stream.difusor.iniciar(asyncio.get_running_loop())
 
+    # La matriz se calcula midiendo sobre lo persistido y tarda decenas de
+    # segundos. Se calienta al arrancar y en segundo plano, para que la primera
+    # consulta no la pague y para que un fallo aca no impida servir el resto.
+    async def _calentar_matriz() -> None:
+        try:
+            await asyncio.to_thread(matriz_fuentes.construir)
+        except Exception as error:  # noqa: BLE001
+            print(f"[matriz] no se pudo precalcular: {type(error).__name__}: {error}")
+
+    asyncio.create_task(_calentar_matriz())
+
 
 @app.on_event("shutdown")
 async def _detener_difusor() -> None:
@@ -539,6 +613,81 @@ def live_status() -> dict:
 # mirar la persistencia le costaria a la base mas que guardarla.
 VIGENCIA_PERSISTENCIA_S = 5.0
 _CACHE_PERSISTENCIA: tuple[float, dict] | None = None
+
+
+# Donde viven las capturas y sus metadatos. La parrilla se sirve desde ahi y no
+# desde la base, porque no es una medicion: es identidad de sesion.
+CAPTURAS = Path(__file__).resolve().parents[1] / "datasets" / "f1_25" / "capturas"
+
+
+@app.get("/fuentes/matriz")
+def fuentes_matriz() -> dict:
+    """Que puede medirse en cada fuente y con que resolucion.
+
+    No es una lista de senales: es el contraste entre las tres, organizado por
+    magnitud fisica. **Ese contraste es en si mismo un resultado del trabajo**,
+    porque es lo que decide que analisis habilita cada fuente.
+
+    Las ausencias figuran con su motivo, y los motivos no son equivalentes: que
+    un vehiculo de calle no tenga aleron movil es un limite del objeto; que la
+    fuente deportiva no exponga la aceleracion es un limite del acceso, porque el
+    vehiculo si la mide.
+    """
+
+    return matriz_fuentes.construir()
+
+
+@app.get("/live/parrilla")
+def live_parrilla(sesion: str | None = None) -> dict:
+    """Quien es cada vehiculo de una sesion capturada.
+
+    Existe porque la parrilla **no esta en la base a proposito**. Guardar el
+    nombre de un conductor como senal de telemetria almacenaria el mismo texto
+    casi siete mil veces para decir veintidos cosas que no cambian, y pondria
+    identidad en una tabla de mediciones.
+
+    Vive entonces donde vive el resto de lo que describe a la sesion —circuito,
+    tipo, clima, ajustes—: en la procedencia derivada del flujo, que el capturador
+    escribe junto a cada archivo crudo. Este endpoint la lee de ahi.
+
+    **Limite declarado:** la procedencia se escribe al cerrar la captura, de modo
+    que una sesion en curso todavia no tiene parrilla servible. Se resuelve solo
+    cuando la sesion termina, y de forma completa cuando exista el catalogo de
+    sesiones persistidas que el cronograma tiene previsto.
+    """
+
+    if not CAPTURAS.is_dir():
+        return {"disponible": False, "motivo": "no hay directorio de capturas"}
+
+    encontradas = []
+    for meta in sorted(CAPTURAS.glob("*.meta.json")):
+        try:
+            datos = json.loads(meta.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        procedencia = datos.get("procedencia") or {}
+        parrilla = procedencia.get("parrilla")
+        if not parrilla:
+            continue
+        uid = procedencia.get("session_uid")
+        identificador = f"f1_25:session:{uid}" if uid is not None else None
+        if sesion is not None and identificador != sesion:
+            continue
+        encontradas.append({
+            "sesion": identificador,
+            "captura": datos.get("archivo"),
+            "circuito": procedencia.get("circuito"),
+            "tipo_sesion": procedencia.get("tipo_sesion"),
+            "vehiculo_propio": procedencia.get("indice_vehiculo_propio"),
+            "parrilla": parrilla,
+        })
+
+    if sesion is not None:
+        if not encontradas:
+            return {"disponible": False, "sesion": sesion,
+                    "motivo": "ninguna captura cerrada declara esa sesion"}
+        return {"disponible": True, **encontradas[0]}
+    return {"disponible": True, "sesiones": encontradas}
 
 
 @app.get("/live/senales")
@@ -636,6 +785,114 @@ def live_persistencia() -> dict:
     }
     _CACHE_PERSISTENCIA = (ahora, respuesta)
     return respuesta
+
+
+@app.get("/live/anotaciones")
+def live_anotaciones() -> dict:
+    """Lo que los anotadores declararon durante la sesion en curso.
+
+    Hay **un anotador por vehiculo**: uno solo compondria instantes con canales de
+    dos autos distintos y podria declarar incidentes que no ocurrieron.
+
+    La vista lo pide al abrirse para no arrancar con la lista vacia cuando ya
+    ocurrieron cosas, y despues las recibe por el flujo a medida que se emiten.
+    """
+
+    difusor = live_stream.difusor
+    por_vehiculo = {}
+    for vehiculo, anotador in difusor.anotadores.items():
+        por_vehiculo[vehiculo] = {
+            "anotaciones": list(anotador.anotaciones),
+            "mensajes_observados": anotador.observados,
+            "curvas_del_circuito": len(anotador.catalogo.curvas),
+            # Una regla cuyo canal no llega **no dice que no paso nada**: dice
+            # que no pudo mirarse. Declararlo evita que la ausencia de
+            # anotaciones se lea como ausencia de incidentes.
+            "reglas_evaluables": {
+                "fuera de pista": all(f"surface_type_{r}" in anotador.ultimos
+                                      for r in anotador_vivo.RUEDAS),
+                "impacto vertical": "g_force_vertical" in anotador.ultimos,
+                "perdida de tren trasero": any(
+                    f"wheel_slip_ratio_{r}" in anotador.ultimos
+                    for r in ("rear_left", "rear_right")),
+                "caida brusca de velocidad": "speed" in anotador.ultimos,
+                "aleron movil": "drs_allowed" in anotador.ultimos,
+            },
+        }
+
+    return {
+        "conservadas": anotador_vivo.ANOTACIONES_CONSERVADAS,
+        "vehiculos": por_vehiculo,
+    }
+
+
+@app.get("/live/historia")
+def live_historia() -> dict:
+    """Lo que ya paso, por vehiculo y por senal, para quien abre la vista tarde.
+
+    Sin esto la vista arrancaba en el instante de conectarse: abrir la pagina a
+    mitad de una vuelta mostraba las trazas vacias, como si antes no hubiera
+    ocurrido nada. **La vista empezaba cuando miraba el observador y no cuando
+    empezo el vehiculo**, que es lo que quien mira espera ver.
+
+    Se agrupa por vehiculo porque en pantalla dividida hay dos conductores
+    publicando las mismas senales, y una serie que los mezclara no describiria a
+    ninguno de los dos.
+
+    Cada serie viaja con su eje temporal y, cuando existe, con la distancia
+    recorrida: **es lo que permite alinear dos conductores por lugar del circuito
+    en lugar de por reloj**, que es como se comparan dos vueltas.
+    """
+
+    difusor = live_stream.difusor
+    return {
+        "muestras_por_senal": live_stream.MUESTRAS_POR_SENAL,
+        "vehiculos": {
+            vehiculo: {
+                "series": {senal: list(valores)
+                           for senal, valores in senales.items()},
+                "tiempos": {senal: list(marcas) for senal, marcas
+                            in difusor.historia_tiempos.get(vehiculo, {}).items()},
+                "distancia": list(difusor.historia_distancia.get(vehiculo, [])),
+            }
+            for vehiculo, senales in difusor.historia.items()
+        },
+    }
+
+
+@app.get("/live/resumen")
+def live_resumen() -> dict:
+    """La sesión entera a resolución reducida, para un eje que crece.
+
+    La ventana de \\texttt{/live/historia} conserva treinta segundos y descarta lo
+    anterior, de modo que el eje del gráfico **se desplaza**: lo viejo sale por la
+    izquierda. Con eso, una anotación de hace dos minutos no tiene dónde
+    dibujarse, y por eso las anotaciones vivían en una lista aparte, desconectadas
+    de las trazas.
+
+    Este recurso devuelve **toda** la sesión, con un intervalo por segundo. Cada
+    intervalo lleva su instante, su mínimo, su máximo y cuántas muestras lo
+    formaron.
+
+    **El mínimo y el máximo, y no un valor representativo.** Una miniatura mide
+    trescientos cincuenta píxeles y no puede dibujar veinte muestras por segundo;
+    pero quedarse con una de cada veinte borraría el pico de una frenada, que dura
+    menos que el intervalo reducido. El gráfico saldría más suave que la
+    conducción que describe, y justo en los instantes que las anotaciones señalan.
+    Conservando los dos extremos, **lo que el gráfico dibuja como pico ocurrió, y
+    lo que no dibuja no ocurrió**.
+    """
+
+    resumen = live_stream.difusor.resumen
+    return {
+        "intervalo_s": resumen_sesion.INTERVALO_S,
+        "formato": ["segundo", "minimo", "maximo", "muestras"],
+        # El instante absoluto de la primera muestra. Las anotaciones viajan con
+        # el reloj de la sesión y esta serie con el tiempo transcurrido; sin un
+        # origen común no se las puede ubicar sobre la traza.
+        "origen_s": resumen.origen,
+        "vehiculos": resumen.vehiculos(),
+    }
 
 
 @app.get("/live/recent")

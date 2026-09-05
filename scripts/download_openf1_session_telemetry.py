@@ -68,12 +68,46 @@ def plan_downloads(session_path: Path, endpoints: tuple[str, ...] = ENDPOINTS) -
     }
 
 
+#: Techo declarado por el proveedor para el plan gratuito, consultado el
+#: 2026-09-02: "Up to 3 requests per second and 30 requests per minute".
+#:
+#: Se respetan los dos. Media segundo entre consultas cumple el techo por segundo
+#: con margen, pero sostenido son ciento veinte solicitudes por minuto contra un
+#: techo de treinta: el limite por minuto es el que gobierna una descarga larga, y
+#: era el que faltaba. Cuando el proveedor publica un limite, el limite se respeta
+#: en lugar de estimar uno propio.
+ESPERA_ENTRE_CONSULTAS_S = 0.5
+LIMITE_POR_MINUTO = 30
+VENTANA_S = 60.0
+
+#: Marcas temporales de las consultas de la ultima ventana. Es una lista y no un
+#: contador porque hay que saber **cuando** vence cada una para poder esperar solo
+#: lo necesario.
+_ventana: list[float] = []
+
+
+def _esperar_turno() -> None:
+    """Bloquea hasta que quepa una consulta mas dentro del techo por minuto."""
+
+    ahora = time.monotonic()
+    # Se descartan las que ya salieron de la ventana.
+    while _ventana and ahora - _ventana[0] >= VENTANA_S:
+        _ventana.pop(0)
+    if len(_ventana) >= LIMITE_POR_MINUTO:
+        # Se espera a que venza la mas antigua, mas un margen para no quedar
+        # justo en el borde por redondeo del reloj.
+        time.sleep(VENTANA_S - (ahora - _ventana[0]) + 0.05)
+        return _esperar_turno()
+    _ventana.append(time.monotonic())
+
+
 def fetch_openf1(endpoint: str, params: dict[str, int], last_request: list[float]) -> tuple[list[dict] | None, dict[str, Any]]:
     """Consulta OpenF1 con pausas y reintentos simples."""
 
     elapsed = time.monotonic() - last_request[0]
-    if elapsed < 0.5:
-        time.sleep(0.5 - elapsed)
+    if elapsed < ESPERA_ENTRE_CONSULTAS_S:
+        time.sleep(ESPERA_ENTRE_CONSULTAS_S - elapsed)
+    _esperar_turno()
     url = f"{BASE_URL}/{endpoint}?{urlencode(params)}"
     for attempt in range(1, 4):
         requested_at = datetime.now(timezone.utc).isoformat()

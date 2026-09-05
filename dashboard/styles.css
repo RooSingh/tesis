@@ -1802,20 +1802,52 @@ body.modo-openf1-activo {
 }
 
 .grafica-vivo figcaption {
+  /* Envuelve en lugar de superponerse: con cuatro ruedas en la leyenda y un
+     titulo largo, la version en una sola linea las encimaba. */
   display: flex;
+  flex-wrap: wrap;
   align-items: baseline;
-  gap: 0.45rem;
+  gap: 0.2rem 0.45rem;
   margin-bottom: 0.4rem;
   font-size: 0.72rem;
   text-transform: uppercase;
   letter-spacing: 0.05em;
   opacity: 0.7;
+  min-height: 1.6em;
 }
 
 .grafica-vivo canvas {
   display: block;
   width: 100%;
   height: 110px;
+}
+
+/* Un grafico ampliado ocupa el ancho entero de la grilla y triplica su alto.
+   Existe porque una miniatura de trescientos cincuenta pixeles alcanza para ver
+   la forma de una senal y no para leer un instante: con el eje de la sesion
+   completa, media hora repartida en ese ancho deja cada segundo en menos de un
+   pixel. Ampliar no agrega datos, reparte los mismos sobre mas espacio. */
+.grafica-vivo.ampliada {
+  grid-column: 1 / -1;
+}
+
+.grafica-vivo.ampliada canvas {
+  height: 340px;
+}
+
+/* El titulo se comporta como un control, porque lo es: al tocarlo amplia. */
+.grafica-vivo figcaption {
+  cursor: zoom-in;
+}
+
+.grafica-vivo.ampliada figcaption {
+  cursor: zoom-out;
+}
+
+.grafica-vivo .lupa {
+  margin-left: auto;
+  opacity: 0.55;
+  font-size: 0.85em;
 }
 
 .grafica-vivo .leyenda {
@@ -1915,4 +1947,339 @@ body.modo-openf1-activo {
 .diagnostico-vivo dd {
   margin: 0.15rem 0 0;
   font-variant-numeric: tabular-nums;
+}
+
+
+/* Matriz de fuentes --------------------------------------------------------
+   Los colores de nivel no son decorativos: separan de donde sale la medicion.
+   A es el bus de un vehiculo, B una fuente deportiva ya procesada, C un
+   simulador. Que se distingan de un vistazo es el punto de la vista. */
+
+.tarjetas-fuente {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+  gap: 0.9rem;
+  margin: 1rem 0 1.6rem;
+}
+
+.tarjeta-fuente {
+  padding: 0.9rem 1rem;
+  background: rgba(127, 127, 127, 0.06);
+  border: 1px solid rgba(127, 127, 127, 0.22);
+  border-left-width: 3px;
+  border-radius: 0.4rem;
+}
+
+.tarjeta-fuente[data-nivel="A"] { border-left-color: #4ade80; }
+.tarjeta-fuente[data-nivel="B"] { border-left-color: #fbbf24; }
+.tarjeta-fuente[data-nivel="C"] { border-left-color: #4ea8ff; }
+
+.tarjeta-fuente .nivel {
+  font-size: 0.66rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  opacity: 0.6;
+}
+
+.tarjeta-fuente h3 {
+  margin: 0.15rem 0 0.3rem;
+  font-size: 1rem;
+}
+
+.tarjeta-fuente .detalle {
+  margin: 0 0 0.6rem;
+  font-size: 0.78rem;
+  opacity: 0.7;
+}
+
+.tarjeta-fuente .cifras-fuente {
+  display: flex;
+  gap: 1.1rem;
+  font-size: 0.76rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.tarjeta-fuente .cifras-fuente b { display: block; font-size: 0.95rem; }
+
+.envoltorio-matriz { overflow-x: auto; }
+
+table.matriz {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.84rem;
+  min-width: 44rem;
+}
+
+table.matriz th,
+table.matriz td {
+  padding: 0.5rem 0.7rem;
+  text-align: left;
+  border-bottom: 1px solid rgba(127, 127, 127, 0.2);
+  vertical-align: top;
+}
+
+table.matriz th {
+  font-size: 0.68rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  opacity: 0.6;
+  font-weight: 500;
+}
+
+table.matriz tr.familia-nueva td { border-top: 2px solid rgba(127, 127, 127, 0.35); }
+
+.celda-magnitud { font-weight: 600; }
+
+.celda-magnitud .familia {
+  display: block;
+  font-weight: 400;
+  font-size: 0.68rem;
+  opacity: 0.5;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+/* Presente y ausente se distinguen por forma ademas de por color: la ausencia
+   lleva su motivo, que es la parte que importa. */
+.presente { font-variant-numeric: tabular-nums; }
+
+.presente .unidad-hz {
+  display: block;
+  font-size: 0.74rem;
+  opacity: 0.65;
+}
+
+.ausente { opacity: 0.55; }
+
+.ausente .motivo {
+  display: block;
+  font-size: 0.72rem;
+  font-style: italic;
+}
+
+.nota-magnitud {
+  font-size: 0.74rem;
+  opacity: 0.7;
+  font-style: italic;
+  padding-top: 0.15rem;
+}
+
+.pie-matriz {
+  margin-top: 1.2rem;
+  font-size: 0.76rem;
+  opacity: 0.6;
+}
+
+/* Anotaciones en tiempo real.
+   ---------------------------------------------------------------------------
+   Siguen la convencion del resto de la vista: los grises se escriben como
+   rgba(127, 127, 127, x) y el texto hereda el color, de modo que la misma regla
+   sirve con fondo claro y con fondo oscuro sin dos juegos de variables.
+
+   Los dos unicos colores propios son los que distinguen un hecho de un estado, y
+   estan elegidos con suficiente saturacion para leerse sobre los dos fondos: no
+   son decoracion, son la unica diferencia visible entre "esto ya paso" y "sobre
+   esto todavia se puede decidir". */
+.anotaciones-vivo {
+  margin-top: 1rem;
+  padding: 0.75rem 0.9rem;
+  background: rgba(127, 127, 127, 0.06);
+  border: 1px solid rgba(127, 127, 127, 0.22);
+  border-radius: 0.6rem;
+}
+
+.cabecera-anotaciones {
+  display: flex;
+  align-items: baseline;
+  gap: 0.75rem;
+  margin-bottom: 0.6rem;
+}
+
+.cabecera-anotaciones .rotulo {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  opacity: 0.7;
+}
+
+/* Que reglas no pudieron evaluarse. Se muestra arriba de la lista y no al pie
+   porque cambia como se lee la lista entera: una lista vacia con reglas ciegas
+   no dice que no paso nada. */
+.aviso-reglas {
+  margin: 0 0 0.6rem;
+  padding: 0.4rem 0.55rem;
+  font-size: 0.72rem;
+  line-height: 1.45;
+  opacity: 0.75;
+  background: rgba(127, 127, 127, 0.08);
+  border-radius: 0.35rem;
+}
+
+.lista-anotaciones {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  max-height: 18rem;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  list-style: none;
+}
+
+.anotacion {
+  padding: 0.45rem 0.6rem 0.45rem 0.7rem;
+  background: rgba(127, 127, 127, 0.07);
+  border-left: 3px solid rgba(127, 127, 127, 0.4);
+  border-radius: 0.3rem;
+}
+
+.anotacion-incidente { border-left-color: #d1495b; }
+.anotacion-aviso     { border-left-color: #d99000; }
+
+/* Un incidente todavia abierto: su duracion es la medida hasta ahora y va a
+   crecer. Se marca con un pulso tenue para que no se lea como definitivo. */
+.anotacion-abierta {
+  animation: latido-anotacion 1.4s ease-in-out infinite;
+}
+
+@keyframes latido-anotacion {
+  0%, 100% { background: rgba(209, 73, 91, 0.10); }
+  50%      { background: rgba(209, 73, 91, 0.22); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .anotacion-abierta {
+    animation: none;
+    background: rgba(209, 73, 91, 0.16);
+  }
+}
+
+.anotacion strong {
+  display: block;
+  font-size: 0.82rem;
+  font-weight: 600;
+}
+
+.anotacion-donde {
+  margin-left: 0.5rem;
+  font-size: 0.72rem;
+  font-weight: 400;
+  opacity: 0.55;
+  font-variant-numeric: tabular-nums;
+}
+
+.anotacion-detalle {
+  margin: 0.15rem 0 0;
+  font-size: 0.75rem;
+  line-height: 1.45;
+  opacity: 0.8;
+  font-variant-numeric: tabular-nums;
+}
+
+/* La sospecha se destaca del detalle sin gritar: es la parte que hay que leer
+   cuando algo paso, y a la vez la parte que puede estar equivocada. */
+.anotacion-sospecha {
+  margin: 0.35rem 0 0;
+  padding: 0.3rem 0.45rem;
+  font-size: 0.74rem;
+  line-height: 1.5;
+  background: rgba(127, 127, 127, 0.09);
+  border-radius: 0.25rem;
+}
+
+.anotacion-sospecha strong {
+  display: inline;
+  font-size: inherit;
+}
+
+.anotacion-fundamento {
+  margin: 0.25rem 0 0;
+  font-size: 0.68rem;
+  font-style: italic;
+  opacity: 0.5;
+}
+
+/* La anotacion senalada: la que las trazas estan marcando. */
+.anotacion { cursor: pointer; }
+.anotacion:hover  { background: rgba(127, 127, 127, 0.12); }
+.anotacion:focus-visible { outline: 2px solid #4ea8ff; outline-offset: 2px; }
+
+.anotacion-senalada {
+  background: rgba(209, 73, 91, 0.14);
+  border-left-width: 5px;
+}
+
+/* Selector de conductor.
+   ---------------------------------------------------------------------------
+   Aparece solo con mas de un conductor en la sesion. Cada pastilla lleva el
+   color con que ese conductor se dibuja en las trazas, de modo que la relacion
+   entre el control y la linea no haya que recordarla. */
+.selector-conductores {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-bottom: 0.7rem;
+}
+
+.pastilla-conductor {
+  padding: 0.3rem 0.75rem;
+  font-size: 0.75rem;
+  color: inherit;
+  background: transparent;
+  border: 1px solid var(--color-conductor, rgba(127, 127, 127, 0.4));
+  border-radius: 999px;
+  cursor: pointer;
+  opacity: 0.55;
+}
+
+.pastilla-conductor::before {
+  content: "";
+  display: inline-block;
+  width: 0.5rem;
+  height: 0.5rem;
+  margin-right: 0.4rem;
+  background: var(--color-conductor, currentColor);
+  border-radius: 50%;
+  vertical-align: middle;
+}
+
+.pastilla-conductor.elegida { opacity: 1; font-weight: 600; }
+.pastilla-conductor:hover   { opacity: 0.85; }
+
+/* La de comparar no representa a un conductor, y por eso no lleva punto. */
+.pastilla-comparar::before { display: none; }
+.pastilla-comparar { border-style: dashed; }
+
+/* A quien le paso cada anotacion, cuando se comparan dos. */
+.anotacion-conductor {
+  margin-right: 0.45rem;
+  font-size: 0.68rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+/* Recorrido reconstruido del vehiculo de calle.
+   El lienzo es cuadrado a proposito: el recorrido se dibuja con la misma escala
+   en los dos ejes, porque estirarlo haria parecer sinuoso un tramo recto. */
+.panel-recorrido canvas {
+  display: block;
+  width: 100%;
+  max-width: 760px;
+  margin: 0 auto 12px;
+  background: #0b1220;
+  border-radius: 14px;
+}
+
+/* La advertencia va con el dibujo y no en una nota al pie: quien mira el
+   recorrido tiene que saber en el acto que no es una posicion medida. */
+.advertencia-derivado {
+  margin: 12px 0 0;
+  padding: 12px 14px;
+  color: #7c4a03;
+  background: rgba(251, 191, 36, 0.14);
+  border-left: 3px solid rgba(217, 119, 6, 0.7);
+  border-radius: 8px;
+  font-size: 0.86rem;
+  line-height: 1.5;
 }

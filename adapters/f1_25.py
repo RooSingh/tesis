@@ -97,6 +97,10 @@ SENALES_ESTADO: dict[str, tuple[str, str, float]] = {
     "actual_tyre_compound": ("tyre_compound", "code", 1.0),
     "tyres_age_laps": ("tyre_age", "lap", 1.0),
     "drs_allowed": ("drs_allowed", "bool", 1.0),
+    # Metros que faltan para que el aleron movil se habilite; cero cuando
+    # no esta disponible. Es la contraparte cuantitativa del booleano, y sin
+    # ella no se puede verificar donde empieza la zona.
+    "drs_activation_distance_m": ("drs_activation_distance", "m", 1.0),
     "pit_limiter": ("pit_limiter", "bool", 1.0),
     "vehicle_fia_flags": ("fia_flag", "code", 1.0),
 }
@@ -137,6 +141,12 @@ SENALES_POR_RUEDA: dict[str, tuple[str, str, str]] = {
     "tyres_pressure_psi": ("tyre_pressure", "psi", "car_telemetry"),
     "brakes_temperature_c": ("brake_temperature", "celsius", "car_telemetry"),
     "surface_type": ("surface_type", "code", "car_telemetry"),
+    # Fraccion en que la superficie del neumatico gira mas rapido que el avance
+    # del vehiculo. Es el canal del resultado central sobre asistencias.
+    "wheel_slip_ratio": ("wheel_slip_ratio", "ratio", "motion_ex"),
+    # Velocidad de giro de cada rueda. Es el equivalente directo de la senal
+    # `wheel_speeds` ya validada sobre el bus CAN real de un vehiculo de calle.
+    "wheel_speed": ("wheel_speed", "m/s", "motion_ex"),
 }
 
 # Nombre corto de cada rueda para componer el nombre de senal.
@@ -146,16 +156,153 @@ SUFIJO_RUEDA = {
 }
 
 
+# Senales del paquete de movimiento. **Nueve de dieciocho**, y la seleccion es
+# una decision de alcance que conviene declarar:
+#
+# * **la aceleracion en los tres ejes** entra porque es el unico canal del
+#   protocolo que existe con el mismo significado fisico en un vehiculo real. Un
+#   acelerometro publica aceleracion lateral y longitudinal en el bus, y el
+#   simulador la entrega en las mismas unidades, de modo que **el mismo analisis
+#   corre sobre las dos fuentes sin traducir nada**;
+# * **la posicion en el mundo** entra porque es lo unico que permite dibujar el
+#   trazado y ubicar a los vehiculos sobre el. Sin ella solo se conoce el avance
+#   sobre la linea de referencia, que no dice donde esta el vehiculo;
+# * **guinada, cabeceo y balanceo** entran porque son la actitud del vehiculo, y
+#   el balanceo en particular es dinamica que ningun otro paquete publica.
+#
+# Quedan afuera, por redundantes y no por costo:
+#
+# * el **vector de velocidad**, cuyo modulo ya viaja como velocidad en el paquete
+#   de telemetria;
+# * los **seis campos de direccion**, que expresan la misma orientacion que
+#   guinada, cabeceo y balanceo y en una forma menos interpretable.
+#
+# Publicar los dieciocho costaria 553.104 filas por carrera contra 276.552, sin
+# agregar nada que no este ya.
+SENALES_MOVIMIENTO: dict[str, tuple[str, str, float]] = {
+    "g_force_lateral": ("g_force_lateral", "g", 1.0),
+    "g_force_longitudinal": ("g_force_longitudinal", "g", 1.0),
+    "g_force_vertical": ("g_force_vertical", "g", 1.0),
+    # El eje y es la altura, verificado por medicion: en la carrera capturada su
+    # recorrido es de 11,6 m contra 1.022 y 1.725 de los otros dos.
+    "world_position_x_m": ("world_position_x", "m", 1.0),
+    "world_position_y_m": ("world_position_y", "m", 1.0),
+    "world_position_z_m": ("world_position_z", "m", 1.0),
+    "yaw_rad": ("yaw", "rad", 1.0),
+    "pitch_rad": ("pitch", "rad", 1.0),
+    "roll_rad": ("roll", "rad", 1.0),
+}
+
+
+# Senales de dinamica del vehiculo, del paquete `motion_ex`.
+#
+# **Nueve de sesenta y uno**, y la seleccion tambien es una decision de alcance.
+# El paquete se decodificaba desde el Dia 25 y no entraba al contrato interno, de
+# modo que sus canales existian en la captura y no en la base ni en la vista.
+# Entraron cuando quedo claro que la ausencia tenia una consecuencia concreta: la
+# regla del deslizamiento producia **siete de los diez incidentes** de la captura
+# sin control de traccion, y en vivo no podia evaluarse.
+#
+# Entran:
+#
+# * el **deslizamiento de cada rueda**, cuatro senales, que es el canal sobre el
+#   que se apoya el resultado central del analisis de asistencias y la unica
+#   regla del anotador que hoy no puede evaluarse en vivo;
+# * la **velocidad de guinada**, que cierra una ausencia que la propia matriz de
+#   capacidades declaraba: el bus real la publica y el simulador la tenia
+#   decodificada sin publicar. Va del eje `y` y no del `z`, verificado por
+#   integracion sobre una vuelta completa.
+#
+# * la **velocidad de cada rueda**, cuatro senales, que es el equivalente directo
+#   de `wheel_speeds` ya validada sobre el bus CAN real. Es la que mejor sostiene
+#   el argumento central de esta tesis: **el mismo analisis corre sobre las dos
+#   fuentes sin traducir nada**. Un vehiculo de calle publica la velocidad de sus
+#   cuatro ruedas en el bus, y el simulador la entrega con el mismo significado
+#   fisico y en la misma unidad.
+#
+# Quedan afuera, y conviene decir cuales porque no es por falta de valor:
+#
+# * los **doce campos de suspension**, el **angulo de deslizamiento**, las **ocho
+#   fuerzas por rueda** y la **altura del centro de gravedad**, que describen
+#   dinamica que este trabajo no analiza;
+# * el **vector de velocidad local**, redundante con la velocidad que ya publica
+#   el paquete de telemetria.
+#
+# Costo medido sobre la carrera de Silverstone, 30.728 paquetes en 23 min:
+# **276.552 filas**, un 11,1 % sobre las 2.489.002 ya persistidas.
+SENALES_DINAMICA: dict[str, tuple[str, str, float]] = {}
+
+#: Senales que se componen de mas de un campo del mismo paquete.
+#:
+#: La distancia al vehiculo de adelante viaja partida en minutos y milisegundos, y
+#: ninguna de las dos mitades significa nada por separado. Componerla aca, y no en
+#: cada consumidor, evita que cada uno la rearme a su manera: el contrato interno
+#: entrega una magnitud, no dos fragmentos.
+SENALES_COMPUESTAS: dict[str, tuple[tuple[str, ...], Any, str, str]] = {
+    "delta_to_car_in_front": (
+        ("delta_to_car_in_front_minutes_part", "delta_to_car_in_front_ms_part"),
+        lambda minutos, ms: minutos * 60_000 + ms,
+        "ms", "lap_data",
+    ),
+    "delta_to_race_leader": (
+        ("delta_to_race_leader_minutes_part", "delta_to_race_leader_ms_part"),
+        lambda minutos, ms: minutos * 60_000 + ms,
+        "ms", "lap_data",
+    ),
+}
+
+#: Campos anidados: el valor no esta en la raiz del paquete sino dentro de otro.
+#:
+#: La velocidad angular viaja como un vector de tres ejes y solo interesa uno. Se
+#: declara con su ruta en lugar de aplanarse en el decodificador, porque el
+#: decodificador describe el protocolo y el protocolo la publica como vector.
+SENALES_ANIDADAS: dict[str, tuple[str, str, float, str]] = {
+    # ruta -> nombre, unidad, factor, paquete
+    "angular_velocity_rads.y": ("yaw_rate", "rad/s", 1.0, "motion_ex"),
+}
+
+
+#: Estado de la pista, del paquete de sesion. Llega a 2 Hz.
+#:
+#: **El clima es un canal y no un metadato.** Una carrera puede empezar seca y
+#: terminar mojada, y la procedencia guarda un valor por captura: el del final.
+#: Publicarlo por instante es lo que permite preguntar si un deslizamiento
+#: coincidio con la caida de temperatura de pista, en lugar de saber solamente
+#: que en algun momento llovio.
+#:
+#: El clima viaja como codigo y se publica como codigo. Traducirlo aca lo
+#: convertiria en texto dentro de una tabla de valores medidos, y el significado
+#: de cada codigo ya vive en la tabla del capturador.
+SENALES_CLIMA: dict[str, tuple[str, str, float]] = {
+    "weather": ("weather_code", "codigo", 1.0),
+    "track_temperature_c": ("track_temperature", "C", 1.0),
+    "air_temperature_c": ("air_temperature", "C", 1.0),
+}
+
+
 # Que paquete alimenta que mapa. Se declara aca, y no en cada consumidor, para
 # que agregar una familia de senales sea un solo cambio: mientras el capturador
 # llevaba su propia lista escrita a mano, ampliar el adaptador no alcanzaba para
 # que los canales nuevos llegaran a la base.
 MAPAS_POR_PAQUETE: dict[str, dict[str, tuple[str, str, float]]] = {
+    "motion": SENALES_MOVIMIENTO,
     "car_telemetry": SENALES_TELEMETRIA,
     "lap_data": SENALES_VUELTA,
     "car_status": SENALES_ESTADO,
     "car_damage": SENALES_DANO,
+    "motion_ex": SENALES_DINAMICA,
+    "session": SENALES_CLIMA,
 }
+
+#: Paquetes que describen **un solo vehiculo** y no llevan arreglo de veintidos.
+#:
+#: El protocolo los emite para el vehiculo propio y el decodificador los deja
+#: bajo otra clave. Normalizarlos por el camino de los demas paquetes buscaria un
+#: arreglo que no existe.
+#: El paquete de sesion describe la sesion y no a un vehiculo, de modo que entra
+#: por el mismo camino: su contenido se ata al vehiculo propio, que es el unico
+#: al que este trabajo puede referirlo.
+PAQUETES_DE_BLOQUE_UNICO = frozenset({"motion_ex", "session"})
 
 #: Paquetes que este adaptador sabe convertir al contrato interno.
 PAQUETES_NORMALIZABLES = frozenset(MAPAS_POR_PAQUETE)
@@ -184,6 +331,12 @@ def catalogo_de_senales() -> list[dict[str, str]]:
         for sufijo in SUFIJO_RUEDA.values():
             catalogo.append({"signal_name": f"{base}_{sufijo}", "unit": unidad,
                              "paquete": paquete})
+    for _, (nombre, unidad, _, paquete) in SENALES_ANIDADAS.items():
+        catalogo.append({"signal_name": nombre, "unit": unidad,
+                         "paquete": paquete})
+    for nombre, (_, _, unidad, paquete) in SENALES_COMPUESTAS.items():
+        catalogo.append({"signal_name": nombre, "unit": unidad,
+                         "paquete": paquete})
     return sorted(catalogo, key=lambda s: (s["paquete"], s["signal_name"]))
 
 
@@ -249,8 +402,25 @@ def mensajes_desde_paquete(
     indice_propio = cabecera["player_car_index"]
     marca = _marca_temporal(inicio_captura_utc, cabecera["session_time"])
 
-    if solo_vehiculo_propio:
+    if paquete in PAQUETES_DE_BLOQUE_UNICO:
+        # Describe al vehiculo propio y nada mas. El pedido de todos los
+        # vehiculos no se puede satisfacer, y devolver solo el propio en
+        # silencio haria creer que se devolvieron los veintidos.
+        if not solo_vehiculo_propio:
+            raise ErrorNormalizacion(
+                f"El paquete {paquete} describe unicamente al vehiculo propio; "
+                "no puede normalizarse para todos los vehiculos."
+            )
+        seleccion = [(indice_propio, decodificado["sesion"])]
+    elif solo_vehiculo_propio:
         seleccion = [(indice_propio, decodificado["vehiculo_propio"])]
+        # En pantalla dividida el segundo jugador tambien se normaliza. No es un
+        # tercero: comparte la consola. Cada uno viaja con su propio
+        # identificador de vehiculo y de conductor, que es lo que permite
+        # compararlos sin mezclarlos.
+        secundario = decodificado.get("vehiculo_secundario")
+        if secundario is not None:
+            seleccion.append((decodificado["indice_secundario"], secundario))
     else:
         seleccion = list(enumerate(decodificado["vehiculos"]))
 
@@ -281,6 +451,23 @@ def mensajes_desde_paquete(
             for rueda, valor in valores.items():
                 sufijo = SUFIJO_RUEDA.get(rueda, rueda)
                 pares.append((campo, f"{base}_{sufijo}", unidad, valor, 1.0))
+        # Senales que se componen de mas de un campo del mismo paquete.
+        for nombre_c, (campos, componer, unidad_c, paquete_c) in SENALES_COMPUESTAS.items():
+            if paquete_c != paquete:
+                continue
+            if all(c in vehiculo for c in campos):
+                pares.append((nombre_c, nombre_c, unidad_c,
+                              componer(*(vehiculo[c] for c in campos)), 1.0))
+
+        # Campos que viajan dentro de otro, como un eje de un vector.
+        for ruta, (nombre_a, unidad_a, factor_a, paquete_a) in SENALES_ANIDADAS.items():
+            if paquete_a != paquete:
+                continue
+            raiz, _, subcampo = ruta.partition(".")
+            contenedor = vehiculo.get(raiz)
+            if isinstance(contenedor, dict) and subcampo in contenedor:
+                pares.append((ruta, nombre_a, unidad_a,
+                              contenedor[subcampo], factor_a))
 
         for campo, nombre, unidad, crudo, factor in pares:
             if unidad == "bool":

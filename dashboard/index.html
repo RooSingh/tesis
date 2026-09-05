@@ -18,6 +18,7 @@
         <option value="simulation">Simulacion CAN</option>
         <option value="openf1">Replay OpenF1</option>
         <option value="vivo">F1 25 en vivo</option>
+        <option value="matriz">Comparacion de fuentes</option>
       </select>
     </nav>
 
@@ -104,10 +105,21 @@
            cada vez que el adaptador aprende un canal nuevo, que es la misma
            duplicacion que dejo la energia y el dano fuera de la base. -->
       <div id="vivo-graficas" class="graficas-vivo" hidden>
+        <!-- Los conductores de la sesion. Aparece solo cuando hay mas de uno:
+             con uno solo seria un control que no decide nada. -->
+        <div id="vivo-conductores" class="selector-conductores" hidden></div>
         <div class="selector-trazas">
           <div class="cabecera-selector">
             <span class="rotulo">Senales en pantalla</span>
             <span id="vivo-conteo-senales" class="conteo-senales"></span>
+            <!-- Que tramo del tiempo dibujan las trazas.
+                 La ventana muestra los ultimos treinta segundos y su eje se
+                 desplaza; la sesion completa dibuja desde el inicio y su eje
+                 crece. Con la ventana, una anotacion vieja no tiene donde
+                 dibujarse, que es lo que las dejaba en una lista aparte. -->
+            <button type="button" id="vivo-modo-eje" class="boton-tenue">
+              Ver sesion completa
+            </button>
             <button type="button" id="vivo-limpiar-trazas" class="boton-tenue">
               Quitar todas
             </button>
@@ -115,6 +127,24 @@
           <div id="vivo-catalogo" class="catalogo-trazas"></div>
         </div>
         <div id="vivo-trazas" class="grilla-trazas"></div>
+      </div>
+
+      <!-- Anotaciones en tiempo real.
+           No repiten lo que las trazas ya muestran: dicen cuando algo que hay
+           que interpretar acaba de ocurrir. Una traza en movimiento exige
+           reconocer el suceso mientras pasa; la anotacion lo declara con su
+           vuelta, su metro y de donde sale el umbral, para que despues pueda
+           citarse en lugar de recordarse. -->
+      <div id="vivo-anotaciones" class="anotaciones-vivo" hidden>
+        <div class="cabecera-anotaciones">
+          <span class="rotulo">Lo que va ocurriendo</span>
+          <span id="vivo-conteo-anotaciones" class="conteo-senales"></span>
+          <button type="button" id="vivo-limpiar-anotaciones" class="boton-tenue">
+            Limpiar
+          </button>
+        </div>
+        <p id="vivo-reglas-ciegas" class="aviso-reglas" hidden></p>
+        <ol id="vivo-lista-anotaciones" class="lista-anotaciones"></ol>
       </div>
 
       <!-- La latencia se muestra porque es medible y porque es lo que este
@@ -131,6 +161,26 @@
       </dl>
     </section>
 
+
+    <!-- Matriz de capacidades y ausencias. No lista senales: contrasta que
+         puede medirse en cada fuente y con que resolucion, organizado por
+         magnitud fisica porque cada fuente nombra lo suyo a su manera. -->
+    <section id="panel-matriz" class="panel panel-matriz" hidden>
+      <header class="cabecera-vivo">
+        <div>
+          <p class="etiqueta-superior">Capacidades y ausencias</p>
+          <h2>Que puede medirse en cada fuente</h2>
+        </div>
+      </header>
+
+      <p id="matriz-estado" class="aviso-vivo">Midiendo sobre lo persistido...</p>
+
+      <div id="matriz-fuentes" class="tarjetas-fuente" hidden></div>
+
+      <div id="matriz-tabla" class="envoltorio-matriz" hidden></div>
+
+      <p id="matriz-pie" class="pie-matriz" hidden></p>
+    </section>
     <section id="panel-openf1" class="panel panel-openf1" hidden>
       <div class="titulo-seccion">
         <div>
@@ -356,6 +406,24 @@
         </article>
       </div>
       <p id="detalle-grafico" class="detalle-grafico"></p>
+      </section>
+
+      <section class="panel panel-recorrido" aria-labelledby="titulo-recorrido">
+        <div class="titulo-seccion">
+          <div>
+            <p class="etiqueta-superior">Forma del recorrido</p>
+            <h2 id="titulo-recorrido">Por donde fue el vehiculo</h2>
+          </div>
+        </div>
+        <canvas id="grafico-recorrido" width="760" height="420"
+                aria-label="Recorrido reconstruido del vehiculo"></canvas>
+        <p id="detalle-recorrido" class="detalle-grafico"></p>
+        <p class="advertencia-derivado">El registro del vehiculo no contiene
+           coordenadas. La forma se reconstruye integrando velocidad y velocidad
+           de guinada: <strong>es una derivacion y no una medicion de
+           posicion</strong>. La orientacion absoluta y la ubicacion en el mundo
+           no son recuperables, y un tramo recto significa que el vehiculo iba
+           derecho.</p>
       </section>
     </div>
 

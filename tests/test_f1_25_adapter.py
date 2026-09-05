@@ -20,6 +20,18 @@ from tests.test_f1_udp import (
 INICIO = "2026-08-29T14:30:00+00:00"
 
 
+def paquetes_normalizables() -> list[int]:
+    """Los identificadores de los paquetes que el adaptador sabe normalizar.
+
+    Se derivan del adaptador y no se escriben aca. La lista escrita a mano ya
+    fallo: al incorporar el paquete de movimiento, estas pruebas seguian
+    contrastando cuatro paquetes y el quinto quedaba sin comprobar, que es
+    exactamente el defecto de las dos listas que el trabajo viene corrigiendo.
+    """
+
+    por_nombre = {p["nombre"]: i for i, p in f1_udp.PAQUETES.items()}
+    return sorted(por_nombre[n] for n in f1_25.PAQUETES_NORMALIZABLES)
+
 def _telemetria(indice_propio: int = 3, marcha: int = -1) -> dict:
     return f1_udp.decodificar(datagrama_telemetria(indice_propio, marcha))
 
@@ -217,7 +229,7 @@ class EnergiaYDanoTests(unittest.TestCase):
     def test_toda_senal_declara_su_transformacion(self):
         """Es la regla que este trabajo le reclama a la fuente deportiva."""
 
-        for packet_id in (6, 7, 10):
+        for packet_id in paquetes_normalizables():
             for m in f1_25.mensajes_desde_paquete(
                     f1_udp.decodificar(
                         __import__("tests.test_f1_udp", fromlist=["x"])
@@ -243,7 +255,7 @@ class CatalogoDeSenalesTests(unittest.TestCase):
         from tests.test_f1_udp import _datagrama_relleno
 
         emitidas: set[str] = set()
-        for packet_id in (6, 2, 7, 10):
+        for packet_id in paquetes_normalizables():
             decodificado = f1_udp.decodificar(_datagrama_relleno(packet_id))
             for mensaje in f1_25.mensajes_desde_paquete(decodificado, INICIO):
                 emitidas.add(mensaje["signal_name"])
@@ -273,7 +285,7 @@ class CatalogoDeSenalesTests(unittest.TestCase):
         from tests.test_f1_udp import _datagrama_relleno
 
         declarada = {s["signal_name"]: s["unit"] for s in f1_25.catalogo_de_senales()}
-        for packet_id in (6, 2, 7, 10):
+        for packet_id in paquetes_normalizables():
             decodificado = f1_udp.decodificar(_datagrama_relleno(packet_id))
             for mensaje in f1_25.mensajes_desde_paquete(decodificado, INICIO):
                 with self.subTest(senal=mensaje["signal_name"]):

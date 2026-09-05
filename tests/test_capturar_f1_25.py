@@ -153,16 +153,108 @@ class SinListaDuplicadaTests(unittest.TestCase):
             with self.subTest(paquete=paquete):
                 self.assertNotIn(f'"{paquete}"', fuente)
 
-    def test_el_adaptador_declara_un_mapa_por_paquete(self):
-        """Cada paquete normalizable tiene sus senales, y ninguno sobra."""
+    def test_el_adaptador_declara_senales_para_cada_paquete(self):
+        """Cada paquete normalizable aporta senales, y ninguno sobra.
+
+        La version anterior de esta prueba exigia que las senales estuvieran en
+        el mapa raiz del paquete, y `motion_ex` la hizo fallar: sus cinco senales
+        entran cuatro por el mapa por rueda y una por el de campos anidados, de
+        modo que su mapa raiz esta vacio y aun asi el paquete aporta.
+
+        El defecto estaba en la prueba y no en el adaptador: la invariante que
+        importa es **que ningun paquete declarado normalizable produzca cero
+        senales**, no por que camino las produce. La version anterior habria
+        dejado pasar un paquete que aportara solo por rueda y estuviera roto.
+        """
 
         from adapters import f1_25
 
         self.assertEqual(set(f1_25.PAQUETES_NORMALIZABLES),
                          set(f1_25.MAPAS_POR_PAQUETE))
-        for paquete, mapa in f1_25.MAPAS_POR_PAQUETE.items():
+
+        # Se cuenta sobre el catalogo, que es lo que el adaptador afirma
+        # producir, y no sumando los tres mapas a mano: sumarlos a mano seria
+        # repetir aca la logica que se quiere verificar.
+        por_paquete: dict[str, int] = {}
+        for senal in f1_25.catalogo_de_senales():
+            por_paquete[senal["paquete"]] = por_paquete.get(senal["paquete"], 0) + 1
+
+        for paquete in f1_25.PAQUETES_NORMALIZABLES:
             with self.subTest(paquete=paquete):
-                self.assertTrue(mapa, f"{paquete} no declara ninguna senal")
+                self.assertGreater(
+                    por_paquete.get(paquete, 0), 0,
+                    f"{paquete} es normalizable y no produce ninguna senal")
+
+    def test_el_catalogo_declara_todo_lo_que_la_normalizacion_produce(self):
+        """Lo que el catalogo promete y lo que un paquete real entrega coinciden.
+
+        Es la prueba que atrapa una senal agregada a la normalizacion y olvidada
+        en el catalogo: la vista mostraria un canal que no puede elegirse, o
+        elegiria uno que nunca llega.
+        """
+
+        from adapters import f1_25
+
+        prometidas = {s["signal_name"] for s in f1_25.catalogo_de_senales()}
+
+        # Un paquete de bloque unico, que es el camino nuevo y el menos
+        # transitado. Los campos van escritos aca a mano, sin leerlos del
+        # adaptador, para que la prueba no herede su error.
+        decodificado = {
+            "decodificado": True,
+            "paquete": "motion_ex",
+            "packet_id": 13,
+            "version_decodificador": "prueba",
+            "cabecera": {
+                "session_uid": 1, "player_car_index": 0, "session_time": 1.0,
+                "packet_format": 2025, "frame_identifier": 1,
+            },
+            "sesion": {
+                "wheel_slip_ratio": {
+                    "trasera_izquierda": 0.1, "trasera_derecha": 0.2,
+                    "delantera_izquierda": 0.3, "delantera_derecha": 0.4,
+                },
+                "angular_velocity_rads": {"x": 1.0, "y": 2.0, "z": 3.0},
+            },
+        }
+        mensajes = f1_25.mensajes_desde_paquete(
+            decodificado, "2026-08-31T00:00:00+00:00")
+        producidas = {m["signal_name"] for m in mensajes}
+
+        self.assertEqual(producidas, {
+            "wheel_slip_ratio_rear_left", "wheel_slip_ratio_rear_right",
+            "wheel_slip_ratio_front_left", "wheel_slip_ratio_front_right",
+            "yaw_rate",
+        })
+        self.assertTrue(producidas <= prometidas,
+                        f"produce sin declarar: {producidas - prometidas}")
+
+        # Y el eje correcto: la guinada es el `y`, verificado por integracion
+        # sobre una vuelta completa. Tomar el `z` daria 3,0 en lugar de 2,0.
+        guinada = next(m for m in mensajes if m["signal_name"] == "yaw_rate")
+        self.assertEqual(guinada["value"], 2.0)
+
+    def test_un_paquete_de_bloque_unico_no_finge_tener_veintidos_vehiculos(self):
+        """Pedirle todos los vehiculos tiene que fallar, no devolver uno.
+
+        Devolver el propio en silencio haria creer que se devolvieron los
+        veintidos, que es la clase de error que no deja rastro.
+        """
+
+        from adapters import f1_25
+
+        decodificado = {
+            "decodificado": True, "paquete": "motion_ex", "packet_id": 13,
+            "version_decodificador": "prueba",
+            "cabecera": {"session_uid": 1, "player_car_index": 0,
+                         "session_time": 1.0, "packet_format": 2025,
+                         "frame_identifier": 1},
+            "sesion": {"angular_velocity_rads": {"x": 0.0, "y": 0.0, "z": 0.0}},
+        }
+        with self.assertRaises(f1_25.ErrorNormalizacion):
+            f1_25.mensajes_desde_paquete(
+                decodificado, "2026-08-31T00:00:00+00:00",
+                solo_vehiculo_propio=False)
 
 
 if __name__ == "__main__":
@@ -221,18 +313,46 @@ class SegundoConductorTests(unittest.TestCase):
         self.assertTrue(p["pantalla_dividida"])
 
     def test_detecta_pantalla_dividida_por_indice_del_segundo(self):
-        """Segunda via independiente: la cabecera declara el indice del segundo."""
+        """Segunda via independiente del modo de juego: el indice del segundo.
+
+        La version anterior de esta prueba pasaba **una cabecera** y daba por
+        buena una sola lectura. Eso era exactamente el defecto: en los primeros
+        paquetes de una captura, y al reiniciarse una sesion, el emisor publica
+        la cabecera todavia en cero, y un cero es un indice legitimo. La via
+        sigue siendo independiente; lo que cambia es que ahora exige que el
+        indice **se sostenga** en el recuento de cabeceras ya pobladas.
+        """
 
         cabecera = {"secondary_player_car_index": 1, "session_uid": 1,
                     "game_major_version": 1, "game_minor_version": 24}
-        p = derivar_procedencia(_sesion(game_mode=5), None, cabecera)
+        p = derivar_procedencia(_sesion(game_mode=5), None, cabecera,
+                                secundarios={1: 3169})
         self.assertTrue(p["pantalla_dividida"])
 
     def test_un_solo_conductor_no_se_marca(self):
         cabecera = {"secondary_player_car_index": 255, "session_uid": 1,
                     "game_major_version": 1, "game_minor_version": 24}
-        p = derivar_procedencia(_sesion(game_mode=5), None, cabecera)
+        p = derivar_procedencia(_sesion(game_mode=5), None, cabecera,
+                                secundarios={255: 6652})
         self.assertFalse(p["pantalla_dividida"])
+
+    def test_una_cabecera_suelta_ya_no_declara_dos_conductores(self):
+        """La regresion concreta que este cambio impide.
+
+        La cabecera declara un segundo participante y el recuento dice que no se
+        sostuvo. Antes alcanzaba con la cabecera, y tres capturas del fin de
+        semana de Spa quedaron nombradas como de dos conductores sin haberlos.
+        """
+
+        from datetime import datetime
+
+        cabecera = {"secondary_player_car_index": 0, "session_uid": 1,
+                    "game_major_version": 1, "game_minor_version": 24}
+        p = derivar_procedencia(_sesion(game_mode=4), None, cabecera,
+                                secundarios={0: 18, 255: 49519})
+        self.assertFalse(p["pantalla_dividida"])
+        self.assertNotIn("dos-conductores",
+                         nombre_derivado(p, datetime(2026, 9, 4, 18, 39)))
 
 
 class DescarteDeNoSesionTests(unittest.TestCase):
@@ -256,3 +376,106 @@ class DescarteDeNoSesionTests(unittest.TestCase):
         p = derivar_procedencia(None, None, None)
         nombre = nombre_derivado(p, datetime(2026, 8, 30, 21, 8))
         self.assertIn("sesion-no-declarada", nombre)
+
+
+class ParrillaTests(unittest.TestCase):
+    """La parrilla se arma por nombre, no por el contador de vehiculos activos.
+
+    Son dos cosas distintas y confundirlas costo la entrada del propio conductor:
+    `num_active_cars` cuenta los que siguen en carrera, mientras que el arreglo
+    conserva sus veintidos posiciones indexadas por vehiculo. En la carrera
+    capturada el contador bajo de 20 a 18 por dos abandonos y las veinte entradas
+    seguian teniendo nombre; recortar por el contador descartaba las posiciones
+    18 y 19, y el vehiculo propio era el 19.
+    """
+
+    @staticmethod
+    def _participantes(nombres, activos):
+        vehiculos = []
+        for i in range(22):
+            nombre = nombres[i] if i < len(nombres) else ""
+            vehiculos.append({
+                "name": nombre, "race_number": i + 1, "team": "Mercedes",
+                "team_id": 0, "ai_controlled": 0 if i == len(nombres) - 1 else 1,
+                "platform": "PlayStation",
+            })
+        return {"num_active_cars": activos, "vehiculos": vehiculos}
+
+    def test_un_abandono_no_borra_a_nadie_de_la_parrilla(self):
+        nombres = [f"P{i:02d}" for i in range(20)]
+        parrilla = capturar_f1_25.derivar_parrilla(
+            self._participantes(nombres, activos=18))
+        self.assertEqual(len(parrilla), 20)
+        self.assertEqual(parrilla[-1]["indice"], 19)
+        self.assertEqual(parrilla[-1]["nombre"], "P19")
+
+    def test_las_posiciones_vacias_no_entran(self):
+        parrilla = capturar_f1_25.derivar_parrilla(
+            self._participantes(["UNO", "DOS"], activos=2))
+        self.assertEqual([v["nombre"] for v in parrilla], ["UNO", "DOS"])
+
+    def test_el_indice_es_el_del_vehiculo_y_no_el_de_la_lista(self):
+        """Es el indice con el que el resto del protocolo nombra al vehiculo."""
+
+        nombres = [f"P{i:02d}" for i in range(20)]
+        parrilla = capturar_f1_25.derivar_parrilla(
+            self._participantes(nombres, activos=20))
+        for entrada in parrilla:
+            with self.subTest(indice=entrada["indice"]):
+                self.assertEqual(entrada["nombre"], f"P{entrada['indice']:02d}")
+
+    def test_sin_paquete_de_participantes_no_se_inventa_parrilla(self):
+        self.assertIsNone(capturar_f1_25.derivar_parrilla(None))
+
+
+class SegundoConductorSostenidoTests(unittest.TestCase):
+    """El segundo conductor se decide por la moda, no por una cabecera.
+
+    Tres capturas quedaron nombradas como de dos conductores sin haberlos. El
+    nombre salia de la **primera** cabecera de la captura, y en los primeros
+    paquetes ---y tambien al reiniciarse una sesion--- el emisor publica
+    estructura valida con la cabecera todavia en cero. Un cero es un indice
+    legitimo, de modo que el error no fallaba: producia un experimento mal
+    rotulado, y en este trabajo **el nombre del archivo es la condicion
+    declarada**.
+
+    Los numeros de estas pruebas salen de las capturas reales. Con dos
+    conductores el indice secundario vale 19 en las 3.169 cabeceras utiles de la
+    captura mas larga; con la cabecera sin poblar, 255 en las 6.652 de la carrera
+    del fin de semana de Spa.
+    """
+
+    def test_dos_conductores_reales_se_reconocen(self):
+        self.assertTrue(capturar_f1_25._segundo_sostenido({19: 3169}))
+
+    def test_sin_segundo_conductor_no_se_declara(self):
+        self.assertFalse(capturar_f1_25._segundo_sostenido({255: 6652}))
+
+    def test_un_punado_de_cabeceras_en_cero_no_alcanza(self):
+        """El caso exacto que produjo los tres nombres equivocados.
+
+        Dieciocho paquetes con la cabecera sin poblar contra casi cincuenta mil
+        que la declaran ausente. La lectura por moda los ignora; la lectura de un
+        instante los tomaba por buenos.
+        """
+
+        self.assertFalse(capturar_f1_25._segundo_sostenido({0: 18, 255: 49519}))
+
+    def test_sin_cabeceras_no_se_inventa_un_segundo_conductor(self):
+        self.assertFalse(capturar_f1_25._segundo_sostenido({}))
+        self.assertFalse(capturar_f1_25._segundo_sostenido(None))
+
+    def test_el_valor_ausente_tampoco_declara_segundo_conductor(self):
+        """`None` aparece cuando la cabecera no trae el campo, y no es un indice."""
+
+        self.assertFalse(capturar_f1_25._segundo_sostenido({None: 500}))
+
+    def test_hace_falta_mayoria_y_no_una_simple_aparicion(self):
+        """Un indice valido en minoria no alcanza.
+
+        Es la diferencia entre "aparecio" y "se sostuvo", que es justamente la
+        distincion que el defecto original no hacia.
+        """
+
+        self.assertFalse(capturar_f1_25._segundo_sostenido({19: 400, 255: 600}))
+        self.assertTrue(capturar_f1_25._segundo_sostenido({19: 600, 255: 400}))

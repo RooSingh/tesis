@@ -48,6 +48,9 @@ from backend.config import MQTT_HOST, MQTT_PORT, MQTT_TOPIC
 
 DESTINO_POR_DEFECTO = ROOT / "datasets" / "f1_25" / "capturas"
 
+# El puerto en que el juego emite su telemetria.
+PUERTO_JUEGO = 20777
+
 # Silencio que cierra una captura: se salio de la sesion o se pauso el juego.
 SILENCIO_CIERRA_S = 8.0
 # Duracion minima para conservar un archivo. Por debajo es un roce accidental
@@ -113,8 +116,179 @@ AYUDAS = {
 }
 
 
+def derivar_parrilla(participantes: dict | None) -> list[dict] | None:
+    """Quien es cada vehiculo, leido del flujo.
+
+    Va en la procedencia y **no en el contrato de telemetria**, porque no es una
+    medicion: es identidad, y no cambia durante la sesion. Publicarla como senal
+    guardaria el mismo nombre casi siete mil veces para decir veintidos cosas que
+    nunca varian, y pondria texto en una tabla pensada para valores medidos.
+
+    Los nombres son de piloto y no de persona. La especificacion lo declara por
+    plataforma —en PlayStation el nombre es el del piloto salvo en partida LAN— y
+    se verifico sobre la carrera capturada: la conductora humana aparece con
+    `ai_controlled` en cero y el nombre del piloto que eligio.
+    """
+
+    if participantes is None:
+        return None
+    # Se recorren las veintidos posiciones y se conservan las que tienen nombre.
+    #
+    # **No se recorta por `num_active_cars`.** Ese campo cuenta los vehiculos que
+    # siguen en carrera, no la longitud del arreglo: la especificacion declara que
+    # el arreglo se indexa por indice de vehiculo, y las posiciones se mantienen
+    # aunque un vehiculo abandone. En la carrera capturada el contador bajo de 20
+    # a 18 mientras las veinte entradas conservaban su nombre, de modo que
+    # recortar descartaba las dos ultimas posiciones —entre ellas la del vehiculo
+    # propio, que era el indice 19— y la parrilla perdia justo al conductor.
+    return [
+        {
+            "indice": indice,
+            "nombre": v["name"],
+            "numero": v["race_number"],
+            "equipo": v["team"],
+            "equipo_id": v["team_id"],
+            "es_ia": bool(v["ai_controlled"]),
+            "plataforma": v["platform"],
+        }
+        for indice, v in enumerate(participantes["vehiculos"])
+        if v["name"]
+    ]
+
+
+class AyudasEnMarcha:
+    """Acumula el control de traccion y el antibloqueo **del auto en marcha**.
+
+    Estas dos ayudas no viajan en el paquete de sesion como las otras ocho: hay
+    que leerlas del estado del auto, que llega muchas veces por segundo. Tomar la
+    ultima lectura parecia resolver que en el menu llegan en cero, pero la ultima
+    lectura de una captura tambien es de menu, porque llega despues de la bandera
+    a cuadros.
+
+    En la primera pasada de la prueba de dos conductores eso archivo el
+    antibloqueo como activo. El canal lo mostro en cero durante los cinco giros
+    de carrera y salto a uno en el segundo 423,82, cuatro segundos despues de la
+    bandera a cuadros del 419,68. La pantalla de configuracion del juego decia
+    "desactivado", y la pantalla tenia razon.
+
+    Lo destapo una fotografia del menu, no el dato. Sin esa imagen el informe
+    habria declarado que los dos conductores manejaron con ayudas distintas, que
+    es justo la afirmacion que invalidaria la comparacion.
+
+    Se archiva la **moda** y no la ultima lectura: un marco suelto no alcanza
+    para cambiar lo que se declara que se condujo.
+    """
+
+    #: Eventos que cierran el intento en curso. Despues de cualquiera de los dos,
+    #: lo que declaren los canales ya no es lo que se condujo.
+    FIN_DE_LO_CONDUCIDO = frozenset({"CHQF", "SEND"})
+
+    #: Eventos que abren un intento. Una captura puede contener varios.
+    #:
+    #: El juego emite sesion-iniciada y largada **en cada reinicio**, sin cambiar
+    #: el identificador de sesion: una captura del 2026-09-01 tiene veinticuatro
+    #: pares de estos con un unico `session_uid`. Sin reabrir la cuenta, el primer
+    #: reinicio la cerraba para siempre y una carrera entera quedaba sin medir.
+    INICIO_DE_INTENTO = frozenset({"SSTA", "LGOT"})
+
+    def __init__(self) -> None:
+        self._conteo: dict[tuple, int] = {}
+        #: El ultimo intento que llego a tener marcos conducidos. Se conserva
+        #: aparte porque el intento final puede haberse abandonado enseguida, y
+        #: entonces lo que describe la captura es el anterior.
+        self._ultimo_intento: dict[tuple, int] = {}
+        self._en_marcha = False
+        self._termino = False
+        self._ultimo: dict | None = None
+
+    def _cerrar_intento(self) -> None:
+        if self._conteo:
+            self._ultimo_intento = self._conteo
+        self._conteo = {}
+
+    def ver(self, decodificado: dict) -> None:
+        paquete = decodificado.get("paquete")
+        if paquete == "event":
+            # Estar en movimiento no alcanza para excluir el despues.
+            #
+            # En la primera pasada de la prueba de dos conductores, 885 marcos
+            # posteriores a la bandera a cuadros llegaron con el auto todavia
+            # rodando y declarando el antibloqueo activo. La moda resolvio el
+            # caso por 90,5 % contra 9,5 %, pero por margen y no por criterio:
+            # con una vuelta de desaceleracion mas larga habria dado vuelta el
+            # resultado. La bandera es lo que separa la carrera de lo que sigue.
+            codigo = decodificado.get("codigo")
+            if codigo in self.FIN_DE_LO_CONDUCIDO:
+                self._termino = True
+                self._cerrar_intento()
+            elif codigo in self.INICIO_DE_INTENTO:
+                self._termino = False
+                self._cerrar_intento()
+        elif paquete == "car_telemetry":
+            propio = decodificado.get("vehiculo_propio")
+            if propio is not None:
+                # Cualquier velocidad distinta de cero: no interesa cuanto corria
+                # sino que no estaba detenido en un menu.
+                self._en_marcha = bool(propio.get("speed_kmh"))
+        elif paquete == "car_status":
+            propio = decodificado.get("vehiculo_propio")
+            if propio is not None:
+                self._ultimo = propio
+                if self._en_marcha and not self._termino:
+                    clave = (propio.get("traction_control"),
+                             propio.get("anti_lock_brakes"))
+                    self._conteo[clave] = self._conteo.get(clave, 0) + 1
+
+    def estado(self) -> dict | None:
+        """El estado del auto con las dos ayudas corregidas por la moda.
+
+        Si nunca se vio el auto en movimiento ---una captura que solo toco el
+        menu--- se devuelve la ultima lectura sin corregir, porque no hay nada
+        mejor y ocultarla seria peor que declararla.
+        """
+
+        conteo = self._conteo or self._ultimo_intento
+        if not conteo:
+            return self._ultimo
+        traccion, antibloqueo = max(conteo.items(), key=lambda par: par[1])[0]
+        estado = dict(self._ultimo or {})
+        estado["traction_control"] = traccion
+        estado["anti_lock_brakes"] = antibloqueo
+        estado["ayudas_desde"] = "moda con el auto en marcha, antes de la bandera"
+        estado["marcos_en_marcha"] = sum(conteo.values())
+        return estado
+
+
+#: Fraccion de cabeceras que tiene que declarar el mismo segundo participante
+#: para darlo por real. No es un umbral calibrado: con dos conductores el valor
+#: aparece en **todas** las cabeceras utiles, y con la cabecera sin poblar en un
+#: punado. Cualquier corte entre ambos extremos separa los dos casos, y se elige
+#: la mayoria simple por ser el mas facil de justificar.
+FRACCION_SEGUNDO = 0.5
+
+
+def _segundo_sostenido(secundarios: dict | None) -> bool:
+    """Decide si hubo un segundo conductor, por la moda y no por un instante.
+
+    Recibe el recuento de valores del indice del segundo participante sobre las
+    cabeceras **ya pobladas**. Devuelve verdadero solo si un indice valido es
+    mayoria, que es lo que distingue a un segundo conductor de un campo que
+    todavia no se lleno.
+    """
+
+    if not secundarios:
+        return False
+    total = sum(secundarios.values())
+    validos = {i: n for i, n in secundarios.items() if i not in (255, None)}
+    if not validos:
+        return False
+    return max(validos.values()) > total * FRACCION_SEGUNDO
+
+
 def derivar_procedencia(sesion: dict | None, estado: dict | None,
-                        cabecera: dict | None) -> dict:
+                        cabecera: dict | None,
+                        participantes: dict | None = None,
+                        secundarios: dict | None = None) -> dict:
     """Construye la procedencia leyendola del propio flujo."""
 
     if sesion is None:
@@ -128,7 +302,21 @@ def derivar_procedencia(sesion: dict | None, estado: dict | None,
     activas = [n for n, v in ayudas.items() if v is not None and v != AYUDAS.get(n, 0)]
 
     # La pantalla dividida se declara en el flujo por dos vias independientes.
-    segundo = cabecera is not None and cabecera.get("secondary_player_car_index", 255) != 255
+    #
+    # La segunda **no se lee de una cabecera**, se lee de la moda sostenida.
+    # Leerla de la primera cabecera de la captura fue un error real: en los
+    # primeros paquetes ---y tambien al reiniciarse una sesion--- el emisor
+    # publica estructura valida con la cabecera todavia en cero, y un cero en el
+    # indice del segundo participante es un indice legitimo. Tres capturas
+    # quedaron nombradas como de dos conductores sin haberlos.
+    #
+    # El contraste que fija el criterio esta disponible en el propio conjunto de
+    # capturas. Con dos conductores reales el flujo declara indice propio 18 y
+    # secundario 19 **en todos los paquetes**, con modo de juego 6 y dos
+    # participantes humanos con nombre. Con la cabecera sin poblar, el indice
+    # propio y el secundario valen cero **a la vez** y solo en un punado de
+    # paquetes sobre decenas de miles.
+    segundo = _segundo_sostenido(secundarios)
     pantalla_dividida = sesion.get("game_mode") == 6 or segundo
 
     return {
@@ -146,16 +334,45 @@ def derivar_procedencia(sesion: dict | None, estado: dict | None,
         "vueltas_totales": sesion["total_laps"],
         "dificultad_ia": sesion["ai_difficulty"],
         "juego_en_red": sesion["network_game"],
+        # Que comparacion habilita la captura, declarado por el propio flujo.
+        #
+        # Con el rendimiento igualado, la diferencia observada entre dos
+        # conductores es atribuible a **quien conduce**. Sin igualar, incluye el
+        # material. Son dos preguntas distintas y confundirlas invalida el
+        # resultado, de modo que la captura tiene que decir por si misma cual de
+        # las dos responde.
+        "rendimiento_igualado": bool(sesion["equal_car_performance"]),
+        "comparacion_habilitada": (
+            "entre pilotos" if sesion["equal_car_performance"]
+            else "entre autos, incluye el material"),
         # Cada ajuste con su valor crudo y su nombre, para que la condicion
         # experimental quede legible en el archivo de metadatos.
         "ajustes": {nombre: {"valor": sesion.get(nombre),
                              "nombre": tabla.get(sesion.get(nombre), "desconocido")}
                     for nombre, tabla in AJUSTES.items()},
+        # Quien es cada vehiculo. Sin esto, todo el resto habla de indices.
+        "parrilla": derivar_parrilla(participantes),
+        # Nombre explicito: no es cuantos corrieron, es cuantos seguian en
+        # carrera cuando se leyo el paquete. Llamarlo "activos" a secas fue lo
+        # que hizo confundirlo con la longitud de la parrilla.
+        "vehiculos_en_carrera_al_leer": (participantes.get("num_active_cars")
+                                         if participantes else None),
         "inicio_sector2_m": sesion["sector2_lap_distance_start_m"],
         "inicio_sector3_m": sesion["sector3_lap_distance_start_m"],
         "ayudas": ayudas,
         "ayudas_activas": activas,
         "sin_ayudas": not activas,
+        # De donde salieron el control de traccion y el antibloqueo.
+        #
+        # Las otras ocho ayudas vienen del paquete de sesion y no admiten duda.
+        # Estas dos se resuelven con un criterio, y el criterio tiene que viajar
+        # con el dato: en la primera pasada de la prueba de dos conductores el
+        # valor archivado y el que mostraba la pantalla del juego no coincidian,
+        # y sin saber como se habia derivado el numero no habia manera de decidir
+        # cual de los dos estaba mal.
+        "ayudas_pedales_desde": (estado or {}).get(
+            "ayudas_desde", "ultima lectura, sin criterio de marcha"),
+        "ayudas_pedales_marcos": (estado or {}).get("marcos_en_marcha"),
         # La conformidad del segundo conductor se asume, como en una partida
         # compartida. Solo se registra que la sesion fue de dos.
         "pantalla_dividida": pantalla_dividida,
@@ -186,21 +403,57 @@ class Publicador:
     captura no lo es. Por eso un broker ausente nunca detiene la grabacion.
     """
 
+    #: Cada cuanto se vuelve a intentar la conexion al broker.
+    #:
+    #: Antes se intentaba **una sola vez, al arrancar el proceso**. Con el
+    #: capturador convertido en servicio permanente eso dejo de ser aceptable:
+    #: arranca al iniciar sesion, posiblemente antes que el broker, y un fallo
+    #: en ese instante lo dejaba mudo durante dias. El 2026-09-02 una carrera
+    #: entera quedo grabada sin publicar un solo mensaje.
+    REINTENTO_S = 30.0
+
     def __init__(self, activo: bool) -> None:
         self.cliente = None
         self.mensajes = 0
         self.motivo = None
+        self._activo = activo
+        self._proximo_intento = 0.0
+        self._intentos = 0
         if not activo:
             self.motivo = "desactivada por parametro"
             return
+        self._conectar()
+
+    def _conectar(self) -> None:
+        """Intenta conectar. No propaga el fallo: la grabacion no se detiene."""
+
+        self._proximo_intento = time.monotonic() + self.REINTENTO_S
+        self._intentos += 1
         try:
             import paho.mqtt.client as mqtt
-            self.cliente = mqtt.Client()
-            self.cliente.connect(MQTT_HOST, MQTT_PORT, 5)
-            self.cliente.loop_start()
+            cliente = mqtt.Client()
+            cliente.connect(MQTT_HOST, MQTT_PORT, 5)
+            cliente.loop_start()
         except Exception as error:
             self.cliente = None
-            self.motivo = f"broker no disponible: {type(error).__name__}"
+            self.motivo = (f"broker no disponible: {type(error).__name__}: "
+                           f"{error} (intento {self._intentos})")
+            # Se escribe, y no solo se guarda.
+            #
+            # Que el motivo quedara unicamente en los metadatos del archivo
+            # significaba enterarse recien al terminar de conducir. Un aviso en
+            # el registro permite verlo mientras todavia se puede corregir.
+            print(f"[capturador] sin publicacion: {self.motivo}", flush=True)
+            return
+        self.cliente = cliente
+        self.motivo = None
+        print(f"[capturador] publicando en {MQTT_HOST}:{MQTT_PORT}"
+              f" (intento {self._intentos})", flush=True)
+
+    def _reintentar_si_toca(self) -> None:
+        if (self._activo and self.cliente is None
+                and time.monotonic() >= self._proximo_intento):
+            self._conectar()
 
     @property
     def activa(self) -> bool:
@@ -213,8 +466,12 @@ class Publicador:
         # publicar: la energia y el dano existian en el crudo y no llegaban a la
         # base, de modo que la persistencia guardaba que el vehiculo freno y no
         # por que.
-        if self.cliente is None or decodificado["paquete"] not in f1_25.PAQUETES_NORMALIZABLES:
+        if decodificado["paquete"] not in f1_25.PAQUETES_NORMALIZABLES:
             return
+        if self.cliente is None:
+            self._reintentar_si_toca()
+            if self.cliente is None:
+                return
         for mensaje in f1_25.mensajes_desde_paquete(
                 decodificado, inicio_utc,
                 desplazamiento_captura_us=desplazamiento_us):
@@ -249,7 +506,9 @@ def capturar_sesion(sock: socket.socket, primer_datagrama: bytes,
 
     provisional = destino / f".captura_en_curso_{inicio_dt.strftime('%H%M%S')}.f1raw"
     conteo: dict[int, int] = {}
-    sesion = estado = cabecera = None
+    sesion = cabecera = participantes = None
+    secundarios: dict = {}
+    ayudas_vistas = AyudasEnMarcha()
     # El primer paquete de sesion llega antes de que el juego tenga cargada la
     # configuracion: declara todo en cero. Tomar ese es lo que hacia que una
     # carrera con dano en simulacion se archivara como "dano desactivado".
@@ -281,6 +540,13 @@ def capturar_sesion(sock: socket.socket, primer_datagrama: bytes,
             if decodificado is not None:
                 if cabecera is None:
                     cabecera = decodificado["cabecera"]
+                # El marco en cero identifica las cabeceras que el emisor
+                # todavia no lleno. Se las descarta para el recuento, y el
+                # recuento decide por moda: ver `_segundo_sostenido`.
+                _cab = decodificado["cabecera"]
+                if _cab.get("frame_identifier"):
+                    _sec = _cab.get("secondary_player_car_index")
+                    secundarios[_sec] = secundarios.get(_sec, 0) + 1
                 if decodificado["paquete"] == "session":
                     candidata = decodificado["sesion"]
                     sesiones_vistas += 1
@@ -292,11 +558,11 @@ def capturar_sesion(sock: socket.socket, primer_datagrama: bytes,
                         if perfil != ultimo_perfil:
                             ultimo_perfil = perfil
                             estable_desde_s = time.perf_counter() - inicio
-                elif decodificado["paquete"] == "car_status":
-                    # Tambien el ultimo, por el mismo motivo que la sesion: en el
-                    # menu el control de traccion y el antibloqueo llegan en cero
-                    # y se archivarian como desactivados.
-                    estado = decodificado["vehiculo_propio"]
+                elif decodificado["paquete"] == "participants":
+                    # El ultimo, como el resto: la parrilla se completa cuando la
+                    # sesion arranca, no en el menu.
+                    participantes = decodificado
+                ayudas_vistas.ver(decodificado)
                 publicador.publicar(decodificado, inicio_utc, desplazamiento)
 
             try:
@@ -305,7 +571,8 @@ def capturar_sesion(sock: socket.socket, primer_datagrama: bytes,
                 break
 
     transcurrido = time.perf_counter() - inicio
-    procedencia = derivar_procedencia(sesion, estado, cabecera)
+    procedencia = derivar_procedencia(
+        sesion, ayudas_vistas.estado(), cabecera, participantes, secundarios)
 
     if transcurrido < MINIMO_UTIL_S:
         provisional.unlink(missing_ok=True)
@@ -381,8 +648,20 @@ def informar(r: dict) -> None:
     if p["disponible"]:
         print(f"  sesion     : {p['circuito']} / {p['tipo_sesion']} / {p['clima']}, "
               f"pista {p['temperatura_pista_c']} C")
-        print(f"  dano       : {'activado' if p['dano_activado'] else 'DESACTIVADO'}"
+        # Los ajustes se leen del diccionario que la procedencia declara, no de
+        # un campo suelto. El campo suelto existia y se renombro; el resumen
+        # quedo apuntando al viejo y el capturador se caia **despues** de
+        # escribir el archivo, de modo que la captura se salvaba y el proceso
+        # moria sin quedar escuchando la siguiente.
+        ajustes = p.get("ajustes", {})
+        dano = ajustes.get("car_damage_setting", {}).get("nombre", "no declarado")
+        print(f"  dano       : {dano}"
               f"   ayudas: {'ninguna' if p['sin_ayudas'] else ', '.join(p['ayudas_activas'])}")
+        parrilla = p.get("parrilla") or []
+        if parrilla:
+            humanos = [v["nombre"] for v in parrilla if not v["es_ia"]]
+            print(f"  parrilla   : {len(parrilla)} vehiculos"
+                  f"{', conductor: ' + ', '.join(humanos) if humanos else ''}")
         if p["pantalla_dividida"]:
             print(f"  conductores: dos, en pantalla dividida")
     else:
@@ -402,16 +681,24 @@ def main() -> None:
                         help="Solo graba. Por defecto publica si el broker responde.")
     parser.add_argument("--silencio", type=float, default=SILENCIO_CIERRA_S,
                         help="Segundos sin datagramas que cierran una captura.")
+    # El puerto se puede cambiar para levantar una segunda instancia sin
+    # molestar a la que esta escuchando el juego. Es lo que permite correr los
+    # escenarios de degradacion contra una captura reproducida ---en su propio
+    # directorio y sin publicar--- mientras el capturador de verdad sigue en
+    # marcha. Por omision es el del juego, de modo que nada cambia para quien
+    # no lo pase.
+    parser.add_argument("--puerto", type=int, default=PUERTO_JUEGO,
+                        help="Puerto UDP donde escuchar.")
     args = parser.parse_args()
 
     args.destino.mkdir(parents=True, exist_ok=True)
     publicador = Publicador(not args.sin_publicar)
 
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    sock.bind(("0.0.0.0", 20777))
+    sock.bind(("0.0.0.0", args.puerto))
     sock.settimeout(args.silencio)
 
-    print("Capturador en marcha. Escuchando el puerto 20777.")
+    print(f"Capturador en marcha. Escuchando el puerto {args.puerto}.")
     print("Jugue normalmente: cada sesion se graba en su propio archivo.")
     print(f"Publicacion: {'activa' if publicador.activa else publicador.motivo}")
     print("Ctrl+C para detener el capturador.\n")
@@ -424,7 +711,15 @@ def main() -> None:
             sock.settimeout(args.silencio)  # dentro de la sesion, el silencio corta
             capturadas += 1
             print(f"[{datetime.now().strftime('%H:%M:%S')}] sesion detectada, grabando...")
-            informar(capturar_sesion(sock, datos, args.destino, publicador))
+            resultado = capturar_sesion(sock, datos, args.destino, publicador)
+            try:
+                informar(resultado)
+            except Exception as error:  # noqa: BLE001
+                # El resumen es para la persona, no para el dato. Si falla,
+                # la captura ya esta en disco con su procedencia: seguir
+                # escuchando vale mas que imprimir bien.
+                print(f"  ATENCION   : no se pudo resumir la captura "
+                      f"({type(error).__name__}: {error}). El archivo esta guardado.")
             print()
     except KeyboardInterrupt:
         print(f"\nCapturador detenido. Sesiones grabadas en esta corrida: {capturadas}.")

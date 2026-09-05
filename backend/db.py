@@ -455,6 +455,59 @@ def obtener_ultimos_por_senal() -> list[dict]:
     return [dict(zip(columnas, fila)) for fila in filas]
 
 
+def obtener_series_de_senales(session_id: str, senales: tuple[str, ...],
+                              source_type: str,
+                              limite: int = 20000) -> dict[str, dict[float, float]]:
+    """Devuelve varias senales de una sesion, indexadas por milisegundo.
+
+    Sirve a quien necesita **varias senales alineadas en el tiempo**, que es lo
+    que una reconstruccion o cualquier derivada requieren. Devolver una lista de
+    mensajes obligaria a cada consumidor a reagruparlos, y a repetir el criterio
+    de agrupamiento en cada sitio.
+
+    El instante se expresa en milisegundos desde la primera muestra de la sesion,
+    y no como fecha absoluta, porque **lo que se integra son diferencias**: la
+    fecha de origen de un segmento de bus es una asignacion declarada y no un
+    dato del registro, de modo que apoyarse en ella daria una precision que no
+    existe.
+
+    `source_type` **no es opcional aunque la sesion ya sea univoca**: el indice
+    encabeza por el tipo de fuente, y una consulta que no lo nombra no puede
+    aprovecharlo. Medido sobre esta misma tabla y para el mismo resultado de
+    26.455 filas: **12,1 segundos sin nombrarlo contra 0,1 con el**.
+
+    Es la tercera aparicion del mismo descuido en el trabajo, y la primera en que
+    la documentacion afirmaba la condicion **que el codigo no cumplia**: el
+    parametro se agrego para que no se pueda volver a omitir.
+    """
+
+    marcador = ",".join(["%s"] * len(senales))
+    with obtener_conexion() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                f"""
+                SELECT signal_name, timestamp, value_numeric
+                FROM telemetry_messages
+                WHERE source_type = %s
+                  AND session_id = %s
+                  AND signal_name IN ({marcador})
+                  AND value_numeric IS NOT NULL
+                ORDER BY timestamp
+                LIMIT %s
+                """,
+                (source_type, session_id, *senales, limite))
+            filas = cur.fetchall()
+
+    if not filas:
+        return {}
+    origen = min(f[1] for f in filas)
+    series: dict[str, dict[float, float]] = {}
+    for nombre, marca, valor in filas:
+        ms = round((marca - origen).total_seconds() * 1000.0, 0)
+        series.setdefault(nombre, {})[ms] = float(valor)
+    return series
+
+
 def obtener_mensajes_por_sesion(session_id: str, limite: int = 100) -> list[dict]:
     """Devuelve mensajes persistidos pertenecientes a una sesion concreta."""
 

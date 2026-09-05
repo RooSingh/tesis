@@ -110,16 +110,23 @@ def datagrama_vueltas(indice_propio: int = 0) -> bytes:
 def datagrama_sin_decodificador() -> bytes:
     """Un paquete valido de un tipo que este trabajo no decodifica.
 
-    El tipo se elige dinamicamente entre los que no tienen decodificador, para
-    que la prueba no envejezca cada vez que se implementa uno nuevo: al agregar
-    Session, esta funcion lo seguia usando como ejemplo de lo no decodificado.
+    El tipo se elige **preguntandole al decodificador**, no consultando sus
+    registros. Consultar los registros ya fallo dos veces: al implementar Session
+    la funcion lo seguia proponiendo como ejemplo de lo no decodificado, y al
+    implementar el evento —que se resuelve por una via especial y no figura en
+    ningun registro— volvio a proponer uno que si se decodifica.
+
+    Preguntar por el resultado y no por la implementacion es lo unico que no
+    puede envejecer.
     """
 
-    implementados = set(f1_udp._DECODIFICADORES) | set(f1_udp._DECODIFICADORES_UNICOS)
-    packet_id = next(i for i in sorted(f1_udp.PAQUETES) if i not in implementados)
-    tamano = f1_udp.PAQUETES[packet_id]["tamano"]
-    relleno = bytes(tamano - f1_udp.CABECERA_TAMANO)
-    return _cabecera(packet_id) + relleno
+    for packet_id in sorted(f1_udp.PAQUETES):
+        tamano = f1_udp.PAQUETES[packet_id]["tamano"]
+        candidato = _cabecera(packet_id) + bytes(tamano - f1_udp.CABECERA_TAMANO)
+        if not f1_udp.decodificar(candidato).get("decodificado"):
+            return candidato
+    raise unittest.SkipTest(
+        "ya no queda ningun paquete sin decodificador: la prueba perdio su objeto")
 
 
 # --------------------------------------------------------------------------- #
@@ -664,3 +671,163 @@ class IndicesDeLaColaDeSesionTests(unittest.TestCase):
         self.assertNotEqual(sesion["car_damage_setting"], sesion["car_damage_rate"])
         self.assertEqual(sesion["car_damage_rate"],
                          sesion["car_damage_setting"] + 1)
+
+
+class MovimientoTests(unittest.TestCase):
+    """El paquete que aporta la aceleracion y la posicion en el mundo.
+
+    Se prueba con la tecnica que este trabajo adopto despues del defecto del
+    indice corrido: **un valor distinto por posicion**, de modo que un
+    desplazamiento cambie el valor y la prueba caiga. Comparar contra la misma
+    cadena de formato que usa el decodificador no detectaria nada.
+    """
+
+    def _con_marcadores(self) -> dict:
+        """Un paquete donde cada campo del vehiculo cero vale su propia posicion."""
+
+        valores = []
+        for indice in range(f1_udp.VEHICULOS):
+            for posicion in range(18):
+                # Los seis campos de direccion son enteros; el resto, flotantes.
+                bruto = posicion if indice == 0 else 0
+                valores.append(bruto)
+        # Se arma vehiculo por vehiculo para respetar los tipos de cada campo.
+        cuerpo = b""
+        for indice in range(f1_udp.VEHICULOS):
+            campos = [float(p) if indice == 0 else 0.0 for p in range(6)]
+            campos += [p if indice == 0 else 0 for p in range(6, 12)]
+            campos += [float(p) if indice == 0 else 0.0 for p in range(12, 18)]
+            cuerpo += struct.pack(f1_udp.MOTION_FMT, *campos)
+        datos = _cabecera(0) + cuerpo
+        self.assertEqual(len(datos), f1_udp.PAQUETES[0]["tamano"])
+        return f1_udp.decodificar(datos)["vehiculos"][0]
+
+    def test_el_tamano_cierra_contra_la_especificacion(self):
+        self.assertEqual(f1_udp.MOTION_TAMANO, 60)
+        self.assertEqual(
+            f1_udp.CABECERA_TAMANO + f1_udp.MOTION_TAMANO * f1_udp.VEHICULOS,
+            f1_udp.PAQUETES[0]["tamano"],
+        )
+
+    def test_cada_campo_lee_su_propia_posicion(self):
+        v = self._con_marcadores()
+        posiciones = {
+            "world_position_x_m": 0, "world_position_y_m": 1, "world_position_z_m": 2,
+            "world_velocity_x_ms": 3, "world_velocity_y_ms": 4, "world_velocity_z_ms": 5,
+            "g_force_lateral": 12, "g_force_longitudinal": 13, "g_force_vertical": 14,
+            "yaw_rad": 15, "pitch_rad": 16, "roll_rad": 17,
+        }
+        for campo, posicion in posiciones.items():
+            with self.subTest(campo=campo):
+                self.assertEqual(v[campo], float(posicion))
+
+    def test_los_vectores_de_direccion_se_normalizan(self):
+        """Sin dividir por 32767 los vectores medirian decenas de miles.
+
+        Es un error que ninguna prueba de tamano puede detectar: los enteros
+        entran y salen igual, y solo la escala esta mal.
+        """
+
+        v = self._con_marcadores()
+        for campo, posicion in (("forward_dir_x", 6), ("right_dir_x", 9)):
+            with self.subTest(campo=campo):
+                self.assertAlmostEqual(
+                    v[campo], posicion / f1_udp.NORMALIZACION_DIRECCION, places=9)
+                self.assertLess(abs(v[campo]), 1.0)
+
+    def test_la_aceleracion_y_la_altura_no_comparten_eje(self):
+        """El eje vertical es y, verificado por medicion sobre el eje de guinada.
+
+        Si la altura se leyera como z, la aceleracion lateral y la vertical
+        quedarian intercambiadas sin que el tamano del paquete cambiara.
+        """
+
+        v = self._con_marcadores()
+        self.assertNotEqual(v["world_position_y_m"], v["world_position_z_m"])
+        self.assertEqual(v["world_position_y_m"], 1.0)
+
+
+class ParticipantesTests(unittest.TestCase):
+    """El paquete que responde quien es cada vehiculo.
+
+    Su modo de falla propio es nuevo en este decodificador: **lleva un campo
+    antes del arreglo**. Si ese byte no entra en el calculo del origen, las
+    veintidos entradas se leen corridas un byte y el paquete sigue midiendo
+    exactamente lo que la especificacion declara.
+    """
+
+    @staticmethod
+    def _paquete(nombres, activos=20) -> bytes:
+        cuerpo = struct.pack(f1_udp.PARTICIPANTS_CABEZA_FMT, activos)
+        for indice in range(f1_udp.VEHICULOS):
+            nombre = nombres[indice] if indice < len(nombres) else ""
+            cuerpo += struct.pack(
+                f1_udp.PARTICIPANTE_FMT,
+                bytes([1, 10, 0, indice % 10, 0, 44, 3]),   # los siete de un byte
+                nombre.encode("utf-8")[:32].ljust(32, b"\x00"),
+                bytes([1, 0]),                              # privacidad y nombres
+                7,                                          # nivel tecnico
+                3,                                          # plataforma
+                4,                                          # cantidad de colores
+                bytes(12),                                  # colores
+            )
+        return _cabecera(4) + cuerpo
+
+    def test_el_tamano_cierra_contra_la_especificacion(self):
+        self.assertEqual(f1_udp.PARTICIPANTE_TAMANO, 57)
+        self.assertEqual(len(self._paquete([])), f1_udp.PAQUETES[4]["tamano"])
+
+    def test_el_campo_previo_al_arreglo_se_lee_y_no_desplaza_las_entradas(self):
+        """La prueba del defecto que la cabeza puede introducir.
+
+        Se pone un nombre distinto en cada entrada: si el origen del arreglo
+        estuviera corrido, ningun nombre coincidiria con su indice.
+        """
+
+        nombres = [f"PILOTO{i:02d}" for i in range(f1_udp.VEHICULOS)]
+        r = f1_udp.decodificar(self._paquete(nombres, activos=17))
+        self.assertEqual(r["num_active_cars"], 17)
+        for i, v in enumerate(r["vehiculos"]):
+            with self.subTest(indice=i):
+                self.assertEqual(v["name"], f"PILOTO{i:02d}")
+
+    def test_el_nombre_se_recorta_en_el_nulo(self):
+        """Sin recortar, el nombre arrastraria los bytes de relleno."""
+
+        r = f1_udp.decodificar(self._paquete(["NORRIS"]))
+        self.assertEqual(r["vehiculos"][0]["name"], "NORRIS")
+        self.assertNotIn("\x00", r["vehiculos"][0]["name"])
+
+    def test_el_nombre_admite_caracteres_no_ascii(self):
+        """Aparecio en la carrera capturada: HULKENBERG lleva U con dieresis.
+
+        El protocolo declara UTF-8 y la captura lo confirma: los bytes del
+        nombre son c3 9c, que es U+00DC. Leerlo como Latin-1 daria dos
+        caracteres en lugar de uno.
+        """
+
+        r = f1_udp.decodificar(self._paquete(["HÜLKENBERG"]))
+        nombre = r["vehiculos"][0]["name"]
+        self.assertEqual(nombre, "HÜLKENBERG")
+        self.assertEqual(len(nombre), 10)
+        self.assertEqual(ord(nombre[1]), 0x00DC)
+
+    def test_el_ajuste_de_privacidad_se_expone_sin_interpretar(self):
+        """Se informa aunque no haga falta para decidir sobre el nombre.
+
+        En los modos que este trabajo usa el nombre es el del piloto elegido y
+        no el de la persona —verificado sobre la carrera capturada, donde la
+        conductora humana aparece como VERSTAPPEN—, de modo que este campo no
+        gobierna ninguna decision hoy. Se expone igual: esconderlo en la lectura
+        lo volveria invisible si el alcance cambiara.
+        """
+
+        r = f1_udp.decodificar(self._paquete(["ALGUIEN"]))
+        self.assertIn("your_telemetry", r["vehiculos"][0])
+        self.assertEqual(r["vehiculos"][0]["your_telemetry"], 1)
+
+    def test_el_equipo_se_traduce_y_el_id_se_conserva(self):
+        r = f1_udp.decodificar(self._paquete(["X"]))
+        v = r["vehiculos"][0]
+        self.assertEqual(v["team_id"], 0)
+        self.assertEqual(v["team"], "Mercedes")

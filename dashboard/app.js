@@ -1372,18 +1372,205 @@ const COMBINACIONES = {
       { senal: "brake_position", nombre: "freno", color: "#f87171" },
     ],
   },
+  // El aleron movil se lee de tres canales que llegan en tres paquetes
+  // distintos, y por eso el catalogo los reparte en tres grupos. Juntos cuentan
+  // una secuencia: la distancia baja hasta cero, el permiso se concede, y recien
+  // ahi el aleron puede abrirse. Separados hay que reconstruir esa secuencia de
+  // memoria mirando tres lienzos.
+  //
+  // La distancia se dibuja normalizada sobre su propio maximo observado, porque
+  // esta en metros y los otros dos son booleanos: en un eje comun de cero a uno,
+  // los tres se leen a la vez sin que la escala de uno aplaste a los otros.
+  aleron: {
+    etiqueta: "Aleron movil",
+    familia: "car_telemetry",
+    unidad: "bool",
+    series: [
+      { senal: "drs_open", nombre: "abierto", color: "#4ade80" },
+      { senal: "drs_allowed", nombre: "permitido", color: "#fbbf24" },
+      { senal: "drs_activation_distance", nombre: "faltan (m)", color: "#4ea8ff",
+        normalizar: true },
+    ],
+  },
 };
 
 // Seleccion inicial. Son las que se miran mientras se maneja; el resto esta a un
 // clic. Guardar la seleccion en el navegador evita rearmarla en cada recarga.
-const SELECCION_POR_DEFECTO = ["speed", "pedales", "engine_speed", "ers_stored_energy"];
+const SELECCION_POR_DEFECTO = ["speed", "pedales", "aleron", "ers_stored_energy"];
 const CLAVE_SELECCION = "tesis.trazas.seleccion";
 
 const graficasVivo = document.getElementById("vivo-graficas");
 const catalogoVivo = document.getElementById("vivo-catalogo");
 const grillaTrazas = document.getElementById("vivo-trazas");
 
+const panelAnotaciones = document.getElementById("vivo-anotaciones");
+const listaAnotaciones = document.getElementById("vivo-lista-anotaciones");
+const conteoAnotaciones = document.getElementById("vivo-conteo-anotaciones");
+const avisoReglasCiegas = document.getElementById("vivo-reglas-ciegas");
+
+// Las anotaciones se guardan por identidad y no en una lista.
+//
+// Un incidente se emite **dos veces**: al empezar, para que el aviso llegue a
+// tiempo, y al cerrarse, ya con su duracion medida. Son la misma cosa, y
+// acumularlas mostraria el doble de incidentes de los que ocurrieron.
+const anotacionesPorId = new Map();
+let proximaAnotacionSuelta = -1;
+
+// La historia, indexada **por vehiculo y despues por senal**.
+//
+// Una sola capa por senal alcanzaba mientras se publicaba un unico vehiculo. Con
+// dos conductores en pantalla dividida, las muestras de los dos caian en la misma
+// serie y la traza dibujaba una linea que no describia a ninguno.
+const historiaPorVehiculo = new Map();
+const tiemposPorVehiculo = new Map();
+const distanciaPorVehiculo = new Map();
+
+// La sesion entera a resolucion reducida, por vehiculo y por senal.
+//
+// Se declara junto a los demas mapas de estado y no donde se usa: las funciones
+// que limpian una sesion vieja lo tocan, y en JavaScript una constante todavia
+// no inicializada lanza al leerse en lugar de dar indefinido.
+const resumenPorVehiculo = new Map();
+let modoSesionCompleta = false;
+let intervaloResumen = 1;
+// El instante absoluto de la primera muestra de la sesion.
+//
+// Las anotaciones viajan con el reloj de la sesion y el resumen con el tiempo
+// transcurrido. Este valor es lo que traduce entre los dos, y sin el una
+// anotacion no se puede ubicar sobre la traza.
+let origenDeLaSesion = null;
+
+// Que conductores hay y como se los muestra. El orden de llegada fija el color,
+// de modo que un conductor no cambia de color al recargar la pagina.
+const COLORES_CONDUCTOR = ["#4ea8ff", "#f59e0b", "#4ade80", "#f87171"];
+const conductores = new Map();
+let conductorElegido = null;
+let compararConductores = true;
+
+// La sesion que se esta mirando. Un identificador de vehiculo es
+// `...:session:UID:car:N`, de modo que el mismo auto de dos carreras distintas
+// son dos claves distintas.
+let sesionEnPantalla = null;
+
+function sesionDe(vehiculo) {
+  const partes = String(vehiculo).split(":car:");
+  return partes.length > 1 ? partes[0] : null;
+}
+
+// Descarta lo que quedo de una carrera anterior.
+//
+// El caso que lo motiva: al terminar una carrera y empezar otra sin recargar la
+// pagina, el auto de la carrera vieja seguia registrado como un segundo
+// conductor **y su traza quedaba congelada**, porque ya no le llegaba nada. La
+// autora lo vio como una linea naranja estatica en todos los graficos, en una
+// prueba de **un solo conductor**.
+//
+// El mecanismo se penso para pantalla dividida, donde los dos conductores son
+// simultaneos. Nadie previo que una sesion nueva conviviera con la anterior.
+function olvidarSesionesViejas(sesionActual) {
+  if (!sesionActual || sesionEnPantalla === sesionActual) return;
+  const habiaOtra = sesionEnPantalla !== null;
+  sesionEnPantalla = sesionActual;
+  if (!habiaOtra) return;
+
+  for (const vehiculo of [...conductores.keys()]) {
+    if (sesionDe(vehiculo) === sesionActual) continue;
+    conductores.delete(vehiculo);
+    historiaPorVehiculo.delete(vehiculo);
+    tiemposPorVehiculo.delete(vehiculo);
+    distanciaPorVehiculo.delete(vehiculo);
+    resumenPorVehiculo.delete(vehiculo);
+    if (conductorElegido === vehiculo) conductorElegido = null;
+  }
+  // Las anotaciones de la carrera anterior tampoco pertenecen a esta.
+  for (const [clave, a] of [...anotacionesPorId.entries()]) {
+    if (a.vehiculo && sesionDe(a.vehiculo) !== sesionActual) {
+      anotacionesPorId.delete(clave);
+    }
+  }
+  // El eje arranca de nuevo con la sesion nueva.
+  origenDeLaSesion = null;
+  dibujarSelectorDeConductor();
+  dibujarAnotaciones();
+}
+
+function registrarConductor(vehiculo) {
+  olvidarSesionesViejas(sesionDe(vehiculo));
+  if (!vehiculo || conductores.has(vehiculo)) return;
+  const i = conductores.size;
+  conductores.set(vehiculo, {
+    color: COLORES_CONDUCTOR[i % COLORES_CONDUCTOR.length],
+    // El identificador es largo y termina en el indice del auto, que es lo
+    // unico que distingue a un conductor de otro en la misma sesion.
+    nombre: `auto ${String(vehiculo).split(":").pop()}`,
+  });
+  if (conductorElegido === null) conductorElegido = vehiculo;
+  dibujarSelectorDeConductor();
+}
+
+// Que vehiculos se dibujan: el elegido, o todos si se esta comparando.
+function vehiculosADibujar() {
+  if (compararConductores && conductores.size > 1) return [...conductores.keys()];
+  return conductorElegido ? [conductorElegido] : [...conductores.keys()];
+}
+
+// El selector solo aparece cuando hay mas de un conductor. Con uno solo seria un
+// control que no decide nada, ocupando el lugar de algo que si informa.
+function dibujarSelectorDeConductor() {
+  const caja = document.getElementById("vivo-conductores");
+  if (!caja) return;
+  caja.hidden = conductores.size < 2;
+  if (caja.hidden) return;
+
+  caja.replaceChildren();
+  for (const [vehiculo, info] of conductores) {
+    const boton = document.createElement("button");
+    boton.type = "button";
+    boton.className = "pastilla-conductor";
+    if (compararConductores || conductorElegido === vehiculo) {
+      boton.classList.add("elegida");
+    }
+    boton.style.setProperty("--color-conductor", info.color);
+    boton.textContent = info.nombre;
+    boton.addEventListener("click", () => {
+      conductorElegido = vehiculo;
+      compararConductores = false;
+      dibujarSelectorDeConductor();
+      dibujarTrazas();
+      dibujarAnotaciones();
+    });
+    caja.append(boton);
+  }
+
+  const comparar = document.createElement("button");
+  comparar.type = "button";
+  comparar.className = "pastilla-conductor pastilla-comparar";
+  if (compararConductores) comparar.classList.add("elegida");
+  comparar.textContent = "comparar";
+  comparar.addEventListener("click", () => {
+    compararConductores = !compararConductores;
+    dibujarSelectorDeConductor();
+    dibujarTrazas();
+    dibujarAnotaciones();
+  });
+  caja.append(comparar);
+}
+
+function serieDe(vehiculo, senal) {
+  return historiaPorVehiculo.get(vehiculo)?.get(senal) ?? [];
+}
+
+function tiemposDe(vehiculo, senal) {
+  return tiemposPorVehiculo.get(vehiculo)?.get(senal) ?? [];
+}
+
 const historiaPorSenal = new Map();
+// El instante de cada muestra, en paralelo a su valor. Es lo unico que las
+// anotaciones y las trazas comparten, y por lo tanto lo unico que permite
+// ubicar una sobre las otras.
+const tiemposPorSenal = new Map();
+// La anotacion senalada, si hay alguna. Las trazas marcan su instante.
+let anotacionSenalada = null;
 // Lo que cada senal declara de si misma: unidad y paquete de origen.
 const catalogoSenales = new Map();
 let seleccionTrazas = cargarSeleccion();
@@ -1488,6 +1675,15 @@ function entradasDelCatalogo() {
 // cero a cien por definicion; escalarlo a lo observado haria que un toque leve
 // de freno se viera como una frenada a fondo. Lo demas se ajusta a lo observado,
 // porque un eje fijo aplastaria un circuito lento contra uno rapido.
+// La marca del contrato viene como cadena ISO. Se la pasa a segundos para poder
+// compararla con el reloj que traen las anotaciones.
+function instanteDe(marca) {
+  if (typeof marca === "number") return marca;
+  if (typeof marca !== "string") return null;
+  const ms = Date.parse(marca);
+  return Number.isNaN(ms) ? null : ms / 1000;
+}
+
 function rangoDe(entrada) {
   if (entrada.unidad === "%") return [0, 100];
   if (entrada.unidad === "bool") return [-0.1, 1.1];
@@ -1503,6 +1699,32 @@ function conversionDe(senal) {
 function acumularEnTraza(mensaje) {
   const valor = typeof mensaje.value === "boolean" ? Number(mensaje.value) : mensaje.value;
   if (typeof valor !== "number" || !Number.isFinite(valor)) return;
+  const vehiculo = mensaje.vehicle_id ?? "sin-vehiculo";
+  registrarConductor(vehiculo);
+  if (!historiaPorVehiculo.has(vehiculo)) {
+    historiaPorVehiculo.set(vehiculo, new Map());
+    tiemposPorVehiculo.set(vehiculo, new Map());
+  }
+  const suHistoria = historiaPorVehiculo.get(vehiculo);
+  const susTiempos = tiemposPorVehiculo.get(vehiculo);
+
+  let suSerie = suHistoria.get(mensaje.signal_name);
+  if (!suSerie) { suSerie = []; suHistoria.set(mensaje.signal_name, suSerie); }
+  suSerie.push(valor);
+  if (suSerie.length > MUESTRAS_POR_TRAZA) suSerie.shift();
+
+  let susMarcas = susTiempos.get(mensaje.signal_name);
+  if (!susMarcas) { susMarcas = []; susTiempos.set(mensaje.signal_name, susMarcas); }
+  susMarcas.push(instanteDe(mensaje.timestamp));
+  if (susMarcas.length > MUESTRAS_POR_TRAZA) susMarcas.shift();
+
+  if (mensaje.signal_name === "lap_distance") {
+    let d = distanciaPorVehiculo.get(vehiculo);
+    if (!d) { d = []; distanciaPorVehiculo.set(vehiculo, d); }
+    d.push(valor);
+    if (d.length > MUESTRAS_POR_TRAZA) d.shift();
+  }
+
   let serie = historiaPorSenal.get(mensaje.signal_name);
   if (serie === undefined) {
     serie = [];
@@ -1513,6 +1735,14 @@ function acumularEnTraza(mensaje) {
   // treinta mil muestras por senal, y conservarlas todas para mostrar los
   // ultimos treinta segundos seria memoria gastada sin uso.
   if (serie.length > MUESTRAS_POR_TRAZA) serie.shift();
+
+  let marcas = tiemposPorSenal.get(mensaje.signal_name);
+  if (!marcas) {
+    marcas = [];
+    tiemposPorSenal.set(mensaje.signal_name, marcas);
+  }
+  marcas.push(instanteDe(mensaje.timestamp));
+  if (marcas.length > MUESTRAS_POR_TRAZA) marcas.shift();
 }
 
 function dibujarCatalogo() {
@@ -1615,6 +1845,43 @@ function sincronizarLienzos() {
       pie.append(leyenda);
     }
 
+    // Tocar el titulo amplia el grafico a todo el ancho.
+    //
+    // Una miniatura alcanza para ver la forma de una senal y no para leer un
+    // instante. Con el eje de la sesion completa el problema se agrava: media
+    // hora repartida en trescientos cincuenta pixeles deja cada segundo en
+    // menos de un pixel, y las marcas de anotacion quedan encimadas.
+    //
+    // Se amplia **uno a la vez**: dos graficos grandes no entran en la pantalla
+    // y obligarian a desplazarse para compararlos, que es justo lo que la vista
+    // superpuesta evita.
+    const lupa = document.createElement("span");
+    lupa.className = "lupa";
+    lupa.textContent = "ampliar";
+    pie.append(lupa);
+    pie.tabIndex = 0;
+    pie.setAttribute("role", "button");
+    const alternarAmpliada = () => {
+      const yaEstaba = figura.classList.contains("ampliada");
+      for (const otra of grillaTrazas.querySelectorAll(".ampliada")) {
+        otra.classList.remove("ampliada");
+        const suLupa = otra.querySelector(".lupa");
+        if (suLupa) suLupa.textContent = "ampliar";
+      }
+      if (!yaEstaba) {
+        figura.classList.add("ampliada");
+        lupa.textContent = "reducir";
+      }
+      dibujarTrazas();
+    };
+    pie.addEventListener("click", alternarAmpliada);
+    pie.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        alternarAmpliada();
+      }
+    });
+
     const lienzo = document.createElement("canvas");
     lienzo.height = 110;
     figura.append(pie, lienzo);
@@ -1629,17 +1896,110 @@ function sincronizarLienzos() {
   }
 }
 
+//: Ancho reservado a la izquierda para los valores del eje.
+//
+// Antes los numeros se escribian encima del lienzo, sobre la propia traza, y
+// quedaban ilegibles justo donde la linea pasaba. Reservar la banda cuesta
+// espacio de dibujo y hace que la escala se pueda leer, que es para lo que esta.
+const BANDA_EJE = 46;
+
+//: Cuantas divisiones tiene el eje. Tres —minimo, medio y maximo— alcanzan para
+//: ubicar un valor sin convertir el lienzo en una grilla.
+const DIVISIONES_EJE = 3;
+
+function formatearValor(valor, unidad) {
+  const absoluto = Math.abs(valor);
+  if (unidad === "J") return `${(valor / 1e6).toFixed(1)}M`;
+  if (absoluto >= 1000) return valor.toFixed(0);
+  if (absoluto >= 100) return valor.toFixed(0);
+  if (absoluto >= 10) return valor.toFixed(1);
+  return valor.toFixed(2);
+}
+
+// Dibuja las anotaciones sobre la traza, en el instante en que ocurrieron.
+//
+// **Es lo que las saca de la lista de abajo.** Una anotacion es un instante con
+// un lugar, y hasta ahora no tenia donde vivir dentro del grafico porque el eje
+// se desplazaba y ese instante desaparecia a los treinta segundos. Con el eje
+// que abarca la sesion, cada anotacion tiene una abscisa estable.
+//
+// Se dibujan en todos los graficos y no solo en el del canal que las produjo:
+// lo que se quiere leer es **que estaban haciendo las demas senales cuando
+// ocurrio**, que es justamente lo que una lista aparte no puede mostrar.
+function dibujarMarcasDeAnotacion(ctx, alto, duracion, zona) {
+  if (origenDeLaSesion === null || duracion <= 0) return;
+  const vehiculos = new Set(vehiculosADibujar());
+  for (const anotacion of anotacionesPorId.values()) {
+    if (anotacion.reloj_s === undefined) continue;
+    // Una anotacion pertenece a un conductor: si ese conductor no se esta
+    // dibujando, su anotacion tampoco.
+    if (anotacion.vehiculo && vehiculos.size && !vehiculos.has(anotacion.vehiculo)) {
+      continue;
+    }
+    const segundo = anotacion.reloj_s - origenDeLaSesion;
+    if (segundo < 0 || segundo > duracion) continue;
+    const x = BANDA_EJE + (segundo / duracion) * zona;
+    // La que esta senalada se dibuja fuerte y el resto tenue. Todas visibles y
+    // una destacada: ver solo la elegida obliga a recorrer la lista para saber
+    // si hubo algo mas, que es el trabajo que la vista deberia ahorrar.
+    const senalada = anotacionSenalada === anotacion.reloj_s;
+    ctx.strokeStyle = COLOR_MARCA_ANOTACION[anotacion.nivel] ?? "#94a3b8";
+    ctx.lineWidth = senalada ? 2 : 1;
+    ctx.globalAlpha = senalada ? 0.95 : 0.3;
+    ctx.beginPath();
+    ctx.moveTo(x, 0);
+    ctx.lineTo(x, alto - 12);
+    ctx.stroke();
+    // Un punto en la cabecera para que la marca se vea aunque la traza pase por
+    // encima. Sin el, una linea tenue sobre una zona densa desaparece.
+    ctx.fillStyle = ctx.strokeStyle;
+    ctx.globalAlpha = senalada ? 1 : 0.55;
+    ctx.beginPath();
+    ctx.arc(x, 3, senalada ? 3 : 2.2, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+}
+
+// Rotula el eje de tiempo de la vista de sesion completa.
+//
+// Sin rotulo, un eje que crece es indistinguible de uno que se desplaza: las dos
+// vistas se ven igual y quien mira no sabe cual esta leyendo. El minuto y segundo
+// al pie lo declara.
+function dibujarEjeDeTiempo(ctx, ancho, alto, duracion, zona) {
+  const marcas = 4;
+  ctx.globalAlpha = 0.45;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "bottom";
+  for (let i = 0; i <= marcas; i += 1) {
+    const segundo = (duracion * i) / marcas;
+    const x = BANDA_EJE + (segundo / duracion) * zona;
+    const minutos = Math.floor(segundo / 60);
+    const resto = Math.round(segundo % 60);
+    ctx.fillText(`${minutos}:${String(resto).padStart(2, "0")}`,
+                 Math.min(ancho - 12, Math.max(BANDA_EJE + 12, x)), alto - 1);
+  }
+  ctx.globalAlpha = 1;
+  ctx.textAlign = "left";
+}
+
 function dibujarUnaTraza(figura, entrada, clave) {
   const lienzo = figura.querySelector("canvas");
   if (!lienzo) return;
 
-  // El lienzo se ajusta al ancho real y a la densidad de la pantalla: sin esto
-  // la linea se ve borrosa en pantallas de alta densidad.
   const densidad = window.devicePixelRatio || 1;
   const ancho = lienzo.clientWidth;
-  const alto = 110;
+  // El alto sale del lienzo y no de una constante: un grafico ampliado mide
+  // mas, y con el alto fijo la traza se dibujaba en la franja superior dejando
+  // el resto en blanco.
+  const alto = lienzo.clientHeight || 110;
   if (!ancho) return;
-  if (lienzo.width !== Math.round(ancho * densidad)) {
+  // Se comprueban **las dos** dimensiones. Mirando solo el ancho, un grafico
+  // que se amplia sin cambiar de ancho ---el unico de su fila--- conservaba el
+  // bufer de ciento diez pixeles y la traza salia aplastada contra el borde
+  // superior, con el resto en blanco.
+  if (lienzo.width !== Math.round(ancho * densidad)
+      || lienzo.height !== Math.round(alto * densidad)) {
     lienzo.width = Math.round(ancho * densidad);
     lienzo.height = Math.round(alto * densidad);
   }
@@ -1647,26 +2007,56 @@ function dibujarUnaTraza(figura, entrada, clave) {
   ctx.setTransform(densidad, 0, 0, densidad, 0, 0);
   ctx.clearRect(0, 0, ancho, alto);
 
-  // El color del texto y de la referencia se lee del tema en lugar de fijarse
-  // aca. El guion asumia fondo oscuro y esta vista es clara: la escala quedaba
-  // ilegible y la linea de referencia, invisible.
+  // El color se lee del tema: el guion asumia fondo oscuro y esta vista es clara.
   const tinta = getComputedStyle(lienzo).color;
   ctx.fillStyle = tinta;
   ctx.strokeStyle = tinta;
+  ctx.font = "10px system-ui, sans-serif";
 
-  const series = entrada.series
-    .map((s) => ({
-      color: s.color,
-      valores: (historiaPorSenal.get(s.senal) ?? []).map(conversionDe(s.senal)),
-    }))
-    .filter((s) => s.valores.length > 1);
+  // Cada conductor aporta sus propias series. Con uno solo el resultado es el de
+  // siempre; con dos, las lineas se superponen sobre el mismo lienzo y **la
+  // separacion entre ellas es la diferencia**, que es lo que se quiere leer.
+  // Ponerlas en graficos separados obliga a alternar la mirada y la diferencia
+  // se pierde.
+  const vehiculos = vehiculosADibujar();
+  const combinaciones = [];
+  for (const vehiculo of vehiculos) {
+    for (const s of entrada.series) {
+      combinaciones.push({
+        ...s,
+        // Con un conductor manda el color de la senal; con dos manda el del
+        // conductor, porque lo que se esta comparando son los conductores.
+        color: vehiculos.length > 1
+          ? (conductores.get(vehiculo)?.color ?? s.color) : s.color,
+        vehiculo,
+      });
+    }
+  }
+
+  const series = (combinaciones.length ? combinaciones : entrada.series)
+    .map((s) => {
+      let valores = (s.vehiculo
+        ? serieDe(s.vehiculo, s.senal)
+        : (historiaPorSenal.get(s.senal) ?? [])).map(conversionDe(s.senal));
+      // Una serie marcada para normalizar comparte lienzo con otras de distinta
+      // unidad. Se la lleva a la escala comun sobre su propio maximo observado,
+      // que es lo que permite leer las tres a la vez.
+      if (s.normalizar && valores.length) {
+        const tope = Math.max(...valores.map(Math.abs), 1);
+        valores = valores.map((v) => v / tope);
+      }
+      // En la vista de sesion completa se usa el resumen y no la ventana.
+      const intervalos = s.vehiculo
+        ? (resumenPorVehiculo.get(s.vehiculo)?.get(s.senal) ?? null)
+        : null;
+      return { color: s.color, valores, intervalos };
+    })
+    .filter((s) => s.valores.length > 1
+      || (modoSesionCompleta && s.intervalos && s.intervalos.length > 1));
 
   if (!series.length) {
-    // Una traza elegida y todavia sin muestras se declara. Dejarla en blanco
-    // no distinguiria "este canal no llego" de "este canal vale cero".
     ctx.globalAlpha = 0.4;
-    ctx.font = "11px system-ui, sans-serif";
-    ctx.fillText("sin muestras todavia", 8, alto / 2);
+    ctx.fillText("sin muestras todavia", BANDA_EJE + 8, alto / 2);
     ctx.globalAlpha = 1;
     return;
   }
@@ -1678,9 +2068,7 @@ function dibujarUnaTraza(figura, entrada, clave) {
     const todos = series.flatMap((s) => s.valores);
     minimo = Math.min(...todos);
     maximo = Math.max(...todos);
-    // Un margen del cinco por ciento evita que la traza toque el borde y que una
-    // senal constante quede dibujada encima del eje.
-    const margen = (maximo - minimo) * 0.05 || 1;
+    const margen = (maximo - minimo) * 0.08 || 1;
     minimo -= margen;
     maximo += margen;
   } else {
@@ -1688,39 +2076,120 @@ function dibujarUnaTraza(figura, entrada, clave) {
     maximo = rango[1];
   }
 
-  const escalaY = (valor) => alto - ((valor - minimo) / (maximo - minimo || 1)) * alto;
+  const zona = ancho - BANDA_EJE;
+  const escalaY = (valor) =>
+    alto - ((valor - minimo) / (maximo - minimo || 1)) * alto;
 
-  ctx.globalAlpha = 0.18;
-  ctx.lineWidth = 1;
-  ctx.beginPath();
-  ctx.moveTo(0, alto / 2);
-  ctx.lineTo(ancho, alto / 2);
-  ctx.stroke();
+  // Divisiones con su valor a la izquierda. La linea guia cruza el lienzo entero
+  // para que un valor pueda seguirse de un extremo al otro.
+  const unidad = clave === "ers_stored_energy" ? "%" : entrada.unidad;
+  for (let i = 0; i < DIVISIONES_EJE; i += 1) {
+    const proporcion = i / (DIVISIONES_EJE - 1);
+    const valor = maximo - proporcion * (maximo - minimo);
+    let y = escalaY(valor);
+    // Las lineas extremas se corren hacia adentro para no quedar cortadas.
+    y = Math.min(alto - 1, Math.max(1, y));
+
+    ctx.globalAlpha = 0.14;
+    ctx.beginPath();
+    ctx.moveTo(BANDA_EJE, y);
+    ctx.lineTo(ancho, y);
+    ctx.stroke();
+
+    ctx.globalAlpha = 0.6;
+    ctx.textAlign = "right";
+    ctx.textBaseline = i === 0 ? "top" : (i === DIVISIONES_EJE - 1 ? "bottom" : "middle");
+    ctx.fillText(formatearValor(valor, unidad), BANDA_EJE - 6, y);
+  }
   ctx.globalAlpha = 1;
 
-  const paso = ancho / (MUESTRAS_POR_TRAZA - 1);
+  // En la vista de sesion completa el eje va del inicio al instante actual, y
+  // cada intervalo se dibuja como un segmento vertical entre su minimo y su
+  // maximo. Un trazo entre medias suavizaria justo los picos que las
+  // anotaciones senalan; el segmento declara el rango que realmente ocurrio.
+  if (modoSesionCompleta) {
+    const duracion = duracionDeLaSesion();
+    if (duracion > 0) {
+      for (const serie of series) {
+        if (!serie.intervalos || !serie.intervalos.length) continue;
+        ctx.strokeStyle = serie.color;
+        ctx.lineWidth = 1;
+        ctx.globalAlpha = 0.85;
+        ctx.beginPath();
+        for (const [segundo, bajo, alto_] of serie.intervalos) {
+          const x = BANDA_EJE + (segundo / duracion) * zona;
+          ctx.moveTo(x, escalaY(bajo));
+          ctx.lineTo(x, escalaY(alto_));
+        }
+        ctx.stroke();
+        ctx.globalAlpha = 1;
+      }
+      dibujarMarcasDeAnotacion(ctx, alto, duracion, zona);
+      dibujarEjeDeTiempo(ctx, ancho, alto, duracion, zona);
+      return;
+    }
+  }
+
+  const paso = zona / (MUESTRAS_POR_TRAZA - 1);
   for (const serie of series) {
-    // Las muestras se alinean a la derecha: el dato mas nuevo queda siempre en
-    // el mismo lugar, de modo que la traza avanza en vez de reescalarse.
     const desplazamiento = ancho - (serie.valores.length - 1) * paso;
     ctx.strokeStyle = serie.color;
     ctx.lineWidth = 1.6;
     ctx.beginPath();
     serie.valores.forEach((valor, i) => {
-      const x = desplazamiento + i * paso;
+      const x = Math.max(BANDA_EJE, desplazamiento + i * paso);
       const y = escalaY(valor);
       if (i === 0) ctx.moveTo(x, y);
       else ctx.lineTo(x, y);
     });
     ctx.stroke();
+
+    // El valor actual, marcado en el extremo derecho. Es el que se mira mientras
+    // se conduce, y en una traza de trescientas muestras es el mas dificil de
+    // distinguir.
+    const ultimo = serie.valores[serie.valores.length - 1];
+    const y = escalaY(ultimo);
+    ctx.fillStyle = serie.color;
+    ctx.beginPath();
+    ctx.arc(ancho - 2, y, 2.5, 0, Math.PI * 2);
+    ctx.fill();
   }
 
-  // El extremo de la escala se escribe: una traza sin numeros muestra la forma
-  // pero no permite decir cuanto.
-  ctx.globalAlpha = 0.55;
-  ctx.font = "10px system-ui, sans-serif";
-  ctx.fillText(maximo.toFixed(maximo >= 100 ? 0 : 1), 4, 11);
-  ctx.fillText(minimo.toFixed(minimo >= 100 ? 0 : 1), 4, alto - 3);
+  // La anotacion senalada, ubicada sobre la traza por su instante.
+  //
+  // Es lo que conecta las dos mitades de la vista: la lista dice que paso y
+  // cuando, y la traza muestra que hacian los canales en ese momento. Sin la
+  // marca hay que buscar el instante a ojo, que es exactamente lo que la lista
+  // deberia ahorrar.
+  if (anotacionSenalada !== null) {
+    const vehiculoDeReferencia = vehiculosADibujar()[0];
+    const senalDeReferencia = entrada.series
+      .map((s) => s.senal)
+      .find((s) => tiemposDe(vehiculoDeReferencia, s).length > 1);
+    const marcas = senalDeReferencia
+      ? tiemposDe(vehiculoDeReferencia, senalDeReferencia) : null;
+    if (marcas && marcas.length > 1) {
+      const primero = marcas[0];
+      const ultimo = marcas[marcas.length - 1];
+      const t = anotacionSenalada;
+      if (t >= primero && t <= ultimo && ultimo > primero) {
+        const x = BANDA_EJE + ((t - primero) / (ultimo - primero)) * zona;
+        ctx.save();
+        ctx.strokeStyle = "#d1495b";
+        ctx.lineWidth = 1.5;
+        ctx.setLineDash([4, 3]);
+        ctx.beginPath();
+        ctx.moveTo(x, 0);
+        ctx.lineTo(x, alto);
+        ctx.stroke();
+        ctx.restore();
+      }
+    }
+  }
+
+  ctx.fillStyle = tinta;
+  ctx.textAlign = "left";
+  ctx.textBaseline = "alphabetic";
 }
 
 function dibujarTrazas() {
@@ -1746,6 +2215,33 @@ if (botonLimpiar) {
     guardarSeleccion();
     actualizarMarcasDelCatalogo();
     sincronizarLienzos();
+  });
+}
+
+// El control que alterna entre la ventana y la sesion completa.
+//
+// Al pasar a sesion completa se refresca el resumen antes de dibujar: la vista
+// tiene que mostrar lo que hay ahora y no lo que habia cuando se abrio la
+// pagina. Mientras el modo esta activo, el resumen se refresca solo, porque un
+// eje que crece sin traer datos nuevos deja de crecer sin decirlo.
+const botonModoEje = document.getElementById("vivo-modo-eje");
+let refrescoDelResumen = null;
+if (botonModoEje) {
+  botonModoEje.addEventListener("click", async () => {
+    modoSesionCompleta = !modoSesionCompleta;
+    botonModoEje.textContent = modoSesionCompleta
+      ? "Ver ultimos 30 s" : "Ver sesion completa";
+    if (modoSesionCompleta) {
+      await traerResumenDeSesion();
+      refrescoDelResumen = window.setInterval(async () => {
+        await traerResumenDeSesion();
+        dibujarTrazas();
+      }, 2000);
+    } else if (refrescoDelResumen !== null) {
+      window.clearInterval(refrescoDelResumen);
+      refrescoDelResumen = null;
+    }
+    dibujarTrazas();
   });
 }
 
@@ -1803,7 +2299,7 @@ async function consultarPersistencia() {
   const destino = document.getElementById("vivo-persistencia");
   if (!destino) return;
   try {
-    const respuesta = await fetch(API + "/live/persistencia");
+    const respuesta = await fetch(`${API_BASE_URL}/live/persistencia`);
     const estado = await respuesta.json();
     if (!estado.disponible) {
       destino.textContent =
@@ -1885,11 +2381,293 @@ async function pedirCatalogoDeSenales() {
   }
 }
 
+// ---------------------------------------------------------------------------
+// La sesion entera, con el eje que crece
+// ---------------------------------------------------------------------------
+//
+// La ventana de arriba conserva treinta segundos: su eje **se desplaza** y lo
+// viejo sale por la izquierda. Con eso una anotacion de hace dos minutos no
+// tiene donde dibujarse, y por eso las anotaciones vivian en una lista aparte.
+//
+// Este modo dibuja **toda la sesion desde su inicio**, con un intervalo por
+// segundo. El servidor conserva el minimo y el maximo de cada intervalo en lugar
+// de una muestra representativa, de modo que un pico de frenada ---que dura
+// menos que el intervalo--- no desaparece al reducir.
+//
+// Las dos vistas conviven y no se reemplazan: una da el detalle de lo que esta
+// pasando y la otra el recorrido completo.
+
+
+// Con que color se dibuja cada nivel de anotacion sobre las trazas.
+//
+// Un incidente ya ocurrio y un aviso todavia se puede evitar: son dos cosas
+// distintas y el grafico las distingue, igual que la lista.
+const COLOR_MARCA_ANOTACION = {
+  incidente: "#f87171",
+  aviso: "#f59e0b",
+};
+
+async function traerResumenDeSesion() {
+  try {
+    const respuesta = await fetch(`${API_BASE_URL}/live/resumen`);
+    const cuerpo = await respuesta.json();
+    intervaloResumen = cuerpo.intervalo_s ?? 1;
+    origenDeLaSesion = cuerpo.origen_s ?? null;
+    resumenPorVehiculo.clear();
+    for (const [vehiculo, senales] of Object.entries(cuerpo.vehiculos ?? {})) {
+      registrarConductor(vehiculo);
+      const porSenal = new Map();
+      for (const [senal, intervalos] of Object.entries(senales ?? {})) {
+        if (Array.isArray(intervalos) && intervalos.length) {
+          porSenal.set(senal, intervalos);
+        }
+      }
+      resumenPorVehiculo.set(vehiculo, porSenal);
+    }
+  } catch (error) {
+    // Sin resumen, la vista de ventana sigue sirviendo igual.
+  }
+}
+
+// Cuanto duro la sesion, en segundos, segun el resumen mas largo.
+//
+// Se toma el maximo entre vehiculos y senales para que **los dos conductores
+// compartan el mismo eje**: si cada uno se escalara a su propia duracion, dos
+// trazas del mismo instante quedarian en abscisas distintas y la comparacion
+// diria cualquier cosa.
+function duracionDeLaSesion() {
+  let fin = 0;
+  for (const porSenal of resumenPorVehiculo.values()) {
+    for (const intervalos of porSenal.values()) {
+      const ultimo = intervalos[intervalos.length - 1];
+      if (ultimo && ultimo[0] > fin) fin = ultimo[0];
+    }
+  }
+  return fin;
+}
+
+// Trae lo que ya paso antes de que se abriera la vista.
+//
+// Sin esto la traza empezaba en el instante de conectarse: abrir la pagina a
+// mitad de una vuelta mostraba los lienzos vacios, como si antes no hubiera
+// ocurrido nada. La vista arrancaba cuando miraba el observador y no cuando
+// empezo el vehiculo.
+async function sembrarHistoria() {
+  try {
+    const respuesta = await fetch(`${API_BASE_URL}/live/historia`);
+    const cuerpo = await respuesta.json();
+    for (const [vehiculo, datos] of Object.entries(cuerpo.vehiculos ?? {})) {
+      registrarConductor(vehiculo);
+      const series = new Map();
+      const marcas = new Map();
+      for (const [senal, valores] of Object.entries(datos.series ?? {})) {
+        const limpia = valores
+          .map((v) => (typeof v === "boolean" ? Number(v) : v))
+          .filter((v) => typeof v === "number" && Number.isFinite(v));
+        if (limpia.length) {
+          series.set(senal, limpia.slice(-MUESTRAS_POR_TRAZA));
+          // El catalogo se arma con lo que efectivamente llega, de modo que
+          // sembrarlo aca evita que la vista arranque sin nada que elegir.
+          historiaPorSenal.set(senal, limpia.slice(-MUESTRAS_POR_TRAZA));
+        }
+      }
+      for (const [senal, t] of Object.entries(datos.tiempos ?? {})) {
+        const limpia = t.map(instanteDe).filter((x) => x !== null);
+        if (limpia.length) marcas.set(senal, limpia.slice(-MUESTRAS_POR_TRAZA));
+      }
+      historiaPorVehiculo.set(vehiculo, series);
+      tiemposPorVehiculo.set(vehiculo, marcas);
+      if (Array.isArray(datos.distancia) && datos.distancia.length) {
+        distanciaPorVehiculo.set(vehiculo, datos.distancia.slice(-MUESTRAS_POR_TRAZA));
+      }
+    }
+    dibujarSelectorDeConductor();
+    dibujarTrazas();
+  } catch (error) {
+    // Sin historia la vista sigue sirviendo: dibuja desde ahora.
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Anotaciones en tiempo real
+// ---------------------------------------------------------------------------
+//
+// No repiten lo que las trazas ya muestran. Una traza en movimiento obliga a
+// reconocer el suceso mientras pasa y a recordarlo despues; la anotacion lo
+// declara con su vuelta, su lugar y el fundamento de su umbral, de modo que en
+// el informe pueda **citarse** en lugar de recordarse.
+
+function registrarAnotacion(anotacion) {
+  const clave = anotacion.id !== undefined
+    ? `${anotacion.vehiculo ?? ""}#i${anotacion.id}`
+    // Los avisos no llevan identidad porque no se corrigen despues: se emiten
+    // una sola vez, cuando la condicion aparece.
+    : `a${(proximaAnotacionSuelta -= 1)}`;
+  anotacionesPorId.set(clave, anotacion);
+  dibujarAnotaciones();
+}
+
+// Donde paso, dicho de la forma mas util que el dato permita.
+//
+// "curva 7" se entiende sin saber nada del circuito; "metro 2.105" obliga a
+// saber donde queda el metro 2.105. Cuando el sistema todavia no aprendio el
+// trazado cae al metro, que es menos util y sigue siendo cierto.
+function textoDeUbicacion(anotacion) {
+  const partes = [];
+  if (anotacion.vuelta !== undefined) partes.push(`vuelta ${anotacion.vuelta}`);
+  if (anotacion.lugar) {
+    partes.push(anotacion.lugar);
+  } else if (anotacion.distancia_m !== undefined) {
+    partes.push(`metro ${Math.round(anotacion.distancia_m).toLocaleString("es-AR")}`);
+  }
+  return partes.join(", ");
+}
+
+function dibujarAnotaciones() {
+  if (!listaAnotaciones) return;
+
+  // Con un conductor elegido, la lista muestra solo lo suyo: mezclarlas obliga
+  // a leer el nombre en cada linea para saber a quien le paso.
+  const visibles = vehiculosADibujar();
+  const entradas = [...anotacionesPorId.entries()].filter(
+    ([, a]) => !a.vehiculo || conductores.size < 2 || visibles.includes(a.vehiculo));
+
+  panelAnotaciones.hidden = entradas.length === 0;
+  if (!entradas.length) return;
+
+  // Lo mas reciente arriba: en vivo, lo que acaba de pasar es lo que se mira.
+  entradas.sort((a, b) => (b[1].reloj_s ?? 0) - (a[1].reloj_s ?? 0));
+
+  const incidentes = entradas.filter(([, a]) => a.nivel === "incidente").length;
+  const avisos = entradas.length - incidentes;
+  conteoAnotaciones.textContent =
+    `${incidentes} ${incidentes === 1 ? "incidente" : "incidentes"}`
+    + (avisos ? ` y ${avisos} ${avisos === 1 ? "aviso" : "avisos"}` : "");
+
+  listaAnotaciones.replaceChildren(...entradas.map(([clave, a]) => {
+    const item = document.createElement("li");
+    item.className = `anotacion anotacion-${a.nivel}`;
+    // Un incidente todavia abierto se marca: su duracion es la medida hasta
+    // ahora y va a crecer, y presentarla como definitiva seria afirmar de mas.
+    if (a.cerrada === false) item.classList.add("anotacion-abierta");
+    item.dataset.clave = clave;
+
+    // Tocar una anotacion la senala sobre las trazas; tocarla otra vez la
+    // suelta. Es la operacion que relaciona las dos mitades de la vista, y por
+    // eso el elemento se comporta como un control y no como texto.
+    item.tabIndex = 0;
+    item.setAttribute("role", "button");
+    const alternar = () => {
+      anotacionSenalada = anotacionSenalada === a.reloj_s ? null : a.reloj_s;
+      dibujarAnotaciones();
+      dibujarTrazas();
+    };
+    item.addEventListener("click", alternar);
+    item.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " ") { e.preventDefault(); alternar(); }
+    });
+    if (anotacionSenalada === a.reloj_s) item.classList.add("anotacion-senalada");
+
+    const titulo = document.createElement("strong");
+    titulo.textContent = a.titulo;
+    // Comparando dos conductores hace falta saber a quien le paso cada cosa.
+    if (a.vehiculo && conductores.size > 1 && compararConductores) {
+      const quien = document.createElement("span");
+      quien.className = "anotacion-conductor";
+      quien.textContent = conductores.get(a.vehiculo)?.nombre ?? "";
+      quien.style.color = conductores.get(a.vehiculo)?.color ?? "inherit";
+      titulo.prepend(quien);
+    }
+    const ubicacion = textoDeUbicacion(a);
+    if (ubicacion) {
+      const donde = document.createElement("span");
+      donde.className = "anotacion-donde";
+      donde.textContent = ubicacion;
+      titulo.append(donde);
+    }
+
+    const detalle = document.createElement("p");
+    detalle.className = "anotacion-detalle";
+    detalle.textContent = a.detalle;
+
+    item.append(titulo, detalle);
+
+    // Que venia pasando antes. Es lo que separa "algo ocurrio" de "esto ocurrio
+    // y se sospecha por que". Se escribe como sospecha y no como causa: lo que
+    // el dato permite afirmar es que dos cosas pasaron en ese orden, y que una
+    // haya producido la otra es una lectura.
+    if (a.sospecha) {
+      const sospecha = document.createElement("p");
+      sospecha.className = "anotacion-sospecha";
+      const encabezado = document.createElement("strong");
+      encabezado.textContent = `Se sospecha que ${a.sospecha}. `;
+      sospecha.append(encabezado,
+                      document.createTextNode(a.sospecha_evidencia ?? ""));
+      item.append(sospecha);
+    }
+
+    if (a.fundamento) {
+      const pie = document.createElement("p");
+      pie.className = "anotacion-fundamento";
+      // Si la ubicacion es una curva, se declara de cuantas vueltas salio esa
+      // numeracion. Sin eso, "curva 7" se lee como una cita del trazado
+      // oficial, y no lo es: es lo que el dato de esta sesion declaro.
+      pie.textContent = a.curvas_derivadas_de
+        ? `${a.fundamento} · curvas derivadas de ${a.curvas_derivadas_de} `
+          + `${a.curvas_derivadas_de === 1 ? "vuelta" : "vueltas"} de referencia`
+        : a.fundamento;
+      item.append(pie);
+    }
+    return item;
+  }));
+}
+
+// Trae lo ya anotado, por conductor, y declara que reglas quedaron ciegas.
+async function sembrarAnotaciones() {
+  try {
+    const respuesta = await fetch(`${API_BASE_URL}/live/anotaciones`);
+    const cuerpo = await respuesta.json();
+    const ciegas = new Set();
+    for (const [vehiculo, datos] of Object.entries(cuerpo.vehiculos ?? {})) {
+      registrarConductor(vehiculo);
+      for (const anotacion of datos.anotaciones ?? []) {
+        registrarAnotacion({ ...anotacion, vehiculo });
+      }
+      for (const [regla, puede] of Object.entries(datos.reglas_evaluables ?? {})) {
+        if (!puede) ciegas.add(regla);
+      }
+    }
+    // Una regla cuyo canal no llega **no dice que no paso nada**: dice que no
+    // pudo mirarse. Sin declararlo, una lista vacia se lee como si no hubiera
+    // ocurrido nada.
+    if (avisoReglasCiegas) {
+      avisoReglasCiegas.hidden = ciegas.size === 0;
+      avisoReglasCiegas.textContent = ciegas.size
+        ? `Sin canal para evaluar: ${[...ciegas].join(", ")}. `
+          + "Que no se anote no significa que no haya ocurrido."
+        : "";
+    }
+  } catch (error) {
+    // Sin anotaciones previas la vista sigue sirviendo: recibe las que vengan.
+  }
+}
+
+const botonLimpiarAnotaciones = document.getElementById("vivo-limpiar-anotaciones");
+if (botonLimpiarAnotaciones) {
+  botonLimpiarAnotaciones.addEventListener("click", () => {
+    anotacionesPorId.clear();
+    anotacionSenalada = null;
+    dibujarAnotaciones();
+    dibujarTrazas();
+  });
+}
+
 function conectarFlujoEnVivo() {
   if (fuenteEnVivo) {
     return;
   }
-  pedirCatalogoDeSenales();
+  pedirCatalogoDeSenales().then(sembrarHistoria);
+  sembrarAnotaciones();
   fuenteEnVivo = new EventSource(`${API_BASE_URL}/live/stream`);
 
   fuenteEnVivo.addEventListener("estado", (evento) => {
@@ -1897,6 +2675,9 @@ function conectarFlujoEnVivo() {
   });
   fuenteEnVivo.addEventListener("telemetria", (evento) => {
     registrarMensajeEnVivo(JSON.parse(evento.data));
+  });
+  fuenteEnVivo.addEventListener("anotacion", (evento) => {
+    registrarAnotacion(JSON.parse(evento.data));
   });
   fuenteEnVivo.addEventListener("latido", () => {
     // Distingue "sin datos" de "conexion cortada": sin el latido, un
@@ -1921,10 +2702,164 @@ function desconectarFlujoEnVivo() {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Matriz de capacidades y ausencias
+// ---------------------------------------------------------------------------
+//
+// No lista senales: contrasta **que puede medirse en cada fuente y con que
+// resolucion**, organizado por magnitud fisica. Cada fuente nombra lo suyo a su
+// manera —la deportiva llama `brake_applied` a lo que el bus llama
+// `brake_pressed`— de modo que comparar nombres no compararia nada.
+//
+// Las ausencias se muestran con su motivo, y no son equivalentes: que un
+// vehiculo de calle no tenga aleron movil es un limite del objeto; que la fuente
+// deportiva no exponga la aceleracion es un limite del acceso.
+
+const panelMatriz = document.getElementById("panel-matriz");
+let matrizCargada = false;
+
+const ORDEN_FUENTES = [
+  "can_real_replay",
+  "openf1_historical_replay",
+  "f1_25_udp_simulation",
+];
+
+function celdaDeFuente(dato) {
+  const celda = document.createElement("td");
+  if (!dato || !dato.disponible) {
+    celda.className = "ausente";
+    celda.append(document.createTextNode("no disponible"));
+    const motivo = dato && dato.motivo;
+    if (motivo) {
+      const span = document.createElement("span");
+      span.className = "motivo";
+      span.textContent = motivo;
+      celda.append(span);
+    }
+    return celda;
+  }
+  celda.className = "presente";
+  celda.append(document.createTextNode(dato.senal));
+  const detalle = document.createElement("span");
+  detalle.className = "unidad-hz";
+  // La frecuencia se muestra medida, no declarada. Cuando no se pudo medir se
+  // dice, en lugar de mostrar un hueco que se lee como cero.
+  detalle.textContent = dato.hz === null || dato.hz === undefined
+    ? `${dato.unidad ?? ""} · frecuencia no medible`
+    : `${dato.unidad ?? ""} · ${dato.hz} Hz`;
+  celda.append(detalle);
+  return celda;
+}
+
+function dibujarMatriz(datos) {
+  const estado = document.getElementById("matriz-estado");
+  const contenedorFuentes = document.getElementById("matriz-fuentes");
+  const contenedorTabla = document.getElementById("matriz-tabla");
+  const pie = document.getElementById("matriz-pie");
+
+  contenedorFuentes.replaceChildren();
+  const porClave = new Map(datos.fuentes.map((f) => [f.clave, f]));
+  for (const clave of ORDEN_FUENTES) {
+    const fuente = porClave.get(clave);
+    if (!fuente) continue;
+    const tarjeta = document.createElement("article");
+    tarjeta.className = "tarjeta-fuente";
+    tarjeta.dataset.nivel = fuente.nivel;
+    tarjeta.innerHTML = `
+      <span class="nivel">Nivel ${fuente.nivel}</span>
+      <h3></h3>
+      <p class="detalle"></p>
+      <div class="cifras-fuente">
+        <span><b>${fuente.filas.toLocaleString("es-AR")}</b>filas</span>
+        <span><b>${fuente.senales}</b>senales</span>
+        <span><b>${fuente.vehiculos}</b>vehiculos</span>
+      </div>`;
+    // El nombre y el detalle se escriben como texto y no como marcado, para que
+    // un valor con caracteres especiales no se interprete.
+    tarjeta.querySelector("h3").textContent = fuente.nombre;
+    tarjeta.querySelector(".detalle").textContent = fuente.medicion;
+    contenedorFuentes.append(tarjeta);
+  }
+  contenedorFuentes.hidden = false;
+
+  const tabla = document.createElement("table");
+  tabla.className = "matriz";
+  const cabecera = document.createElement("tr");
+  for (const titulo of ["Magnitud", "Bus de vehiculo real", "Fuente deportiva",
+                        "Simulador"]) {
+    const th = document.createElement("th");
+    th.textContent = titulo;
+    cabecera.append(th);
+  }
+  const thead = document.createElement("thead");
+  thead.append(cabecera);
+  tabla.append(thead);
+
+  const cuerpo = document.createElement("tbody");
+  let familiaAnterior = null;
+  for (const fila of datos.magnitudes) {
+    const tr = document.createElement("tr");
+    // La linea mas gruesa separa familias: agrupa lo que se lee junto.
+    if (fila.familia !== familiaAnterior) {
+      tr.className = "familia-nueva";
+      familiaAnterior = fila.familia;
+    }
+    const magnitud = document.createElement("td");
+    magnitud.className = "celda-magnitud";
+    magnitud.append(document.createTextNode(fila.magnitud));
+    const familia = document.createElement("span");
+    familia.className = "familia";
+    familia.textContent = fila.familia;
+    magnitud.append(familia);
+    tr.append(magnitud);
+
+    for (const clave of ORDEN_FUENTES) {
+      tr.append(celdaDeFuente(fila.fuentes[clave]));
+    }
+    cuerpo.append(tr);
+
+    if (fila.nota) {
+      const notaFila = document.createElement("tr");
+      const celda = document.createElement("td");
+      celda.colSpan = 4;
+      celda.className = "nota-magnitud";
+      celda.textContent = fila.nota;
+      notaFila.append(celda);
+      cuerpo.append(notaFila);
+    }
+  }
+  tabla.append(cuerpo);
+  contenedorTabla.replaceChildren(tabla);
+  contenedorTabla.hidden = false;
+
+  pie.textContent =
+    `Frecuencias medidas sobre ${datos.medido_sobre}. ` +
+    "Ninguna cifra se declara sin haberla medido.";
+  pie.hidden = false;
+  estado.hidden = true;
+}
+
+async function cargarMatriz() {
+  if (matrizCargada) return;
+  const estado = document.getElementById("matriz-estado");
+  try {
+    const respuesta = await fetch(`${API_BASE_URL}/fuentes/matriz`);
+    const datos = await respuesta.json();
+    dibujarMatriz(datos);
+    matrizCargada = true;
+  } catch (error) {
+    estado.hidden = false;
+    estado.classList.add("aviso-error");
+    // Se declara el motivo en lugar de dejar la pantalla a medias.
+    estado.textContent = `No se pudo construir la matriz (${error.message}).`;
+  }
+}
+
 async function cambiarModo() {
   const modo = selectorModo.value;
   const openF1Activo = modo === "openf1";
   const vivoActivo = modo === "vivo";
+  const matrizActiva = modo === "matriz";
   document.body.classList.toggle("modo-openf1-activo", openF1Activo);
   document.body.classList.toggle("modo-vivo-activo", vivoActivo);
   document.querySelectorAll(".modo-simulacion").forEach((elemento) => {
@@ -1932,6 +2867,8 @@ async function cambiarModo() {
   });
   panelOpenF1.hidden = !openF1Activo;
   panelVivo.hidden = !vivoActivo;
+  panelMatriz.hidden = !matrizActiva;
+  if (matrizActiva) cargarMatriz();
   // La cabecera describe la sesion demostrativa: en los otros espacios de
   // trabajo anunciaba una sesion que la pantalla no esta mostrando.
   const cabecera = document.querySelector(".cabecera-sesion");
@@ -2028,7 +2965,136 @@ lineaFases.addEventListener("click", (event) => {
   dibujarGraficosCoordinados();
 });
 
+
+// --- Recorrido reconstruido del vehiculo de calle ------------------------- //
+//
+// El registro no trae coordenadas: la forma sale de integrar velocidad y
+// velocidad de guinada. Se dibuja con **la misma escala en los dos ejes**
+// porque estirar el dibujo para que llene el lienzo haria parecer sinuoso un
+// tramo recto, que es justamente lo contrario de lo que el dato dice.
+const CANVAS_RECORRIDO = document.getElementById("grafico-recorrido");
+const DETALLE_RECORRIDO = document.getElementById("detalle-recorrido");
+
+function dibujarRecorrido(datos) {
+  if (!CANVAS_RECORRIDO) return;
+  const ctx = CANVAS_RECORRIDO.getContext("2d");
+  const { width: ancho, height: alto } = CANVAS_RECORRIDO;
+  ctx.clearRect(0, 0, ancho, alto);
+  ctx.fillStyle = "#0b1220";
+  ctx.fillRect(0, 0, ancho, alto);
+
+  const puntos = datos?.puntos ?? [];
+  if (puntos.length < 2) {
+    ctx.fillStyle = "#94a3b8";
+    ctx.font = "13px system-ui, sans-serif";
+    ctx.fillText("Sin recorrido para este segmento.", 16, 26);
+    return;
+  }
+
+  const xs = puntos.map((p) => p.x);
+  const ys = puntos.map((p) => p.y);
+  const minX = Math.min(...xs);
+  const maxX = Math.max(...xs);
+  const minY = Math.min(...ys);
+  const maxY = Math.max(...ys);
+  const margen = 28;
+  // Una sola escala para los dos ejes: la proporcion real es parte del dato.
+  const escala = Math.min(
+    (ancho - margen * 2) / Math.max(maxX - minX, 1),
+    (alto - margen * 2) / Math.max(maxY - minY, 1)
+  );
+  const centroX = (minX + maxX) / 2;
+  const centroY = (minY + maxY) / 2;
+  const aPantalla = (p) => [
+    ancho / 2 + (p.x - centroX) * escala,
+    // El eje vertical del lienzo crece hacia abajo y el del recorrido hacia
+    // arriba: sin invertirlo, el dibujo sale espejado.
+    alto / 2 - (p.y - centroY) * escala,
+  ];
+
+  // Barra de escala: sin ella, un recorrido de cien metros y uno de dos mil se
+  // ven iguales, porque el dibujo se ajusta al lienzo en los dos casos.
+  const metrosBarra = escalaLegible(Math.max(maxX - minX, maxY - minY) / 4);
+  ctx.strokeStyle = "rgba(148, 163, 184, 0.5)";
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(margen, alto - 18);
+  ctx.lineTo(margen + metrosBarra * escala, alto - 18);
+  ctx.stroke();
+  ctx.fillStyle = "#94a3b8";
+  ctx.font = "11px system-ui, sans-serif";
+  ctx.fillText(`${metrosBarra} m`, margen, alto - 24);
+
+  ctx.strokeStyle = "#38bdf8";
+  ctx.lineWidth = 2;
+  ctx.lineJoin = "round";
+  ctx.beginPath();
+  puntos.forEach((p, i) => {
+    const [px, py] = aPantalla(p);
+    if (i === 0) ctx.moveTo(px, py);
+    else ctx.lineTo(px, py);
+  });
+  ctx.stroke();
+
+  const [ix, iy] = aPantalla(puntos[0]);
+  ctx.fillStyle = "#f8fafc";
+  ctx.beginPath();
+  ctx.arc(ix, iy, 4, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillText("inicio", ix + 8, iy + 4);
+}
+
+function escalaLegible(metros) {
+  const candidatos = [10, 25, 50, 100, 250, 500, 1000];
+  return candidatos.find((c) => c >= metros) ?? 1000;
+}
+
+function describirRecorrido(datos) {
+  if (!DETALLE_RECORRIDO) return;
+  const v = datos?.validacion_guinada;
+  // La comprobacion se muestra siempre, tambien cuando no se pudo hacer: que un
+  // tramo recto no permita deducir el ancho de via **es informacion**, y
+  // ocultarla dejaria creer que la validacion siempre corrio.
+  const comprobacion = v?.ancho_de_via_m
+    ? `Comprobado contra las cuatro ruedas: el ancho de via que se deduce es de ${v.ancho_de_via_m} m, con correlacion ${v.correlacion} sobre ${v.muestras.toLocaleString("es-AR")} muestras. Ese valor no viaja en el bus: surge de dos senales decodificadas por separado.`
+    : "Sin giro suficiente para deducir el ancho de via: en un tramo recto la diferencia entre ruedas es ruido y la comprobacion no aplica.";
+  DETALLE_RECORRIDO.textContent =
+    `${datos.recorrido_m.toLocaleString("es-AR")} m recorridos, en ${Math.round(datos.extension_x_m)} por ${Math.round(datos.extension_y_m)} m. ${comprobacion}`;
+}
+
+async function traerRecorrido(sessionId) {
+  if (!CANVAS_RECORRIDO) return;
+  try {
+    const respuesta = await fetch(`${API_BASE_URL}/can/recorrido/${encodeURIComponent(sessionId)}`);
+    if (!respuesta.ok) {
+      dibujarRecorrido(null);
+      if (DETALLE_RECORRIDO) {
+        DETALLE_RECORRIDO.textContent =
+          respuesta.status === 404
+            ? "Este segmento no tiene velocidad y guinada juntas, que son las dos senales que la reconstruccion necesita."
+            : `No se pudo obtener el recorrido (${respuesta.status}).`;
+      }
+      return;
+    }
+    const datos = await respuesta.json();
+    dibujarRecorrido(datos);
+    describirRecorrido(datos);
+  } catch (error) {
+    dibujarRecorrido(null);
+    if (DETALLE_RECORRIDO) {
+      DETALLE_RECORRIDO.textContent = `No se pudo obtener el recorrido: ${error.message}`;
+    }
+  }
+}
+
+// El segmento de bus que se dibuja. Es una constante y no una eleccion porque
+// el tablero muestra un segmento de referencia; que sea urbano y no de
+// autopista es deliberado: en autopista el vehiculo va derecho y el recorrido
+// es una recta, que es cierto pero no muestra nada.
+const SEGMENTO_RECORRIDO = "can:segmento:sample_10";
+
 cargarSesion();
+traerRecorrido(SEGMENTO_RECORRIDO);
 // La recarga conserva soporte para una vista actualizable, aunque la demo actual
 // usa una sesion historica y finita.
 // El temporizador solo corre en el espacio de trabajo que lo necesita. Antes

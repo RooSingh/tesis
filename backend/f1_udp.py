@@ -129,6 +129,181 @@ PAQUETES: dict[int, dict[str, Any]] = {
 # Cantidad de vehiculos en los paquetes que llevan un arreglo por auto.
 VEHICULOS = 22
 
+#: Valor con que la cabecera declara que no hay segundo jugador.
+#:
+#: Se usa 255 y no cero porque cero es un indice valido: el vehiculo de la
+#: primera posicion del arreglo. Confundirlos haria que toda sesion sin segundo
+#: jugador pareciera tener uno.
+SIN_SEGUNDO_JUGADOR = 255
+
+
+# --------------------------------------------------------------------------- #
+# Motion, paquete 0
+# --------------------------------------------------------------------------- #
+
+# Una entrada por vehiculo. 60 bytes.
+#
+# Es el paquete que aporta los dos canales que ninguna otra estructura tiene:
+#
+# **La aceleracion en los tres ejes.** Es el unico canal del protocolo que existe
+# con el mismo significado fisico en un vehiculo real: un acelerometro publica
+# aceleracion lateral y longitudinal en el bus, y el simulador la entrega en las
+# mismas unidades. Junto con la velocidad de guinada del paquete de dinamica
+# extendida, es el puente mas directo entre la fuente simulada y el trabajo sobre
+# vehiculo real, porque **el mismo analisis corre sobre las dos sin traducir**.
+#
+# **La posicion de cada vehiculo en el mundo.** Es lo que permite dibujar el
+# trazado y ubicar a los veintidos vehiculos sobre el, en lugar de conocer
+# unicamente su distancia recorrida.
+#
+# Los seis campos de direccion son enteros de dos bytes que representan vectores
+# normalizados: se dividen por 32767 para volver al rango de menos uno a uno. No
+# hacerlo daria vectores de decenas de miles de unidades de largo, que es un error
+# que ninguna prueba de tamano puede detectar.
+MOTION_FMT = "<" + "f" * 6 + "h" * 6 + "f" * 6
+MOTION_TAMANO = struct.calcsize(MOTION_FMT)
+
+#: Factor de los vectores de direccion. Es el maximo de un entero de dos bytes
+#: con signo, que es como el protocolo representa un valor normalizado.
+NORMALIZACION_DIRECCION = 32767.0
+
+
+def _desempaquetar_motion(bruto: tuple) -> dict[str, Any]:
+    """Nombra los campos de posicion, velocidad, orientacion y aceleracion.
+
+    Los ejes siguen la convencion que este trabajo ya verifico sobre el paquete
+    de dinamica extendida: **la altura es el eje y**, no el z. Se detecto
+    integrando la velocidad angular de cada eje a lo largo de dos minutos de
+    conduccion, donde solo uno acumulaba las vueltas completas que un circuito
+    impone. Nombrar mal un eje aca intercambiaria la aceleracion lateral con la
+    vertical sin alterar un solo byte.
+    """
+
+    return {
+        "world_position_x_m": bruto[0],
+        "world_position_y_m": bruto[1],          # altura
+        "world_position_z_m": bruto[2],
+        "world_velocity_x_ms": bruto[3],
+        "world_velocity_y_ms": bruto[4],
+        "world_velocity_z_ms": bruto[5],
+        "forward_dir_x": bruto[6] / NORMALIZACION_DIRECCION,
+        "forward_dir_y": bruto[7] / NORMALIZACION_DIRECCION,
+        "forward_dir_z": bruto[8] / NORMALIZACION_DIRECCION,
+        "right_dir_x": bruto[9] / NORMALIZACION_DIRECCION,
+        "right_dir_y": bruto[10] / NORMALIZACION_DIRECCION,
+        "right_dir_z": bruto[11] / NORMALIZACION_DIRECCION,
+        # En unidades de g, no en metros por segundo al cuadrado.
+        "g_force_lateral": bruto[12],
+        "g_force_longitudinal": bruto[13],
+        "g_force_vertical": bruto[14],
+        "yaw_rad": bruto[15],
+        "pitch_rad": bruto[16],
+        "roll_rad": bruto[17],
+    }
+
+
+# --------------------------------------------------------------------------- #
+# Participants, paquete 4
+# --------------------------------------------------------------------------- #
+
+# Una entrada por vehiculo, 57 bytes, precedida por un byte con la cantidad de
+# vehiculos activos.
+#
+# Es el unico paquete que responde **quien** es cada vehiculo. Sin el, todo el
+# resto del protocolo habla de indices: la interfaz dice "vehiculo 19" donde
+# deberia decir un nombre y una escuderia.
+#
+# El campo de nombre es texto de treinta y dos bytes terminado en nulo. Lleva
+# tratamiento aparte porque **no es un numero**: hay que recortarlo en el nulo y
+# decodificarlo como UTF-8, y un nombre demasiado largo llega truncado con puntos
+# suspensivos por decision del propio protocolo.
+#
+# Que contiene el nombre: depende del modo, y no de lo que declara la
+# especificacion
+# --------------------------------------------------------------------------
+# La especificacion lo declara por plataforma: en PlayStation el nombre seria el
+# del piloto elegido, y pasaria a ser el identificador de red solo en partida
+# LAN. **Eso resulto incompleto.**
+#
+# Medido sobre capturas propias, en el mismo equipo y la misma consola:
+#
+# | modo | nombre del conductor humano |
+# | --- | --- |
+# | carrera de un jugador | `VERSTAPPEN`, el piloto elegido |
+# | contrarreloj | `mauruiz20`, **el identificador de la plataforma** |
+#
+# Y en contrarreloj la parrilla incluye ademas los fantasmas de la tabla de
+# tiempos en linea, con **identificadores de otras personas**.
+#
+# De modo que el campo **puede contener el identificador de una persona real** en
+# un modo que este trabajo usa, sin que medie partida LAN ni multijugador. Quien
+# publique la parrilla tiene que decidirlo sabiendo esto, y por eso el
+# decodificador expone el nombre tal cual y no lo interpreta: la decision de que
+# se publica no puede quedar escondida en la lectura.
+#
+# Registro de una correccion: este comentario afirmaba antes que los nombres eran
+# siempre de piloto en los modos usados, apoyandose en una sola captura de
+# carrera. **La generalizacion desde un unico modo fue el error**, y lo desmintio
+# la primera captura de contrarreloj.
+#
+# Cada entrada declara ademas `your_telemetry`, que es el ajuste con el que el
+# protocolo restringe la telemetria de un jugador ante terceros. Se expone sin
+# interpretarlo: no hace falta para decidir sobre el nombre, y esconderlo en la
+# lectura lo volveria invisible si algun dia hiciera falta.
+PARTICIPANTS_CABEZA_FMT = "<B"
+PARTICIPANTE_FMT = "<7s32s2sHBB12s"
+PARTICIPANTE_TAMANO = struct.calcsize(PARTICIPANTE_FMT)
+
+# Transcritos del apendice "Team IDs". Solo los del campeonato y los genericos:
+# los historicos existen en el apendice y no aparecen en una sesion de 2025.
+EQUIPOS = {
+    0: "Mercedes", 1: "Ferrari", 2: "Red Bull Racing", 3: "Williams",
+    4: "Aston Martin", 5: "Alpine", 6: "RB", 7: "Haas", 8: "McLaren",
+    9: "Sauber", 41: "F1 Generico", 104: "Equipo personalizado",
+    129: "Konnersport", 142: "APXGP",
+}
+
+PLATAFORMAS = {1: "Steam", 3: "PlayStation", 4: "Xbox", 6: "Origin", 255: "desconocida"}
+
+
+def _nombre_participante(crudo: bytes) -> str:
+    """Recorta en el nulo y decodifica como UTF-8.
+
+    Sin recortar, el nombre arrastraria los bytes nulos de relleno; sin
+    contemplar el error de decodificacion, un byte invalido interrumpiria la
+    lectura del paquete entero por un campo que no sostiene ninguna afirmacion.
+    """
+
+    return crudo.split(b"\x00", 1)[0].decode("utf-8", "replace")
+
+
+def _desempaquetar_participante(bruto: tuple) -> dict[str, Any]:
+    """Nombra los campos de un participante."""
+
+    cabeza = bruto[0]            # los siete enteros de un byte
+    nombre = bruto[1]
+    ajustes = bruto[2]           # your_telemetry y show_online_names
+    equipo = cabeza[3]
+    return {
+        "ai_controlled": cabeza[0],
+        "driver_id": cabeza[1],
+        "network_id": cabeza[2],
+        "team_id": equipo,
+        "team": EQUIPOS.get(equipo, f"id-{equipo}"),
+        "my_team": cabeza[4],
+        "race_number": cabeza[5],
+        "nationality_id": cabeza[6],
+        "name": _nombre_participante(nombre),
+        # Ajuste de privacidad del jugador: 0 restringido, 1 publico. Se expone
+        # sin interpretarlo; quien publique decide que hacer con el.
+        "your_telemetry": ajustes[0],
+        "show_online_names": ajustes[1],
+        "tech_level": bruto[3],
+        "platform_id": bruto[4],
+        "platform": PLATAFORMAS.get(bruto[4], f"id-{bruto[4]}"),
+        "num_colours": bruto[5],
+    }
+
 
 # --------------------------------------------------------------------------- #
 # Orden de las ruedas
@@ -189,6 +364,41 @@ def _desempaquetar_cola_car_telemetry(bruto: tuple) -> dict[str, Any]:
         "mfd_panel_segundo_jugador": bruto[1],
         "marcha_sugerida": bruto[2],
     }
+
+
+#: Tipos de superficie, transcritos del apendice "Surface types" de la
+#: especificacion.
+#:
+#: Vive aca, en el modulo del protocolo, y no en cada consumidor. Cuando el
+#: anotador en vivo se escribio con su propia copia, esa copia salio de memoria y
+#: quedo corrida: declaraba "piedra" donde la especificacion dice "cesped", y las
+#: dos lecturas de la misma captura describian superficies distintas. **Una tabla
+#: transcrita de un documento tiene que estar una sola vez**, o la copia
+#: equivocada es cuestion de tiempo.
+SUPERFICIES = {
+    0: "asfalto", 1: "piano", 2: "hormigon", 3: "roca", 4: "grava",
+    5: "barro", 6: "arena", 7: "cesped", 8: "agua", 9: "adoquin",
+    10: "metal", 11: "estriado",
+}
+
+#: Codigo de la superficie que es pista segun el reglamento deportivo.
+#:
+#: El articulo 33.3 declara que las lineas blancas que delimitan el borde son
+#: pista **y que los pianos no lo son**. El canal no distingue la linea blanca del
+#: asfalto, de modo que queda correctamente incluida sin hacer nada.
+SUPERFICIE_DE_PISTA = 0
+
+#: Superficies sobre las que el neumatico conserva agarre.
+#:
+#: Es una nocion **fisica** y distinta de la anterior, que es normativa. El piano
+#: esta aca y no alla: se puede rodar sobre un piano sin perder agarre —en las
+#: vueltas limpias de Hungaroring hay 2.083 muestras de rueda sobre piano— y aun
+#: asi, segun el reglamento, un vehiculo con las cuatro ruedas sobre el piano
+#: dejo la pista.
+#:
+#: El nombre anterior de esta constante era `SUPERFICIES_EN_PISTA`, y decia algo
+#: que el reglamento contradice.
+SUPERFICIES_CON_AGARRE = frozenset({0, 1})
 
 
 def _desempaquetar_car_telemetry(bruto: tuple) -> dict[str, Any]:
@@ -263,6 +473,20 @@ def _desempaquetar_lap_data(bruto: tuple) -> dict[str, Any]:
         "corner_cutting_warnings": bruto[21],
         "num_unserved_drive_through_pens": bruto[22],
         "num_unserved_stop_go_pens": bruto[23],
+        # OJO: este campo **empieza en cero** y `car_position` empieza en uno.
+        #
+        # No es una suposicion. Sobre cuatro capturas distintas ---dos carreras de
+        # Spa, el sprint y una de Spielberg--- los veinte vehiculos de cada una
+        # cumplen `car_position - grid_position == 1` en los primeros segundos, y
+        # el recorrido de este campo es 0..19 mientras el de la posicion es 1..20.
+        # Son ochenta observaciones sin una excepcion.
+        #
+        # El valor se publica **tal como llega**, porque el trabajo no corrige lo
+        # que la fuente declara. Lo que se corrige es el riesgo de leerlo mal:
+        # compararlo de frente contra `car_position` da un puesto de diferencia, y
+        # ya produjo una discrepancia aparente en el analisis de una carrera
+        # ---la partida figuraba como quinta y la posicion en la vuelta 1 como
+        # sexta--- que costo perseguir hasta entender que no habia ningun error.
         "grid_position": bruto[24],
         "driver_status": bruto[25],
         "result_status": bruto[26],
@@ -306,12 +530,59 @@ SESSION_FMT = ("<"
 SESSION_TAMANO = struct.calcsize(SESSION_FMT)
 
 
+#: Sentido del cambio de temperatura que anuncia cada muestra de pronostico.
+CAMBIO_DE_TEMPERATURA = {0: "sube", 1: "baja", 2: "sin cambio"}
+
+
+def _pronostico(bruto: tuple, desde: int, cuantas: int) -> list[dict[str, Any]]:
+    """Nombra las muestras de pronostico del clima.
+
+    Cada muestra declara **para que sesion**, dentro de cuantos minutos, que
+    clima, que temperaturas con su sentido de cambio, y **que probabilidad de
+    lluvia**.
+
+    Por que se decodifican
+    ----------------------
+    El trabajo declaraba que la transicion de clima quedaba fuera de la ventana
+    observada por la duracion de las capturas, y esa afirmacion se apoyaba en la
+    ayuda del propio programa emisor. Con el pronostico leido, la afirmacion deja
+    de ser una explicacion plausible y pasa a ser comprobable: **la fuente
+    anuncia las etapas por adelantado**, de modo que se puede contrastar lo que
+    anuncio contra lo que se observo.
+
+    Se recorta a las muestras declaradas
+    ------------------------------------
+    El arreglo trae sesenta y cuatro posiciones y solo las primeras tienen dato.
+    Devolver las sesenta y cuatro meteria decenas de muestras en cero, que un
+    promedio leeria como lluvia nula anunciada a cero minutos. Es el mismo
+    recorte que ya se aplica a las vueltas del historial y a las tandas.
+    """
+
+    salida = []
+    for i in range(min(cuantas, MUESTRAS_PRONOSTICO)):
+        m = bruto[desde + i * 8: desde + (i + 1) * 8]
+        if len(m) < 8:
+            break
+        salida.append({
+            "session_type": m[0],
+            "minutos": m[1],
+            "weather": m[2],
+            "track_temperature_c": m[3],
+            "track_temperature_cambio": CAMBIO_DE_TEMPERATURA.get(m[4], m[4]),
+            "air_temperature_c": m[5],
+            "air_temperature_cambio": CAMBIO_DE_TEMPERATURA.get(m[6], m[6]),
+            "probabilidad_lluvia_pct": m[7],
+        })
+    return salida
+
+
 def _desempaquetar_session(bruto: tuple) -> dict[str, Any]:
     """Nombra los campos del paquete de sesion.
 
-    Se nombran los que el trabajo usa. Las zonas de comisarios y las muestras de
-    pronostico se resumen por cantidad: existen en el crudo y pueden leerse
-    despues, pero normalizarlas hoy no sostiene ninguna afirmacion.
+    Las zonas de comisarios se resumen por cantidad: existen en el crudo y pueden
+    leerse despues, pero normalizarlas hoy no sostiene ninguna afirmacion. Las
+    muestras de pronostico, en cambio, **si se nombran**: son lo que permite
+    contrastar el clima anunciado contra el observado.
     """
 
     fin_cabeza = len(SESSION_CABEZA_FMT)
@@ -341,6 +612,7 @@ def _desempaquetar_session(bruto: tuple) -> dict[str, Any]:
         "safety_car_status": medio[0],
         "network_game": medio[1],
         "num_weather_forecast_samples": medio[2],
+        "weather_forecast": _pronostico(bruto, ini_pronostico, medio[2]),
         "forecast_accuracy": cola[0],
         "ai_difficulty": cola[1],
         "season_link_id": cola[2],
@@ -427,6 +699,95 @@ FASES_COCHE_SEGURIDAD = {
     0: "desplegado", 1: "regresando", 2: "regreso", 3: "carrera-reanudada",
 }
 
+# Las dieciocho penalizaciones y las cincuenta y cinco infracciones que la
+# especificacion declara, con sus identificadores contiguos desde cero.
+#
+# Interesan porque son **el veredicto del juego**, y eso es un dato distinto de
+# lo que miden los canales: la telemetria dice que hubo un impacto y con que
+# fuerza, y solo esto dice a quien se lo atribuyo el juego y por que motivo.
+#
+# Que sea un veredicto y no una medicion tambien fija su alcance. La bandera de
+# vuelta invalida del propio juego no marco ninguna de las diecinueve colisiones
+# de la primera pasada de la prueba de dos conductores, de modo que estas tablas
+# se citan como lo que el juego decidio, nunca como la determinacion de la causa.
+TIPOS_PENALIZACION = {
+    0: "paso-por-boxes",
+    1: "detencion-obligatoria",
+    2: "penalizacion-de-parrilla",
+    3: "recordatorio-de-penalizacion",
+    4: "penalizacion-de-tiempo",
+    5: "advertencia",
+    6: "descalificado",
+    7: "retirado-de-la-vuelta-de-formacion",
+    8: "detenido-demasiado-tiempo",
+    9: "reglamento-de-neumaticos",
+    10: "vuelta-invalidada",
+    11: "esta-vuelta-y-la-siguiente-invalidadas",
+    12: "vuelta-invalidada-sin-motivo-declarado",
+    13: "esta-vuelta-y-la-siguiente-invalidadas-sin-motivo-declarado",
+    14: "esta-vuelta-y-la-anterior-invalidadas",
+    15: "esta-vuelta-y-la-anterior-invalidadas-sin-motivo-declarado",
+    16: "retirado",
+    17: "cuenta-de-bandera-negra",
+}
+TIPOS_INFRACCION = {
+    0: "bloquear-conduciendo-lento",
+    1: "bloquear-en-contramano",
+    2: "retroceder-en-la-linea-de-largada",
+    3: "colision-grande",
+    4: "colision-chica",
+    5: "no-devolver-la-posicion-a-uno",
+    6: "no-devolver-la-posicion-a-varios",
+    7: "cortar-curva-ganando-tiempo",
+    8: "cortar-curva-para-adelantar-a-uno",
+    9: "cortar-curva-para-adelantar-a-varios",
+    10: "cruzar-la-salida-de-boxes",
+    11: "ignorar-banderas-azules",
+    12: "ignorar-banderas-amarillas",
+    13: "ignorar-el-paso-por-boxes",
+    14: "demasiados-pasos-por-boxes",
+    15: "recordatorio-de-paso-por-boxes-en-n-vueltas",
+    16: "recordatorio-de-paso-por-boxes-en-esta-vuelta",
+    17: "exceso-de-velocidad-en-boxes",
+    18: "detenido-demasiado-tiempo",
+    19: "ignorar-el-reglamento-de-neumaticos",
+    20: "demasiadas-penalizaciones",
+    21: "advertencias-multiples",
+    22: "al-borde-de-la-descalificacion",
+    23: "eleccion-de-neumaticos-uno",
+    24: "eleccion-de-neumaticos-varios",
+    25: "vuelta-invalidada-por-cortar-curva",
+    26: "vuelta-invalidada-por-irse-ancho",
+    27: "irse-ancho-ganando-tiempo-leve",
+    28: "irse-ancho-ganando-tiempo-significativo",
+    29: "irse-ancho-ganando-tiempo-extremo",
+    30: "vuelta-invalidada-por-apoyarse-en-el-muro",
+    31: "vuelta-invalidada-por-usar-retroceso",
+    32: "vuelta-invalidada-por-reposicion-en-pista",
+    33: "bloquear-la-calle-de-boxes",
+    34: "largada-adelantada",
+    35: "colision-con-el-coche-de-seguridad",
+    36: "adelantamiento-ilegal-tras-el-coche-de-seguridad",
+    37: "exceder-el-ritmo-tras-el-coche-de-seguridad",
+    38: "exceder-el-ritmo-tras-el-coche-de-seguridad-virtual",
+    39: "vuelta-de-formacion-por-debajo-de-la-velocidad-permitida",
+    40: "detenerse-en-la-vuelta-de-formacion",
+    41: "retirado-por-falla-mecanica",
+    42: "retirado-por-dano-terminal",
+    43: "quedarse-demasiado-atras-del-coche-de-seguridad",
+    44: "cuenta-de-bandera-negra",
+    45: "detencion-obligatoria-sin-cumplir",
+    46: "paso-por-boxes-sin-cumplir",
+    47: "cambio-de-componente-del-motor",
+    48: "cambio-de-caja-de-cambios",
+    49: "cambio-en-parque-cerrado",
+    50: "penalizacion-de-parrilla-de-liga",
+    51: "penalizacion-por-reintento",
+    52: "ganancia-de-tiempo-ilegal",
+    53: "parada-en-boxes-obligatoria",
+    54: "atributo-asignado",
+}
+
 # Cada codigo con el formato de su detalle y los nombres de sus campos. Los
 # codigos ausentes no llevan detalle: el hecho de que ocurrieron es todo el dato.
 _EVENTOS = {
@@ -490,6 +851,11 @@ def _desempaquetar_event(datos: bytes) -> dict[str, Any]:
         detalle["motivo_nombre"] = MOTIVOS_ABANDONO.get(detalle["motivo"], "desconocido")
     elif codigo == "DRSD":
         detalle["motivo_nombre"] = MOTIVOS_DRS_DESACTIVADO.get(detalle["motivo"], "desconocido")
+    elif codigo == "PENA":
+        detalle["tipo_penalizacion_nombre"] = TIPOS_PENALIZACION.get(
+            detalle["tipo_penalizacion"], "desconocida")
+        detalle["tipo_infraccion_nombre"] = TIPOS_INFRACCION.get(
+            detalle["tipo_infraccion"], "desconocida")
 
     evento["detalle"] = detalle
     return evento
@@ -701,6 +1067,161 @@ _COLAS = {
 }
 
 
+# Campos que van **antes** del arreglo de vehiculos. Es el simetrico de las
+# colas, y hace falta porque el arreglo no siempre empieza pegado a la cabecera:
+# el paquete de participantes lleva delante la cantidad de vehiculos activos.
+#
+# Se resuelve con un registro y no con un caso especial porque el desplazamiento
+# de la cabeza tiene que **entrar en el calculo de la posicion de cada vehiculo**.
+# Olvidarlo desplazaria las veintidos entradas un byte, y el paquete seguiria
+# midiendo lo que la especificacion dice.
+_CABEZAS = {
+    4: (PARTICIPANTS_CABEZA_FMT, ("num_active_cars",)),
+}
+
+
+# --------------------------------------------------------------------------- #
+# Historial de sesion y posiciones por vuelta
+# --------------------------------------------------------------------------- #
+#
+# Estos dos no encajan en ninguno de los dos patrones anteriores, y por eso
+# tienen su propio desempaquetador.
+#
+# Los demas paquetes describen **un instante**: llegan veinte veces por segundo
+# y cada uno dice como estaba el vehiculo en ese momento. Estos describen
+# **hechos cerrados**: el historial dice cuanto tardo cada vuelta, y las
+# posiciones dicen en que puesto iba cada auto al empezar cada vuelta.
+#
+# La consecuencia es de diseno y no solo de forma. Un instante entra al contrato
+# de telemetria ---senal, valor, momento---; una vuelta no, porque guardaria el
+# mismo tiempo cientos de veces para declarar un solo hecho. Es el mismo
+# criterio por el que la parrilla fue a la procedencia y no al contrato.
+
+#: Una vuelta del historial. Los sectores viajan partidos en minutos y
+#: milisegundos, igual que las distancias entre vehiculos del paquete de vuelta.
+LAP_HISTORY_FMT = "<IHBHBHBB"
+LAP_HISTORY_TAMANO = struct.calcsize(LAP_HISTORY_FMT)
+LAP_HISTORY_VUELTAS = 100
+
+#: Una tanda de neumaticos del historial.
+TYRE_STINT_FMT = "<BBB"
+TYRE_STINT_TAMANO = struct.calcsize(TYRE_STINT_FMT)
+TYRE_STINT_MAXIMO = 8
+
+SESSION_HISTORY_CABEZA_FMT = "<7B"
+SESSION_HISTORY_CABEZA_TAMANO = struct.calcsize(SESSION_HISTORY_CABEZA_FMT)
+
+#: Cuantas vueltas de posiciones trae el paquete, y cuantos vehiculos.
+#:
+#: La especificacion declara el segundo con una constante que no escribe en
+#: ninguna parte del documento. **El tamano declarado la determina**: con 29
+#: bytes de cabecera y dos de cabeza propia, 50 x 22 da 1131 exactos, que es el
+#: tamano que la tabla de paquetes declara. Con 20 o con 24 no cerraria.
+LAP_POSITIONS_VUELTAS = 50
+LAP_POSITIONS_CABEZA_FMT = "<BB"
+LAP_POSITIONS_CABEZA_TAMANO = struct.calcsize(LAP_POSITIONS_CABEZA_FMT)
+
+
+def _milisegundos(minutos: int, ms: int) -> int:
+    """Compone un tiempo partido en minutos enteros y milisegundos.
+
+    Ninguna de las dos mitades significa nada por separado, de modo que se
+    componen aca y no en cada consumidor.
+    """
+
+    return minutos * 60_000 + ms
+
+
+def _desempaquetar_session_history(datos: bytes) -> dict[str, Any]:
+    """Nombra el historial de vueltas y de tandas de **un** vehiculo.
+
+    El paquete no describe a los veintidos: describe a uno, y el campo
+    `car_idx` dice a cual. El juego rota entre vehiculos, de modo que la
+    historia completa de la parrilla se arma acumulando paquetes sucesivos.
+    """
+
+    cabeza = struct.unpack_from(SESSION_HISTORY_CABEZA_FMT, datos, CABECERA_TAMANO)
+    inicio = CABECERA_TAMANO + SESSION_HISTORY_CABEZA_TAMANO
+
+    vueltas = []
+    for i in range(LAP_HISTORY_VUELTAS):
+        b = struct.unpack_from(LAP_HISTORY_FMT, datos,
+                               inicio + i * LAP_HISTORY_TAMANO)
+        banderas = b[7]
+        vueltas.append({
+            "numero": i + 1,
+            "lap_time_ms": b[0],
+            "sector1_ms": _milisegundos(b[2], b[1]),
+            "sector2_ms": _milisegundos(b[4], b[3]),
+            "sector3_ms": _milisegundos(b[6], b[5]),
+            # Los cuatro bits de validez, nombrados. La especificacion los
+            # declara como banderas y no como un valor: una vuelta puede ser
+            # invalida con dos sectores validos, y eso es informacion que un
+            # unico booleano perderia.
+            "vuelta_valida": bool(banderas & 0x01),
+            "sector1_valido": bool(banderas & 0x02),
+            "sector2_valido": bool(banderas & 0x04),
+            "sector3_valido": bool(banderas & 0x08),
+        })
+
+    inicio_tandas = inicio + LAP_HISTORY_VUELTAS * LAP_HISTORY_TAMANO
+    tandas = []
+    for i in range(TYRE_STINT_MAXIMO):
+        b = struct.unpack_from(TYRE_STINT_FMT, datos,
+                               inicio_tandas + i * TYRE_STINT_TAMANO)
+        tandas.append({
+            # 255 significa que la tanda es la actual y todavia no termino.
+            "vuelta_final": b[0],
+            "compuesto_real": b[1],
+            "compuesto_visual": b[2],
+        })
+
+    num_vueltas = cabeza[1]
+    num_tandas = cabeza[2]
+    return {
+        "car_idx": cabeza[0],
+        "num_vueltas": num_vueltas,
+        "num_tandas": num_tandas,
+        "mejor_vuelta_num": cabeza[3],
+        "mejor_sector1_num": cabeza[4],
+        "mejor_sector2_num": cabeza[5],
+        "mejor_sector3_num": cabeza[6],
+        # El arreglo trae cien entradas siempre; solo las primeras `num_vueltas`
+        # tienen dato. Se recortan aca en lugar de dejar que cada consumidor
+        # decida donde termina la historia, que es como se cuelan vueltas de
+        # cero milisegundos en un promedio.
+        "vueltas": vueltas[:num_vueltas],
+        "tandas": tandas[:num_tandas],
+    }
+
+
+def _desempaquetar_lap_positions(datos: bytes) -> dict[str, Any]:
+    """Nombra la posicion de cada vehiculo al empezar cada vuelta."""
+
+    num_vueltas, vuelta_inicial = struct.unpack_from(
+        LAP_POSITIONS_CABEZA_FMT, datos, CABECERA_TAMANO)
+    inicio = CABECERA_TAMANO + LAP_POSITIONS_CABEZA_TAMANO
+
+    por_vuelta = []
+    for v in range(LAP_POSITIONS_VUELTAS):
+        fila = struct.unpack_from(f"<{VEHICULOS}B", datos,
+                                  inicio + v * VEHICULOS)
+        por_vuelta.append(list(fila))
+
+    return {
+        "num_vueltas": num_vueltas,
+        "vuelta_inicial": vuelta_inicial,
+        # Igual que arriba: el arreglo trae cincuenta filas y solo las primeras
+        # `num_vueltas` describen algo. Un cero significa "sin registro" y no
+        # "posicion cero", de modo que recortar evita que se lea como puesto.
+        #
+        # La clave se llama `por_vuelta` y no `posiciones` porque el paquete ya
+        # se expone bajo esa palabra: `d["posiciones"]["posiciones"]` invita a
+        # leer una de las dos por la otra.
+        "por_vuelta": por_vuelta[:num_vueltas],
+    }
+
+
 # Paquetes de bloque unico: describen la sesion, no a cada vehiculo, de modo
 # que no llevan arreglo de 22 entradas y se decodifican de una sola vez.
 _DECODIFICADORES_UNICOS = {
@@ -708,8 +1229,17 @@ _DECODIFICADORES_UNICOS = {
     13: (MOTION_EX_FMT, _desempaquetar_motion_ex),
 }
 
+# Paquetes con su propia forma: ni un instante por vehiculo ni un bloque de
+# sesion, sino hechos cerrados con arreglos internos.
+_DECODIFICADORES_PROPIOS = {
+    11: ("historial", _desempaquetar_session_history),
+    15: ("posiciones", _desempaquetar_lap_positions),
+}
+
 # Paquetes con un arreglo de una entrada por vehiculo.
 _DECODIFICADORES = {
+    0: (MOTION_FMT, MOTION_TAMANO, 0, _desempaquetar_motion),
+    4: (PARTICIPANTE_FMT, PARTICIPANTE_TAMANO, 0, _desempaquetar_participante),
     5: (CAR_SETUP_FMT, CAR_SETUP_TAMANO, CAR_SETUP_COLA_TAMANO, _desempaquetar_car_setup),
     7: (CAR_STATUS_FMT, CAR_STATUS_TAMANO, 0, _desempaquetar_car_status),
     10: (CAR_DAMAGE_FMT, CAR_DAMAGE_TAMANO, 0, _desempaquetar_car_damage),
@@ -756,10 +1286,16 @@ def verificar_estructuras() -> list[dict[str, Any]]:
 
     for packet_id, (_, por_vehiculo, cola, _) in _DECODIFICADORES.items():
         declarado = PAQUETES[packet_id]["tamano"]
-        calculado = CABECERA_TAMANO + VEHICULOS * por_vehiculo + cola
+        # La cabeza entra en la cuenta. Omitirla es el mismo defecto que
+        # desplazaria las veintidos entradas, visto desde la verificacion: el
+        # total no cerraria y el paquete quedaria reportado como desajustado.
+        cabeza = (struct.calcsize(_CABEZAS[packet_id][0])
+                  if packet_id in _CABEZAS else 0)
+        calculado = CABECERA_TAMANO + cabeza + VEHICULOS * por_vehiculo + cola
         filas.append({
             "estructura": PAQUETES[packet_id]["nombre"],
             "por_vehiculo": por_vehiculo,
+            "cabeza": cabeza,
             "calculado": calculado,
             "declarado": declarado,
             "coincide": calculado == declarado,
@@ -841,23 +1377,46 @@ def decodificar(datos: bytes) -> dict[str, Any]:
         resultado["sesion"] = nombrar(struct.unpack_from(formato, datos, CABECERA_TAMANO))
         return resultado
 
+    if packet_id in _DECODIFICADORES_PROPIOS:
+        clave, nombrar = _DECODIFICADORES_PROPIOS[packet_id]
+        resultado["decodificado"] = True
+        resultado[clave] = nombrar(datos)
+        return resultado
+
     if packet_id not in _DECODIFICADORES:
         resultado["decodificado"] = False
         resultado["motivo"] = "sin decodificador para este paquete"
         return resultado
 
     formato, por_vehiculo, _, nombrar = _DECODIFICADORES[packet_id]
+
+    # Los campos previos al arreglo corren el origen de las veintidos entradas.
+    inicio = CABECERA_TAMANO
+    if packet_id in _CABEZAS:
+        formato_cabeza, nombres_cabeza = _CABEZAS[packet_id]
+        valores = struct.unpack_from(formato_cabeza, datos, CABECERA_TAMANO)
+        resultado.update(dict(zip(nombres_cabeza, valores)))
+        inicio += struct.calcsize(formato_cabeza)
+
     vehiculos = []
     for indice in range(VEHICULOS):
-        desplazamiento = CABECERA_TAMANO + indice * por_vehiculo
+        desplazamiento = inicio + indice * por_vehiculo
         vehiculos.append(nombrar(struct.unpack_from(formato, datos, desplazamiento)))
 
     resultado["decodificado"] = True
     resultado["vehiculos"] = vehiculos
     resultado["vehiculo_propio"] = vehiculos[cabecera["player_car_index"]]
 
+    # El segundo jugador de una partida en pantalla dividida. La cabecera declara
+    # su indice y usa 255 para decir que no hay ninguno, de modo que la ausencia
+    # se distingue de la posicion cero sin ambiguedad.
+    indice_secundario = cabecera["secondary_player_car_index"]
+    if indice_secundario != SIN_SEGUNDO_JUGADOR and indice_secundario < VEHICULOS:
+        resultado["vehiculo_secundario"] = vehiculos[indice_secundario]
+        resultado["indice_secundario"] = indice_secundario
+
     if packet_id in _COLAS:
         formato_cola, nombrar_cola = _COLAS[packet_id]
-        desplazamiento = CABECERA_TAMANO + VEHICULOS * por_vehiculo
+        desplazamiento = inicio + VEHICULOS * por_vehiculo
         resultado.update(nombrar_cola(struct.unpack_from(formato_cola, datos, desplazamiento)))
     return resultado

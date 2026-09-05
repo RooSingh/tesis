@@ -41,7 +41,7 @@ sys.path.insert(0, str(ROOT))
 
 from backend import f1_capture, f1_udp
 from scripts.capturar_f1_25 import (
-    _perfil_declarado, derivar_procedencia, nombre_derivado,
+    AyudasEnMarcha, _perfil_declarado, derivar_procedencia, nombre_derivado,
 )
 
 CAPTURAS = ROOT / "datasets" / "f1_25" / "capturas"
@@ -50,7 +50,11 @@ CAPTURAS = ROOT / "datasets" / "f1_25" / "capturas"
 def releer(ruta: Path) -> dict:
     """Recorre el crudo y devuelve la procedencia segun el decodificador actual."""
 
-    sesion = estado = cabecera = None
+    sesion = cabecera = participantes = None
+    # El mismo acumulador que usa el capturador en vivo. La regla estaba escrita
+    # dos veces y las dos tomaban la ultima lectura: arreglar una sola habria
+    # dejado que el crudo y su rederivacion declararan cosas distintas.
+    ayudas_vistas = AyudasEnMarcha()
     sesion_inicial = None
     sesiones = 0
     perfil = None
@@ -75,11 +79,13 @@ def releer(ruta: Path) -> dict:
                 if actual != perfil:
                     perfil = actual
                     estable_us = datagrama.desplazamiento_us
-        elif d["paquete"] == "car_status":
-            estado = d["vehiculo_propio"]
+        elif d["paquete"] == "participants":
+            participantes = d
+        ayudas_vistas.ver(d)
 
     return {
-        "procedencia": derivar_procedencia(sesion, estado, cabecera),
+        "procedencia": derivar_procedencia(
+            sesion, ayudas_vistas.estado(), cabecera, participantes),
         "paquetes_sesion": sesiones,
         "metadatos_desde": "ultimo paquete de sesion con tipo declarado",
         "metadatos_estables_desde_s": (round(estable_us / 1e6, 3)
@@ -93,9 +99,22 @@ def releer(ruta: Path) -> dict:
 def procesar(ruta: Path, renombrar: bool) -> dict:
     meta_ruta = ruta.with_suffix(ruta.suffix + ".meta.json")
     if not meta_ruta.exists():
-        return {"archivo": ruta.name, "estado": "sin metadatos previos"}
-
-    previo = json.loads(meta_ruta.read_text(encoding="utf-8"))
+        # Una captura sin metadatos no es un caso raro: es lo que queda cuando el
+        # capturador se interrumpe antes de cerrar el archivo. Tres capturas del
+        # 02/09 quedaron asi, y una de ellas resulto ser el unico registro de una
+        # sesion de pantalla dividida con dos conductores reales.
+        #
+        # Negarse a procesarla obligaba a escribir un guion suelto para cada
+        # rescate. La procedencia se deriva del crudo igual que en cualquier otro
+        # archivo, de modo que **generarla es el mismo trabajo que releerla**, y
+        # queda declarado que se genero aqui y no en la captura.
+        previo = {
+            "metadatos_generados_en_rescate": True,
+            "nota_rescate": ("la captura no tenia metadatos: quedo interrumpida "
+                             "antes de cerrarse y se la recupero despues"),
+        }
+    else:
+        previo = json.loads(meta_ruta.read_text(encoding="utf-8"))
     nuevo = dict(previo)
     nuevo.update(releer(ruta))
     nuevo["version_decodificador"] = f1_udp.VERSION_DECODIFICADOR
@@ -129,6 +148,17 @@ def procesar(ruta: Path, renombrar: bool) -> dict:
                 ruta.rename(destino)
                 meta_ruta = destino.with_suffix(destino.suffix + ".meta.json")
                 resultado["renombrado"] = destino.name
+
+    if nuevo.get("metadatos_generados_en_rescate"):
+        # En un rescate no hay metadatos previos de los que heredar los hechos
+        # del archivo ---huella, tamano, recuento de datagramas---, y sin la
+        # huella la captura **no es verificable por un tercero**, que es
+        # justamente lo que los metadatos existen para permitir. Se los calcula
+        # desde el crudo con la misma funcion que usa el capturador, de modo que
+        # una captura rescatada queda indistinguible de una bien cerrada salvo
+        # por la nota que declara que lo fue.
+        f1_capture.escribir_metadatos(ruta, nuevo)
+        return resultado
 
     meta_ruta.write_text(json.dumps(nuevo, indent=2, ensure_ascii=False),
                          encoding="utf-8")

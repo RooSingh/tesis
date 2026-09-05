@@ -64,6 +64,7 @@ Antes de publicar declara cuantas filas va a agregar y que senales. Con
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import sys
 import time
@@ -185,7 +186,24 @@ def identidad_de_corrida(meta: dict, ruta: Path) -> str:
             "Sin el, la identidad de la corrida dependeria del momento de "
             "ejecutarla y la operacion dejaria de ser repetible."
         )
-    return f"f1_25:recompletado:{hash_captura[:16]}"
+
+    # La identidad incluye **el catalogo de senales**, y no solo la captura.
+    #
+    # El numero de secuencia es un contador sobre todos los mensajes que el
+    # adaptador emite, de modo que **agregar una familia de senales corre toda la
+    # numeracion**. Con la identidad derivada solo del archivo, dos corridas con
+    # adaptadores distintos compartian espacio de identidades dandole a cada
+    # numero un significado diferente, y el indice unico suprimia las
+    # coincidencias creyendo que eran repeticiones.
+    #
+    # Ocurrio: al incorporar los nueve canales de movimiento, 34 filas quedaron
+    # sin insertar porque sus numeros ya estaban ocupados por senales de neumatico
+    # y de estado de la corrida anterior, con la misma marca temporal.
+    #
+    # La huella cambia sola cuando cambia lo que se emite, y no cambia cuando no.
+    catalogo = ",".join(sorted(s["signal_name"] for s in f1_25.catalogo_de_senales()))
+    huella = hashlib.sha256(catalogo.encode("utf-8")).hexdigest()[:8]
+    return f"f1_25:recompletado:{hash_captura[:16]}:{huella}"
 
 
 def escribir(ruta: Path, inicio_utc: str, sha256: str | None,

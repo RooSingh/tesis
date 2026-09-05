@@ -16,6 +16,8 @@ sys.path.insert(0, str(ROOT))
 from backend.db import obtener_conexion
 
 
+#: Sesion por defecto, la primera que se cargo. Se conserva para que las
+#: invocaciones anteriores sigan funcionando igual.
 RAW_PATH = ROOT / "datasets" / "OpenF1" / "raw" / "2025" / "9947"
 BASE_URL = "https://api.openf1.org/v1"
 
@@ -140,9 +142,14 @@ def load_context() -> dict[str, int]:
 
 
 def main() -> None:
+    global RAW_PATH
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--apply", action="store_true", help="Realiza las inserciones; sin este flag solo valida archivos.")
+    parser.add_argument("--session-path", type=Path, default=None,
+                        help="Directorio crudo de la sesion. Por defecto, la primera cargada.")
     args = parser.parse_args()
+    if args.session_path is not None:
+        RAW_PATH = args.session_path.resolve()
     if not args.apply:
         for filename in ("session.json", "drivers.json", "laps.json", "stints.json", "pit.json", "weather.json", "race_control.json", "position.json", "intervals.json", "overtakes.json", "team_radio.json", "session_result.json"):
             if not (RAW_PATH / filename).is_file():

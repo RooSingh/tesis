@@ -76,8 +76,24 @@ INFRACCIONES = {
     43: "quedo demasiado atras del coche de seguridad",
     44: "temporizador de bandera negra", 45: "detencion obligatoria no cumplida",
 }
-COMPUESTOS = {16: "blando", 17: "medio", 18: "duro", 7: "intermedio",
-              8: "lluvia", 20: "blando", 21: "medio", 22: "duro"}
+# Dos escalas distintas, y confundirlas invierte duro con blando.
+#
+# El paquete de estado trae **dos** campos de compuesto que no significan lo
+# mismo. El visual es el que la pantalla muestra al espectador; el real nombra la
+# especificacion concreta que el fabricante llevo a ese circuito.
+#
+# El caso que lo delata es el 18: es **duro** en la escala visual y **C3** en la
+# real, y el C3 de un fin de semana puede mostrarse como medio. Aplicar los
+# nombres visuales al campo real **invierte el extremo duro con el blando sin
+# fallar**, porque los dos codigos existen en las dos escalas.
+#
+# Ya ocurrio: un analisis del fin de semana de Spa informo compuesto duro donde
+# la pantalla del juego mostraba M, y la equivocacion llego al informe. La
+# validacion contra video fue lo unico que la detecto.
+COMPUESTOS_VISUALES = {16: "blando", 17: "medio", 18: "duro",
+                       7: "intermedio", 8: "lluvia"}
+COMPUESTOS_REALES = {16: "C5", 17: "C4", 18: "C3", 19: "C2", 20: "C1",
+                     21: "C0", 7: "intermedio", 8: "lluvia"}
 MODOS_ERS = {0: "ninguno", 1: "medio", 2: "acumulacion", 3: "vuelta rapida",
              4: "maximo"}
 
@@ -181,7 +197,8 @@ def analizar(ruta: Path) -> dict:
                 c["recuperado_mguk_j"] = e["ers_harvested_this_lap_mguk_j"]
                 c["recuperado_mguh_j"] = e["ers_harvested_this_lap_mguh_j"]
                 c["desplegado_j"] = e["ers_deployed_this_lap_j"]
-                c["compuesto"] = COMPUESTOS.get(e["visual_tyre_compound"], "?")
+                c["compuesto"] = COMPUESTOS_VISUALES.get(
+                    e["visual_tyre_compound"], "?")
                 c["edad_neumatico_vueltas"] = e["tyres_age_laps"]
                 c["combustible_kg"] = round(e["fuel_in_tank_kg"], 2)
 

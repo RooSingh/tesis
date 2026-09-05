@@ -43,6 +43,8 @@ from typing import Any
 
 from backend.config import MQTT_HOST, MQTT_PORT, MQTT_TOPIC
 
+from backend import anotador_vivo, resumen_sesion
+
 # Tope de suscriptores simultaneos. El dashboard abre uno; el resto serian
 # pestanas olvidadas. Se acota para que una fuga no consuma memoria sin limite.
 MAX_SUSCRIPTORES = 16
@@ -51,6 +53,35 @@ MAX_SUSCRIPTORES = 16
 # llenarse se descarta lo mas viejo: en un flujo en vivo el dato reciente vale
 # mas que el atrasado, y acumular introduciria una latencia creciente invisible.
 COLA_POR_SUSCRIPTOR = 500
+
+# Cuantas muestras se conservan **por senal** para quien llega tarde.
+#
+# Sin esto, abrir la pagina a mitad de una vuelta mostraba las trazas vacias y
+# dibujando desde ese instante, como si antes no hubiera pasado nada. La vista
+# arrancaba en el momento de conectarse y no en el momento en que el vehiculo
+# salio a pista, que es lo que quien mira espera ver.
+#
+# Seiscientas muestras son los treinta segundos que la traza dibuja a la
+# frecuencia declarada por el juego. Con noventa y ocho senales son unas sesenta
+# mil entradas: memoria acotada y conocida, que es lo que un tope por senal
+# garantiza y un tope global no.
+MUESTRAS_POR_SENAL = 600
+
+
+def _segundo_de(marca) -> float | None:
+    """Convierte la marca temporal del mensaje en segundos absolutos.
+
+    Devuelve ``None`` si la marca falta o no se puede leer. El resumen se
+    saltea ese punto en lugar de inventar un instante: una serie con un valor
+    ubicado en el momento equivocado es peor que una serie con un hueco.
+    """
+
+    if not marca:
+        return None
+    try:
+        return datetime.fromisoformat(marca).timestamp()
+    except (TypeError, ValueError):
+        return None
 
 
 class DifusorEnVivo:
@@ -69,9 +100,41 @@ class DifusorEnVivo:
         self.motivo: str | None = None
         self.recibidos = 0
         self.descartados = 0
+        self.fallos_anotador = 0
+        self.motivo_anotador: str | None = None
         # Se conserva una ventana corta para que un navegador que llega tarde
         # vea algo de inmediato en lugar de una pantalla vacia.
         self.recientes: deque = deque(maxlen=100)
+        # Y una historia **por senal**, que es lo que las trazas necesitan: la
+        # ventana corta alcanza para llenar las tarjetas y no para dibujar.
+        # La historia se indexa **por vehiculo y por senal**, en ese orden.
+        #
+        # Indexarla solo por senal alcanzaba mientras se normalizaba un unico
+        # vehiculo. Con dos conductores en pantalla dividida, las muestras de los
+        # dos caian en la misma serie y la traza dibujaba una linea que no
+        # describia a ninguno.
+        self.historia: dict[str, dict[str, deque]] = {}
+        # Y el instante de cada una de esas muestras.
+        #
+        # Sin el, una anotacion y una traza no se pueden relacionar: la anotacion
+        # dice cuando paso algo y la traza es una secuencia sin eje temporal
+        # explicito. El tiempo es lo unico que las dos comparten.
+        self.historia_tiempos: dict[str, dict[str, deque]] = {}
+        # Y la distancia recorrida, que es como las herramientas de telemetria
+        # alinean dos vueltas: por lugar del circuito y no por reloj, de modo que
+        # la frenada y el apice coincidan aunque uno vaya mas rapido.
+        self.historia_distancia: dict[str, deque] = {}
+        #: La sesion entera, a un intervalo por segundo con su minimo y su
+        #: maximo. Convive con la ventana de arriba y no la reemplaza: una da
+        #: el detalle reciente y la otra el recorrido completo.
+        self.resumen = resumen_sesion.ResumenDeSesion()
+        # El anotador mira el mismo flujo y declara lo que ocurre mientras
+        # ocurre. Vive en el difusor y no en el navegador por dos razones: ve
+        # **todas** las senales y no solo las que alguien eligio mirar, y su
+        # salida queda del lado del servidor, donde puede citarse despues.
+        # **Un anotador por vehiculo.** Uno solo compondria instantes con canales
+        # de dos autos distintos y podria declarar incidentes que no ocurrieron.
+        self.anotadores: dict[str, anotador_vivo.Anotador] = {}
 
     # -- ciclo de vida ---------------------------------------------------- #
 
@@ -116,12 +179,72 @@ class DifusorEnVivo:
         self.recibidos += 1
         self.recientes.append(cuerpo)
 
+        senal = cuerpo.get("signal_name")
+        vehiculo = cuerpo.get("vehicle_id") or "sin-vehiculo"
+        if senal is not None:
+            del_vehiculo = self.historia.setdefault(vehiculo, {})
+            tiempos = self.historia_tiempos.setdefault(vehiculo, {})
+            serie = del_vehiculo.get(senal)
+            if serie is None:
+                serie = del_vehiculo[senal] = deque(maxlen=MUESTRAS_POR_SENAL)
+                tiempos[senal] = deque(maxlen=MUESTRAS_POR_SENAL)
+            serie.append(cuerpo.get("value"))
+            tiempos[senal].append(cuerpo.get("timestamp"))
+            # Y en paralelo, la sesion entera a resolucion reducida.
+            #
+            # La ventana de arriba conserva treinta segundos y descarta lo
+            # anterior, de modo que su eje se desplaza y una anotacion vieja no
+            # tiene donde dibujarse. El resumen conserva **toda** la sesion con
+            # el minimo y el maximo de cada segundo, que es lo que permite un
+            # eje que crece en lugar de correrse.
+            segundo = _segundo_de(cuerpo.get("timestamp"))
+            if segundo is not None:
+                self.resumen.observar(vehiculo, senal, segundo,
+                                      cuerpo.get("value"))
+            if senal == "lap_distance":
+                self.historia_distancia.setdefault(
+                    vehiculo, deque(maxlen=MUESTRAS_POR_SENAL)
+                ).append(cuerpo.get("value"))
+
+        # Un fallo del anotador no puede cortar el reparto: interpretar es
+        # accesorio y transportar no lo es. El mismo criterio vale para el
+        # resumen: si el mensaje no trae una marca temporal legible, se pierde
+        # ese punto del resumen y no la difusion.
+        try:
+            anotador = self.anotadores.get(vehiculo)
+            if anotador is None:
+                anotador = self.anotadores[vehiculo] = anotador_vivo.Anotador(
+                    al_anotar=lambda a, v=vehiculo: self._repartir_anotacion(a, v))
+            anotador.observar(cuerpo)
+        except Exception as error:
+            self.fallos_anotador += 1
+            self.motivo_anotador = f"{type(error).__name__}: {error}"
+
         if self._bucle is None:
             return
         with self._candado:
             colas = list(self._suscriptores)
         for cola in colas:
             # Se entrega a traves del bucle porque este hilo no es el suyo.
+            self._bucle.call_soon_threadsafe(self._encolar, cola, cuerpo)
+
+    def _repartir_anotacion(self, anotacion: dict, vehiculo: str = "") -> None:
+        """Envia una anotacion recien emitida por el mismo canal que los datos.
+
+        Viaja marcada con `_evento` para que el navegador la reconozca sin tener
+        que adivinar por su forma.
+        """
+
+        cuerpo = dict(anotacion)
+        cuerpo["_evento"] = "anotacion"
+        # Sin esto, dos conductores producirian una lista mezclada en la que no se
+        # podria saber a quien le paso cada cosa.
+        cuerpo["vehiculo"] = vehiculo
+        if self._bucle is None:
+            return
+        with self._candado:
+            colas = list(self._suscriptores)
+        for cola in colas:
             self._bucle.call_soon_threadsafe(self._encolar, cola, cuerpo)
 
     @staticmethod
@@ -173,6 +296,11 @@ class DifusorEnVivo:
             # dice que el dato no se guarda. Lo que no pasa por la base es
             # **esta vista**; la persistencia corre en paralelo y no depende de
             # ella.
+            "vehiculos": sorted(self.historia),
+            "senales_con_historia": sum(len(s) for s in self.historia.values()),
+            "anotaciones": sum(len(a.anotaciones) for a in self.anotadores.values()),
+            "fallos_anotador": self.fallos_anotador,
+            "motivo_anotador": self.motivo_anotador,
             "camino_vista": ("broker -> difusor -> navegador "
                              "(solo esta vista, no pasa por la base)"),
             "camino_persistencia": ("broker -> consumidor -> base de datos "
@@ -205,4 +333,4 @@ async def flujo_de_eventos(cola: asyncio.Queue, intervalo_latido_s: float = 15.0
             yield evento_sse({"momento": datetime.now(timezone.utc).isoformat(),
                               "recibidos": difusor.recibidos}, "latido")
             continue
-        yield evento_sse(dato)
+        yield evento_sse(dato, dato.get("_evento", "telemetria"))

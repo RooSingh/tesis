@@ -63,7 +63,14 @@ def messages_from_openf1_sample(
     for raw_field, (signal_name, unit) in signal_map.items():
         if raw_field not in sample:
             continue
-        value = bool(sample[raw_field]) if raw_field == "brake" else sample[raw_field]
+        # El freno llega como entero y se publica como booleano; el resto pasa
+        # sin tocar. La transformacion se declara por senal y no una sola vez
+        # para todas: cuando el campo decia "identity" para las seis, el canal
+        # de freno afirmaba no haber sido convertido mientras lo era. El valor
+        # era correcto y la procedencia mentia, que es peor de detectar.
+        convierte = raw_field == "brake"
+        value = bool(sample[raw_field]) if convierte else sample[raw_field]
+        transformacion = "int_a_bool" if convierte else "identity"
         messages.append(
             {
                 **common,
@@ -86,7 +93,7 @@ def messages_from_openf1_sample(
                         "raw_payload_path": raw_payload_path,
                         "source_sample_rate_hz": 3.7,
                         "published_at_utc": published_at_utc,
-                        "transformation": "identity",
+                        "transformation": transformacion,
                     },
                 },
             }
