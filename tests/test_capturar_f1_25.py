@@ -479,3 +479,74 @@ class SegundoConductorSostenidoTests(unittest.TestCase):
 
         self.assertFalse(capturar_f1_25._segundo_sostenido({19: 400, 255: 600}))
         self.assertTrue(capturar_f1_25._segundo_sostenido({19: 600, 255: 400}))
+
+
+class IdentidadDeReinyeccionTests(unittest.TestCase):
+    """El capturador puede marcar lo que publica como corrida de prueba.
+
+    Sin esa marca, una reproduccion **contra** el capturador entra a la base con
+    el mismo `source_type` y el mismo `session_id` que la sesion verdadera, y no
+    hay forma de separarlas. Y el indice unico de trazabilidad es parcial ---solo
+    aplica cuando `replay_run_id` no es nulo--- de modo que una segunda corrida
+    duplicaria filas **en silencio**.
+
+    Es el mismo defecto que el camino del bus vehicular ya habia corregido. Aca
+    no se habia notado porque solo aparece al reproducir contra el capturador,
+    que es algo que empezo a hacerse al medir la cadena completa.
+    """
+
+    class _ClienteFalso:
+        def __init__(self):
+            self.publicados = []
+
+        def publish(self, topico, carga, qos=0):
+            import json as _json
+            self.publicados.append(_json.loads(carga))
+
+    def _publicar(self, run_id):
+        pub = capturar_f1_25.Publicador(activo=False, run_id=run_id)
+        cliente = self._ClienteFalso()
+        pub.cliente = cliente
+        paquete = {"paquete": "car_telemetry", "decodificado": True}
+        mensajes = [{"signal_name": "speed_kmh", "value_numeric": 1.0},
+                    {"signal_name": "speed_kmh", "value_numeric": 2.0}]
+        original = capturar_f1_25.f1_25.mensajes_desde_paquete
+        capturar_f1_25.f1_25.mensajes_desde_paquete = (
+            lambda *a, **k: iter(mensajes))
+        try:
+            pub.publicar(paquete, "2026-09-05T00:00:00+00:00")
+        finally:
+            capturar_f1_25.f1_25.mensajes_desde_paquete = original
+        return cliente.publicados
+
+    def test_sin_identidad_no_se_agrega_nada(self):
+        """Una sesion real no lleva identidad de reinyeccion y no debe llevarla."""
+
+        for m in self._publicar(None):
+            self.assertNotIn("replay_run_id", m.get("metadata", {}).get("extra", {}))
+
+    def test_la_marca_va_donde_el_contrato_la_espera(self):
+        """Dentro de `metadata.extra`, no en el nivel superior del mensaje.
+
+        La primera version la puso arriba y **no fallo**: el mensaje se publico,
+        se persistio, y la columna quedo en nulo. Las filas de la prueba entraron
+        sin marca, que es exactamente lo que la marca existia para impedir.
+        """
+
+        publicados = self._publicar("prueba_d")
+        self.assertTrue(publicados)
+        for m in publicados:
+            self.assertNotIn("replay_run_id", m)
+            self.assertEqual(m["metadata"]["extra"]["replay_run_id"], "prueba_d")
+
+    def test_la_secuencia_avanza_y_no_se_repite(self):
+        """Es lo que hace aplicable el indice unico parcial.
+
+        Con la secuencia repetida, el indice no distingue una fila de otra y la
+        proteccion contra duplicados no serviria de nada.
+        """
+
+        publicados = self._publicar("prueba_d")
+        secuencias = [m["metadata"]["extra"]["replay_seq"] for m in publicados]
+        self.assertEqual(secuencias, sorted(secuencias))
+        self.assertEqual(len(set(secuencias)), len(secuencias))

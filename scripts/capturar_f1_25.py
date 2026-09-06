@@ -412,11 +412,26 @@ class Publicador:
     #: entera quedo grabada sin publicar un solo mensaje.
     REINTENTO_S = 30.0
 
-    def __init__(self, activo: bool) -> None:
+    def __init__(self, activo: bool, run_id: str | None = None) -> None:
         self.cliente = None
         self.mensajes = 0
         self.motivo = None
         self._activo = activo
+        # Identidad de reinyeccion, para las corridas que **no son una sesion
+        # real**: una reproduccion contra el capturador, hecha para medir.
+        #
+        # Sin ella, esas filas entran a la base con el mismo `source_type` y el
+        # mismo `session_id` que las de la sesion verdadera, y **no hay forma de
+        # separarlas despues**. Peor: el indice unico de trazabilidad es parcial
+        # ---solo aplica cuando esta columna no es nula--- de modo que una
+        # segunda corrida duplica filas en silencio.
+        #
+        # Es el mismo defecto que el camino de reproduccion del bus vehicular ya
+        # habia corregido, por el mismo motivo. Aca no se habia notado porque
+        # solo aparece al reproducir **contra** el capturador, que es algo que
+        # empezo a hacerse al medir la cadena completa.
+        self._run_id = run_id
+        self._seq = 0
         self._proximo_intento = 0.0
         self._intentos = 0
         if not activo:
@@ -475,6 +490,21 @@ class Publicador:
         for mensaje in f1_25.mensajes_desde_paquete(
                 decodificado, inicio_utc,
                 desplazamiento_captura_us=desplazamiento_us):
+            if self._run_id is not None:
+                # Va **dentro de `metadata.extra`**, no en el nivel superior del
+                # mensaje. Es donde el contrato lo espera y donde ya lo pone el
+                # camino de reproduccion del bus vehicular; el consumidor lo
+                # promueve desde ahi a la columna.
+                #
+                # La primera version lo puso arriba. No fallo: el mensaje se
+                # publico, se persistio, y la columna quedo en nulo, de modo que
+                # las filas de la prueba entraron **sin marca**. Se detecto
+                # porque la prueba conto cero filas propias mientras el
+                # consumidor mostraba trafico.
+                extra = mensaje.setdefault("metadata", {}).setdefault("extra", {})
+                extra["replay_run_id"] = self._run_id
+                extra["replay_seq"] = self._seq
+                self._seq += 1
             self.cliente.publish(MQTT_TOPIC, json.dumps(mensaje), qos=1)
             self.mensajes += 1
 
@@ -689,10 +719,15 @@ def main() -> None:
     # no lo pase.
     parser.add_argument("--puerto", type=int, default=PUERTO_JUEGO,
                         help="Puerto UDP donde escuchar.")
+    parser.add_argument("--run-id", default=None,
+                        help="Identidad de reinyeccion para una corrida que no "
+                             "es una sesion real. Sin ella, lo que se reproduzca "
+                             "contra el capturador entra a la base mezclado con "
+                             "la telemetria verdadera y no se puede separar.")
     args = parser.parse_args()
 
     args.destino.mkdir(parents=True, exist_ok=True)
-    publicador = Publicador(not args.sin_publicar)
+    publicador = Publicador(not args.sin_publicar, run_id=args.run_id)
 
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.bind(("0.0.0.0", args.puerto))
