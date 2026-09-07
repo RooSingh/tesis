@@ -13,8 +13,33 @@ publica el freno puede tener una sesion sin el.
 Que ninguna herramienta estime en silencio es la regla que ordena el resto. Si la
 resolucion no alcanza o la magnitud no esta, se dice; no se interpola para que el
 resultado exista.
+Como se usa
+-----------
+Cada herramienta vive en su modulo y se lo importa por su nombre:
+
+    from backend.analisis import consistencia, degradacion, frenadas, traccion
+    resultado = consistencia.analizar(fuente, session_id)
+
+**Los submodulos se declaran abajo a proposito.** Sin declararlos, importarlos
+funcionaria igual ---Python los resuelve solo--- pero por accidente de la
+maquinaria de importacion y no porque el paquete lo ofrezca. Tres de las siete
+entradas se llaman `analizar`, de modo que exponerlas planas obligaria a
+renombrarlas y a que el nombre dejara de decir a que herramienta pertenece.
 """
 
+from backend.analisis import (  # noqa: F401
+    ajuste,
+    consistencia,
+    curvas,
+    degradacion,
+    delta,
+    disponibilidad,
+    fases,
+    frenadas,
+    lectura,
+    traccion,
+    vueltas,
+)
 from backend.analisis.disponibilidad import (  # noqa: F401
     COMPLETA,
     DEGRADADA,
