@@ -145,6 +145,38 @@ def _identidad_replay(metadata: TelemetryMetadata) -> tuple[str | None, int | No
     return str(replay_run_id), int(replay_seq)
 
 
+def _desplazamiento_de_captura(metadata: TelemetryMetadata) -> int | None:
+    """Extrae la clave de idempotencia de la telemetria en vivo.
+
+    Es el desplazamiento monotono del datagrama dentro de su captura, que el
+    adaptador ya escribe en `metadata.extra`. Se promueve a columna por el mismo
+    motivo que la identidad de reinyeccion: un campo dentro de JSONB no se indexa
+    de forma economica, y una clave de idempotencia tiene que poder expresarse
+    como indice unico.
+
+    **No se usa el instante para esto**, aunque seria lo natural. La marca de
+    tiempo se deriva del reloj de sesion de la fuente, y ese reloj puede
+    detenerse: con el vehiculo quieto en el box, cientos de muestras distintas
+    reciben el mismo instante. Medido sobre una carrera, 21.047 filas comparten
+    esa clave por ese motivo y son mediciones genuinas.
+
+    Los mensajes sin desplazamiento ---los de fuentes que no capturan
+    datagramas--- devuelven `None` y quedan fuera del indice unico parcial.
+    """
+
+    extra = metadata.extra or {}
+    valor = extra.get("desplazamiento_captura_us")
+    if valor is None:
+        return None
+    try:
+        return int(valor)
+    except (TypeError, ValueError):
+        # Un valor no interpretable se trata como ausencia y no como error: deja
+        # la fila fuera del indice, que es peor que deduplicarla y mucho mejor
+        # que rechazar telemetria valida por un metadato mal formado.
+        return None
+
+
 def _parametros_telemetria(mensaje: TelemetryMessage) -> dict[str, Any]:
     """Normaliza un mensaje para insercion individual o por lote."""
     value_numeric, value_boolean, value_text = _separar_valor(mensaje.value)
@@ -153,6 +185,7 @@ def _parametros_telemetria(mensaje: TelemetryMessage) -> dict[str, Any]:
     return {
         "replay_run_id": replay_run_id,
         "replay_seq": replay_seq,
+        "desplazamiento_captura_us": _desplazamiento_de_captura(metadata),
         "timestamp": mensaje.timestamp,
         "vehicle_id": mensaje.vehicle_id,
         "driver_id": mensaje.driver_id,
@@ -179,17 +212,24 @@ INSERT_TELEMETRY_SQL = """
         timestamp, vehicle_id, driver_id, session_id, lap_id, source_type,
         signal_name, value_numeric, value_boolean, value_text, unit,
         quality_flag, track_segment_id, sector_id, curve_id, can_id, src, metadata,
-        replay_run_id, replay_seq
+        replay_run_id, replay_seq, desplazamiento_captura_us
     ) VALUES (
         %(timestamp)s, %(vehicle_id)s, %(driver_id)s, %(session_id)s, %(lap_id)s,
         %(source_type)s, %(signal_name)s, %(value_numeric)s, %(value_boolean)s,
         %(value_text)s, %(unit)s, %(quality_flag)s, %(track_segment_id)s,
         %(sector_id)s, %(curve_id)s, %(can_id)s, %(src)s, %(metadata)s::jsonb,
-        %(replay_run_id)s, %(replay_seq)s
+        %(replay_run_id)s, %(replay_seq)s, %(desplazamiento_captura_us)s
     )
-    ON CONFLICT (replay_run_id, replay_seq, timestamp)
-        WHERE replay_run_id IS NOT NULL AND replay_seq IS NOT NULL
-        DO NOTHING
+    -- Sin apuntar a un indice: hay **dos** claves de idempotencia y una clausula
+    -- apuntada solo cubre una. La de reinyeccion protege las reproducciones; la
+    -- del desplazamiento de captura protege la telemetria en vivo, que con la
+    -- confirmacion manual puede recibir un reenvio.
+    --
+    -- El precio hay que decirlo: esta forma tambien absorberia el choque contra
+    -- cualquier indice unico que se agregue despues, de modo que un indice mal
+    -- elegido descartaria filas en silencio en lugar de fallar. Se acepta porque
+    -- hoy son dos, los dos parciales y los dos con una clave declarada.
+    ON CONFLICT DO NOTHING
 """
 
 
