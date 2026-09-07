@@ -24,7 +24,7 @@ RAIZ = Path(__file__).resolve().parent.parent
 if str(RAIZ) not in sys.path:
     sys.path.insert(0, str(RAIZ))
 
-from backend import curvas as mod  # noqa: E402
+from backend.analisis import curvas as mod  # noqa: E402
 
 
 def recorrido(curvas_en: list[tuple[float, float, float]],

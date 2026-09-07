@@ -34,7 +34,8 @@ from collections import deque
 from datetime import datetime
 from typing import Any, Callable, Iterable
 
-from backend import curvas as mod_curvas, f1_udp
+from backend import f1_udp
+from backend.analisis import curvas as mod_curvas
 
 
 #: Cuanto puede envejecer el valor de un canal antes de dejar de usarse.
