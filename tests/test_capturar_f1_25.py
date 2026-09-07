@@ -498,10 +498,21 @@ class IdentidadDeReinyeccionTests(unittest.TestCase):
     class _ClienteFalso:
         def __init__(self):
             self.publicados = []
+            self.envios = 0
 
         def publish(self, topico, carga, qos=0):
             import json as _json
-            self.publicados.append(_json.loads(carga))
+            import types
+            # **Llega un envio por paquete, con la lista de senales adentro.**
+            # El falso la desarma para que las pruebas sigan mirando senales,
+            # que es de lo que hablan, y no envios.
+            contenido = _json.loads(carga)
+            self.envios += 1
+            self.publicados.extend(
+                contenido if isinstance(contenido, list) else [contenido])
+            # El cliente real devuelve un objeto con el codigo de resultado, y
+            # el publicador lo mira: un falso que devuelva None ya no sirve.
+            return types.SimpleNamespace(rc=0)
 
     def _publicar(self, run_id):
         pub = capturar_f1_25.Publicador(activo=False, run_id=run_id)
@@ -550,3 +561,256 @@ class IdentidadDeReinyeccionTests(unittest.TestCase):
         secuencias = [m["metadata"]["extra"]["replay_seq"] for m in publicados]
         self.assertEqual(secuencias, sorted(secuencias))
         self.assertEqual(len(set(secuencias)), len(secuencias))
+
+
+class ParrillaCompletaTests(unittest.TestCase):
+    """Normalizar los veintidos vehiculos, y no solo el propio.
+
+    Existe porque el destinatario amateur usa el sistema para medir su propio
+    desempeno **comparandose contra los demas**, y en un simulador ese dato le
+    pertenece. La restriccion de no tener telemetria de rivales es la de un
+    ingeniero de equipo, no la de cualquier usuario.
+
+    Va apagado por omision: multiplica por unas veinte lo que se escribe en la
+    base, y eso conviene que sea una decision y no un descuido.
+    """
+
+    class _ClienteFalso:
+        def __init__(self):
+            self.publicados = []
+            self.envios = 0
+
+        def publish(self, topico, carga, qos=0):
+            import json as _json
+            import types
+            # **Llega un envio por paquete, con la lista de senales adentro.**
+            # El falso la desarma para que las pruebas sigan mirando senales,
+            # que es de lo que hablan, y no envios.
+            contenido = _json.loads(carga)
+            self.envios += 1
+            self.publicados.extend(
+                contenido if isinstance(contenido, list) else [contenido])
+            # El cliente real devuelve un objeto con el codigo de resultado, y
+            # el publicador lo mira: un falso que devuelva None ya no sirve.
+            return types.SimpleNamespace(rc=0)
+
+    def _publicar(self, paquete, parrilla_completa, con_participantes=True):
+        """Publica un paquete y devuelve con que argumentos se llamo al adaptador."""
+
+        pub = capturar_f1_25.Publicador(activo=False,
+                                        parrilla_completa=parrilla_completa)
+        pub.cliente = self._ClienteFalso()
+        llamadas = []
+        original = capturar_f1_25.f1_25.mensajes_desde_paquete
+
+        def espia(decodificado, inicio, **kw):
+            llamadas.append(kw)
+            return iter([])
+
+        capturar_f1_25.f1_25.mensajes_desde_paquete = espia
+        try:
+            if con_participantes:
+                pub.publicar({"paquete": "participants", "decodificado": True,
+                              "vehiculos": [{"name": "UNO"}, {"name": "DOS"},
+                                            {"name": ""}]},
+                             "2026-09-06T00:00:00+00:00")
+                llamadas.clear()
+            pub.publicar({"paquete": paquete, "decodificado": True},
+                         "2026-09-06T00:00:00+00:00")
+        finally:
+            capturar_f1_25.f1_25.mensajes_desde_paquete = original
+        return llamadas
+
+    def test_apagada_por_omision(self):
+        """Veinte veces mas filas no puede ser el comportamiento accidental."""
+
+        kw = self._publicar("car_telemetry", parrilla_completa=False)
+        self.assertTrue(kw[0]["solo_vehiculo_propio"])
+
+    def test_encendida_normaliza_a_todos(self):
+        kw = self._publicar("car_telemetry", parrilla_completa=True)
+        self.assertFalse(kw[0]["solo_vehiculo_propio"])
+
+    def test_los_paquetes_de_bloque_unico_siguen_en_modo_propio(self):
+        """Pedirles todos los vehiculos es un error, no una opcion.
+
+        El paquete de sesion describe la sesion y el de movimiento extendido al
+        vehiculo propio: el adaptador levanta excepcion si se le piden los
+        veintidos. Encender la parrilla no puede romperlos.
+        """
+
+        for paquete in sorted(capturar_f1_25.f1_25.PAQUETES_DE_BLOQUE_UNICO):
+            with self.subTest(paquete=paquete):
+                kw = self._publicar(paquete, parrilla_completa=True)
+                self.assertTrue(kw[0]["solo_vehiculo_propio"])
+
+    def test_solo_se_publican_los_vehiculos_con_nombre(self):
+        """El arreglo tiene veintidos lugares y no siempre corren veintidos.
+
+        Sin filtrar, una carrera de veinte autos producia mensajes para los
+        indices 20 y 21: filas describiendo vehiculos que no existieron. No
+        fallaba, porque sus campos vienen en cero.
+        """
+
+        kw = self._publicar("car_telemetry", parrilla_completa=True)
+        self.assertEqual(kw[0]["vehiculos_validos"], frozenset({0, 1}))
+
+    def test_sin_paquete_de_participantes_no_se_inventa_una_parrilla(self):
+        """Mejor no filtrar que filtrar con una lista adivinada."""
+
+        kw = self._publicar("car_telemetry", parrilla_completa=True,
+                            con_participantes=False)
+        self.assertIsNone(kw[0]["vehiculos_validos"])
+
+
+class DescartesDelPublicadorTests(unittest.TestCase):
+    """Lo que el cliente no llega a enviar se cuenta aparte, no como enviado.
+
+    La version anterior ignoraba lo que `publish` devolvia y sumaba uno al
+    contador igual. Bajo la carga de una parrilla completa **el 95,6 % de los
+    envios devolvia cola llena** y el mensaje se descartaba: el capturador
+    informaba haber publicado un millon y medio de mensajes de los que salieron
+    sesenta y seis mil.
+
+    No hay excepcion, no hay registro y nada falla. El unico sintoma es que a la
+    base llega el cuatro por ciento, y para verlo hay que estar buscandolo.
+    """
+
+    class _ClienteFalso:
+        """Cliente que acepta unos mensajes y rechaza el resto."""
+
+        def __init__(self, acepta_envios):
+            self.acepta_envios = acepta_envios
+            self.enviados = 0
+
+        def publish(self, topico, carga, qos=0):
+            import types
+            if self.enviados < self.acepta_envios:
+                self.enviados += 1
+                return types.SimpleNamespace(rc=0)
+            # 15 es el codigo con que el cliente avisa que su cola esta llena.
+            return types.SimpleNamespace(rc=15)
+
+    def _publicar(self, cuantos, envios_aceptados, paquetes=1):
+        """Publica `paquetes` paquetes de `cuantos` senales cada uno.
+
+        Como ahora va **un envio por paquete**, para probar el descarte hacen
+        falta varios paquetes: uno solo se acepta o se rechaza entero.
+        """
+
+        pub = capturar_f1_25.Publicador(activo=False)
+        pub.cliente = self._ClienteFalso(envios_aceptados)
+        mensajes = [{"signal_name": f"s{i}"} for i in range(cuantos)]
+        original = capturar_f1_25.f1_25.mensajes_desde_paquete
+        capturar_f1_25.f1_25.mensajes_desde_paquete = lambda *a, **k: iter(list(mensajes))
+        try:
+            for _ in range(paquetes):
+                pub.publicar({"paquete": "car_telemetry", "decodificado": True},
+                             "2026-09-06T00:00:00+00:00")
+        finally:
+            capturar_f1_25.f1_25.mensajes_desde_paquete = original
+        return pub
+
+    def test_solo_se_cuentan_como_enviados_los_que_salieron(self):
+        """Diez paquetes de cien senales; el cliente acepta tres envios."""
+
+        pub = self._publicar(cuantos=100, envios_aceptados=3, paquetes=10)
+        self.assertEqual(pub.mensajes, 300)
+        self.assertEqual(pub.descartados, 700)
+
+    def test_el_motivo_del_descarte_queda_registrado(self):
+        """Sin el motivo, un descarte no se distingue de otro.
+
+        Cola llena y sin conexion piden respuestas distintas, y el numero solo
+        no permite elegir.
+        """
+
+        pub = self._publicar(cuantos=10, envios_aceptados=4, paquetes=10)
+        # Seis envios rechazados de diez senales cada uno: se cuenta **por
+        # senal**, porque lo que se perdio son las senales.
+        self.assertEqual(pub.motivos_descarte, {15: 60})
+
+    def test_sin_descartes_el_contador_queda_limpio(self):
+        pub = self._publicar(cuantos=10, envios_aceptados=1)
+        self.assertEqual(pub.mensajes, 10)
+        self.assertEqual(pub.descartados, 0)
+        self.assertEqual(pub.motivos_descarte, {})
+
+    def test_enviados_y_descartados_no_se_suman_en_una_sola_cifra(self):
+        """La cifra unica era la que mentia.
+
+        Que sean dos contadores no es un detalle de presentacion: es lo que
+        permite afirmar cuanto se publico **y** cuanto se perdio, en lugar de
+        afirmar mal una sola cosa.
+        """
+
+        pub = self._publicar(cuantos=50, envios_aceptados=2, paquetes=5)
+        self.assertNotEqual(pub.mensajes, 250)
+        self.assertEqual(pub.mensajes + pub.descartados, 250)
+
+
+class PublicacionPorLoteTests(unittest.TestCase):
+    """Un envio por paquete, con todas sus senales adentro.
+
+    Cada mensaje con garantia de entrega paga un ida y vuelta con el
+    intermediario, y **el cliente acepta unos 6.578 por segundo sin importar
+    que lleven adentro**: uno de 560 senales pesa quinientas sesenta veces mas y
+    se envia al mismo ritmo.
+
+    De a una senal por mensaje, la parrilla completa descartaba el 96 % en la
+    cola de salida. Agrupadas, el caudal util pasa de 6.578 a 3,19 millones de
+    senales por segundo.
+    """
+
+    class _ClienteFalso:
+        def __init__(self):
+            self.cargas = []
+
+        def publish(self, topico, carga, qos=0):
+            import json as _json
+            import types
+            self.cargas.append(_json.loads(carga))
+            return types.SimpleNamespace(rc=0)
+
+    def _publicar(self, cuantas):
+        pub = capturar_f1_25.Publicador(activo=False)
+        pub.cliente = self._ClienteFalso()
+        mensajes = [{"signal_name": f"s{i}"} for i in range(cuantas)]
+        original = capturar_f1_25.f1_25.mensajes_desde_paquete
+        capturar_f1_25.f1_25.mensajes_desde_paquete = lambda *a, **k: iter(mensajes)
+        try:
+            pub.publicar({"paquete": "car_telemetry", "decodificado": True},
+                         "2026-09-06T00:00:00+00:00")
+        finally:
+            capturar_f1_25.f1_25.mensajes_desde_paquete = original
+        return pub.cliente.cargas, pub
+
+    def test_un_paquete_produce_un_solo_envio(self):
+        """Es toda la ganancia: 560 senales en un envio y no en 560."""
+
+        cargas, _ = self._publicar(560)
+        self.assertEqual(len(cargas), 1)
+        self.assertEqual(len(cargas[0]), 560)
+
+    def test_el_contador_sigue_hablando_de_senales(self):
+        """Contar envios haria parecer chico el trabajo y chico el descarte."""
+
+        _, pub = self._publicar(560)
+        self.assertEqual(pub.mensajes, 560)
+
+    def test_una_sola_senal_no_viaja_envuelta_en_una_lista(self):
+        """Un paquete que produce una senal manda esa senal, no un lote de uno.
+
+        Envolver siempre obligaria a todos los consumidores a desarmar, incluso
+        cuando no hay nada que desarmar, y romperia a los que hoy leen el
+        contrato de a un mensaje.
+        """
+
+        cargas, _ = self._publicar(1)
+        self.assertIsInstance(cargas[0], dict)
+        self.assertEqual(cargas[0]["signal_name"], "s0")
+
+    def test_un_paquete_sin_senales_no_publica_nada(self):
+        cargas, pub = self._publicar(0)
+        self.assertEqual(cargas, [])
+        self.assertEqual(pub.mensajes, 0)

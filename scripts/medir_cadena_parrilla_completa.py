@@ -130,6 +130,12 @@ def correr(captura: Path, segundos: float, puerto: int,
     capturador = subprocess.Popen(
         [sys.executable, "-u", "scripts/capturar_f1_25.py",
          "--puerto", str(puerto), "--run-id", run_id,
+         # **La prueba existe para medir esta carga y no otra.**
+         # Sin la parrilla completa el capturador normaliza un vehiculo de
+         # veintidos, y lo medido serian unos 1.776 mensajes por segundo en
+         # lugar de los 35.186 que la fuente produce con todos. Correrla sin
+         # esto era medir una carga que no es la que la prueba nombra.
+         "--parrilla-completa",
          "--destino", str(destino)],
         cwd=str(RAIZ), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     # El capturador tarda un instante en atarse al puerto. Emitir antes de que

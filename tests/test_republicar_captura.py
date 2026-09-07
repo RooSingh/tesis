@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import unittest
 
-from scripts.republicar_captura import clasificar
+from scripts.republicar_captura import clasificar, clasificar_vehiculos
 
 
 class ClasificacionTests(unittest.TestCase):
@@ -73,3 +73,50 @@ class ClasificacionTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ClasificarVehiculosTest(unittest.TestCase):
+    """El criterio de completitud de la parrilla es por vehiculo, no por senal.
+
+    Distinguirlos importa porque `signal_name` es identico para los veintidos
+    autos: preguntar por senal declara presente a `throttle` porque lo tiene el
+    vehiculo propio, y saltearia a los veinte rivales enteros.
+    """
+
+    def test_vehiculo_ausente_va_a_vacios(self):
+        vacios, parciales, completos = clasificar_vehiculos(
+            {"car:1": 100}, {})
+        self.assertEqual(vacios, {"car:1"})
+        self.assertEqual(parciales, {})
+        self.assertEqual(completos, set())
+
+    def test_vehiculo_a_medias_no_cuenta_como_escrito(self):
+        """Tres estados y no dos: tener filas no es estar completo."""
+
+        vacios, parciales, completos = clasificar_vehiculos(
+            {"car:1": 100}, {"car:1": 40})
+        self.assertEqual(vacios, set())
+        self.assertEqual(parciales, {"car:1": (40, 100)})
+        self.assertEqual(completos, set())
+
+    def test_vehiculo_propio_ya_persistido_queda_afuera(self):
+        """El auto propio se excluye por estar completo, no por una regla aparte.
+
+        Es lo que hace que la herramienta sea el complemento exacto de capturar
+        en vivo solo el vehiculo propio: lo que ya entro no se reescribe.
+        """
+
+        esperado = {"car:19": 100, "car:0": 100, "car:1": 100}
+        vacios, _, completos = clasificar_vehiculos(
+            esperado, {"car:19": 4_586_014})
+        self.assertEqual(completos, {"car:19"})
+        self.assertEqual(vacios, {"car:0", "car:1"})
+
+    def test_un_vehiculo_no_esperado_no_inventa_faltante(self):
+        """Lo presente que la captura no espera no se reporta como faltante."""
+
+        vacios, parciales, completos = clasificar_vehiculos(
+            {"car:0": 10}, {"car:0": 10, "car:7": 999})
+        self.assertEqual(completos, {"car:0"})
+        self.assertEqual(vacios, set())
+        self.assertEqual(parciales, {})

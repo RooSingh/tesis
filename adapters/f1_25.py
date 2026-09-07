@@ -372,6 +372,7 @@ def mensajes_desde_paquete(
     captura_sha256: str | None = None,
     solo_vehiculo_propio: bool = True,
     desplazamiento_captura_us: int | None = None,
+    vehiculos_validos: frozenset[int] | set[int] | None = None,
 ) -> list[dict[str, Any]]:
     """Convierte un paquete decodificado en mensajes canonicos por senal.
 
@@ -422,7 +423,19 @@ def mensajes_desde_paquete(
         if secundario is not None:
             seleccion.append((decodificado["indice_secundario"], secundario))
     else:
-        seleccion = list(enumerate(decodificado["vehiculos"]))
+        # **El arreglo tiene veintidos lugares y no siempre corren veintidos.**
+        #
+        # Sin filtrar, una carrera de veinte autos producia mensajes para los
+        # indices 20 y 21: filas en la base describiendo vehiculos que no
+        # existieron. No fallaba ---los campos vienen en cero--- y por eso
+        # habria pasado inadvertido.
+        #
+        # El criterio es **tener nombre**, no `num_active_cars`: ese contador
+        # baja cuando un vehiculo abandona mientras su entrada conserva el
+        # nombre, de modo que recortar por el descartaria a quien abandono. Es
+        # el mismo razonamiento que `derivar_parrilla` ya dejo escrito.
+        seleccion = [(i, v) for i, v in enumerate(decodificado["vehiculos"])
+                     if vehiculos_validos is None or i in vehiculos_validos]
 
     mensajes: list[dict[str, Any]] = []
     for indice, vehiculo in seleccion:

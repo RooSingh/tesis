@@ -14,6 +14,7 @@ Este modulo se ejecuta como proceso separado de FastAPI. Su objetivo es:
 from __future__ import annotations
 
 import json
+from collections import deque
 import threading
 
 import paho.mqtt.client as mqtt
@@ -28,6 +29,10 @@ from backend.config import (
     MQTT_REPLAY_TOPIC,
     MQTT_SYS_DROPPED_TOPIC,
     MQTT_TOPIC,
+    MQTT_CLIENT_ID,
+    MQTT_SESION_PERSISTENTE,
+    MQTT_QOS_EN_VIVO,
+    MQTT_CONFIRMACION_MANUAL,
 )
 from backend.db import EscritorTelemetria
 from backend.models import TelemetryMessage
@@ -52,8 +57,27 @@ class TelemetryBatchBuffer:
         batch_size: int = BATCH_SIZE,
         flush_interval: float = FLUSH_INTERVAL_SECONDS,
         max_pending: int = MAX_PENDING_MESSAGES,
+        confirmar=None,
     ) -> None:
         self.writer = writer if writer is not None else EscritorTelemetria()
+        #: Como se confirma un mensaje al intermediario. Se inyecta, igual que el
+        #: escritor, para que el buffer sea verificable sin un cliente real.
+        #:
+        #: `None` deja el comportamiento anterior: la biblioteca confirma al
+        #: volver del callback, antes de escribir. Es lo que se quiere dejar de
+        #: hacer, y se mantiene disponible para poder comparar los dos modos.
+        self.confirmar = confirmar
+        #: Cola de acuses pendientes, en orden de llegada: por cada mensaje del
+        #: intermediario, su identificador, su calidad y **cuantas senales
+        #: trajo**.
+        #:
+        #: La unidad de confirmacion es el mensaje y no la senal, y desde que se
+        #: agrupa un mensaje trae hasta 560. Los lotes no coinciden con los
+        #: mensajes: un lote puede llevar la cola de uno, otro entero y la cabeza
+        #: de un tercero. Como la cola de pendientes es FIFO y los lotes se toman
+        #: del frente, las senales se escriben en orden de llegada, y basta con
+        #: consumir de esta cola la misma cantidad que el lote escribio.
+        self.acuses: deque = deque()
         self.batch_size = batch_size
         self.flush_interval = flush_interval
         self.max_pending = max_pending
@@ -99,6 +123,53 @@ class TelemetryBatchBuffer:
             self.metrics["max_pending"] = max(self.metrics["max_pending"], len(self.pending))
             if len(self.pending) >= self.batch_size:
                 self.batch_ready.notify()
+
+    def registrar_mensaje(self, mid: int, qos: int, senales: int) -> None:
+        """Anota un mensaje del intermediario a la espera de su acuse.
+
+        Se anota **aunque traiga cero senales validas**: un mensaje cuyas senales
+        se rechazaron todas igual hay que confirmarlo, porque el intermediario lo
+        va a reenviar indefinidamente si no. Con cero senales se confirma en el
+        acto, ya que ningun lote lo va a cubrir nunca.
+        """
+
+        if self.confirmar is None:
+            return
+        if senales <= 0:
+            self.confirmar(mid, qos)
+            return
+        with self.lock:
+            self.acuses.append([mid, qos, senales])
+
+    def _confirmar_cubiertos(self, senales_escritas: int) -> int:
+        """Confirma los mensajes que el lote escrito cubrio por completo.
+
+        Se consume por **la cantidad de senales del lote** y no por las filas
+        persistidas: desde que la insercion usa `ON CONFLICT DO NOTHING`, un lote
+        de repeticiones persiste cero filas habiendo consumido mensajes reales de
+        la cola. Medir por filas dejaria esos mensajes sin confirmar para siempre.
+        """
+
+        if self.confirmar is None or senales_escritas <= 0:
+            return 0
+        a_confirmar = []
+        with self.lock:
+            restantes = senales_escritas
+            while restantes > 0 and self.acuses:
+                entrada = self.acuses[0]
+                if entrada[2] > restantes:
+                    entrada[2] -= restantes
+                    restantes = 0
+                else:
+                    restantes -= entrada[2]
+                    a_confirmar.append((entrada[0], entrada[1]))
+                    self.acuses.popleft()
+        # Se confirma **fuera del cerrojo**: `ack` escribe en el socket del
+        # cliente y retener el cerrojo del buffer mientras se hace bloquearia la
+        # recepcion.
+        for mid, qos in a_confirmar:
+            self.confirmar(mid, qos)
+        return len(a_confirmar)
 
     def record_decode_error(self) -> None:
         with self.lock:
@@ -149,6 +220,19 @@ class TelemetryBatchBuffer:
             self.metrics["persisted"] += persisted
             self.metrics["duplicates_skipped"] += max(0, len(batch) - persisted)
             self.metrics["batches"] += 1
+        # **Recien aca se confirma.** Es el cambio entero: antes la biblioteca
+        # confirmaba al volver del callback, de modo que un mensaje quedaba
+        # confirmado y sin escribir mientras esperaba en la cola, y el
+        # intermediario no lo iba a reenviar nunca.
+        #
+        # Si `self.writer` fallo, esta linea no se alcanza: el lote se reencolo y
+        # sus mensajes siguen sin confirmar, que es lo que hace que el
+        # intermediario los reenvie.
+        confirmados = self._confirmar_cubiertos(len(batch))
+        if confirmados:
+            with self.lock:
+                self.metrics["confirmados"] = (
+                    self.metrics.get("confirmados", 0) + confirmados)
         return persisted
 
     def _drenar_hasta_sin_avance(self) -> None:
@@ -243,7 +327,17 @@ def on_connect(client: mqtt.Client, userdata, flags, reason_code, properties) ->
     """Callback ejecutado al establecer conexion con el broker."""
 
     print(f"[MQTT] Conectado al broker con codigo={reason_code}")
-    client.subscribe([(MQTT_TOPIC, 0), (MQTT_REPLAY_TOPIC, 1), (MQTT_SYS_DROPPED_TOPIC, 0)])
+    # El topico en vivo se suscribe con la calidad configurada y no con cero.
+    # La entrega al suscriptor se rige por **el minimo** entre la calidad de la
+    # publicacion y la de la suscripcion: publicar con garantia y suscribirse en
+    # cero deja el tramo final sin garantia, y con el la sesion persistente sin
+    # efecto para ese topico.
+    #
+    # Las estadisticas del intermediario siguen en cero a proposito: son
+    # informativas, se publican periodicamente y perder una no pierde telemetria.
+    client.subscribe([(MQTT_TOPIC, MQTT_QOS_EN_VIVO),
+                      (MQTT_REPLAY_TOPIC, 1),
+                      (MQTT_SYS_DROPPED_TOPIC, 0)])
     print(f"[MQTT] Suscripto a topics: {MQTT_TOPIC}, {MQTT_REPLAY_TOPIC}, {MQTT_SYS_DROPPED_TOPIC}")
 
 
@@ -270,9 +364,8 @@ def on_message(client: mqtt.Client, userdata: TelemetryBatchBuffer, msg: mqtt.MQ
 
     try:
         payload = msg.payload.decode("utf-8")
-        mensaje_dict = json.loads(payload)
-        mensaje = TelemetryMessage.model_validate(mensaje_dict)
-    except (UnicodeDecodeError, json.JSONDecodeError, ValidationError) as error:
+        contenido = json.loads(payload)
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
         userdata.record_decode_error()
         _informar_error_acotado("Mensaje descartado por decodificacion o validacion", error)
         return
@@ -281,16 +374,62 @@ def on_message(client: mqtt.Client, userdata: TelemetryBatchBuffer, msg: mqtt.MQ
         _informar_error_acotado("Error inesperado al procesar mensaje", error)
         return
 
-    try:
-        # Se reutiliza el diccionario ya parseado en lugar de `mensaje.model_dump()`.
-        # Serializar el modelo completo costaba una vuelta extra por cada mensaje,
-        # en el hilo de red, para conservar solo los ultimos veinte: sobre 6,2
-        # millones de mensajes ese trabajo se descartaba casi por completo.
-        _guardar_mensaje_en_memoria(mensaje_dict)
-        userdata.enqueue(mensaje)
-    except Exception as error:
-        userdata.record_processing_error()
-        _informar_error_acotado("Error al encolar mensaje", error)
+    # **Un mensaje suelto y un lote se distinguen por la forma, no por una
+    # marca.** Si lo que llega es una lista, son varias senales; si es un
+    # objeto, es una.
+    #
+    # Se aceptan las dos porque hay tres publicadores usando este contrato ---el
+    # capturador, la reproduccion del bus y la carga de la fuente deportiva--- y
+    # cambiarlos a los tres a la vez volveria imposible ubicar un fallo. Los que
+    # no agrupen siguen andando sin tocarlos.
+    #
+    # Por que existe el lote: cada mensaje con garantia de entrega paga un ida y
+    # vuelta con el intermediario, y **el cliente acepta unos 6.578 por segundo
+    # sin importar que lleven adentro**. Con una senal por mensaje, la parrilla
+    # completa descartaba el 96 % en la cola de salida; con 560 por lote, el
+    # caudal util pasa a 3,19 millones de senales por segundo y no se descarta
+    # ninguna.
+    crudos = contenido if isinstance(contenido, list) else [contenido]
+
+    aceptadas = 0
+    for mensaje_dict in crudos:
+        try:
+            mensaje = TelemetryMessage.model_validate(mensaje_dict)
+        except ValidationError as error:
+            # **Se cuenta y se sigue con el resto del lote.** Una senal invalida
+            # entre quinientas sesenta no puede descartar las otras quinientas
+            # cincuenta y nueve, que es lo que pasaria si el error cortara aca.
+            userdata.record_decode_error()
+            _informar_error_acotado(
+                "Mensaje descartado por decodificacion o validacion", error)
+            continue
+        except Exception as error:
+            userdata.record_processing_error()
+            _informar_error_acotado("Error inesperado al procesar mensaje", error)
+            continue
+
+        try:
+            # Se reutiliza el diccionario ya parseado en lugar de `mensaje.model_dump()`.
+            # Serializar el modelo completo costaba una vuelta extra por cada mensaje,
+            # en el hilo de red, para conservar solo los ultimos veinte: sobre 6,2
+            # millones de mensajes ese trabajo se descartaba casi por completo.
+            _guardar_mensaje_en_memoria(mensaje_dict)
+            userdata.enqueue(mensaje)
+            aceptadas += 1
+        except Exception as error:
+            userdata.record_processing_error()
+            _informar_error_acotado("Error al encolar mensaje", error)
+
+    # **Se anota el mensaje del intermediario recien aca**, con la cuenta de
+    # senales que efectivamente entraron a la cola. El acuse sale despues, cuando
+    # un lote las haya escrito.
+    #
+    # Se anota siempre, incluso con cero aceptadas: un mensaje cuyas senales se
+    # rechazaron todas igual hay que confirmarlo, o el intermediario lo reenvia
+    # sin fin. Ese caso se confirma en el acto, porque ningun lote lo va a
+    # cubrir.
+    userdata.registrar_mensaje(getattr(msg, "mid", 0),
+                               getattr(msg, "qos", 0), aceptadas)
 
 
 def on_disconnect(client: mqtt.Client, userdata: TelemetryBatchBuffer, disconnect_flags, reason_code, properties) -> None:
@@ -303,8 +442,22 @@ def on_disconnect(client: mqtt.Client, userdata: TelemetryBatchBuffer, disconnec
 def crear_cliente_mqtt() -> mqtt.Client:
     """Crea y configura el cliente MQTT del backend."""
 
-    client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
-    client.user_data_set(TelemetryBatchBuffer())
+    # La identidad es fija y la sesion se conserva. Las dos cosas van juntas y
+    # ninguna sirve sola: el intermediario guarda lo que llega mientras el
+    # consumidor no esta, y solo se lo puede entregar a un cliente que reconozca
+    # como el mismo.
+    client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2,
+                         client_id=MQTT_CLIENT_ID,
+                         clean_session=not MQTT_SESION_PERSISTENTE)
+    if MQTT_CONFIRMACION_MANUAL:
+        # A partir de aca la biblioteca **no confirma sola**: el acuse lo emite
+        # el buffer despues de haber escrito en la base. Es lo que hace que un
+        # mensaje confirmado sea un mensaje persistido.
+        client.manual_ack_set(True)
+        client.user_data_set(TelemetryBatchBuffer(
+            confirmar=lambda mid, qos: client.ack(mid, qos)))
+    else:
+        client.user_data_set(TelemetryBatchBuffer())
     client.on_connect = on_connect
     client.on_message = on_message
     client.on_disconnect = on_disconnect

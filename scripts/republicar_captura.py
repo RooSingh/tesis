@@ -439,6 +439,253 @@ def conciliar(session_id: str, esperado_por_senal: dict[str, int],
     }
 
 
+def vehiculos_persistidos(session_id: str) -> dict[str, int]:
+    """Cuantas filas tiene la base **por vehiculo** para esa sesion.
+
+    El criterio por senal no sirve para la parrilla, y confundirlos habria hecho
+    que esta herramienta no escribiera nada. `signal_name` es el mismo para los
+    veintidos autos ---lo que los distingue es `vehicle_id`--- de modo que
+    preguntar por senal declara presente a `throttle` porque lo tiene el auto
+    propio, y saltea a los veinte rivales enteros.
+    """
+
+    with db.obtener_conexion() as conexion, conexion.cursor() as cursor:
+        cursor.execute(
+            """select vehicle_id, count(*) from telemetry_messages
+               where source_type = %s and session_id = %s
+               group by 1""",
+            (f1_25.SOURCE_TYPE, session_id),
+        )
+        return dict(cursor.fetchall())
+
+
+def inventariar_parrilla(
+    ruta: Path, inicio_utc: str, sha256: str | None,
+) -> tuple[Counter, str | None, frozenset[int]]:
+    """Recorre el crudo contando por vehiculo, y de paso arma la parrilla.
+
+    La parrilla sale del paquete de participantes, que **no se normaliza** ---no
+    trae mediciones, trae identidad--- pero es el unico que dice quienes corren.
+    Sin el, los veintidos lugares del arreglo se emiten enteros y los que no
+    tienen piloto entran como vehiculos fantasma.
+
+    Se recorre el archivo completo antes de escribir, y eso da algo que el
+    capturador en vivo no puede tener: **la parrilla rige desde el primer
+    datagrama y no desde el primer paquete de participantes**. En vivo hay que
+    esperar a que llegue; sobre una captura cerrada, ya llego.
+    """
+
+    conteo: Counter = Counter()
+    session_id: str | None = None
+    validos: set[int] = set()
+
+    for datagrama in f1_capture.leer_captura(ruta):
+        try:
+            decodificado = f1_udp.decodificar(datagrama.carga)
+        except f1_udp.ErrorDecodificacion:
+            continue
+        if decodificado["paquete"] == "participants":
+            validos |= {i for i, v in enumerate(decodificado["vehiculos"])
+                        if v.get("name")}
+        if decodificado["paquete"] not in f1_25.PAQUETES_NORMALIZABLES:
+            continue
+        solo_propio = decodificado["paquete"] in f1_25.PAQUETES_DE_BLOQUE_UNICO
+        for mensaje in f1_25.mensajes_desde_paquete(
+                decodificado, inicio_utc, origen=f1_25.ORIGEN_REPRODUCIDO,
+                captura_sha256=sha256,
+                solo_vehiculo_propio=solo_propio,
+                desplazamiento_captura_us=datagrama.desplazamiento_us):
+            conteo[mensaje["vehicle_id"]] += 1
+            if session_id is None:
+                session_id = mensaje["session_id"]
+
+    # Los fantasmas se descuentan aca y no durante el recorrido, porque la
+    # parrilla recien esta completa cuando el archivo termino.
+    parrilla = frozenset(validos)
+    sufijos = {f":car:{i}" for i in parrilla}
+    conteo = Counter({v: n for v, n in conteo.items()
+                      if any(v.endswith(s) for s in sufijos)})
+    return conteo, session_id, parrilla
+
+
+def clasificar_vehiculos(
+    esperado: dict[str, int], presente: dict[str, int],
+) -> tuple[set[str], dict[str, tuple[int, int]], set[str]]:
+    """Separa los vehiculos en vacios, parciales y completos.
+
+    Tres estados y no dos. Un vehiculo con filas **no** es un vehiculo escrito:
+    contar solo si existe fue lo que dejo pasar una perdida del 5,9 % cuando el
+    criterio era por senal, y el mismo error cabe aca.
+    """
+
+    vacios, parciales, completos = set(), {}, set()
+    for vehiculo, esperadas in esperado.items():
+        hay = presente.get(vehiculo, 0)
+        if hay == 0:
+            vacios.add(vehiculo)
+        elif hay < esperadas:
+            parciales[vehiculo] = (hay, esperadas)
+        else:
+            completos.add(vehiculo)
+    return vacios, parciales, completos
+
+
+def escribir_parrilla(ruta: Path, inicio_utc: str, sha256: str | None,
+                      vehiculos: set[str], parrilla: frozenset[int],
+                      total: int, run_id: str) -> dict:
+    """Persiste los vehiculos pedidos, directo y sin transporte.
+
+    Es el mismo camino que `escribir`, con el filtro corrido de senal a
+    vehiculo. El auto propio queda afuera solo porque su `vehicle_id` ya figura
+    persistido, no por una regla aparte: si por algun motivo faltara, se
+    escribiria como cualquier otro.
+    """
+
+    lote: list[TelemetryMessage] = []
+    validados = insertados = rechazados = 0
+    seq = 0
+    inicio = time.perf_counter()
+
+    def descargar() -> None:
+        nonlocal insertados
+        if lote:
+            insertados += db.insertar_telemetria_lote(lote)
+            lote.clear()
+
+    for datagrama in f1_capture.leer_captura(ruta):
+        try:
+            decodificado = f1_udp.decodificar(datagrama.carga)
+        except f1_udp.ErrorDecodificacion:
+            continue
+        if decodificado["paquete"] not in f1_25.PAQUETES_NORMALIZABLES:
+            continue
+        # Los paquetes de bloque unico describen la sesion o al vehiculo propio
+        # y no admiten normalizarse para todos: pedirselo es un error, no una
+        # opcion.
+        solo_propio = decodificado["paquete"] in f1_25.PAQUETES_DE_BLOQUE_UNICO
+        for mensaje in f1_25.mensajes_desde_paquete(
+                decodificado, inicio_utc, origen=f1_25.ORIGEN_REPRODUCIDO,
+                captura_sha256=sha256,
+                solo_vehiculo_propio=solo_propio,
+                vehiculos_validos=parrilla,
+                desplazamiento_captura_us=datagrama.desplazamiento_us):
+            mensaje_seq = seq
+            seq += 1
+            if mensaje["vehicle_id"] not in vehiculos:
+                continue
+            mensaje["metadata"]["extra"]["replay_run_id"] = run_id
+            mensaje["metadata"]["extra"]["replay_seq"] = mensaje_seq
+            try:
+                lote.append(TelemetryMessage.model_validate(mensaje))
+                validados += 1
+            except Exception as error:
+                rechazados += 1
+                if rechazados <= 3:
+                    print(f"  rechazado por validacion: {type(error).__name__}")
+                continue
+            if len(lote) >= TAMANO_LOTE:
+                descargar()
+                if insertados % 100_000 < TAMANO_LOTE:
+                    transcurrido = time.perf_counter() - inicio
+                    print(f"  {insertados:>9,} de {total:,}  "
+                          f"({insertados / transcurrido:,.0f} por segundo)")
+    descargar()
+
+    return {"validados": validados, "insertados": insertados,
+            "rechazados": rechazados,
+            "duracion_s": time.perf_counter() - inicio}
+
+
+def completar_parrilla(captura: Path, meta: dict, inicio_utc: str,
+                       simular: bool) -> None:
+    """Escribe los rivales de una sesion ya capturada.
+
+    Por que diferido y no en vivo
+    -----------------------------
+    La parrilla completa produce 35.186 senales por segundo y la base absorbe
+    2.770: **doce veces mas de lo que puede escribir**. Medido, no estimado. En
+    vivo la cola crece sin techo y no vuelve a bajar mientras la sesion siga.
+
+    El vehiculo propio si entra en vivo ---1.776 por segundo, comodo dentro de
+    los 2.770---, que es lo que el uso pide: el conductor mira lo suyo mientras
+    conduce, y a los rivales los mira despues. Un rival diferido sigue sirviendo
+    para comparar; un dato propio diferido, no.
+
+    Aca no hay restriccion de tiempo real, de modo que se escribe directo a la
+    base por el mismo camino de validacion del consumidor, sin transporte. El
+    intermediario es justamente el tramo donde esta herramienta perdio datos dos
+    veces.
+    """
+
+    print(f"Captura : {captura.name}")
+    print(f"Inicio  : {inicio_utc}")
+    print("Recorriendo el crudo para inventariar la parrilla...\n")
+
+    esperado, session_id, parrilla = inventariar_parrilla(
+        captura, inicio_utc, meta.get("sha256"))
+    if session_id is None:
+        raise SystemExit("La captura no produjo mensajes normalizables.")
+
+    print(f"Sesion    : {session_id}")
+    print(f"Parrilla  : {len(parrilla)} vehiculos con piloto "
+          f"de {len(esperado)} con telemetria")
+
+    presente = vehiculos_persistidos(session_id)
+    vacios, parciales, completos = clasificar_vehiculos(esperado, presente)
+
+    print(f"completos : {len(completos)}")
+    print(f"parciales : {len(parciales)}")
+    print(f"vacios    : {len(vacios)}")
+
+    if parciales:
+        # Un vehiculo a medias no se completa reinsertando: sus filas presentes
+        # no llevan la identidad de esta corrida, de modo que no chocarian
+        # contra el indice unico y se duplicarian.
+        print("\nHay vehiculos con filas incompletas. No se tocan: reinsertar "
+              "los duplicaria. Se informan para resolverlos aparte.")
+        for vehiculo, (hay, esperadas) in sorted(parciales.items())[:6]:
+            print(f"  {vehiculo[-24:]:<24} {hay:>9,} de {esperadas:,}")
+
+    total = sum(esperado[v] for v in vacios)
+    print(f"\nFilas a escribir : {total:,}\n")
+
+    if not vacios:
+        print("Nada que escribir.")
+        return
+    if simular:
+        for vehiculo in sorted(vacios):
+            print(f"  {vehiculo[-24:]:<24} {esperado[vehiculo]:>9,}")
+        print("\n(simulacion: no se escribio nada)")
+        return
+
+    run_id = identidad_de_corrida(meta, captura)
+    print(f"identidad de corrida: {run_id}")
+    print("Escribiendo por el camino de validacion del consumidor, "
+          "sin transporte\n")
+
+    r = escribir_parrilla(captura, inicio_utc, meta.get("sha256"),
+                          vacios, parrilla, total, run_id)
+    print(f"\nvalidados  : {r['validados']:,}")
+    print(f"insertados : {r['insertados']:,}")
+    print(f"rechazados : {r['rechazados']:,}")
+    print(f"duracion   : {r['duracion_s'] / 60:.1f} min "
+          f"({r['insertados'] / max(r['duracion_s'], 1):,.0f} por segundo)")
+
+    # Se concilia contra lo que debia quedar, y no contra el error que se
+    # evitaba. Que la escritura no informe fallas no dice que la base quedo
+    # completa.
+    print("\nConciliando contra lo esperado...")
+    presente = vehiculos_persistidos(session_id)
+    faltan = {v: (presente.get(v, 0), esperado[v]) for v in vacios
+              if presente.get(v, 0) < esperado[v]}
+    if faltan:
+        print(f"  QUEDARON INCOMPLETOS {len(faltan)} de {len(vacios)}:")
+        for vehiculo, (hay, esperadas) in sorted(faltan.items())[:6]:
+            print(f"    {vehiculo[-24:]:<24} {hay:>9,} de {esperadas:,}")
+        raise SystemExit(1)
+    print(f"  los {len(vacios)} vehiculos quedaron completos")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("captura", type=Path)
@@ -452,6 +699,10 @@ def main() -> None:
                         help="Borra las filas de reproducciones anteriores que "
                              "quedaron incompletas, para poder rehacerlas. No "
                              "toca las filas capturadas en vivo.")
+    parser.add_argument("--parrilla-completa", action="store_true",
+                        help="Escribe los rivales de la sesion, diferidos. "
+                             "Es el complemento de capturar en vivo solo el "
+                             "vehiculo propio.")
     args = parser.parse_args()
 
     if not args.captura.exists():
@@ -461,6 +712,10 @@ def main() -> None:
     inicio_utc = meta.get("inicio_utc")
     if not inicio_utc:
         raise SystemExit("Los metadatos no declaran el inicio de captura.")
+
+    if args.parrilla_completa:
+        completar_parrilla(args.captura, meta, inicio_utc, args.simular)
+        return
 
     print(f"Captura : {args.captura.name}")
     print(f"Inicio  : {inicio_utc}")

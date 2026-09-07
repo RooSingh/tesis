@@ -412,9 +412,16 @@ class Publicador:
     #: entera quedo grabada sin publicar un solo mensaje.
     REINTENTO_S = 30.0
 
-    def __init__(self, activo: bool, run_id: str | None = None) -> None:
+    def __init__(self, activo: bool, run_id: str | None = None,
+                 parrilla_completa: bool = False) -> None:
         self.cliente = None
         self.mensajes = 0
+        #: Mensajes que el cliente **no llego a enviar**, con el motivo que
+        #: devolvio. Van separados de `mensajes` a proposito: uno cuenta lo que
+        #: salio y el otro lo que se perdio, y sumarlos seria volver a la cifra
+        #: unica que mentia.
+        self.descartados = 0
+        self.motivos_descarte: dict[int, int] = {}
         self.motivo = None
         self._activo = activo
         # Identidad de reinyeccion, para las corridas que **no son una sesion
@@ -432,6 +439,21 @@ class Publicador:
         # empezo a hacerse al medir la cadena completa.
         self._run_id = run_id
         self._seq = 0
+        # Normalizar los veintidos vehiculos y no solo el propio.
+        #
+        # **Es una opcion y no el comportamiento por omision.** Multiplica por
+        # unas veinte lo que se escribe en la base, y eso conviene que sea una
+        # decision tomada a proposito y no un descuido.
+        #
+        # Por que existe: el destinatario amateur usa el sistema para medir su
+        # propio desempeno **comparandose contra los demas** ---la maquina o un
+        # companero---, y en un simulador ese dato le pertenece. La restriccion
+        # de no tener datos de rivales es la de un ingeniero de equipo, no la de
+        # cualquier usuario, y aplicarla a todos era un error de alcance.
+        self._parrilla_completa = parrilla_completa
+        #: Indices que efectivamente corren, derivados del paquete de
+        #: participantes. Sin esto se publicarian los lugares vacios del arreglo.
+        self._validos: frozenset[int] | None = None
         self._proximo_intento = 0.0
         self._intentos = 0
         if not activo:
@@ -481,14 +503,33 @@ class Publicador:
         # publicar: la energia y el dano existian en el crudo y no llegaban a la
         # base, de modo que la persistencia guardaba que el vehiculo freno y no
         # por que.
+        # La parrilla se anota **antes** del filtro de normalizables.
+        #
+        # El paquete de participantes no se normaliza ---no trae mediciones, trae
+        # identidad--- de modo que el filtro lo descarta. Pero es el unico que
+        # dice **quienes corren**, y sin el la parrilla completa publicaria
+        # tambien los lugares vacios del arreglo.
+        if decodificado["paquete"] == "participants":
+            self._validos = frozenset(
+                i for i, v in enumerate(decodificado["vehiculos"]) if v.get("name"))
+
         if decodificado["paquete"] not in f1_25.PAQUETES_NORMALIZABLES:
             return
         if self.cliente is None:
             self._reintentar_si_toca()
             if self.cliente is None:
                 return
+        # Los paquetes de bloque unico describen la sesion o al vehiculo propio
+        # y **no admiten** normalizarse para todos: pedirselo es un error, no una
+        # opcion. Se les pasa siempre el modo propio, aunque la parrilla completa
+        # este encendida.
+        solo_propio = (not self._parrilla_completa
+                       or decodificado["paquete"] in f1_25.PAQUETES_DE_BLOQUE_UNICO)
+        lote: list[dict] = []
         for mensaje in f1_25.mensajes_desde_paquete(
                 decodificado, inicio_utc,
+                solo_vehiculo_propio=solo_propio,
+                vehiculos_validos=self._validos,
                 desplazamiento_captura_us=desplazamiento_us):
             if self._run_id is not None:
                 # Va **dentro de `metadata.extra`**, no en el nivel superior del
@@ -505,8 +546,30 @@ class Publicador:
                 extra["replay_run_id"] = self._run_id
                 extra["replay_seq"] = self._seq
                 self._seq += 1
-            self.cliente.publish(MQTT_TOPIC, json.dumps(mensaje), qos=1)
-            self.mensajes += 1
+            lote.append(mensaje)
+        # **Un envio por paquete, no uno por senal.**
+        #
+        # Cada mensaje con garantia de entrega paga un ida y vuelta con el
+        # intermediario, y el cliente acepta unos 6.578 por segundo **sin
+        # importar que lleven adentro**: el de 560 senales pesa quinientas
+        # sesenta veces mas y se envia al mismo ritmo.
+        #
+        # De a una, la parrilla completa descartaba el 96 % en la cola de
+        # salida. Agrupadas, el caudal util pasa de 6.578 a 3.193.566 senales
+        # por segundo y no se descarta ninguna.
+        if not lote:
+            return
+        carga = json.dumps(lote if len(lote) > 1 else lote[0])
+        info = self.cliente.publish(MQTT_TOPIC, carga, qos=1)
+        if info.rc == 0:
+            self.mensajes += len(lote)
+        else:
+            # Se cuenta **por senal y no por envio**: lo que se perdio son las
+            # senales, y contarlas como uno haria parecer chico un descarte
+            # grande.
+            self.descartados += len(lote)
+            self.motivos_descarte[info.rc] = (
+                self.motivos_descarte.get(info.rc, 0) + len(lote))
 
     def cerrar(self) -> None:
         if self.cliente is not None:
@@ -653,7 +716,13 @@ def capturar_sesion(sock: socket.socket, primer_datagrama: bytes,
         ],
         "datagramas_no_decodificables": descartados,
         "procedencia": procedencia,
-        "publicacion": {"activa": publicador.activa, "mensajes": publicador.mensajes,
+        # Lo descartado va **en los metadatos de la captura**, no solo en la
+        # pantalla: una captura cuyos mensajes no llegaron a la base tiene que
+        # poder decirlo despues, cuando alguien se pregunte por que faltan filas.
+        "publicacion": {"activa": publicador.activa,
+                        "mensajes": publicador.mensajes,
+                        "descartados": publicador.descartados,
+                        "motivos_descarte": publicador.motivos_descarte,
                         "motivo": publicador.motivo},
         "version_decodificador": f1_udp.VERSION_DECODIFICADOR,
         "formato_udp_admitido": f1_udp.FORMATO_ADMITIDO,
@@ -700,8 +769,16 @@ def informar(r: dict) -> None:
         print(f"  ATENCION   : tamanos fuera de la especificacion: "
               f"{r['tamanos_fuera_de_especificacion']}")
     pub = r["publicacion"]
-    print(f"  publicacion: {pub['mensajes']} mensajes" if pub["activa"]
-          else f"  publicacion: no, {pub['motivo']}")
+    if not pub["activa"]:
+        print(f"  publicacion: no, {pub['motivo']}")
+    elif pub["descartados"]:
+        total = pub["mensajes"] + pub["descartados"]
+        print(f"  publicacion: {pub['mensajes']} mensajes, "
+              f"**{pub['descartados']} DESCARTADOS** "
+              f"({100 * pub['descartados'] / total:.1f} %) "
+              f"motivos {pub['motivos_descarte']}")
+    else:
+        print(f"  publicacion: {pub['mensajes']} mensajes, ninguno descartado")
 
 
 def main() -> None:
@@ -719,6 +796,14 @@ def main() -> None:
     # no lo pase.
     parser.add_argument("--puerto", type=int, default=PUERTO_JUEGO,
                         help="Puerto UDP donde escuchar.")
+    parser.add_argument("--parrilla-completa", action="store_true",
+                        help="Normaliza los veintidos vehiculos y no solo "
+                             "el propio. La base absorbe 2.770 filas por "
+                             "segundo y esto produce 35.186: la cola crece "
+                             "y no vuelve a bajar. Sirve para medir la "
+                             "carga, no para capturar. Para los rivales, "
+                             "republicar_captura.py --parrilla-completa "
+                             "al terminar la sesion.")
     parser.add_argument("--run-id", default=None,
                         help="Identidad de reinyeccion para una corrida que no "
                              "es una sesion real. Sin ella, lo que se reproduzca "
@@ -727,7 +812,8 @@ def main() -> None:
     args = parser.parse_args()
 
     args.destino.mkdir(parents=True, exist_ok=True)
-    publicador = Publicador(not args.sin_publicar, run_id=args.run_id)
+    publicador = Publicador(not args.sin_publicar, run_id=args.run_id,
+                            parrilla_completa=args.parrilla_completa)
 
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.bind(("0.0.0.0", args.puerto))
