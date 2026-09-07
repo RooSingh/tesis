@@ -1,0 +1,74 @@
+# Definicion reproducible del intermediario de mensajeria.
+#
+# POR QUE EXISTE
+# --------------
+# El contenedor se habia creado con `docker run`, de modo que **su configuracion
+# vivia adentro del contenedor**. Recrearlo por cualquier motivo ---una
+# actualizacion, un incidente del disco, un `docker rm`--- devolvia dos topes a su
+# valor por omision, y los dos descartan telemetria en silencio:
+#
+#   max_inflight_messages   cuantos mensajes con garantia entrega sin que se los
+#                           confirmen. Con la confirmacion manual fija el techo de
+#                           caudal: veinte dejaban cuarenta mensajes por segundo
+#                           contra los 77,2 que el modo en vivo necesita.
+#   max_queued_messages     cuantos retiene para un suscriptor ausente. Es hasta
+#                           donde protege la sesion conservada: con mil, matar al
+#                           consumidor con tres mil encolados perdia 1.700.
+#
+# Montando la configuracion desde el repositorio, el ajuste **viaja con el codigo**
+# y sobrevive a recrear el contenedor.
+#
+# LA BASE DE DATOS NO ESTA ACA, Y ES A PROPOSITO
+# ----------------------------------------------
+# Su contenedor tambien se creo con `docker run`, pero su situacion es distinta:
+# tanto sus datos como su ajuste fino ---`shared_buffers` en 1,7 GB,
+# `effective_cache_size` en 5 GB, dieciseis trabajadores de fondo--- viven en un
+# volumen con nombre y **sobreviven a recrearlo**. Lo unico que no es reproducible
+# es el comando de creacion.
+#
+# Traerla aca exigiria referenciar su volumen exactamente bien, y un error ahi son
+# ochenta y siete millones de filas. No hay apuro que lo justifique.
+#
+# COMO SE USA
+# -----------
+#   docker compose -f infra/docker-compose.yml up -d
+#
+# Y despues, siempre:
+#   python scripts/verificar_topes_intermediario.py
+#
+# Ese guion no lee la configuracion sino que **mide la conducta**, que es lo unico
+# que distingue un ajuste aplicado de uno leido y descartado. Estos topes no se
+# aplican en una recarga, y la recarga informa exito igual.
+
+services:
+  mosquitto:
+    # Version fija y no `latest`. La imagen que corria era `latest`, y `latest`
+    # es justamente lo que puede cambiar de version ---y de valores por
+    # omision--- sin que nadie lo pida. La etiqueta apunta a la imagen que ya
+    # estaba en la maquina, de modo que recrear no descarga nada.
+    image: eclipse-mosquitto:2.1.2
+    container_name: tesis-mosquitto
+    # `no` reproduce la conducta que el contenedor tenia. Conviene evaluar
+    # `unless-stopped`, que lo levantaria solo tras un reinicio de Docker ---esta
+    # jornada hubo uno y los contenedores quedaron abajo--- pero es un cambio de
+    # conducta y se deja a decision de la autora.
+    restart: "no"
+    ports:
+      # Solo el 1883. El listener del panel en 9883 existe en la configuracion y
+      # **no estaba publicado al anfitrion**; se reproduce tal cual para no
+      # exponer nada que antes no lo estuviera.
+      - "1883:1883"
+    volumes:
+      # La configuracion, de solo lectura: el contenedor no debe poder cambiar lo
+      # que el repositorio declara.
+      - ./mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      - mosquitto_data:/mosquitto/data
+      - mosquitto_log:/mosquitto/log
+
+volumes:
+  # Nombrados en lugar de anonimos. Los anteriores eran anonimos y quedan
+  # huerfanos al recrear: no se pierde nada porque la persistencia en disco no
+  # esta habilitada y la cola del intermediario vive en memoria, cosa que ya se
+  # sabia por haberla perdido en un reinicio.
+  mosquitto_data:
+  mosquitto_log:
