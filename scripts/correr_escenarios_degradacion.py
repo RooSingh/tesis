@@ -71,6 +71,22 @@ ESCENARIOS = [
     {"nombre": "irregular_20ms", "velocidad": 1.0, "jitter_ms": 20.0},
     {"nombre": "irregular_y_perdida", "velocidad": 1.0,
      "descarte": 0.05, "jitter_ms": 20.0},
+    # Fallo parcial de sensado: un canal **deja de existir**, de forma sostenida,
+    # mientras el resto del flujo sigue intacto.
+    #
+    # No es lo mismo que el descarte de arriba, y la diferencia es el escenario.
+    # Perder un datagrama al azar quita todas las senales de ese paquete durante
+    # un instante y las devuelve enseguida; que un sensor falle quita **una
+    # familia de senales para siempre** y deja el resto sin tocar. Lo primero se
+    # ve como un hueco en el flujo, lo segundo como un canal ausente, y el
+    # sistema debe declararlos distinto.
+    #
+    # Se eligen tres familias con consecuencias distintas sobre el analisis:
+    # el movimiento sostiene la deteccion de curvas, la telemetria sostiene las
+    # frenadas, y los datos de vuelta sostienen todo lo que compara vueltas.
+    {"nombre": "sin_movimiento", "velocidad": 1.0, "silenciar": ["motion"]},
+    {"nombre": "sin_telemetria", "velocidad": 1.0, "silenciar": ["car_telemetry"]},
+    {"nombre": "sin_datos_de_vuelta", "velocidad": 1.0, "silenciar": ["lap_data"]},
 ]
 
 
@@ -106,11 +122,14 @@ def correr_uno(original: Path, escenario: dict, limite: int | None,
               "--jitter-ms", str(escenario.get("jitter_ms", 0.0)),
               "--retraso-ms", str(escenario.get("retraso_ms", 0.0)),
               "--semilla", str(escenario.get("semilla", 7))]
+    for paquete in escenario.get("silenciar", []):
+        emisor += ["--silenciar", paquete]
     if limite:
         emisor += ["--limite", str(limite)]
 
     salida = subprocess.run(emisor, capture_output=True, text=True)
     emitidos = descartados = leidos = None
+    silenciados = 0
     for linea in salida.stdout.splitlines():
         partes = linea.split()
         if linea.strip().startswith("leidos"):
@@ -119,6 +138,8 @@ def correr_uno(original: Path, escenario: dict, limite: int | None,
             emitidos = int(partes[1].replace(",", ""))
         elif linea.strip().startswith("descartados"):
             descartados = int(partes[1].replace(",", ""))
+        elif linea.strip().startswith("silenciados"):
+            silenciados = int(partes[1].replace(",", ""))
 
     # Se espera el silencio que cierra la captura, mas margen.
     time.sleep(SILENCIO_S + 3.0)
@@ -149,13 +170,16 @@ def correr_uno(original: Path, escenario: dict, limite: int | None,
         "velocidad": escenario.get("velocidad", 1.0),
         "descarte_pedido": escenario.get("descarte", 0.0),
         "jitter_ms": escenario.get("jitter_ms", 0.0),
+        "silenciar": escenario.get("silenciar", []),
+        "silenciados": silenciados,
         "leidos": leidos,
         "descartados": descartados,
         "emitidos": emitidos,
         "recibidos": recibidos,
         "archivo": archivo.name if archivo else None,
         # Las dos restas que tienen que cerrar.
-        "cierra_el_emisor": (leidos == (descartados or 0) + (emitidos or 0)
+        "cierra_el_emisor": (leidos == (descartados or 0) + silenciados
+                             + (emitidos or 0)
                              if leidos is not None and emitidos is not None
                              else None),
         "perdidos_en_el_camino": ((emitidos - recibidos)

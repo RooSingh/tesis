@@ -144,8 +144,24 @@ class RespetaElCalendario(unittest.TestCase):
 
         Si el calendario se calculara contra el datagrama anterior en lugar de
         contra el arranque, cada espera agregaria su propio error y el desvio
-        del ultimo datagrama seria mucho mayor que el del primero. El maximo
-        acotado es lo que demuestra que no se acumula.
+        del ultimo datagrama seria mucho mayor que el del primero.
+
+        Se mira **la mediana y no el maximo**, y el motivo se midio
+        -----------------------------------------------------------
+        La version anterior exigia un maximo por debajo de 20 ms y fallaba tres
+        de cada cuatro corridas **con la maquina al uno por ciento de CPU**. No
+        era un defecto del reproductor: sobre este sistema operativo un
+        `sleep` de 50 ms tarda a veces 90, y la resolucion del temporizador
+        ---comprobada en un milisegundo, la fina--- no lo evita.
+
+        La prueba le estaba reclamando al codigo algo que hace el planificador
+        del sistema. Y una prueba que falla por ruido tres de cada cuatro veces
+        **es peor que no tenerla**: ensena a ignorar los fallos.
+
+        La mediana separa las dos responsabilidades. El temblor del sistema
+        operativo es esporadico y no la mueve; **la acumulacion la moveria
+        entera**, porque afectaria a todos los datagramas y no a unos pocos. En
+        corridas normales la mediana es de unos 400 microsegundos.
         """
 
         with TemporaryDirectory() as d:
@@ -153,21 +169,52 @@ class RespetaElCalendario(unittest.TestCase):
             r = cli.reproducir_por_udp(ruta, DESTINO,
                                        f1_capture.PerfilDegradacion(),
                                        velocidad=1.0, sin_red=True)
-        # Sesenta datagramas de 10 ms: si el error se acumulara, el desvio
-        # maximo llegaria al orden de la duracion entera.
-        self.assertLess(r["desvio_maximo_us"], 20_000)
+        # Sesenta datagramas de 10 ms: si el error se acumulara, la mediana
+        # llegaria al orden de cientos de milisegundos, no a medio milisegundo.
+        self.assertLess(r["desvio_mediano_us"], 5_000)
+        # Y un techo generoso, por si el reproductor se volviera lento de forma
+        # pareja: eso la mediana **si** lo detectaria, pero el techo lo declara
+        # sin ambiguedad. El valor sale del ruido medido ---decenas de
+        # milisegundos--- con un factor de cinco, no de una intuicion.
+        self.assertLess(r["desvio_maximo_us"], 200_000)
 
 
 class DefinicionDeAtraso(unittest.TestCase):
     """Atraso es pasarse de la tolerancia, no correrse un microsegundo."""
 
-    def test_a_velocidad_real_no_hay_atrasos(self):
+    def test_a_velocidad_real_los_atrasos_son_la_excepcion(self):
+        """A ritmo real el reproductor no se atrasa de forma sistematica.
+
+        No se exige **cero**, y no por indulgencia: la tolerancia declarada es
+        de un milisegundo y el piso de ruido del sistema operativo esta por
+        encima. Un `sleep` de 50 ms tarda a veces 90 con la maquina ociosa, de
+        modo que exigir cero atrasos es exigir que Windows no tiemble.
+
+        Lo que la prueba tiene que distinguir es **un atraso sistematico de uno
+        esporadico**. Un reproductor que no respeta el calendario los produce en
+        casi todos los datagramas; el temblor del sistema, en uno de cada
+        tantos. Con veinte datagramas, un atraso es ruido y quince son un
+        defecto.
+        """
+
         with TemporaryDirectory() as d:
             ruta = _captura(Path(d), [50_000] * 20)
             r = cli.reproducir_por_udp(ruta, DESTINO,
                                        f1_capture.PerfilDegradacion(),
                                        velocidad=1.0, sin_red=True)
-        self.assertEqual(r["atrasados"], 0)
+        # **La mediana es la que detecta; el conteo es solo el respaldo.**
+        #
+        # Un atraso sistematico mueve la mediana entera, porque afecta a todos
+        # los datagramas. En corridas normales ronda los 350 microsegundos,
+        # menos de la mitad de la tolerancia declarada: si el reproductor
+        # dejara de respetar el calendario, esto salta sin ambiguedad.
+        self.assertLess(r["desvio_mediano_us"], 1_000)
+        # El conteo va holgado a proposito. Un primer umbral de dos sobre veinte
+        # todavia fallaba una de cada diez corridas: estaba ajustado a lo
+        # observado en unas pocas y no al ruido real. Cinco sobre veinte sigue
+        # estando cuatro veces por debajo de lo que produciria un defecto, que
+        # atrasaria casi todos.
+        self.assertLessEqual(r["atrasados"], 5)
 
     def test_una_velocidad_imposible_declara_los_atrasos(self):
         """Es la senal que hay que ver: el perfil pedido no se respeto."""

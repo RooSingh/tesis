@@ -53,7 +53,7 @@ RAIZ = Path(__file__).resolve().parent.parent
 if str(RAIZ) not in sys.path:
     sys.path.insert(0, str(RAIZ))
 
-from backend import f1_capture  # noqa: E402
+from backend import f1_capture, f1_udp  # noqa: E402
 
 # El puerto en que escucha el capturador. Emitir aca es lo que hace que la
 # reproduccion recorra la cadena real y no una maqueta.
@@ -75,12 +75,39 @@ ESPERA_MINIMA_S = 0.0005
 TOLERANCIA_MS = 1.0
 
 
+#: Posicion del tipo de paquete dentro de la cabecera: dos bytes de formato mas
+#: cuatro de version. Se lee ese byte suelto en lugar de decodificar el datagrama
+#: entero, porque silenciar es una decision por paquete y decodificar cada uno
+#: costaria mas que emitirlo.
+POSICION_TIPO_DE_PAQUETE = 6
+
+
+def tipos_por_nombre(nombres: list[str]) -> set[int]:
+    """Traduce nombres de paquete a sus identificadores.
+
+    Falla ante un nombre desconocido en lugar de ignorarlo: una prueba que cree
+    haber silenciado un canal y no lo haya silenciado daria por bueno el
+    comportamiento que venia a poner a prueba.
+    """
+
+    por_nombre = {d["nombre"]: i for i, d in f1_udp.PAQUETES.items()}
+    ids = set()
+    for nombre in nombres:
+        if nombre not in por_nombre:
+            conocidos = ", ".join(sorted(por_nombre))
+            raise SystemExit(f"paquete desconocido: {nombre!r}. "
+                             f"Los que hay son: {conocidos}")
+        ids.add(por_nombre[nombre])
+    return ids
+
+
 def reproducir_por_udp(ruta: Path, destino: tuple[str, int],
                        perfil: f1_capture.PerfilDegradacion,
                        velocidad: float = 1.0,
                        sin_red: bool = False,
                        limite: int | None = None,
-                       tolerancia_ms: float = TOLERANCIA_MS) -> dict:
+                       tolerancia_ms: float = TOLERANCIA_MS,
+                       silenciar: set[int] | None = None) -> dict:
     """Emite la captura respetando sus tiempos y devuelve lo que hizo."""
 
     metricas = f1_capture.MetricasReproduccion()
@@ -91,6 +118,8 @@ def reproducir_por_udp(ruta: Path, destino: tuple[str, int],
     atrasados = 0
     desvios_us: list[int] = []
     enviados = 0
+    silenciados = 0
+    silenciar = silenciar or set()
     arranque = time.perf_counter()
     try:
         for dg in f1_capture.reproducir(ruta, perfil, metricas):
@@ -111,6 +140,12 @@ def reproducir_por_udp(ruta: Path, destino: tuple[str, int],
             # forma del trafico, no un incumplimiento.
             if desvio_us > tolerancia_ms * 1000:
                 atrasados += 1
+            # El silencio va **despues** de haber respetado el calendario: un
+            # sensor que deja de emitir no acelera a los demas, y adelantar los
+            # datagramas restantes cambiaria la prueba por otra.
+            if silenciar and len(dg.carga) > POSICION_TIPO_DE_PAQUETE                     and dg.carga[POSICION_TIPO_DE_PAQUETE] in silenciar:
+                silenciados += 1
+                continue
             if sock is not None:
                 sock.sendto(dg.carga, destino)
             enviados += 1
@@ -124,6 +159,7 @@ def reproducir_por_udp(ruta: Path, destino: tuple[str, int],
     resultado = metricas.como_dict()
     resultado.update({
         "enviados": enviados,
+        "silenciados": silenciados,
         "duracion_s": transcurrido,
         "atrasados": atrasados,
         # Cuanto se corrio cada emision respecto de su instante previsto. Es la
@@ -158,6 +194,11 @@ def main() -> int:
                     help="puerto del receptor")
     ap.add_argument("--velocidad", type=float, default=1.0,
                     help="multiplicador del tiempo; 2 reproduce al doble")
+    ap.add_argument("--silenciar", action="append", default=[], metavar="PAQUETE",
+                    help="deja de emitir ese tipo de paquete, de forma sostenida. "
+                         "Es el fallo parcial de sensado: no se pierde un "
+                         "datagrama suelto sino que un canal deja de existir. "
+                         "Se puede repetir.")
     ap.add_argument("--descarte", type=float, default=0.0,
                     help="probabilidad de descartar cada datagrama, 0 a 1")
     ap.add_argument("--jitter-ms", type=float, default=0.0,
@@ -200,17 +241,22 @@ def main() -> int:
         print("  sin emitir: solo se recorre y se mide el perfil")
     else:
         print(f"  hacia {destino[0]}:{destino[1]}")
+    if args.silenciar:
+        print(f"  silenciando: {', '.join(sorted(args.silenciar))}")
     print(f"  velocidad {args.velocidad:g}x, descarte {args.descarte:.1%}, "
           f"jitter {args.jitter_ms:g} ms, retraso {args.retraso_ms:g} ms, "
           f"semilla {args.semilla}")
     print()
 
     r = reproducir_por_udp(args.captura, destino, perfil, args.velocidad,
-                           args.sin_red, args.limite, args.tolerancia_ms)
+                           args.sin_red, args.limite, args.tolerancia_ms,
+                           silenciar=tipos_por_nombre(args.silenciar))
 
     print(f"  leidos       {r['leidos']:>10,}")
     print(f"  descartados  {r['descartados']:>10,}  "
           f"({r['tasa_descarte']:.2%} pedido {args.descarte:.2%})")
+    if r.get("silenciados"):
+        print(f"  silenciados  {r['silenciados']:>10,}")
     print(f"  emitidos     {r['enviados']:>10,}")
     print(f"  duracion     {r['duracion_s']:>10.1f} s")
     print(f"  desvio del calendario: mediano {r['desvio_mediano_us'] / 1000:.2f} ms, "
@@ -221,10 +267,15 @@ def main() -> int:
           f"{r['tolerancia_ms']:g} ms)")
 
     # La conciliacion, contra lo que debia quedar y no contra lo que se evito.
-    if r["leidos"] != r["descartados"] + r["emitidos"] and args.limite is None:
+    # Lo silenciado es un tercer sumando y no una perdida: el datagrama se leyo,
+    # se decidio no emitirlo y se conto. Dejarlo fuera de la cuenta haria que la
+    # unica verificacion de la herramienta fallara siempre que se la use.
+    esperado = r["descartados"] + r.get("silenciados", 0) + r["emitidos"]
+    if r["leidos"] != esperado and args.limite is None:
         print()
         print(f"  ATENCION: leidos ({r['leidos']:,}) no es descartados "
-              f"({r['descartados']:,}) mas emitidos ({r['enviados']:,})")
+              f"({r['descartados']:,}) mas silenciados "
+              f"({r.get('silenciados', 0):,}) mas emitidos ({r['enviados']:,})")
         return 1
 
     if args.json:
