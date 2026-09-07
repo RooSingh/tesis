@@ -112,16 +112,31 @@ class ListadoDeSesionesTests(unittest.TestCase):
 
 
 class ListadoDeCorridasTests(unittest.TestCase):
-    def test_expone_la_variante_acotada_y_no_el_agregado_lento(self) -> None:
-        """El listado exhaustivo cuesta 23,2 segundos medidos y no debe exponerse."""
-        with patch("backend.app.listar_corridas_replay_acotado", return_value=[]) as acotado:
-            racing_replay_runs(9939)
+    """La ruta no debe recorrer la tabla para listar unas pocas corridas.
 
-        acotado.assert_called_once_with(9939)
+    ACTUALIZADA EL 2026-09-06. Esta prueba exigia que la ruta llamara a
+    `listar_corridas_replay_acotado`, que enumeraba por saltos de indice. La
+    intencion era **no exponer un recorrido costoso**, y sigue siendo la misma;
+    lo que cambio es cual es hoy la variante barata.
+
+    Al comprimirse la tabla, la enumeracion por saltos dejo de ser barata: se
+    midio en 302,3 segundos para devolver una corrida, porque `replay_run_id`
+    no es columna de segmentacion de la compresion. La ruta pasa a servirse de
+    un catalogo mantenido, y la prueba comprueba eso mismo.
+    """
+
+    def test_se_sirve_del_catalogo_y_no_recorre_la_tabla(self) -> None:
+        """Ni el agregado exhaustivo ni la enumeracion por saltos se exponen."""
+        with patch("backend.app.catalogo_corridas.listar", return_value=[]) as catalogo:
+            with patch("backend.app.listar_corridas_replay_acotado") as recorrido:
+                racing_replay_runs(9939)
+
+        catalogo.assert_called_once_with(9939)
+        recorrido.assert_not_called()
 
     def test_una_sesion_sin_corridas_devuelve_lista_vacia_y_no_un_error(self) -> None:
         """La sesion existe; lo que no hay es telemetria replicada."""
-        with patch("backend.app.listar_corridas_replay_acotado", return_value=[]):
+        with patch("backend.app.catalogo_corridas.listar", return_value=[]):
             self.assertEqual(racing_replay_runs(10006), [])
 
 

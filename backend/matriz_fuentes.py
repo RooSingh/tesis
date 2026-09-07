@@ -35,6 +35,7 @@ vehiculo la mida. La primera es un limite del objeto; la segunda, del acceso.
 
 from __future__ import annotations
 
+import threading
 import time
 from typing import Any
 
@@ -322,24 +323,124 @@ def _medir(cursor, fuente: str, senal: str,
     }
 
 
+#: Un solo recalculo a la vez, y nunca dentro de una peticion si ya hay un
+#: resultado anterior que servir.
+_CERROJO_REFRESCO = threading.Lock()
+_REFRESCANDO = False
+
+
+def _refrescar_en_segundo_plano() -> None:
+    """Recalcula la matriz sin que nadie espere el resultado."""
+
+    global _REFRESCANDO
+    try:
+        _construir_midiendo()
+    except Exception:  # pragma: no cover - el refresco no debe tumbar el hilo
+        pass
+    finally:
+        with _CERROJO_REFRESCO:
+            _REFRESCANDO = False
+
+
 def construir() -> dict[str, Any]:
-    """Arma la matriz midiendo sobre lo persistido."""
+    """Devuelve la matriz, midiendo solo cuando no hay nada que servir.
+
+    POR QUE NO SE RECALCULA DENTRO DE LA PETICION.
+
+    La medicion recorre la tabla entera: son 19,9 s con las consultas ya
+    corregidas, y eran mas de cinco minutos antes. Con una vigencia de cinco
+    minutos, una de cada tantas visitas pagaba esa espera completa, y el
+    tablero parecia colgado sin decir por que.
+
+    Lo que la matriz describe ---cuantas filas, senales, sesiones y vehiculos
+    tiene cada fuente--- **cambia cuando se carga una sesion, no cuando se
+    consulta**. Por eso, vencida la vigencia, se entrega igual el ultimo
+    calculo, declarando su edad, y el recalculo ocurre por detras. Quien mira
+    ve un dato de hace unos minutos, que es exacto salvo que se haya cargado
+    algo en el medio, en lugar de esperar veinte segundos.
+
+    La unica espera real es la primera, cuando todavia no hay nada que servir.
+    """
+
+    global _REFRESCANDO
+    ahora = time.monotonic()
+
+    if _CACHE:
+        edad = ahora - _CACHE[0]
+        if edad >= VIGENCIA_S:
+            with _CERROJO_REFRESCO:
+                if not _REFRESCANDO:
+                    _REFRESCANDO = True
+                    hilo = threading.Thread(
+                        target=_refrescar_en_segundo_plano,
+                        name="matriz-fuentes-refresco",
+                        daemon=True,
+                    )
+                    hilo.start()
+        return {
+            **_CACHE[1],
+            "edad_del_calculo_s": round(edad, 1),
+            "recalculando": edad >= VIGENCIA_S,
+        }
+
+    return _construir_midiendo()
+
+
+def _construir_midiendo() -> dict[str, Any]:
+    """Mide contra la base. Es la parte cara; no llamarla desde una peticion
+    si hay un resultado anterior disponible."""
 
     global _CACHE
     ahora = time.monotonic()
-    if _CACHE and ahora - _CACHE[0] < VIGENCIA_S:
-        return {**_CACHE[1], "edad_del_calculo_s": round(ahora - _CACHE[0], 1)}
-
     with db.obtener_conexion() as conexion, conexion.cursor() as cursor:
         fuentes = []
         for definicion in FUENTES:
+            # POR QUE ESTO SON TRES CONSULTAS Y NO UNA.
+            #
+            # Escrito como una sola sentencia con los cuatro agregados juntos,
+            # el planificador resuelve todo en una pasada que descomprime la
+            # tabla entera: medido el 2026-09-06 sobre la fuente de simulacion
+            # ---64,9 millones de filas--- costaba 282 segundos, y la matriz
+            # tiene varias fuentes. El modo del tablero que la consume no
+            # llegaba a cargar nunca.
+            #
+            # Separadas, cada una puede aprovechar que `signal_name`,
+            # `session_id`, `source_type` y `vehicle_id` son columnas de
+            # segmentacion de la compresion, y que los valores distintos estan
+            # disponibles sin descomprimir el contenido. El conteo de filas baja
+            # a 0,2 s, el de senales a 1,4 s, y los dos conteos de valores
+            # distintos, resueltos sobre una subconsulta `distinct` comun, a
+            # 7,7 s. La misma respuesta en 9,3 s en lugar de 282.
             cursor.execute(
-                """select count(*), count(distinct signal_name),
-                          count(distinct session_id), count(distinct vehicle_id)
-                   from telemetry_messages where source_type = %s""",
+                "select count(*) from telemetry_messages where source_type = %s",
                 (definicion["clave"],),
             )
-            filas, senales, sesiones, vehiculos = cursor.fetchone()
+            (filas,) = cursor.fetchone()
+
+            cursor.execute(
+                """select count(distinct signal_name)
+                     from telemetry_messages where source_type = %s""",
+                (definicion["clave"],),
+            )
+            (senales,) = cursor.fetchone()
+
+            cursor.execute(
+                """select count(*), count(distinct vehicle_id)
+                     from (select distinct session_id, vehicle_id
+                             from telemetry_messages
+                            where source_type = %s) as pares""",
+                (definicion["clave"],),
+            )
+            _pares, vehiculos = cursor.fetchone()
+
+            cursor.execute(
+                """select count(*)
+                     from (select distinct session_id
+                             from telemetry_messages
+                            where source_type = %s) as s""",
+                (definicion["clave"],),
+            )
+            (sesiones,) = cursor.fetchone()
             fuentes.append({**definicion, "filas": filas, "senales": senales,
                             "sesiones": sesiones, "vehiculos": vehiculos})
 

@@ -68,6 +68,25 @@ class DifusorTests(unittest.TestCase):
         self._entregar({"signal_name": "speed"})
         self.assertIn("_recibido_utc", cola.get_nowait())
 
+    def test_desagrupa_un_lote_mqtt(self):
+        """El capturador publica lotes; SSE debe entregar una senal por evento."""
+
+        cola = self.d.suscribir()
+        self._entregar([
+            {"signal_name": "speed", "value": 300},
+            {"signal_name": "engine_speed", "value": 12000},
+        ])
+        recibidos = [cola.get_nowait(), cola.get_nowait()]
+        self.assertEqual([m["signal_name"] for m in recibidos],
+                         ["speed", "engine_speed"])
+        self.assertEqual(self.d.recibidos, 2)
+
+    def test_un_elemento_invalido_no_descarta_el_resto_del_lote(self):
+        cola = self.d.suscribir()
+        self._entregar(["invalido", {"signal_name": "speed", "value": 280}])
+        self.assertEqual(self.d.descartados, 1)
+        self.assertEqual(cola.get_nowait()["value"], 280)
+
     def test_un_mensaje_ilegible_no_interrumpe_el_flujo(self):
         cola = self.d.suscribir()
         self.d._al_recibir(None, None, Mensaje(None, crudo=b"esto no es json"))

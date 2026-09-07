@@ -170,12 +170,23 @@ class DifusorEnVivo:
 
     def _al_recibir(self, _cliente, _datos, mensaje) -> None:
         try:
-            cuerpo = json.loads(mensaje.payload.decode("utf-8"))
+            contenido = json.loads(mensaje.payload.decode("utf-8"))
         except (UnicodeDecodeError, json.JSONDecodeError):
             self.descartados += 1
             return
 
-        cuerpo["_recibido_utc"] = datetime.now(timezone.utc).isoformat()
+        cuerpos = contenido if isinstance(contenido, list) else [contenido]
+        recibido_utc = datetime.now(timezone.utc).isoformat()
+        for cuerpo in cuerpos:
+            if not isinstance(cuerpo, dict):
+                self.descartados += 1
+                continue
+            self._procesar_cuerpo(dict(cuerpo), recibido_utc)
+
+    def _procesar_cuerpo(self, cuerpo: dict, recibido_utc: str) -> None:
+        """Registra y reparte una senal de un mensaje MQTT simple o agrupado."""
+
+        cuerpo["_recibido_utc"] = recibido_utc
         self.recibidos += 1
         self.recientes.append(cuerpo)
 

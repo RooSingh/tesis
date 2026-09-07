@@ -21,7 +21,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 
 from adapters import f1_25 as f1_25_adapter
+from backend import api_analisis
+from backend import api_sesion
+from backend import catalogo_corridas
 from backend import db
+from backend import ingesta
 from backend import live_stream
 from backend import matriz_fuentes
 from backend import anotador_vivo
@@ -70,6 +74,16 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Los endpoints de escritura viven en su propio modulo: iniciar y detener
+# captura, importar datasets y borrar una sesion persistida.
+app.include_router(ingesta.router)
+
+# Lectura de una sesion persistida ---series por distancia, trazado, estado del
+# vehiculo, clima, avisos y catalogo--- y el modulo de analisis, que hasta aqui
+# no tenia ninguna ruta.
+app.include_router(api_sesion.router)
+app.include_router(api_analisis.router)
 
 
 LIMITE_MUESTRAS_MAXIMO = 200000
@@ -312,7 +326,18 @@ def racing_replay_runs(session_key: int) -> list[dict]:
     La respuesta puede ser una lista vacia, y eso es una respuesta valida: la
     sesion existe pero no tiene telemetria replicada.
     """
-    return listar_corridas_replay_acotado(session_key)
+    # CORRECCION DEL 2026-09-06. Lo que este docstring afirmaba dejo de ser
+    # cierto al comprimirse la tabla: `listar_corridas_replay_acotado` tardo
+    # **302,3 segundos** en devolver una corrida, y este modo del tablero no
+    # llegaba a cargar. La enumeracion por saltos de indice se apoya en
+    # `replay_run_id`, que **no es columna de segmentacion** de la compresion,
+    # de modo que cada salto degrada a recorrer y descomprimir.
+    #
+    # Se sirve desde un catalogo mantenido, que responde en milisegundos y cuyo
+    # costo si es independiente del volumen. La funcion anterior se conserva:
+    # sigue siendo la definicion correcta de que es una corrida, y es de donde
+    # el catalogo saldria si hubiera que rehacerlo sin esta tabla.
+    return catalogo_corridas.listar(session_key)
 
 
 @app.get("/racing/sessions/{session_key}/replay-series")

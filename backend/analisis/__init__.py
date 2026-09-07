@@ -30,6 +30,7 @@ renombrarlas y a que el nombre dejara de decir a que herramienta pertenece.
 from backend.analisis import (  # noqa: F401
     ajuste,
     consistencia,
+    criticidad,
     curvas,
     degradacion,
     delta,
