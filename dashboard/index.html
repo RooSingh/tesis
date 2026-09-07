@@ -1,459 +1,573 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="es">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Sesion demostrativa | Telemetria</title>
-  <link rel="stylesheet" href="styles.css">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Banco de instrumentos</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Saira+Condensed:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<link rel="stylesheet" href="styles.css">
 </head>
 <body>
-  <main class="dashboard">
-    <nav class="selector-modo" aria-label="Navegacion de analisis">
-      <div class="marca-producto">
-        <p class="etiqueta-superior">Telemetry workspace</p>
-        <strong>Analisis de rendimiento</strong>
+<div class="lienzo">
+
+  <p class="aviso-descarga" id="aviso-descarga" role="status" aria-live="polite" data-visible="no"></p>
+
+  <!-- La nota se lee una vez y despues estorba: cada pixel que ocupa es un
+       pixel que le falta a la cabina, que tiene que entrar en la ventana.
+       Queda a un clic, plegada. -->
+  <!-- El estado de la conexion con la API. Es lo primero que hay que saber:
+       si el tablero no puede hablar con el backend, todo lo demas es ruido. -->
+  <p class="estado-api" id="estado-api" role="status" aria-live="polite" hidden></p>
+
+  <div class="barra">
+    <div class="marca">
+      <p class="eyebrow" id="marca-eyebrow">Banco de instrumentos</p>
+      <h1 id="marca-titulo">Sin sesión</h1>
+    </div>
+    <div class="grupo-control">
+      <p class="eyebrow">Fuente</p>
+      <div class="segmentado" id="sel-fuente" role="group" aria-label="Fuente de datos">
+        <button type="button" data-fuente="f1" aria-pressed="true">F1 25</button>
+        <button type="button" data-fuente="openf1" aria-pressed="false">OpenF1</button>
+        <button type="button" data-fuente="can" aria-pressed="false">CAN real</button>
       </div>
-      <label for="selector-modo">Espacio de trabajo</label>
-      <select id="selector-modo">
-        <option value="simulation">Simulacion CAN</option>
-        <option value="openf1">Replay OpenF1</option>
-        <option value="vivo">F1 25 en vivo</option>
-        <option value="matriz">Comparacion de fuentes</option>
-      </select>
-    </nav>
-
-    <header class="cabecera-sesion">
-      <div>
-        <p id="etiqueta-cabecera" class="etiqueta-superior">Telemetria de conduccion</p>
-        <h1 id="titulo-cabecera">Sesion demostrativa</h1>
-        <p id="resumen-sesion">Cargando contexto de sesion...</p>
+    </div>
+    <div class="grupo-control">
+      <p class="eyebrow">Tema</p>
+      <div class="segmentado" id="sel-tema" role="group" aria-label="Tema visual">
+        <button type="button" data-tema="claro" aria-pressed="false">Claro</button>
+        <button type="button" data-tema="oscuro" aria-pressed="true">Oscuro</button>
       </div>
-      <div id="estado-origen" class="estado-origen">SIN DATOS</div>
-    </header>
+    </div>
+  </div>
 
+  <!-- ciclo de vida del modo -->
+  <div class="ciclo">
+    <div class="estado-sesion">
+      <span class="pastilla" id="pastilla-estado">sin datos</span>
+      <span class="detalle" id="detalle-estado"></span>
+    </div>
+    <button class="boton" id="btn-accion" type="button"></button>
+    <button class="boton secundario" id="btn-abrir" type="button">Abrir sesión guardada</button>
+    <button class="boton secundario" id="btn-comparar" type="button">Comparar pilotos</button>
+    <button class="boton peligro" id="btn-limpiar" type="button">Limpiar sesión</button>
+    <span class="sin-api" title="Las acciones se ejecutan mediante la API">API</span>
+  </div>
 
-    <!-- Camino en vivo. No consulta la base: recibe del broker por eventos
-         enviados por el servidor. Que sea un camino distinto del historico es lo
-         que vuelve significativa la comparacion entre operacion en vivo y
-         post-sesion. -->
-    <section id="panel-vivo" class="panel panel-vivo" hidden>
-      <header class="cabecera-vivo">
-        <div>
-          <p class="etiqueta-superior">Fuente de simulacion en vivo</p>
-          <h2 id="vivo-titulo">F1 25 &mdash; esperando telemetria</h2>
-        </div>
-        <div class="marcas-vivo">
-          <div class="marca-simulado" title="Los valores provienen de un simulador">
-            DATO SIMULADO
-          </div>
-          <!-- El mismo canal transporta la consola en vivo y la reproduccion de
-               una captura. El mensaje declara cual de las dos es; no mostrarlo
-               presentaria una grabacion como si estuviera ocurriendo. -->
-          <div id="vivo-origen" class="marca-origen" hidden></div>
-        </div>
-      </header>
+  <!-- ============================================================
+       TRANSPORTE
+       ------------------------------------------------------------
+       Una sesion guardada se recorre; un flujo en vivo, no. Son dos modos
+       de uso distintos y la interfaz tiene que decir en cual esta: sin eso,
+       quien mira no sabe si el numero que ve esta pasando ahora o paso el
+       martes, que es la diferencia entre operar y analizar.
+       ============================================================ -->
+  <div class="transporte" id="transporte" data-modo="reproduccion">
 
-      <p id="vivo-estado" class="aviso-vivo">Conectando con el flujo en vivo...</p>
+    <!-- Modo reproduccion: la sesion se recorre. -->
+    <div class="mandos" id="mandos-reproduccion">
+      <button class="boton-transporte" id="tr-atras" type="button"
+              title="Retroceder 10 segundos" aria-label="Retroceder 10 segundos">
+        <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M13 3 L6 8 L13 13 Z M4 3 v10" /></svg>
+      </button>
+      <button class="boton-transporte grande" id="tr-play" type="button"
+              aria-label="Reproducir" aria-pressed="false">
+        <svg viewBox="0 0 16 16" aria-hidden="true" id="icono-play"><path d="M4 2 L14 8 L4 14 Z" /></svg>
+      </button>
+      <button class="boton-transporte" id="tr-adelante" type="button"
+              title="Adelantar 10 segundos" aria-label="Adelantar 10 segundos">
+        <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 3 L10 8 L3 13 Z M12 3 v10" /></svg>
+      </button>
 
-      <!-- Sin este aviso la vista conserva los ultimos valores cuando el flujo
-           se corta, y quien mira no distingue una sesion en curso de una
-           terminada hace media hora. Un tablero que muestra un numero viejo sin
-           decir que es viejo afirma algo falso: que eso esta pasando ahora. -->
-      <p id="vivo-silencio" class="aviso-vivo aviso-detenido" hidden></p>
-
-      <div id="vivo-tarjetas" class="tarjetas-vivo" hidden>
-        <article class="tarjeta-vivo destacada">
-          <span class="rotulo">Velocidad</span>
-          <strong id="vivo-velocidad">&mdash;</strong><span class="unidad">km/h</span>
-        </article>
-        <article class="tarjeta-vivo">
-          <span class="rotulo">Marcha</span>
-          <strong id="vivo-marcha">&mdash;</strong>
-        </article>
-        <article class="tarjeta-vivo">
-          <span class="rotulo">Revoluciones</span>
-          <strong id="vivo-rpm">&mdash;</strong><span class="unidad">rpm</span>
-        </article>
-        <article class="tarjeta-vivo">
-          <span class="rotulo">Acelerador</span>
-          <strong id="vivo-acelerador">&mdash;</strong><span class="unidad">%</span>
-        </article>
-        <article class="tarjeta-vivo">
-          <span class="rotulo">Freno</span>
-          <strong id="vivo-freno">&mdash;</strong><span class="unidad">%</span>
-        </article>
-        <article class="tarjeta-vivo">
-          <span class="rotulo">DRS</span>
-          <strong id="vivo-drs">&mdash;</strong>
-        </article>
-        <article class="tarjeta-vivo">
-          <span class="rotulo">Vuelta</span>
-          <strong id="vivo-vuelta">&mdash;</strong>
-        </article>
-        <article class="tarjeta-vivo">
-          <span class="rotulo">Distancia en vuelta</span>
-          <strong id="vivo-distancia">&mdash;</strong><span class="unidad">m</span>
-        </article>
+      <div class="linea-tiempo">
+        <!-- Diez mil pasos y no mil: sobre una sesion de treinta y cinco
+             minutos, mil pasos hacen que el cursor salte una vez cada dos
+             segundos en vez de deslizarse. -->
+        <input type="range" id="tr-cabezal" min="0" max="10000" value="0" step="1"
+               aria-label="Posición en la sesión">
+        <div class="marcas-tiempo" id="marcas-tiempo"></div>
       </div>
 
-      <!-- Trazas en vivo. Una tarjeta muestra el instante; una traza muestra
-           el gesto: una frenada, una salida de curva o un cambio de marcha solo
-           se leen como forma, no como numero suelto.
-
-           El catalogo no esta escrito aca: se arma con las senales que
-           efectivamente llegan. Fijar una lista obligaria a tocar la pagina
-           cada vez que el adaptador aprende un canal nuevo, que es la misma
-           duplicacion que dejo la energia y el dano fuera de la base. -->
-      <div id="vivo-graficas" class="graficas-vivo" hidden>
-        <!-- Los conductores de la sesion. Aparece solo cuando hay mas de uno:
-             con uno solo seria un control que no decide nada. -->
-        <div id="vivo-conductores" class="selector-conductores" hidden></div>
-        <div class="selector-trazas">
-          <div class="cabecera-selector">
-            <span class="rotulo">Senales en pantalla</span>
-            <span id="vivo-conteo-senales" class="conteo-senales"></span>
-            <!-- Que tramo del tiempo dibujan las trazas.
-                 La ventana muestra los ultimos treinta segundos y su eje se
-                 desplaza; la sesion completa dibuja desde el inicio y su eje
-                 crece. Con la ventana, una anotacion vieja no tiene donde
-                 dibujarse, que es lo que las dejaba en una lista aparte. -->
-            <button type="button" id="vivo-modo-eje" class="boton-tenue">
-              Ver sesion completa
-            </button>
-            <button type="button" id="vivo-limpiar-trazas" class="boton-tenue">
-              Quitar todas
-            </button>
-          </div>
-          <div id="vivo-catalogo" class="catalogo-trazas"></div>
-        </div>
-        <div id="vivo-trazas" class="grilla-trazas"></div>
+      <div class="reloj">
+        <b id="tr-posicion">0 m</b>
+        <span id="tr-total"></span>
       </div>
 
-      <!-- Anotaciones en tiempo real.
-           No repiten lo que las trazas ya muestran: dicen cuando algo que hay
-           que interpretar acaba de ocurrir. Una traza en movimiento exige
-           reconocer el suceso mientras pasa; la anotacion lo declara con su
-           vuelta, su metro y de donde sale el umbral, para que despues pueda
-           citarse en lugar de recordarse. -->
-      <div id="vivo-anotaciones" class="anotaciones-vivo" hidden>
-        <div class="cabecera-anotaciones">
-          <span class="rotulo">Lo que va ocurriendo</span>
-          <span id="vivo-conteo-anotaciones" class="conteo-senales"></span>
-          <button type="button" id="vivo-limpiar-anotaciones" class="boton-tenue">
-            Limpiar
-          </button>
-        </div>
-        <p id="vivo-reglas-ciegas" class="aviso-reglas" hidden></p>
-        <ol id="vivo-lista-anotaciones" class="lista-anotaciones"></ol>
+      <!-- Una carrera de veintidos vueltas dura treinta y cinco minutos: a 1×
+           nadie la mira entera. 10× la deja en tres minutos y medio, que es
+           el paso al que se busca «donde pasó algo». 0,5× es el contrario:
+           el paso al que se mira una frenada. -->
+      <!-- Cuanto del pasado se ve en cada grafico. Vive en la barra de
+           reproduccion porque es una decision sobre el tiempo, como la
+           velocidad: una dice a que ritmo avanza, la otra cuanto se recuerda. -->
+      <div class="segmentado" id="tr-ventana" role="group" aria-label="Ventana de los gráficos">
+        <button type="button" data-ventana="300" aria-pressed="false">300 m</button>
+        <button type="button" data-ventana="1200" aria-pressed="true">1,2 km</button>
+        <button type="button" data-ventana="3000" aria-pressed="false">3 km</button>
+        <button type="button" data-ventana="0" aria-pressed="false">vuelta</button>
       </div>
 
-      <!-- La latencia se muestra porque es medible y porque es lo que este
-           camino existe para poder medir. La persistencia se muestra porque sin
-           ella el aviso de que esta vista no pasa por la base se lee como que el
-           dato no se guarda. -->
-      <dl id="vivo-diagnostico" class="diagnostico-vivo" hidden>
-        <div><dt>Mensajes recibidos</dt><dd id="vivo-mensajes">0</dd></div>
-        <div><dt>Latencia de publicacion a recepcion</dt><dd id="vivo-latencia">&mdash;</dd></div>
-        <div><dt>Ultimo dato</dt><dd id="vivo-ultimo">&mdash;</dd></div>
-        <div><dt>Camino de esta vista</dt><dd id="vivo-camino">&mdash;</dd></div>
-        <div><dt>Camino de la persistencia</dt><dd id="vivo-camino-base">&mdash;</dd></div>
-        <div><dt>Guardado en la base</dt><dd id="vivo-persistencia">&mdash;</dd></div>
-      </dl>
-    </section>
-
-
-    <!-- Matriz de capacidades y ausencias. No lista senales: contrasta que
-         puede medirse en cada fuente y con que resolucion, organizado por
-         magnitud fisica porque cada fuente nombra lo suyo a su manera. -->
-    <section id="panel-matriz" class="panel panel-matriz" hidden>
-      <header class="cabecera-vivo">
-        <div>
-          <p class="etiqueta-superior">Capacidades y ausencias</p>
-          <h2>Que puede medirse en cada fuente</h2>
-        </div>
-      </header>
-
-      <p id="matriz-estado" class="aviso-vivo">Midiendo sobre lo persistido...</p>
-
-      <div id="matriz-fuentes" class="tarjetas-fuente" hidden></div>
-
-      <div id="matriz-tabla" class="envoltorio-matriz" hidden></div>
-
-      <p id="matriz-pie" class="pie-matriz" hidden></p>
-    </section>
-    <section id="panel-openf1" class="panel panel-openf1" hidden>
-      <div class="titulo-seccion">
-        <div>
-          <p class="etiqueta-superior">Replay historico validado</p>
-          <h2 id="openf1-titulo">Cargando sesion...</h2>
-          <p id="openf1-resumen" class="resumen-operativo"></p>
-        </div>
-        <p id="openf1-estado-carga">Esperando consulta...</p>
+      <div class="segmentado" id="tr-velocidad" role="group" aria-label="Velocidad de reproducción">
+        <button type="button" data-vel="0.5" aria-pressed="false">0,5×</button>
+        <button type="button" data-vel="1" aria-pressed="true">1×</button>
+        <button type="button" data-vel="2" aria-pressed="false">2×</button>
+        <button type="button" data-vel="4" aria-pressed="false">4×</button>
+        <button type="button" data-vel="10" aria-pressed="false">10×</button>
       </div>
-      <!-- Seleccion de sesion y de corrida.
-           Ambas eran constantes en `app.js` (`9947` y `d7_silverstone_full_001`), de
-           modo que Spa-Francorchamps y Suzuka estaban importadas en la base y eran
-           invisibles desde la interfaz. La corrida importa tanto como la sesion: una
-           misma carrera acumula el replay definitivo junto a sondeos de carga de las
-           mismas vueltas, y mezclarlos no se ve pero cambia el resultado. -->
-      <fieldset class="selector-sesion-replay">
-        <legend>Sesion y corrida</legend>
-        <div class="controles-sesion-replay">
-          <label for="selector-sesion-openf1">Sesion importada
-            <select id="selector-sesion-openf1"></select>
-          </label>
-          <label for="selector-corrida-replay">Corrida de replay
-            <select id="selector-corrida-replay"></select>
-          </label>
-        </div>
-        <p id="declaracion-telemetria-sesion" class="declaracion-telemetria" aria-live="polite">Cargando sesiones disponibles...</p>
-      </fieldset>
-      <div id="openf1-contexto" class="lista-contexto tarjetas-openf1"></div>
-      <div class="columna-operativa-openf1">
-        <fieldset class="selector-pilotos-comparacion">
-          <legend>Comparador de pilotos</legend>
-          <p>Selecciona una o varias fuentes para actualizar rendimiento, telemetria y contexto sincronizado.</p>
-          <div class="acciones-selector-pilotos">
-            <button id="boton-limpiar-pilotos" type="button">Limpiar seleccion</button>
-            <button id="boton-todos-pilotos" type="button">Seleccionar todos</button>
-          </div>
-          <label class="busqueda-pilotos" for="busqueda-pilotos-comparacion">Buscar piloto, vehiculo o grupo</label>
-          <input id="busqueda-pilotos-comparacion" type="search" placeholder="Ej. Norris, McLaren, coche 02">
-          <div id="seleccionados-pilotos-comparacion" class="seleccionados-pilotos-comparacion" aria-live="polite"></div>
-          <div id="casillas-pilotos-comparacion" class="casillas-pilotos-comparacion"></div>
-        </fieldset>
-        <section class="comparacion-pilotos" aria-labelledby="titulo-comparacion-pilotos">
-          <div class="titulo-seccion">
-            <div>
-              <p class="etiqueta-superior">Contexto de rendimiento</p>
-              <h3 id="titulo-comparacion-pilotos">Comparacion de pilotos</h3>
-              <p class="resumen-operativo">Resultado, ritmo de vuelta y estrategia de los pilotos seleccionados.</p>
-            </div>
-          </div>
-          <div id="tarjetas-comparacion-pilotos" class="tarjetas-comparacion-pilotos"></div>
-        </section>
-      </div>
-      <section id="seccion-analisis-carrera" class="analisis-carrera" aria-labelledby="titulo-analisis-carrera">
-        <div class="titulo-seccion">
-          <div>
-            <p class="etiqueta-superior">Estado simultaneo de carrera</p>
-            <h3 id="titulo-analisis-carrera">Telemetria por reloj deportivo</h3>
-            <p id="resumen-analisis-carrera" class="resumen-operativo">Selecciona una senal para comparar el estado de los pilotos en la misma ventana UTC.</p>
-          </div>
-          <p id="estado-analisis-carrera">Sin serie cargada</p>
-        </div>
-        <div id="leyenda-analisis-carrera" class="leyenda-analisis-carrera"></div>
-        <div class="graficos-operativos">
-          <article class="grafico-operativo"><h4>Velocidad <span>km/h</span></h4><canvas id="grafico-velocidad-carrera" width="1120" height="220" aria-label="Velocidad comparativa por reloj deportivo"></canvas></article>
-          <article class="grafico-operativo"><h4>Acelerador <span>%</span></h4><canvas id="grafico-acelerador-carrera" width="1120" height="180" aria-label="Acelerador comparativo por reloj deportivo"></canvas></article>
-          <article class="grafico-operativo"><h4>Freno <span>liberado o activo</span></h4><canvas id="grafico-freno-carrera" width="1120" height="150" aria-label="Freno comparativo por reloj deportivo"></canvas></article>
-        </div>
-        <section id="contexto-instante-carrera" class="contexto-instante-carrera" aria-live="polite">
-          <div>
-            <p class="etiqueta-superior">Contexto sincronizado</p>
-            <h4>Selecciona un punto de la curva</h4>
-            <p id="resumen-instante-carrera">Al seleccionar un instante se mostrara el contexto racing mas cercano y su diferencia temporal.</p>
-          </div>
-          <div id="clima-instante-carrera" class="clima-instante-carrera"></div>
-          <div id="pilotos-instante-carrera" class="pilotos-instante-carrera"></div>
-        </section>
-      </section>
-      <!-- Analisis automatico por vuelta y stint.
-           Los resultados provienen de `session_lap_analysis` y `session_stint_analysis`,
-           y se muestran separados por nivel de evidencia: la distincion entre dato
-           oficial y dato derivado es el aporte metodologico del analisis, de modo que
-           aplanarla en la interfaz anularia el motivo por el que se guarda asi. -->
-      <section id="seccion-analisis-vuelta" class="analisis-vuelta" aria-labelledby="titulo-analisis-vuelta">
-        <div class="titulo-seccion">
-          <div>
-            <p class="etiqueta-superior">Analisis automatico de la sesion</p>
-            <h3 id="titulo-analisis-vuelta">Metricas por vuelta y por stint</h3>
-            <p id="resumen-analisis-vuelta" class="resumen-operativo">Selecciona un piloto y una vuelta para ver sus metricas separadas por nivel de evidencia.</p>
-          </div>
-          <p id="estado-analisis-vuelta">Sin analisis cargado</p>
-        </div>
-        <div class="controles-analisis-vuelta">
-          <label for="selector-piloto-analisis">Piloto
-            <select id="selector-piloto-analisis"></select>
-          </label>
-          <label for="selector-alcance-analisis">Alcance
-            <select id="selector-alcance-analisis">
-              <option value="vuelta">Vuelta</option>
-              <option value="stint">Stint</option>
-            </select>
-          </label>
-          <label for="selector-vuelta-analisis"><span id="etiqueta-selector-vuelta">Vuelta</span>
-            <select id="selector-vuelta-analisis"></select>
-          </label>
-        </div>
-        <div id="detalle-analisis-vuelta" class="detalle-analisis-vuelta"></div>
-      </section>
-      <details id="seccion-trazabilidad-openf1" class="trazabilidad-openf1">
-        <summary>Trazabilidad tecnica del replay</summary>
-        <p>Mensajes persistidos, timestamp deportivo, instante de publicacion y campo original OpenF1.</p>
-        <div class="contenedor-tabla">
-        <table id="tabla-openf1">
-          <thead>
-            <tr>
-              <th>Senal</th>
-              <th>Valor</th>
-              <th>Tiempo deportivo</th>
-              <th>Publicado localmente</th>
-              <th>Endpoint</th>
-              <th>Campo original</th>
-            </tr>
-          </thead>
-          <tbody></tbody>
-        </table>
-        </div>
-      </details>
-      <section class="procesamiento-sesiones-openf1" aria-labelledby="titulo-procesamiento-sesiones">
-        <div class="titulo-seccion">
-          <div>
-            <p class="etiqueta-superior">Procesamiento Nivel B</p>
-            <h3 id="titulo-procesamiento-sesiones">Sesiones procesadas</h3>
-            <p class="resumen-operativo">Control de calidad del paquete local: que hay disponible, que falta y que analisis puede sostenerse.</p>
-          </div>
-          <p id="estado-procesamiento-sesiones">Esperando consulta...</p>
-        </div>
-        <div id="tarjetas-procesamiento-sesiones" class="tarjetas-procesamiento-sesiones"></div>
-      </section>
-      <p class="nota-openf1">Replay historico OpenF1: no representa CAN crudo ni streaming live oficial.</p>
-    </section>
-
-    <section class="panel panel-contexto modo-simulacion" aria-label="Contexto de sesion">
-      <dl id="contexto-sesion" class="lista-contexto"></dl>
-    </section>
-
-    <section class="panel panel-operativo modo-simulacion">
-      <div class="titulo-seccion">
-        <div>
-          <p class="etiqueta-superior">Lectura operativa</p>
-          <h2>Analizar la maniobra</h2>
-          <p id="resumen-operativo" class="resumen-operativo">Selecciona un punto de control para revisar velocidad, freno y direccion.</p>
-        </div>
-        <p id="estado-carga">Esperando carga inicial...</p>
-      </div>
-    </section>
-
-    <section class="panel panel-fases modo-simulacion">
-      <div class="titulo-seccion">
-        <div>
-          <p class="etiqueta-superior">Secuencia persistida</p>
-          <h2>Recorrido de la maniobra</h2>
-        </div>
-        <span id="cantidad-fases" class="contador-fases">0 puntos de control</span>
-      </div>
-      <div id="linea-fases" class="linea-fases"></div>
-    </section>
-
-    <div class="zona-analisis modo-simulacion">
-      <div class="columna-contexto">
-        <section class="panel panel-mapa">
-          <div class="titulo-seccion">
-            <div>
-              <p class="etiqueta-superior">Contexto visual</p>
-              <h2>Esquema de la maniobra</h2>
-              <p id="descripcion-mapa" class="resumen-operativo">Selecciona un punto para iluminar el tramo correspondiente.</p>
-            </div>
-          </div>
-          <svg class="mapa-maniobra" viewBox="0 0 760 250" role="img" aria-label="Esquema de la maniobra simulada">
-            <path class="tramo-mapa" data-segmento="demo_straight_entry" d="M70 185 L225 185" />
-            <path class="tramo-mapa" data-segmento="demo_braking_zone" d="M225 185 L325 168" />
-            <path class="tramo-mapa" data-segmento="demo_corner_entry" d="M325 168 Q375 162 410 112" />
-            <path class="tramo-mapa" data-segmento="demo_corner_apex" d="M410 112 Q455 58 480 88" />
-            <path class="tramo-mapa" data-segmento="demo_corner_exit" d="M480 88 C495 106 505 114 520 120" />
-            <path class="tramo-mapa" data-segmento="demo_straight_exit" d="M520 120 L710 190" />
-            <circle class="inicio-mapa" cx="70" cy="185" r="8" />
-            <circle class="fin-mapa" cx="710" cy="190" r="8" />
-            <text x="55" y="215">INICIO</text>
-            <text x="682" y="220">FINAL</text>
-          </svg>
-          <p class="nota-mapa">Esquema de maniobra simulada: no representa geometria ni distancia real de circuito.</p>
-        </section>
-
-        <section class="panel panel-punto-seleccionado">
-          <div class="titulo-seccion">
-            <div>
-              <p class="etiqueta-superior">Analisis puntual</p>
-              <h2>Punto seleccionado</h2>
-              <p id="descripcion-punto-seleccionado" class="resumen-operativo">Selecciona un punto del recorrido.</p>
-            </div>
-          </div>
-          <div id="valores-punto-seleccionado" class="grid-punto-seleccionado"></div>
-        </section>
-      </div>
-
-      <section class="panel panel-grafico panel-graficos-laterales">
-      <div class="titulo-seccion">
-        <div>
-          <p class="etiqueta-superior">Series coordinadas</p>
-          <h2>Senales durante la maniobra</h2>
-        </div>
-      </div>
-      <div class="graficos-coordinados">
-        <article class="grafico-coordinado">
-          <h3>Velocidad <span>km/h</span></h3>
-          <canvas id="grafico-velocidad" width="760" height="180"></canvas>
-        </article>
-        <article class="grafico-coordinado">
-          <h3>Freno <span>activo / liberado</span></h3>
-          <canvas id="grafico-freno" width="760" height="180"></canvas>
-        </article>
-        <article class="grafico-coordinado">
-          <h3>Direccion <span>deg</span></h3>
-          <canvas id="grafico-direccion" width="760" height="180"></canvas>
-        </article>
-      </div>
-      <p id="detalle-grafico" class="detalle-grafico"></p>
-      </section>
-
-      <section class="panel panel-recorrido" aria-labelledby="titulo-recorrido">
-        <div class="titulo-seccion">
-          <div>
-            <p class="etiqueta-superior">Forma del recorrido</p>
-            <h2 id="titulo-recorrido">Por donde fue el vehiculo</h2>
-          </div>
-        </div>
-        <canvas id="grafico-recorrido" width="760" height="420"
-                aria-label="Recorrido reconstruido del vehiculo"></canvas>
-        <p id="detalle-recorrido" class="detalle-grafico"></p>
-        <p class="advertencia-derivado">El registro del vehiculo no contiene
-           coordenadas. La forma se reconstruye integrando velocidad y velocidad
-           de guinada: <strong>es una derivacion y no una medicion de
-           posicion</strong>. La orientacion absoluta y la ubicacion en el mundo
-           no son recuperables, y un tramo recto significa que el vehiculo iba
-           derecho.</p>
-      </section>
     </div>
 
-    <section class="panel panel-trazabilidad modo-simulacion">
-      <div class="titulo-seccion">
-        <div>
-          <p class="etiqueta-superior">Trazabilidad tecnica</p>
-          <h2>Mensajes persistidos</h2>
-        </div>
-        <button id="boton-recargar" type="button">Recargar sesion</button>
-      </div>
-      <div class="contenedor-tabla">
-        <table id="tabla-telemetria">
-          <thead>
-            <tr>
-              <th>Senal</th>
-              <th>Valor</th>
-              <th>Tiempo</th>
-              <th>Segmento</th>
-              <th>Curva</th>
-              <th>Origen</th>
-              <th>CAN ID</th>
-            </tr>
-          </thead>
-          <tbody></tbody>
-        </table>
+    <!-- Modo en vivo: no hay nada que recorrer. -->
+    <div class="mandos vivo" id="mandos-vivo">
+      <span class="senal-vivo"><i></i>En vivo</span>
+      <span class="detalle-vivo" id="detalle-vivo"></span>
+      <span class="nota-vivo">Un flujo en vivo no se rebobina: lo que pasó ya se
+        está guardando y se puede recorrer después, desde «Abrir sesión guardada».</span>
+    </div>
+
+    <div class="mandos vacio" id="mandos-vacio">
+      <span class="detalle-vivo">Sin sesión abierta. Elegí una guardada o empezá a escuchar.</span>
+    </div>
+
+    <!-- Fuera de los tres modos: la cabina se amplía se esté reproduciendo,
+         escuchando en vivo o sin sesión. -->
+    <button class="boton-transporte cabina-completa" id="btn-cabina" type="button"
+            aria-pressed="false" title="Ver en pantalla completa"
+            aria-label="Pantalla completa">
+      <svg viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor"
+           stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M2 6 V2 h4 M14 6 V2 h-4 M2 10 v4 h4 M14 10 v4 h-4"></path>
+      </svg>
+    </button>
+  </div>
+
+  <!-- ============================================================
+       UNA SOLA GRILLA
+       ------------------------------------------------------------
+       Antes habia tres columnas fijas y un panel apilado con todos los
+       canales juntos. Eso obligaba a leer los graficos en una sola
+       tira y dejaba el resto de los instrumentos lejos.
+
+       Ahora todo ---auto, circuito, clima, medidores y un grafico por
+       senal--- son celdas de la misma grilla. Los graficos quedan
+       repartidos entre los demas instrumentos, y cuantos hay lo decide
+       la fuente: la simulacion llena la grilla, el bus la deja corta.
+       ============================================================ -->
+  <!-- ============================================================
+       LA CABINA
+       ------------------------------------------------------------
+       QUE TIENE QUE ENTRAR EN UNA PANTALLA.
+
+       Mientras la sesion se reproduce, lo que se lee no es un panel: es la
+       relacion entre varios. Una salida de pista se entiende mirando a la vez
+       donde estaba el vehiculo, que decia el acelerometro, que hizo el
+       acelerador y que aviso salto. Si para ver esas cuatro cosas hay que
+       desplazar la pagina, cuando se llega a la cuarta ya paso el momento: la
+       lectura en tiempo real deja de ser posible y el tablero se convierte en
+       un archivo que se hojea.
+
+       Por eso estas cuatro ---trazado, graficos, aceleraciones y avisos, mas
+       el cronometraje que las ubica--- entran juntas en un alto fijo, atado a
+       la altura de la ventana. Todo lo que se consulta de a ratos ---el
+       esquema del vehiculo, el banco de motor, el clima, la lista de
+       vehiculos--- queda abajo, donde se lo busca cuando hace falta.
+
+       El boton «Cabina completa» de la barra la lleva a ocupar la ventana
+       entera, para cuando lo unico que se esta haciendo es mirar la carrera.
+       ============================================================ -->
+  <div class="cabina" id="cabina" data-pantalla="normal">
+
+    <!-- Dónde está y en qué vuelta va. -->
+    <div class="col-cabina izquierda">
+      <section class="instrumento pista en-cabina">
+      <header><h2>Trazado</h2><span class="fuente-canal" id="canal-pista"></span></header>
+      <div class="cuerpo-instrumento">
+        <svg viewBox="0 0 360 170" role="img"
+             aria-label="Trazado real del circuito, acostado sobre su eje principal">
+          <path class="trazado" id="linea-pista" d=""></path>
+          <g id="marcas-pista"></g>
+        </svg>
+        <div class="leyenda-curvas" id="leyenda-curvas"></div>
+        <div class="globo-curva" id="globo-curva" role="tooltip" hidden></div>
       </div>
     </section>
-  </main>
 
-  <script src="app.js"></script>
+      <section class="instrumento clima-mini" data-necesita="air_temperature">
+      <header><h2>Clima y pista</h2></header>
+      <div class="cuerpo-instrumento"><div class="clima" id="clima"></div></div>
+      <div class="capa-ausente"><strong>Sin clima</strong><span id="motivo-clima"></span></div>
+    </section>
+    </div>
+
+    <!-- ============================================================
+         MOTOR Y ENERGIA, EN COLUMNA
+         ------------------------------------------------------------
+         Cruzaba el pie de la cabina de lado a lado para mostrar ocho
+         numeros: mil cuatrocientos pixeles de ancho ocupados por cuatro
+         medidores chicos y cuatro barras, con aire entre medio. En una
+         columna los mismos ocho numeros entran holgados, y la linea que
+         desocupa ---la de abajo, entera--- se la quedan los graficos, que
+         es lo que se mira mientras la sesion corre.
+         ============================================================ -->
+    <div class="col-cabina motor">
+      <section class="instrumento panel-motor" data-necesita="engine_speed">
+      <header><h2>Motor y energía</h2><span class="fuente-canal" id="canal-motor"></span></header>
+      <div class="cuerpo-instrumento">
+        <!-- Tres zonas: barras, medidores, barras. Los medidores quedan
+             centrados en el ancho, alineados con el vehiculo de la fila de
+             arriba, y las barras acompanan a los lados. -->
+        <div class="banco-motor">
+          <div class="barras-medidas" id="barras-izq"></div>
+          <div class="fila-medidores" id="fila-medidores"></div>
+          <div class="barras-medidas" id="barras-der"></div>
+        </div>
+      </div>
+      <div class="capa-ausente"><strong>Sin datos de motor</strong><span id="motivo-motor"></span></div>
+    </section>
+
+    </div>
+
+    <!-- El vehículo, con sus cuatro esquinas alrededor. -->
+    <div class="col-cabina centro">
+      <section class="instrumento en-cabina" data-necesita="tyre_temperature_surface_front_left">
+      <!-- ============================================================
+           DE QUE PILOTO ES ESTE VEHICULO
+           ------------------------------------------------------------
+           El panel mostraba temperaturas, presiones y daño sin decir de
+           quien: se daba por hecho que del primero de la lista. Pero quien
+           conduce elige con quien corre, y una captura hecha con Norris
+           mostraba los datos rotulados como si fueran de Verstappen. El
+           piloto propio se declara y se elige aca, que es donde se ve su
+           vehiculo.
+           ============================================================ -->
+      <header>
+        <h2>Vehículo</h2>
+        <label class="elige-propio" for="sel-propio">
+          <span>Piloto</span>
+          <select id="sel-propio" aria-label="Piloto propio, del que hay telemetría"></select>
+        </label>
+      </header>
+      <div class="cuerpo-instrumento">
+        <div class="esquema-auto">
+          <div class="esquina" data-esquina="front_left"></div>
+          <div class="silueta">
+            <svg viewBox="0 0 122 196" role="img"
+                 aria-label="Vista superior del vehículo con neumáticos, frenos y partes dañadas">
+              <g id="p-suspension" stroke-linecap="round">
+                <path d="M48 62 L26 56 M48 70 L26 74 M74 62 L96 56 M74 70 L96 74"></path>
+                <path d="M46 150 L26 146 M46 158 L26 164 M76 150 L96 146 M76 158 L96 164"></path>
+              </g>
+              <path id="p-ala-del" d="M12 12 h98 a4 4 0 0 1 4 4 v9 a4 4 0 0 1 -4 4 h-98 a4 4 0 0 1 -4 -4 v-9 a4 4 0 0 1 4 -4 z"></path>
+              <path id="p-ala-del-2" d="M8 29 h10 v13 h-10 z M104 29 h10 v13 h-10 z"></path>
+              <path id="p-morro" d="M54 26 h14 l6 40 h-26 z"></path>
+              <path id="p-pontones" d="M30 92 q0 -14 14 -14 h34 q14 0 14 14 v34 q0 10 -8 14 l-10 5 h-26 l-10 -5 q-8 -4 -8 -14 z"></path>
+              <path id="p-piso" d="M38 140 h46 l-5 26 h-36 z"></path>
+              <path id="p-cuerpo" d="M50 60 h22 q6 0 6 8 v92 q0 6 -5 6 h-24 q-5 0 -5 -6 v-92 q0 -8 6 -8 z"></path>
+              <path id="p-halo" d="M50 86 q11 -9 22 0" fill="none"></path>
+              <ellipse id="p-habitaculo" cx="61" cy="103" rx="8" ry="15"></ellipse>
+              <path id="p-ala-tras" d="M26 170 h70 a3 3 0 0 1 3 3 v10 a3 3 0 0 1 -3 3 h-70 a3 3 0 0 1 -3 -3 v-10 a3 3 0 0 1 3 -3 z"></path>
+              <path id="p-ala-tras-2" d="M20 166 h8 v24 h-8 z M94 166 h8 v24 h-8 z"></path>
+              <rect class="rueda" data-esquina-svg="front_left"  x="6"  y="46"  width="20" height="34" rx="6"></rect>
+              <rect class="rueda" data-esquina-svg="front_right" x="96" y="46"  width="20" height="34" rx="6"></rect>
+              <rect class="rueda" data-esquina-svg="rear_left"   x="4"  y="140" width="22" height="36" rx="6"></rect>
+              <rect class="rueda" data-esquina-svg="rear_right"  x="96" y="140" width="22" height="36" rx="6"></rect>
+              <g id="frenos">
+                <rect class="freno" data-freno="front_left"  x="11" y="56"  width="10" height="14" rx="3"></rect>
+                <rect class="freno" data-freno="front_right" x="101" y="56" width="10" height="14" rx="3"></rect>
+                <rect class="freno" data-freno="rear_left"   x="10" y="150" width="10" height="16" rx="3"></rect>
+                <rect class="freno" data-freno="rear_right"  x="102" y="150" width="10" height="16" rx="3"></rect>
+              </g>
+            </svg>
+            <div class="bloque-dano">
+              <p class="eyebrow">Daño declarado por el vehículo</p>
+              <div class="leyenda-dano" id="leyenda-dano"></div>
+            </div>
+          </div>
+          <div class="esquina" data-esquina="front_right"></div>
+          <div class="esquina" data-esquina="rear_left"></div>
+          <div></div>
+          <div class="esquina" data-esquina="rear_right"></div>
+        </div>
+      </div>
+      <div class="capa-ausente"><strong>Sin neumáticos ni daño</strong><span id="motivo-auto"></span></div>
+    </section>
+    </div>
+
+    <!-- En qué vuelta va, y lo que interrumpió la lectura. -->
+    <div class="col-cabina derecha">
+      <section class="instrumento vertical en-cabina">
+      <header><h2>Cronometraje</h2></header>
+      <dl class="tira-cronometraje">
+        <div><dt>Vehículo</dt><dd class="destacado">—</dd></div>
+        <div><dt>Vuelta</dt><dd>16<span style="color:var(--texto-tenue);font-size:.8rem">/58</span></dd></div>
+        <div><dt>Actual</dt><dd>1:21.52</dd></div>
+        <div><dt>Al líder</dt><dd class="negativo">−1.075</dd></div>
+      </dl>
+    </section>
+      <section class="instrumento panel-avisos en-cabina" data-necesita="tyre_temperature_surface_front_left">
+      <header>
+        <h2>Avisos</h2>
+        <span class="fuente-canal" id="canal-avisos"></span>
+        <span class="con-ayuda">
+          <button class="btn-ayuda" type="button" aria-describedby="ayuda-avisos">?</button>
+          <span class="panel-ayuda" id="ayuda-avisos" role="tooltip">
+          <b>Cada aviso declara el canal que lo dispara.</b> Un aviso es una
+          afirmación sobre lo que ocurrió, y una afirmación sin su origen no se
+          puede discutir. Una condición que no se cumple con claridad no se
+          anota: anotar de más sería peor que no anotar, porque un sistema que
+          declara incidentes que no ocurrieron pierde la confianza que los
+          ciertos le darían. Los más recientes van arriba.
+          </span>
+        </span>
+      </header>
+      <div class="cuerpo-instrumento">
+        <div class="linea-avisos" id="lista-avisos"></div>
+      </div>
+      <div class="capa-ausente">
+        <strong>Sin avisos</strong>
+        <span id="motivo-avisos"></span>
+      </div>
+    </section>
+    </div>
+
+    <!-- ============================================================
+         LOS GRAFICOS, EN UNA LINEA A LO ANCHO
+         ------------------------------------------------------------
+         Repartidos de a dos a cada lado del vehiculo, cada uno tenia una
+         columna de trescientos pixeles y la mitad del alto de la fila. En
+         una sola linea a lo ancho tienen el ancho entero de la pantalla
+         repartido entre ellos y todo el alto de la fila: la traza de una
+         vuelta se lee de largo, que es como se lee una vuelta.
+
+         Cuantos hay lo decide quien mira desde el panel de señales; la
+         linea se reparte sola y, si son muchos, se parte en dos.
+         ============================================================ -->
+    <div class="graficos-cabina" id="graficos-cabina"></div>
+  </div>
+
+  <!-- ============================================================
+       LO QUE SE CONSULTA, NO LO QUE SE VIGILA
+       ------------------------------------------------------------
+       Aca abajo vive todo lo que se mira **cuando surge la pregunta**, no
+       mientras la sesion corre: que canales dibujar, como quedo la huella
+       de aceleraciones de la vuelta, que vehiculos hay en sesion y que
+       clima hacia.
+
+       Las aceleraciones bajaron por pedido, y el criterio se sostiene: el
+       diagrama de fricción es una figura que se lee **acumulada** ---la
+       forma que dejo la vuelta entera--- y no un valor que cambie de un
+       segundo al otro. Es analisis, no vigilancia. Ademas, arriba solo
+       cabia en un circulo de ochenta pixeles, que es no mostrarlo.
+       ============================================================ -->
+  <div class="corte-consulta" aria-hidden="true"></div>
+  <div class="tablero principal" id="tablero">
+    <!-- Los tres a la par: quien esta en sesion, como quedo la huella de
+         aceleraciones y que señales se grafican arriba. Los tres se
+         consultan, ninguno se vigila. -->
+    <section class="instrumento celda-1">
+      <header><h2>Vehículos</h2><span class="fuente-canal" id="canal-autos"></span></header>
+      <div class="cuerpo-instrumento">
+        <div class="segmentado" id="sel-alcance" role="group" aria-label="Cuántos vehículos">
+          <button type="button" data-alcance="1" aria-pressed="true">Uno</button>
+          <button type="button" data-alcance="varios" aria-pressed="false">Varios</button>
+          <button type="button" data-alcance="todos" aria-pressed="false">Todos</button>
+        </div>
+        <div class="lista-autos" id="lista-autos"></div>
+      </div>
+    </section>
+    <section class="instrumento celda-1 vertical abajo" data-necesita="g_force_lateral">
+      <header>
+        <h2>Aceleraciones</h2>
+        <span class="fuente-canal" id="canal-g"></span>
+        <span class="con-ayuda">
+          <button class="btn-ayuda" type="button" aria-describedby="ayuda-g">?</button>
+          <span class="panel-ayuda" id="ayuda-g" role="tooltip">
+          <b>Cómo se lee.</b> Cada punto es un instante de la vuelta, ubicado por
+          cuánto empuja al vehículo hacia adelante o hacia atrás (eje vertical) y
+          hacia los costados (eje horizontal). Frenar lo lleva arriba, acelerar
+          abajo, y girar a un lado o al otro lo corre en horizontal. La estela es
+          el recorrido de la vuelta y el punto es el instante mostrado; los
+          círculos marcan 1, 2 y 3 g. <b>Un piloto que aprovecha el vehículo
+          llena el borde</b>: las zonas vacías son maniobras que el neumático
+          permitía y no se pidieron.
+          </span>
+        </span>
+      </header>
+      <div class="cuerpo-instrumento">
+        <div class="ejes-g">
+          <svg viewBox="0 0 180 180" role="img"
+               aria-label="Diagrama de aceleracion lateral contra longitudinal">
+            <defs>
+              <radialGradient id="veta-g" cx="50%" cy="50%" r="50%">
+                <stop offset="0%" stop-color="var(--acento)" stop-opacity="0.16"></stop>
+                <stop offset="100%" stop-color="var(--acento)" stop-opacity="0"></stop>
+              </radialGradient>
+              <linearGradient id="trazo-g" x1="0" y1="0" x2="1" y2="1">
+                <stop offset="0%" stop-color="var(--acento)"></stop>
+                <stop offset="100%" stop-color="var(--auto-3)"></stop>
+              </linearGradient>
+            </defs>
+            <circle cx="90" cy="90" r="80" fill="url(#veta-g)"></circle>
+            <circle class="rejilla-g" cx="90" cy="90" r="80"></circle>
+            <circle class="rejilla-g" cx="90" cy="90" r="54"></circle>
+            <circle class="rejilla-g" cx="90" cy="90" r="27"></circle>
+            <line class="rejilla-g" x1="90" y1="6" x2="90" y2="174"></line>
+            <line class="rejilla-g" x1="6" y1="90" x2="174" y2="90"></line>
+            <text class="rotulo-g" x="90" y="16" text-anchor="middle">FRENADA</text>
+            <text class="rotulo-g" x="90" y="172" text-anchor="middle">TRACCION</text>
+            <text class="rotulo-g" x="14" y="94">IZQ</text>
+            <text class="rotulo-g" x="166" y="94" text-anchor="end">DER</text>
+            <path class="estela-g" id="estela-g"></path>
+            <circle class="halo-g" id="halo-g" cx="90" cy="90" r="11"></circle>
+            <circle class="punto-g" id="punto-g" cx="90" cy="90" r="5"></circle>
+          </svg>
+          <dl class="lista-canales" id="canales-g"></dl>
+        </div>
+
+      </div>
+      <div class="capa-ausente"><strong>Sin acelerómetro</strong><span id="motivo-g"></span></div>
+    </section>
+    <section class="instrumento celda-2 barra-canales">
+      <header>
+        <h2>Señales</h2>
+        <span class="fuente-canal" id="canal-traza"></span>
+      </header>
+      <div class="cuerpo-instrumento">
+        <div class="controles-traza" id="controles-traza"></div>
+        <p class="nota" id="nota-traza"></p>
+      </div>
+    </section>
+
+  </div>
+
+  <!-- La tabla de disponibilidad es una conclusion sobre lo de arriba, no una
+       celda mas de la grilla: se separa para que se lea como cierre. -->
+  <div class="tablero cierre">
+    <section class="instrumento ancho-total">
+      <header><h2>Qué sostiene cada fuente</h2><span class="fuente-canal">medido sobre la base, 06/09/2026</span></header>
+      <div class="cuerpo-instrumento">
+        <div class="envoltura-tabla">
+          <table class="disponibilidad">
+            <thead><tr><th>Instrumento</th><th>F1 25</th><th>OpenF1</th><th>CAN real</th><th>Señal que lo habilita</th></tr></thead>
+            <tbody>
+              <tr><td>Traza de velocidad</td><td class="si">sí</td><td class="si">sí</td><td class="si">sí</td><td><code>speed</code></td></tr>
+              <tr><td>Acelerador y freno</td><td class="si">continuo</td><td class="parcial">continuo / binario</td><td class="parcial">binario</td><td><code>throttle_position</code>, <code>brake_position</code> vs <code>gas_pressed</code></td></tr>
+              <tr><td>Motor y marcha</td><td class="si">sí</td><td class="si">sí</td><td class="no">no</td><td><code>engine_speed</code>, <code>gear_selected</code></td></tr>
+              <tr><td>Trazado del circuito</td><td class="si">declarado</td><td class="si">declarado</td><td class="parcial">reconstruido</td><td><code>world_position_*</code>, <code>track_position_*</code></td></tr>
+              <tr><td><b>Comparación por distancia</b></td><td class="si">2,67 m entre muestras</td><td class="no">huecos de hasta 83 m</td><td class="no">sin distancia declarada</td><td><code>lap_distance</code></td></tr>
+              <tr><td>Aceleraciones</td><td class="si">3 ejes</td><td class="no">no</td><td class="parcial">2 ejes</td><td><code>g_force_vertical</code> solo en F1 25</td></tr>
+              <tr><td>Dirección y ruedas</td><td class="si">sí</td><td class="no">no</td><td class="si">sí</td><td><code>steer_angle</code>, <code>wheel_speed_*</code></td></tr>
+              <tr><td>Neumáticos y frenos</td><td class="si">sí</td><td class="no">no</td><td class="no">no</td><td><code>tyre_*</code>, <code>brake_temperature_*</code></td></tr>
+              <tr><td>Daño por parte</td><td class="si">sí</td><td class="no">no</td><td class="no">no</td><td><code>wing_damage_*</code>, <code>floor_damage</code></td></tr>
+              <tr><td>Combustible y ERS</td><td class="si">sí</td><td class="no">no</td><td class="no">no</td><td><code>fuel_mass</code>, <code>ers_stored_energy</code></td></tr>
+              <tr><td>Clima y pista</td><td class="si">sí</td><td class="parcial">por contexto</td><td class="no">no</td><td><code>air_temperature</code></td></tr>
+              <tr><td>Biometría del piloto</td><td class="no">no</td><td class="no">no</td><td class="no">no</td><td>ninguna fuente la entrega</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="nota"><strong>La fila que cambia una decisión:</strong> la comparación por distancia se
+        había descartado por medición propia, porque en OpenF1 el muestreo de 3,7 Hz deja huecos de hasta
+        83 m. En F1 25 la separación mediana entre muestras es de <b>2,67 m</b>, treinta y una veces menor.
+        El descarte vale para la fuente deportiva y no para la simulación.</p>
+        <p class="nota"><strong>Biometría:</strong> las referencias visuales muestran pulso, respiración y
+        estrés. Ninguna fuente los entrega, y dibujarlos con valores inventados sería lo que el trabajo
+        prohíbe. Quedan como trabajo futuro con instrumentación del piloto.</p>
+      </div>
+    </section>
+  </div>
+</div>
+
+<!-- ================= MODAL DE CAMBIO DE MODO ================= -->
+<div class="velo-modal" id="velo-modal" role="dialog" aria-modal="true" aria-labelledby="modal-titulo">
+  <div class="modal">
+    <header><h3 id="modal-titulo"></h3></header>
+    <div class="cuerpo">
+      <p id="modal-texto"></p>
+      <p id="modal-razon"></p>
+    </div>
+    <footer>
+      <button class="boton secundario" id="modal-cancelar" type="button">Cancelar</button>
+      <button class="boton peligro" id="modal-confirmar" type="button"></button>
+    </footer>
+  </div>
+</div>
+
+<!-- ================= BUSCADOR DE SESIONES GUARDADAS =================
+     Antes no habia forma de volver a una sesion ya capturada: la interfaz
+     ofrecia importar una nueva y nada mas, y quien cambiaba de modo creia
+     haber perdido lo anterior. Nunca se perdio nada ---el dato esta
+     persistido--- pero no era descubrible, que en la practica se parece
+     bastante. -->
+<div class="velo-comparacion" id="velo-sesiones" role="dialog" aria-modal="true"
+     aria-label="Sesiones guardadas">
+  <div class="cab-comparacion">
+    <h3>Sesiones guardadas<small id="sub-sesiones"></small></h3>
+    <label class="busca">
+      <span class="lupa" aria-hidden="true">⌕</span>
+      <input type="search" id="busca-sesion" placeholder="Buscar por circuito, fecha o identificador"
+             aria-label="Buscar sesiones">
+    </label>
+    <div class="grupo-control">
+      <p class="eyebrow">Fuente</p>
+      <div class="segmentado" id="filtro-fuente" role="group" aria-label="Filtrar por fuente">
+        <button type="button" data-filtro="todas" aria-pressed="true">Todas</button>
+        <button type="button" data-filtro="f1" aria-pressed="false">F1 25</button>
+        <button type="button" data-filtro="openf1" aria-pressed="false">OpenF1</button>
+        <button type="button" data-filtro="can" aria-pressed="false">CAN</button>
+      </div>
+    </div>
+    <div class="grupo-control">
+      <p class="eyebrow">Ordenar</p>
+      <div class="segmentado" id="orden-sesiones" role="group" aria-label="Ordenar sesiones">
+        <button type="button" data-orden="fecha" aria-pressed="true">Más reciente</button>
+        <button type="button" data-orden="tamano" aria-pressed="false">Más grande</button>
+      </div>
+    </div>
+    <button class="boton secundario" id="btn-cerrar-sesiones" type="button">Cerrar</button>
+  </div>
+  <div class="panel-comparacion">
+    <div class="tabla-sesiones" id="tabla-sesiones"></div>
+    <p class="nota" id="nota-sesiones"></p>
+  </div>
+</div>
+
+<!-- ================= COMPARACIÓN A PANTALLA COMPLETA ================= -->
+<div class="velo-comparacion" id="velo-comparacion" role="dialog" aria-modal="true" aria-label="Comparación entre pilotos">
+  <div class="cab-comparacion">
+    <h3>Comparación por distancia<small id="sub-comparacion"></small></h3>
+    <div class="grupo-control">
+      <p class="eyebrow">Eje</p>
+      <div class="segmentado" id="sel-eje" role="group" aria-label="Eje horizontal">
+        <button type="button" data-eje="distancia" aria-pressed="true">Distancia</button>
+        <button type="button" data-eje="tiempo" aria-pressed="false">Tiempo</button>
+      </div>
+    </div>
+    <div class="grupo-control">
+      <p class="eyebrow">Pilotos</p>
+      <div class="elige-pilotos" id="elige-pilotos"></div>
+    </div>
+    <div class="grupo-control">
+      <p class="eyebrow">Vuelta</p>
+      <select id="sel-vuelta-numero" aria-label="Vuelta a comparar"
+        style="padding:7px 10px;border:1px solid var(--linea-fuerte);border-radius:9px;background:var(--superficie-2);color:var(--texto);font:inherit;font-weight:600"></select>
+    </div>
+    <div class="grupo-control">
+      <p class="eyebrow">Alcance</p>
+      <div class="segmentado" id="sel-vuelta" role="group" aria-label="Alcance">
+        <button type="button" data-vuelta="una" aria-pressed="true">Una vuelta</button>
+        <button type="button" data-vuelta="carrera" aria-pressed="false">Toda la carrera</button>
+      </div>
+    </div>
+    <button class="boton secundario" id="btn-exportar-detalle" type="button">Exportar</button>
+    <button class="boton secundario" id="btn-reset-zoom" type="button">Quitar zoom</button>
+    <button class="boton secundario" id="btn-cerrar-comparacion" type="button">Cerrar</button>
+  </div>
+  <div class="panel-comparacion">
+    <div class="metricas-comparacion" id="metricas-comparacion" style="margin-bottom:12px"></div>
+    <canvas class="lienzo-comparacion" id="lienzo-comparacion"></canvas>
+    <p class="nota" id="nota-comparacion"></p>
+  </div>
+  <div class="pilotos-comparacion" id="pilotos-comparacion"></div>
+</div>
+<script src="app.js"></script>
 </body>
 </html>

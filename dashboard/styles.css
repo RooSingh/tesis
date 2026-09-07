@@ -1,2285 +1,1374 @@
 :root {
-  color: #172033;
-  background: #e8edf5;
-  font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
-}
-
-* {
-  box-sizing: border-box;
-}
-
-[hidden] {
-  display: none !important;
-}
-
-body {
-  margin: 0;
-  background:
-    radial-gradient(circle at 82% 2%, rgba(34, 211, 238, 0.18), transparent 26rem),
-    linear-gradient(150deg, #f8fafc 0%, #e7edf5 100%);
-}
-
-.dashboard {
-  width: min(1440px, calc(100% - 32px));
-  margin: 0 auto;
-  padding: 32px 0 56px;
-}
-
-.selector-modo {
-  display: flex;
-  align-items: center;
-  gap: 18px;
-  margin: 0 0 20px;
-  padding: 14px 18px;
-  border: 1px solid rgba(148, 163, 184, 0.34);
-  border-radius: 18px;
-  background: rgba(255, 255, 255, 0.78);
-  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.06);
-}
-
-.selector-modo strong {
-  display: block;
-  color: #0f172a;
-}
-
-.selector-modo label,
-.filtro-openf1 label {
-  color: #475569;
-  font-size: 0.78rem;
-  font-weight: 800;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-}
-
-.selector-modo label {
-  margin-left: auto;
-}
-
-.marca-producto .etiqueta-superior {
-  margin-bottom: 3px;
-}
-
-.selector-modo select,
-.filtro-openf1 select {
-  min-width: 210px;
-  padding: 10px 12px;
-  color: #0f172a;
-  font: inherit;
-  font-weight: 700;
-  border: 1px solid #94a3b8;
-  border-radius: 8px;
-  background: #f8fafc;
-}
-
-.cabecera-sesion {
-  display: flex;
-  justify-content: space-between;
-  gap: 24px;
-  align-items: flex-start;
-  margin-bottom: 18px;
-  padding: 30px 32px;
-  color: #f8fafc;
-  background: linear-gradient(135deg, #0b1220 0%, #172554 66%, #0e7490 100%);
-  border-radius: 24px;
-  box-shadow: 0 24px 48px rgba(15, 23, 42, 0.2);
-}
-
-.etiqueta-superior {
-  margin: 0 0 7px;
-  color: #64748b;
-  font-size: 0.72rem;
-  font-weight: 800;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-}
-
-.cabecera-sesion .etiqueta-superior {
-  color: #67e8f9;
-}
-
-.cabecera-sesion h1,
-.titulo-seccion h2 {
-  margin: 0;
-  letter-spacing: -0.035em;
-}
-
-.cabecera-sesion h1 {
-  font-size: clamp(2rem, 5vw, 3.6rem);
-}
-
-.cabecera-sesion p:not(.etiqueta-superior) {
-  margin: 10px 0 0;
-  color: #cbd5e1;
-}
-
-.estado-origen {
-  flex: 0 0 auto;
-  padding: 9px 12px;
-  color: #0f172a;
-  background: #fbbf24;
-  border-radius: 999px;
-  font-size: 0.72rem;
-  font-weight: 800;
-  letter-spacing: 0.08em;
-}
-
-.estado-can_simulated {
-  color: #083344;
-  background: #67e8f9;
-}
-
-.estado-openf1-replay {
-  color: #fef3c7;
-  background: #92400e;
-}
-
-.filtro-openf1 {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  margin: 22px 0 16px;
-}
-
-.selector-pilotos-comparacion {
-  margin: 0 0 22px;
-  padding: 14px;
-  border: 1px solid #dbe3ee;
-  border-radius: 10px;
-  background: linear-gradient(135deg, #f8fafc, #f0fdfa);
-}
-
-.selector-pilotos-comparacion legend {
-  padding: 0 6px;
-  color: #0f172a;
-  font-size: 0.78rem;
-  font-weight: 800;
-  letter-spacing: 0.07em;
-  text-transform: uppercase;
-}
-
-.selector-pilotos-comparacion p {
-  margin: 0 0 12px;
-  color: #64748b;
-  font-size: 0.8rem;
-}
-
-.casillas-pilotos-comparacion {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
-  gap: 10px;
-  max-height: 272px;
-  overflow-y: auto;
-}
-
-.busqueda-pilotos {
-  display: block;
-  margin: 0 0 5px;
-  color: #475569;
-  font-size: 0.7rem;
-  font-weight: 800;
-  letter-spacing: 0.07em;
-  text-transform: uppercase;
-}
-
-#busqueda-pilotos-comparacion {
-  width: min(100%, 360px);
-  margin-bottom: 10px;
-  padding: 9px 11px;
-  color: #0f172a;
-  border: 1px solid #cbd5e1;
-  border-radius: 8px;
-  background: #ffffff;
-  font: inherit;
-}
-
-.seleccionados-pilotos-comparacion {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  min-height: 28px;
-  margin: 0 0 10px;
-}
-
-.seleccionados-pilotos-comparacion span {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  padding: 4px 7px;
-  color: #0f766e;
-  border-radius: 999px;
-  background: #ccfbf1;
-  font-size: 0.72rem;
-  font-weight: 800;
-}
-
-.seleccionados-pilotos-comparacion button {
-  padding: 0;
-  color: inherit;
-  border: 0;
-  background: transparent;
-  font: inherit;
-  cursor: pointer;
-}
-
-.seleccionados-pilotos-comparacion em {
-  color: #64748b;
-  font-size: 0.78rem;
-}
-
-.grupo-pilotos-comparacion {
-  padding: 9px;
-  border: 1px solid #dbe3ee;
-  border-radius: 9px;
-  background: rgba(255, 255, 255, 0.82);
-}
-
-.grupo-pilotos-comparacion h4 {
-  margin: 0 0 7px;
-  color: #475569;
-  font-size: 0.7rem;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-}
-
-.acciones-selector-pilotos {
-  display: flex;
-  gap: 8px;
-  margin: 0 0 10px;
-}
-
-.acciones-selector-pilotos button {
-  padding: 6px 9px;
-  color: #0e7490;
-  border: 1px solid #94a3b8;
-  border-radius: 7px;
-  background: #ffffff;
-  font: inherit;
-  font-size: 0.74rem;
-  font-weight: 800;
-  cursor: pointer;
-}
-
-.acciones-selector-pilotos button:hover {
-  border-color: #0e7490;
-  background: #ecfeff;
-}
-
-.casilla-piloto-comparacion {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  padding: 5px 0;
-  color: #334155;
-  font-size: 0.78rem;
-  font-weight: 700;
-}
-
-.punto-equipo {
-  display: inline-block;
-  width: 9px;
-  height: 9px;
-  border-radius: 50%;
-}
-
-.casilla-piloto-comparacion input {
-  accent-color: #0e7490;
-}
-
-.tarjetas-openf1 {
-  grid-template-columns: repeat(6, minmax(0, 1fr));
-  margin-top: 22px;
-}
-
-.tarjetas-openf1 div {
-  min-height: 62px;
-  padding: 12px 14px;
-  border: 1px solid #dbe3ee;
-  border-left: 3px solid #0e7490;
-  border-radius: 10px;
-  background: #f8fafc;
-}
-
-.tarjetas-openf1 dd {
-  font-family: Consolas, "Courier New", monospace;
-  font-size: 0.86rem;
-}
-
-#tabla-openf1 {
-  min-width: 940px;
-  border-collapse: separate;
-  border-spacing: 0;
-}
-
-#tabla-openf1 th {
-  padding: 12px 14px;
-  color: #475569;
-  font-size: 0.7rem;
-  letter-spacing: 0.07em;
-  text-transform: uppercase;
-  background: #f1f5f9;
-}
-
-#tabla-openf1 td {
-  padding: 11px 14px;
-  color: #1e293b;
-  font-family: Consolas, "Courier New", monospace;
-  font-size: 0.78rem;
-  border-top: 1px solid #e2e8f0;
-}
-
-#tabla-openf1 td:first-child {
-  color: #0e7490;
-  font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
-  font-weight: 800;
-}
-
-.comparacion-pilotos {
-  margin: 26px 0;
-  padding: 22px;
-  border: 1px solid #cbd5e1;
-  border-radius: 14px;
-  background: linear-gradient(135deg, #f8fafc, #eef8f8);
-}
-
-.tarjetas-comparacion-pilotos {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-  gap: 12px;
-}
-
-.tarjeta-comparacion-piloto {
-  position: relative;
-  padding: 15px;
-  overflow: hidden;
-  border: 1px solid #dbe3ee;
-  border-radius: 12px;
-  background: #ffffff;
-}
-
-.tarjeta-comparacion-piloto::before {
-  position: absolute;
-  top: 0;
-  left: 0;
-  width: 100%;
-  height: 3px;
-  background: #0e7490;
-  content: "";
-}
-
-.tarjeta-comparacion-piloto header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  color: #0f172a;
-  font-weight: 900;
-}
-
-.tarjeta-comparacion-piloto > p {
-  margin: 4px 0 14px;
-  color: #64748b;
-  font-size: 0.78rem;
-}
-
-.tarjeta-comparacion-piloto dl {
-  display: grid;
-  gap: 9px;
-  margin: 0 0 13px;
-}
-
-.tarjeta-comparacion-piloto dl div {
-  display: flex;
-  justify-content: space-between;
-  gap: 8px;
-}
-
-.tarjeta-comparacion-piloto dt {
-  color: #64748b;
-  font-size: 0.7rem;
-  font-weight: 800;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
-}
-
-.tarjeta-comparacion-piloto dd {
-  margin: 0;
-  color: #1e293b;
-  font-size: 0.8rem;
-  font-weight: 800;
-  text-align: right;
-}
-
-.comparacion-pilotos .titulo-seccion {
-  margin-bottom: 14px;
-}
-
-.comparacion-pilotos h3 {
-  margin: 0;
-  color: #0f172a;
-  font-size: 1.18rem;
-  letter-spacing: -0.02em;
-}
-
-.comparacion-posicion,
-.comparacion-mejor-vuelta {
-  color: #0f766e;
-  font-family: Consolas, "Courier New", monospace;
-  font-size: 1rem;
-  font-weight: 800;
-}
-
-.comparacion-compuestos {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 5px;
-}
-
-.comparacion-compuesto {
-  padding: 3px 7px;
-  color: #334155;
-  border: 1px solid #94a3b8;
-  border-radius: 999px;
-  background: #f8fafc;
-  font-size: 0.7rem;
-  font-weight: 800;
-  letter-spacing: 0.03em;
-}
-
-.analisis-carrera {
-  margin: 26px 0;
-  padding: 24px;
-  color: #e2e8f0;
-  border: 1px solid #1e3a5f;
-  border-radius: 16px;
-  background: linear-gradient(140deg, #08111f, #10243e);
-}
-
-.graficos-operativos {
-  display: grid;
-  gap: 12px;
-}
-
-.grafico-operativo {
-  overflow: hidden;
-  border: 1px solid rgba(148, 163, 184, 0.2);
-  border-radius: 10px;
-  background: #07101c;
-}
-
-.grafico-operativo h4 {
-  margin: 0;
-  padding: 10px 14px 0;
-  color: #e2e8f0;
-  font-size: 0.82rem;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-}
-
-.grafico-operativo h4 span {
-  color: #94a3b8;
-  font-weight: 500;
-}
-
-.analisis-carrera .titulo-seccion {
-  align-items: flex-start;
-  margin-bottom: 18px;
-}
-
-.analisis-carrera .etiqueta-superior,
-.analisis-carrera .resumen-operativo,
-.analisis-carrera #estado-analisis-carrera {
-  color: #94a3b8;
-}
-
-.analisis-carrera h3 {
-  margin: 0;
-  color: #f8fafc;
-  font-size: 1.28rem;
-  letter-spacing: -0.02em;
-}
-
-.controles-analisis-carrera {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin-bottom: 16px;
-}
-
-.controles-analisis-carrera label {
-  color: #cbd5e1;
-  font-size: 0.74rem;
-  font-weight: 800;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-
-.controles-analisis-carrera select {
-  min-width: 160px;
-  padding: 9px 11px;
-  color: #f8fafc;
-  font: inherit;
-  font-weight: 700;
-  border: 1px solid #3b82a8;
-  border-radius: 8px;
-  background: #102f4d;
-}
-
-.leyenda-analisis-carrera {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 14px;
-  min-height: 24px;
-  margin-bottom: 12px;
-}
-
-.leyenda-analisis-carrera span {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  color: #cbd5e1;
-  font-size: 0.78rem;
-  font-weight: 800;
-}
-
-.leyenda-analisis-carrera i {
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
-}
-
-.grafico-operativo canvas {
-  display: block;
-  width: 100%;
-  height: auto;
-  border: 1px solid rgba(148, 163, 184, 0.26);
-  border-radius: 10px;
-  background: #07101c;
-}
-
-.trazabilidad-openf1 {
-  margin-top: 24px;
-  border-top: 1px solid #dbe3ee;
-}
-
-.trazabilidad-openf1 summary {
-  padding: 16px 0;
-  color: #475569;
-  font-size: 0.78rem;
-  font-weight: 800;
-  cursor: pointer;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-}
-
-.trazabilidad-openf1 > p {
-  margin: 0 0 12px;
-  color: #64748b;
-  font-size: 0.8rem;
-}
-
-/* El modo OpenF1 se comporta como una estacion de analisis, no como un formulario. */
-body.modo-openf1-activo {
-  color: #dbeafe;
-  background:
-    radial-gradient(circle at 80% -10%, rgba(14, 116, 144, 0.35), transparent 30rem),
-    linear-gradient(145deg, #040914 0%, #081424 54%, #06101c 100%);
-}
-
-.modo-openf1-activo .selector-modo {
-  border-color: rgba(125, 211, 252, 0.22);
-  background: rgba(6, 18, 33, 0.82);
-  box-shadow: none;
-}
-
-.modo-openf1-activo .selector-modo strong,
-.modo-openf1-activo .selector-modo label {
-  color: #e2e8f0;
-}
-
-.modo-openf1-activo .selector-modo select {
-  color: #e2e8f0;
-  border-color: #285b7b;
-  background: #0d2439;
-}
-
-.modo-openf1-activo .panel-openf1 {
-  display: grid;
-  grid-template-columns: minmax(310px, 0.82fr) minmax(0, 1.65fr);
-  gap: 0;
-  padding: 0;
-  overflow: hidden;
-  border: 1px solid rgba(125, 211, 252, 0.2);
-  border-radius: 24px;
-  background: transparent;
-  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.28);
-}
-
-.modo-openf1-activo .panel-openf1 > .titulo-seccion {
-  grid-column: 1 / -1;
-  align-items: center;
-  margin: 0;
-  padding: 28px 32px 22px;
-  border-bottom: 1px solid rgba(125, 211, 252, 0.15);
-  background: linear-gradient(105deg, #071829 0%, #0d2e4a 58%, #0b5b73 150%);
-}
-
-.modo-openf1-activo .panel-openf1 > .titulo-seccion h2 {
-  color: #f8fafc;
-  font-size: clamp(1.5rem, 3vw, 2.3rem);
-}
-
-.modo-openf1-activo .panel-openf1 > .titulo-seccion .resumen-operativo,
-.modo-openf1-activo #openf1-estado-carga {
-  color: #a5c9dc;
-}
-
-.modo-openf1-activo .panel-openf1 > .tarjetas-openf1,
-.modo-openf1-activo .panel-openf1 > .analisis-carrera,
-.modo-openf1-activo .panel-openf1 > .trazabilidad-openf1,
-.modo-openf1-activo .panel-openf1 > .procesamiento-sesiones-openf1,
-.modo-openf1-activo .panel-openf1 > .nota-openf1 {
-  margin-left: 28px;
-  margin-right: 28px;
-}
-
-.modo-openf1-activo .tarjetas-openf1 {
-  grid-column: 1 / -1;
-  grid-template-columns: repeat(6, minmax(0, 1fr));
-  gap: 8px;
-  margin-top: 22px;
-}
-
-.modo-openf1-activo .columna-operativa-openf1 {
-  grid-column: 1;
-  margin: 0 0 28px 28px;
-  padding-right: 20px;
-  border-right: 1px solid rgba(125, 211, 252, 0.14);
-}
-
-.modo-openf1-activo .tarjetas-openf1 div {
-  min-height: 76px;
-  padding: 12px;
-  border-color: rgba(125, 211, 252, 0.2);
-  border-left-color: #22d3ee;
-  background: linear-gradient(145deg, #0a2034, #071626);
-}
-
-.modo-openf1-activo .tarjetas-openf1 dt,
-.modo-openf1-activo .tarjetas-openf1 dd {
-  color: #dbeafe;
-}
-
-.modo-openf1-activo .selector-pilotos-comparacion {
-  margin: 0;
-  border-color: rgba(125, 211, 252, 0.16);
-  background: #071829;
-}
-
-.modo-openf1-activo .selector-pilotos-comparacion legend,
-.modo-openf1-activo .selector-pilotos-comparacion p,
-.modo-openf1-activo .busqueda-pilotos {
-  color: #b7d5e7;
-}
-
-.modo-openf1-activo #busqueda-pilotos-comparacion {
-  color: #e2e8f0;
-  border-color: #285b7b;
-  background: #06111f;
-}
-
-.modo-openf1-activo .grupo-pilotos-comparacion,
-.modo-openf1-activo .casilla-piloto-comparacion {
-  border-color: rgba(125, 211, 252, 0.16);
-  background: #0a2034;
-  color: #dbeafe;
-}
-
-.modo-openf1-activo .grupo-pilotos-comparacion h4 {
-  color: #80b9d5;
-}
-
-.modo-openf1-activo .acciones-selector-pilotos button {
-  color: #9de7f5;
-  border-color: #285b7b;
-  background: #0d2439;
-}
-
-.modo-openf1-activo .comparacion-pilotos {
-  margin: 0;
-  padding: 0;
-  border: 0;
-  border-radius: 0;
-  background: transparent;
-}
-
-.modo-openf1-activo .comparacion-pilotos .titulo-seccion {
-  margin: 28px 0 13px;
-}
-
-.modo-openf1-activo .comparacion-pilotos h3,
-.modo-openf1-activo .comparacion-pilotos .resumen-operativo {
-  color: #e2e8f0;
-}
-
-.modo-openf1-activo .tarjetas-comparacion-pilotos {
-  grid-template-columns: 1fr;
-  gap: 10px;
-}
-
-.modo-openf1-activo .tarjeta-comparacion-piloto {
-  border-color: rgba(125, 211, 252, 0.2);
-  background: linear-gradient(135deg, #0b2338, #091827);
-}
-
-.modo-openf1-activo .tarjeta-comparacion-piloto header,
-.modo-openf1-activo .tarjeta-comparacion-piloto dd,
-.modo-openf1-activo .tarjeta-comparacion-piloto > p,
-.modo-openf1-activo .tarjeta-comparacion-piloto dt {
-  color: #dbeafe;
-}
-
-.modo-openf1-activo .tarjeta-comparacion-piloto dt {
-  color: #80b9d5;
-}
-
-.modo-openf1-activo .analisis-carrera {
-  grid-column: 2;
-  margin-top: 0;
-  margin-bottom: 28px;
-  padding: 24px;
-  border-color: rgba(125, 211, 252, 0.26);
-  border-radius: 16px 16px 0 0;
-  background: linear-gradient(145deg, #071829, #0b2942);
-}
-
-.modo-openf1-activo .grafico-operativo {
-  border-color: rgba(125, 211, 252, 0.18);
-  background: #091827;
-}
-
-.modo-openf1-activo .graficos-operativos {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-}
-
-.modo-openf1-activo .grafico-operativo:first-child {
-  grid-column: 1 / -1;
-}
-
-.modo-openf1-activo .contexto-instante-carrera {
-  border-color: rgba(125, 211, 252, 0.25);
-  background: #061423;
-}
-
-.modo-openf1-activo .trazabilidad-openf1 {
-  grid-column: 1 / -1;
-  margin-top: 0;
-  padding: 0 0 22px;
-  border-color: rgba(125, 211, 252, 0.16);
-}
-
-.modo-openf1-activo .nota-openf1 {
-  grid-column: 1 / -1;
-}
-
-.modo-openf1-activo .procesamiento-sesiones-openf1 {
-  grid-column: 1 / -1;
-  padding: 22px;
-  border: 1px solid rgba(125, 211, 252, 0.16);
-  border-radius: 16px;
-  background: linear-gradient(145deg, #071829, #0b2237);
-}
-
-.tarjetas-procesamiento-sesiones {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 14px;
-  margin-top: 16px;
-}
-
-.tarjeta-procesamiento-sesion {
-  padding: 18px;
-  border: 1px solid rgba(125, 211, 252, 0.18);
-  border-left: 4px solid #22d3ee;
-  border-radius: 14px;
-  background: #091827;
-}
-
-.tarjeta-procesamiento-sesion.estado-partial {
-  border-left-color: #f59e0b;
-}
-
-.tarjeta-procesamiento-sesion header {
-  display: flex;
-  justify-content: space-between;
-  gap: 12px;
-  color: #f8fafc;
-}
-
-.tarjeta-procesamiento-sesion small {
-  display: block;
-  margin-top: 4px;
-  color: #80b9d5;
-}
-
-.tarjeta-procesamiento-sesion span {
-  text-transform: uppercase;
-  color: #93c5fd;
-}
-
-.tarjeta-procesamiento-sesion p,
-.tarjeta-procesamiento-sesion dd,
-.tarjeta-procesamiento-sesion dt,
-.tarjeta-procesamiento-sesion li,
-.tarjeta-procesamiento-sesion h4,
-.tarjeta-procesamiento-sesion em {
-  color: #cbd5e1;
-}
-
-.tarjeta-procesamiento-sesion section {
-  margin-top: 12px;
-}
-
-.tarjeta-procesamiento-sesion h4 {
-  margin: 0 0 7px;
-  font-size: 0.72rem;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-  color: #80b9d5;
-}
-
-.resumen-procesamiento,
-.telemetria-procesamiento {
-  margin: 12px 0;
-  color: #cbd5e1;
-}
-
-.resultado-espacial {
-  margin: 12px 0;
-  padding: 10px 12px;
-  border: 1px solid rgba(125, 211, 252, 0.16);
-  border-radius: 12px;
-  background: rgba(15, 48, 76, 0.46);
-  color: #cbd5e1;
-}
-
-.resultado-espacial strong {
-  color: #dbeafe;
-}
-
-.resultado-espacial.disponible {
-  border-left: 4px solid #22d3ee;
-}
-
-.resultado-espacial.no-disponible {
-  border-left: 4px solid #f59e0b;
-}
-
-.metricas-procesamiento {
-  display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
-  gap: 8px;
-  margin: 14px 0;
-}
-
-.metricas-procesamiento span {
-  padding: 9px;
-  border: 1px solid rgba(125, 211, 252, 0.15);
-  border-radius: 12px;
-  background: rgba(15, 48, 76, 0.56);
-  color: #dbeafe;
-  font-size: 0.86rem;
-}
-
-.metricas-procesamiento strong {
-  display: block;
-  color: #67e8f9;
-  font-size: 1.05rem;
-}
-
-.detalles-procesamiento {
-  margin-top: 10px;
-  color: #cbd5e1;
-}
-
-.detalles-procesamiento summary {
-  cursor: pointer;
-  color: #93c5fd;
-}
-
-.advertencias-procesamiento {
-  margin: 0;
-  padding-left: 18px;
-  color: #fde68a !important;
-}
-
-.advertencias-procesamiento li {
-  color: #fde68a !important;
-}
-
-@media (max-width: 980px) {
-  .modo-openf1-activo .panel-openf1 {
-    display: block;
+    --fondo: #eef2f7; --fondo-veta: rgba(109,40,217,.07);
+    --superficie: #ffffff; --superficie-2: #f5f8fb; --superficie-hueca: #e9eff5;
+    --linea: rgba(15,42,66,.14); --linea-fuerte: rgba(15,42,66,.26);
+    --texto: #0f2233; --texto-medio: #47617a; --texto-tenue: #54697d;
+    --acento: #6d28d9; --acento-vivo: #7c3aed; --acento-veta: rgba(109,40,217,.1);
+    --ok: #136c34; --alerta: #9a4708; --critico: #b91c1c;
+    --auto-1: #6d28d9; --auto-2: #9a4708; --auto-3: #0e7490; --auto-4: #136c34;
+    --velo: #6d28d9; --sobre-acento: #ffffff;
+    /* La barra de reproduccion no es un panel mas: es el borde de la
+       aplicacion. Tiene su propio fondo porque con el de los paneles se
+       confundia con el de la pagina y parecia parte del tablero. */
+    --barra-fondo: #ffffff; --barra-linea: rgba(15,42,66,.3);
+    --sombra: 0 1px 2px rgba(15,34,51,.06), 0 12px 28px rgba(15,34,51,.07);
+    --titulo: "Saira Condensed", "Arial Narrow", sans-serif;
+    --cuerpo: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+    --cifra: "IBM Plex Mono", Consolas, ui-monospace, monospace;
+    color-scheme: light dark;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-tema="claro"]) {
+      --fondo: #060d15; --fondo-veta: rgba(183,148,246,.09);
+      --superficie: #0c1723; --superficie-2: #112232; --superficie-hueca: #081420;
+      --linea: rgba(183,148,246,.18); --linea-fuerte: rgba(183,148,246,.34);
+      --texto: #e8f2f8; --texto-medio: #9fbdd0; --texto-tenue: #6d8ba1;
+      --acento: #b794f6; --acento-vivo: #d8b4fe; --acento-veta: rgba(183,148,246,.14);
+      --ok: #4ade80; --alerta: #fbbf24; --critico: #f87171;
+      --auto-1: #b794f6; --auto-2: #fbbf24; --auto-3: #22d3ee; --auto-4: #4ade80;
+      --velo: #22d3ee; --sobre-acento: #12071f;
+      --sombra: 0 1px 0 rgba(183,148,246,.07), 0 20px 48px rgba(0,0,0,.5);
+      --barra-fondo: #182a3f; --barra-linea: rgba(183,148,246,.45);
+    }
+  }
+  :root[data-tema="oscuro"] {
+    --fondo: #060d15; --fondo-veta: rgba(183,148,246,.09);
+    --superficie: #0c1723; --superficie-2: #112232; --superficie-hueca: #081420;
+    --linea: rgba(183,148,246,.18); --linea-fuerte: rgba(183,148,246,.34);
+    --texto: #e8f2f8; --texto-medio: #9fbdd0; --texto-tenue: #6d8ba1;
+    --acento: #b794f6; --acento-vivo: #d8b4fe; --acento-veta: rgba(183,148,246,.14);
+    --ok: #4ade80; --alerta: #fbbf24; --critico: #f87171;
+    --auto-1: #b794f6; --auto-2: #fbbf24; --auto-3: #22d3ee; --auto-4: #4ade80;
+    --velo: #22d3ee; --sobre-acento: #12071f;
+      --sombra: 0 1px 0 rgba(183,148,246,.07), 0 20px 48px rgba(0,0,0,.5);
+      --barra-fondo: #182a3f; --barra-linea: rgba(183,148,246,.45);
   }
 
-  .modo-openf1-activo .columna-operativa-openf1 {
-    margin: 0 20px 20px;
-    padding: 0;
-    border-right: 0;
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 0 0 64px;
+    background: radial-gradient(circle at 88% -4%, var(--fondo-veta), transparent 32rem), var(--fondo);
+    color: var(--texto); font-family: var(--cuerpo); font-size: 14px; line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+  }
+  /* Debajo, el sitio que ocupa la barra de reproduccion fija. */
+  /* UN TABLERO NO ES UN TEXTO.
+     Los 1400 px venian de la medida comoda para leer prosa. Esta pagina no se
+     lee de corrido: se mira entera de una vez, y cada pixel de ancho que se
+     deja sin usar es ancho que le falta a los graficos y al vehiculo. */
+  .lienzo { width: min(1760px, calc(100% - 32px)); margin: 0 auto; padding-bottom: 94px; }
+
+  /* CADA PIXEL DEL ENCABEZADO SE LO SACA A LA CABINA.
+     En una pantalla de mil pixeles de alto, doscientos de encabezado son la
+     quinta parte de lo que se puede mirar. La nota, el titulo y el ciclo de
+     vida se aprietan a lo que necesitan para leerse y nada mas. */
+  .aviso-maqueta {
+    margin: 10px 0 9px; padding: 7px 12px;
+    border: 1px solid var(--linea-fuerte); border-left: 3px solid var(--alerta);
+    border-radius: 10px; background: var(--superficie-2);
+  }
+  .aviso-maqueta summary {
+    cursor: pointer; font-size: .78rem; color: var(--texto-medio);
+    list-style-position: outside;
+  }
+  .aviso-maqueta summary::marker { color: var(--alerta); }
+  .aviso-maqueta strong { color: var(--alerta); font-weight: 600; }
+  .aviso-maqueta p { margin: 10px 0 0; color: var(--texto-medio); max-width: 82ch; font-size: .86rem; }
+
+  .barra {
+    display: flex; flex-wrap: wrap; gap: 16px; align-items: center;
+    padding: 8px 20px; margin-bottom: 9px;
+    border: 1px solid var(--linea); border-radius: 14px;
+    background: var(--superficie); box-shadow: var(--sombra);
+  }
+  .marca { margin-right: auto; }
+  .marca h1 {
+    margin: 0; font-family: var(--titulo); font-weight: 700;
+    font-size: clamp(1.45rem, 2.3vw, 2.05rem); letter-spacing: .005em; line-height: 1.04;
+  }
+  .eyebrow { margin: 0 0 2px; font-size: .68rem; font-weight: 600; letter-spacing: .14em; text-transform: uppercase; color: var(--texto-tenue); }
+  .grupo-control { display: flex; align-items: center; gap: 8px; }
+
+  .segmentado { display: flex; padding: 3px; gap: 3px; border: 1px solid var(--linea); border-radius: 10px; background: var(--superficie-hueca); }
+  .segmentado button {
+    padding: 7px 13px; border: 0; border-radius: 7px; background: transparent; color: var(--texto-medio);
+    font-family: var(--cuerpo); font-size: .8rem; font-weight: 600; cursor: pointer;
+  }
+  .segmentado button:hover { color: var(--texto); background: var(--acento-veta); }
+  .segmentado button[aria-pressed="true"] { background: var(--acento); color: var(--sobre-acento); }
+  button:focus-visible, select:focus-visible, input:focus-visible { outline: 2px solid var(--acento-vivo); outline-offset: 2px; }
+
+  /* ---------- ciclo de vida del modo ---------- */
+  .ciclo {
+    display: flex; flex-wrap: wrap; gap: 12px; align-items: center;
+    padding: 7px 18px; margin-bottom: 10px;
+    border: 1px solid var(--linea); border-left: 3px solid var(--acento);
+    border-radius: 12px; background: var(--superficie);
+  }
+  .ciclo .estado-sesion { margin-right: auto; display: flex; align-items: center; gap: 10px; }
+  .pastilla {
+    display: inline-flex; align-items: center; gap: 6px; padding: 4px 11px; border-radius: 999px;
+    font-size: .72rem; font-weight: 600; letter-spacing: .04em; text-transform: uppercase;
+    border: 1px solid currentColor;
+  }
+  .pastilla::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+  .pastilla.vacio { color: var(--texto-tenue); }
+  .pastilla.cargado { color: var(--ok); }
+  .pastilla.vivo { color: var(--alerta); }
+  .ciclo .detalle { font-size: .82rem; color: var(--texto-medio); }
+  .ciclo .detalle b { font-family: var(--cifra); font-variant-numeric: tabular-nums; color: var(--texto); }
+
+  .boton {
+    display: inline-flex; align-items: center; gap: 7px;
+    padding: 8px 14px; border-radius: 9px; border: 1px solid var(--acento);
+    background: var(--acento); color: var(--sobre-acento);
+    font-family: var(--cuerpo); font-size: .82rem; font-weight: 600; cursor: pointer;
+  }
+  .boton.secundario { background: transparent; color: var(--texto-medio); border-color: var(--linea-fuerte); }
+  .boton.secundario:hover { color: var(--texto); border-color: var(--acento); }
+  .boton.peligro { background: transparent; color: var(--critico); border-color: var(--critico); }
+  .boton[disabled] { opacity: .55; cursor: not-allowed; }
+  .boton.secundario[disabled], .boton.peligro[disabled] { color: var(--texto-tenue); border-color: var(--linea); }
+  .sin-api {
+    font-size: .68rem; font-weight: 600; letter-spacing: .08em; text-transform: uppercase;
+    color: var(--critico); border: 1px dashed var(--critico); border-radius: 6px; padding: 2px 7px;
   }
 
-  .modo-openf1-activo .panel-openf1 > .tarjetas-openf1,
-  .modo-openf1-activo .panel-openf1 > .analisis-carrera,
-  .modo-openf1-activo .panel-openf1 > .trazabilidad-openf1,
-  .modo-openf1-activo .panel-openf1 > .procesamiento-sesiones-openf1,
-  .modo-openf1-activo .panel-openf1 > .nota-openf1 {
-    margin-left: 20px;
-    margin-right: 20px;
-  }
-}
+  .rejilla { display: grid; grid-template-columns: minmax(0,.85fr) minmax(0,1.15fr) minmax(0,1.1fr); gap: 14px; align-items: start; }
+  .columna { display: grid; gap: 14px; align-content: start; }
 
-@media (max-width: 640px) {
-  .modo-openf1-activo .graficos-operativos {
-    grid-template-columns: 1fr;
+  /* El panel recortaba lo que se saliera de su caja, y la ayuda flotante
+     ---que es mas ancha que una columna--- quedaba cortada por el borde. Se
+     deja de recortar y se redondean las esquinas de las piezas que lo
+     necesitaban, que era para lo unico que servia el recorte. */
+  .instrumento {
+    position: relative; border: 1px solid var(--linea); border-radius: 14px;
+    background: var(--superficie); box-shadow: var(--sombra);
   }
+  .instrumento > header { border-radius: 13px 13px 0 0; }
+  .instrumento > .tira-cronometraje:last-child { border-radius: 0 0 13px 13px; overflow: hidden; }
+  .instrumento > header { display: flex; align-items: baseline; gap: 10px; padding: 12px 16px 10px; border-bottom: 1px solid var(--linea); }
+  .instrumento > header h2 { margin: 0; font-family: var(--titulo); font-weight: 600; font-size: .95rem; letter-spacing: .04em; text-transform: uppercase; }
+  .instrumento > header .fuente-canal { margin-left: auto; font-family: var(--cifra); font-size: .64rem; color: var(--texto-tenue); }
+  .cuerpo-instrumento { padding: 14px 16px 16px; }
 
-  .tarjetas-procesamiento-sesiones {
-    grid-template-columns: 1fr;
+  /* La explicacion de por que no hay dato deja de ser una capa flotante.
+     Como capa se apoyaba en un alto de encabezado supuesto y el titulo se le
+     metia encima ---o al reves, ella tapaba al titulo---; ademas obligaba a
+     atenuar un cuerpo vacio debajo, que no aportaba nada. Ahora el cuerpo se
+     oculta y la explicacion ocupa su lugar como un hermano mas: no hay nada
+     que superponer, y por lo tanto no hay nada que se pueda cortar. */
+  .instrumento[data-estado="ausente"] > .cuerpo-instrumento,
+  .instrumento[data-estado="ausente"] > .tira-cronometraje { display: none; }
+  .capa-ausente {
+    display: none; flex: 1; flex-direction: column; justify-content: center; gap: 7px;
+    min-height: 92px; padding: 22px 20px;
   }
+  .instrumento[data-estado="ausente"] .capa-ausente { display: flex; }
+  .capa-ausente strong { font-family: var(--titulo); font-size: 1rem; letter-spacing: .05em; text-transform: uppercase; color: var(--texto-medio); }
+  .capa-ausente span { color: var(--texto-tenue); font-size: .8rem; max-width: 42ch; }
 
-  .metricas-procesamiento {
+  .tira-cronometraje { display: grid; grid-template-columns: repeat(4, minmax(0,1fr)); gap: 1px; background: var(--linea); }
+  .tira-cronometraje div { padding: 12px 14px; background: var(--superficie); }
+  .tira-cronometraje dt { margin: 0 0 3px; font-size: .64rem; letter-spacing: .12em; text-transform: uppercase; color: var(--texto-tenue); }
+  .tira-cronometraje dd { margin: 0; font-family: var(--cifra); font-variant-numeric: tabular-nums; font-size: 1.15rem; font-weight: 600; }
+  .tira-cronometraje .destacado { color: var(--acento); }
+  .tira-cronometraje .negativo { color: var(--ok); }
+
+  .esquema-auto { display: grid; grid-template-columns: 1fr auto 1fr; gap: 10px; align-items: center; }
+  .esquina { padding: 9px 10px; border: 1px solid var(--linea); border-radius: 9px; background: var(--superficie-2); }
+  .esquina .eyebrow { font-size: .6rem; margin-bottom: 5px; }
+  .fila-canal { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+  .fila-canal span { font-size: .7rem; color: var(--texto-tenue); }
+  .fila-canal b { font-family: var(--cifra); font-variant-numeric: tabular-nums; font-size: .86rem; font-weight: 600; }
+  .barra-desgaste { height: 4px; margin-top: 7px; border-radius: 999px; background: var(--superficie-hueca); overflow: hidden; }
+  .barra-desgaste i { display: block; height: 100%; border-radius: 999px; }
+  .silueta { display: grid; gap: 8px; justify-items: center; padding: 4px 0; }
+  .silueta svg { width: 132px; height: auto; }
+  .silueta .rueda { stroke-width: 1.5; }
+  .silueta .freno { opacity: .95; }
+  #p-suspension path { stroke-width: 2.2; fill: none; }
+  /* El danio se leia con los mismos colores que la temperatura de neumatico
+     y se confundia con ella. Se separa: rotulo propio, forma distinta
+     ---contorno rayado en vez de pastilla llena--- y la gravedad escrita,
+     para que el color no sea el unico canal que la comunica. */
+  .bloque-dano { margin-top: 12px; }
+  .bloque-dano .eyebrow { text-align: center; margin-bottom: 6px; }
+  .leyenda-dano { display: flex; flex-wrap: wrap; gap: 6px; justify-content: center; }
+  .leyenda-dano .chip { border-style: dashed; border-width: 1.5px; }
+  .leyenda-dano .chip b { font-weight: 700; }
+  .leyenda-dano .chip span { color: var(--texto-tenue); font-weight: 400; }
+  .chip { display: inline-flex; align-items: center; gap: 5px; padding: 3px 9px; border-radius: 999px; border: 1px solid var(--linea-fuerte); font-size: .7rem; font-weight: 500; color: var(--texto-medio); }
+  .chip::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+  .chip.ok { color: var(--ok); } .chip.alerta { color: var(--alerta); } .chip.critico { color: var(--critico); }
+
+  .fila-medidores { display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap: 10px; }
+  .medidor { display: grid; justify-items: center; gap: 4px; }
+  .medidor svg { width: 100%; max-width: 104px; height: auto; }
+  .medidor .rotulo { font-size: .64rem; letter-spacing: .1em; text-transform: uppercase; color: var(--texto-tenue); text-align: center; }
+  .arco-fondo { fill: none; stroke: var(--superficie-hueca); stroke-width: 9; stroke-linecap: round; }
+  .arco-valor { fill: none; stroke-width: 9; stroke-linecap: round; }
+  .valor-medidor { font-family: var(--cifra); font-variant-numeric: tabular-nums; font-weight: 600; font-size: 17px; fill: var(--texto); }
+  .unidad-medidor { font-family: var(--cuerpo); font-size: 8px; fill: var(--texto-tenue); letter-spacing: .08em; }
+
+  .ejes-g { display: grid; grid-template-columns: auto 1fr; gap: 14px; align-items: center; }
+  .ejes-g svg { width: 132px; height: 132px; }
+  .rejilla-g { fill: none; stroke: var(--linea); stroke-width: 1; }
+  .estela-g { fill: none; stroke: var(--acento); stroke-width: 1.5; opacity: .55; }
+  .punto-g { fill: var(--acento-vivo); }
+  .lista-canales { display: grid; gap: 7px; margin: 0; }
+  .lista-canales div { display: flex; justify-content: space-between; gap: 10px; align-items: baseline; padding-bottom: 6px; border-bottom: 1px solid var(--linea); }
+  .lista-canales dt { font-family: var(--cifra); font-size: .7rem; color: var(--texto-tenue); }
+  .lista-canales dd { margin: 0; font-family: var(--cifra); font-variant-numeric: tabular-nums; font-weight: 600; }
+
+  /* Veinte vehiculos no pueden empujar al resto de la grilla fuera de
+     pantalla: la lista tiene su propio desplazamiento. */
+  /* La lista toma el alto que le deja el panel en vez de un tope fijo: el
+     parrafo que ocupaba ese espacio decia lo que las propias filas ya
+     declaran, «propio» contra «cronometraje». El texto completo queda en el
+     titulo del panel, para quien lo busque. */
+  /* La lista se desplaza dentro de un alto acotado. Sin ese tope, veinte
+     filas estiraban su panel, y con el la fila entera: el trazado y el clima
+     crecian detras de una lista que ya se desplazaba sola. El tope define el
+     alto de la fila; lo demas se acomoda a el. */
+  .lista-autos {
+    display: grid; gap: 6px; margin-top: 10px;
+    flex: 0 1 auto; min-height: 0; max-height: 328px;
+    overflow-y: auto; padding-right: 4px; align-content: start;
+  }
+  .instrumento .cuerpo-instrumento { display: flex; flex-direction: column; min-height: 0; }
+  /* Barras de desplazamiento: la del navegador es gris de sistema y corta el
+     panel en dos. Se estilan con los tokens, en las dos familias de motor. */
+  .lista-autos, .linea-avisos, .envoltura-tabla, .panel-comparacion, .casillas-pilotos-comparacion {
+    scrollbar-width: thin;
+    scrollbar-color: var(--linea-fuerte) transparent;
+  }
+  .lista-autos::-webkit-scrollbar,
+  .linea-avisos::-webkit-scrollbar,
+  .envoltura-tabla::-webkit-scrollbar,
+  .panel-comparacion::-webkit-scrollbar { width: 9px; height: 9px; }
+  .lista-autos::-webkit-scrollbar-track,
+  .linea-avisos::-webkit-scrollbar-track,
+  .envoltura-tabla::-webkit-scrollbar-track,
+  .panel-comparacion::-webkit-scrollbar-track { background: transparent; }
+  .lista-autos::-webkit-scrollbar-thumb,
+  .linea-avisos::-webkit-scrollbar-thumb,
+  .envoltura-tabla::-webkit-scrollbar-thumb,
+  .panel-comparacion::-webkit-scrollbar-thumb {
+    background: var(--linea-fuerte); border-radius: 999px;
+    border: 2px solid transparent; background-clip: content-box;
+  }
+  .lista-autos::-webkit-scrollbar-thumb:hover,
+  .linea-avisos::-webkit-scrollbar-thumb:hover,
+  .envoltura-tabla::-webkit-scrollbar-thumb:hover,
+  .panel-comparacion::-webkit-scrollbar-thumb:hover { background: var(--acento); background-clip: content-box; }
+  .auto-fila .propio { font-size: .58rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--acento); }
+  .auto-fila { display: grid; grid-template-columns: auto 1fr auto; gap: 10px; align-items: center; padding: 8px 10px; border: 1px solid var(--linea); border-radius: 9px; background: var(--superficie-2); cursor: pointer; }
+  .auto-fila:hover { border-color: var(--acento); }
+  .auto-fila[aria-checked="true"] { border-color: var(--acento); background: var(--acento-veta); }
+  .auto-fila .punto { width: 9px; height: 9px; border-radius: 50%; }
+  .auto-fila .nombre { font-weight: 600; font-size: .82rem; }
+  .auto-fila .nombre small { display: block; font-weight: 400; font-size: .68rem; color: var(--texto-tenue); }
+  .auto-fila .senales { font-family: var(--cifra); font-variant-numeric: tabular-nums; font-size: .72rem; color: var(--texto-tenue); }
+
+  .pista svg { width: 100%; height: auto; }
+  .leyenda-curvas { display: flex; flex-wrap: wrap; gap: 4px 10px; margin-top: 8px; }
+  .leyenda-curvas span { display: inline-flex; align-items: center; gap: 5px; font-size: .72rem; color: var(--texto-medio); }
+  .leyenda-curvas b {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 15px; height: 15px; border-radius: 50%;
+    border: 1px solid var(--linea-fuerte); background: var(--superficie-2);
+    font-family: var(--cifra); font-size: .62rem; color: var(--texto-tenue);
+  }
+  .trazado { fill: none; stroke: var(--linea-fuerte); stroke-width: 3; stroke-linecap: round; stroke-linejoin: round; }
+  .marca-auto { stroke: var(--superficie); stroke-width: 1.5; }
+
+  .fila-clima { display: grid; grid-template-columns: repeat(4, minmax(0,1fr)); gap: 10px; }
+  .fila-clima div { padding: 9px 10px; border-radius: 9px; background: var(--superficie-2); border: 1px solid var(--linea); }
+  .fila-clima dt { margin: 0 0 2px; font-size: .62rem; letter-spacing: .1em; text-transform: uppercase; color: var(--texto-tenue); }
+  .fila-clima dd { margin: 0; font-family: var(--cifra); font-variant-numeric: tabular-nums; font-size: 1rem; font-weight: 600; }
+
+  .controles-traza { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 12px; }
+  .boton-menor { padding: 5px 10px; border: 1px solid var(--linea-fuerte); border-radius: 7px; background: var(--superficie-2); color: var(--texto-medio); font-family: var(--cuerpo); font-size: .74rem; font-weight: 600; cursor: pointer; }
+  .boton-menor:hover { color: var(--texto); border-color: var(--acento); }
+  .boton-menor[aria-pressed="true"] { color: var(--acento); border-color: var(--acento); background: var(--acento-veta); }
+  .lienzo-traza { width: 100%; height: 168px; display: block; }
+  .leyenda-traza { display: flex; flex-wrap: wrap; gap: 14px; margin-top: 10px; }
+  .leyenda-traza span { display: inline-flex; align-items: center; gap: 6px; font-size: .74rem; color: var(--texto-medio); }
+  .leyenda-traza i { width: 14px; height: 3px; border-radius: 2px; }
+
+  .envoltura-tabla { overflow-x: auto; }
+  table.disponibilidad { width: 100%; border-collapse: collapse; min-width: 640px; }
+  table.disponibilidad th, table.disponibilidad td { padding: 9px 12px; text-align: left; border-bottom: 1px solid var(--linea); }
+  table.disponibilidad thead th { font-family: var(--titulo); font-size: .76rem; letter-spacing: .09em; text-transform: uppercase; color: var(--texto-tenue); font-weight: 600; }
+  table.disponibilidad td:first-child { font-weight: 600; }
+  td.si { color: var(--ok); font-weight: 600; } td.parcial { color: var(--alerta); font-weight: 600; } td.no { color: var(--texto-tenue); }
+  table.disponibilidad code { font-family: var(--cifra); font-size: .72rem; color: var(--texto-medio); }
+
+  .nota { margin: 10px 0 0; color: var(--texto-medio); font-size: .82rem; max-width: 82ch; }
+  .nota code { font-family: var(--cifra); font-size: .76rem; color: var(--acento); }
+  .ancho-total { grid-column: 1 / -1; }
+  .tablero.cierre { margin-top: 30px; }
+
+  /* ---------- la traza, como bloque principal ---------- */
+  .panel-traza { order: -1; }
+  .lienzo-traza { width: 100%; height: 420px; display: block; cursor: crosshair; }
+
+  /* ---------- aceleraciones ---------- */
+  .ejes-g { grid-template-columns: minmax(0, 200px) 1fr; }
+  .ejes-g svg { width: 100%; height: auto; }
+  .rotulo-g { font-family: var(--cifra); font-size: 7px; letter-spacing: .1em; fill: var(--texto-tenue); }
+  .nota-g { font-size: .74rem; line-height: 1.5; margin-top: 12px; }
+  .nota-g b { color: var(--texto-medio); }
+  .estela-g { stroke: url(#trazo-g); stroke-width: 2; opacity: .8; }
+  .halo-g { fill: var(--acento); opacity: .22; }
+  .punto-g { fill: var(--acento-vivo); stroke: var(--superficie); stroke-width: 1.5; }
+  .halo-g, .punto-g { transition: cx 90ms linear, cy 90ms linear; }
+
+  /* ---------- medidores ---------- */
+  .fila-medidores { grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 14px; }
+  .medidor svg { max-width: 132px; }
+  .arco-fondo { stroke: var(--superficie-hueca); stroke-width: 11; }
+  /* Tres decimas: suficiente para que la aguja se vea barrer y no tanto como
+     para que quede atras del valor cuando el regimen sube de golpe. */
+  .arco-valor { stroke-width: 11; transition: stroke-dashoffset 300ms cubic-bezier(.22,.8,.3,1); }
+  @media (prefers-reduced-motion: reduce) { .arco-valor { transition: none; } }
+  .valor-medidor { font-size: 21px; }
+  .medidor .rotulo { font-family: var(--titulo); font-size: .7rem; }
+
+  /* barras con segmentos, para lo que se lee de un vistazo y no en cifra */
+  .barras-medidas { display: grid; gap: 10px; margin-top: 14px; }
+  .barra-medida { display: grid; grid-template-columns: 1fr auto; gap: 6px 10px; align-items: center; }
+  .barra-medida .eyebrow { grid-column: 1 / -1; margin: 0; font-size: .6rem; }
+  .segmentos { display: flex; gap: 3px; }
+  /* Un segmento vacio pintado con el color de una superficie se confunde
+     con el panel: la barra parecia terminar donde terminaba lo lleno. Ahora
+     el hueco se dibuja con su propio contorno, de modo que se ve cuanto
+     falta y no solo cuanto hay. */
+  .segmentos i {
+    flex: 1; height: 9px; border-radius: 2px;
+    background: transparent;
+    box-shadow: inset 0 0 0 1px var(--linea-fuerte);
+    transition: background 280ms ease, box-shadow 280ms ease;
+  }
+  .segmentos i[data-lleno="si"] { box-shadow: none; }
+  .barra-medida b { font-family: var(--cifra); font-variant-numeric: tabular-nums; font-size: .92rem; }
+
+  /* ---------- clima ---------- */
+  .clima { display: grid; gap: 12px; }
+  .clima-principal { display: flex; align-items: center; gap: 14px; }
+  .clima-principal .icono { width: 46px; height: 46px; flex: 0 0 auto; }
+  .clima-principal .cifra-grande { font-family: var(--cifra); font-variant-numeric: tabular-nums; font-size: 2rem; font-weight: 600; line-height: 1; }
+  .clima-principal .estado { font-family: var(--titulo); font-size: .95rem; letter-spacing: .05em; text-transform: uppercase; color: var(--texto-medio); }
+  .clima-rejilla { display: grid; grid-template-columns: repeat(auto-fit, minmax(88px, 1fr)); gap: 8px; }
+  .clima-rejilla div { padding: 9px 10px; border: 1px solid var(--linea); border-radius: 9px; background: var(--superficie-2); }
+  .clima-rejilla dt { margin: 0 0 3px; font-size: .6rem; letter-spacing: .1em; text-transform: uppercase; color: var(--texto-tenue); }
+  .clima-rejilla dd { margin: 0; font-family: var(--cifra); font-variant-numeric: tabular-nums; font-size: 1.02rem; font-weight: 600; }
+  .bandera { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 999px; border: 1px solid currentColor; font-size: .72rem; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; }
+  .bandera::before { content: ""; width: 8px; height: 8px; border-radius: 2px; background: currentColor; }
+
+  /* =====================================================================
+     LA GRILLA
+     ---------------------------------------------------------------------
+     Una sola rejilla para todo. Las celdas anchas ---auto, circuito,
+     medidores, cronometraje--- ocupan dos columnas; los graficos chicos y
+     los paneles de contexto, una. Al no haber columnas fijas, los graficos
+     se reparten entre los demas instrumentos en vez de amontonarse.
+     ===================================================================== */
+
+  /* CUATRO COLUMNAS FIJAS, NO AUTOMATICAS.
+     Con `auto-fill` el numero de columnas cambiaba con el ancho y las celdas
+     de dos columnas dejaban de encajar: quedaban huecos al final de cada
+     fila. Con cuatro columnas y anchos que suman exactamente cuatro, cada
+     fila cierra.
+
+     Y `align-items: stretch` en lugar de `start`: antes un panel corto
+     dejaba aire debajo dentro de su propia fila. Ahora cada panel ocupa el
+     alto de su fila, y las filas quedan parejas. */
+  /* ---------- transporte ---------- */
+  /* EL REPRODUCTOR ES DE LA SESION, NO DEL TABLERO.
+     Estaba dentro del flujo, arriba del tablero: al abrir la comparacion a
+     pantalla completa desaparecia, y con el la unica manera de saber en que
+     momento de la carrera se estaba mirando el grafico. Ahora esta fijo al
+     pie de la ventana y se ve en todas las vistas, porque la posicion dentro
+     de la sesion es la misma en todas: es una sola sesion. */
+  .transporte {
+    position: fixed; left: 0; right: 0; bottom: 0; z-index: 60;
+    display: flex; align-items: center; gap: 14px;
+    min-height: 74px;
+    padding: 10px max(16px, calc((100% - 1760px) / 2));
+    border: 0; border-top: 1px solid var(--barra-linea);
+    background: var(--barra-fondo);
+    box-shadow: 0 -14px 34px -14px rgba(0, 0, 0, .55);
+  }
+  .transporte .mandos { display: none; align-items: center; gap: 12px; flex: 1; min-width: 0; }
+  .cabina-completa { flex: 0 0 auto; margin-left: 4px; }
+  .cabina-completa[aria-pressed="true"] {
+    background: var(--acento); color: var(--sobre-acento); border-color: var(--acento);
+  }
+  .transporte[data-modo="reproduccion"] #mandos-reproduccion { display: flex; }
+  .transporte[data-modo="vivo"] #mandos-vivo { display: flex; }
+  .transporte[data-modo="vacio"] #mandos-vacio { display: flex; }
+
+  .boton-transporte {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 34px; height: 34px; padding: 0; flex: 0 0 auto;
+    border: 1px solid var(--linea-fuerte); border-radius: 9px;
+    background: var(--superficie-2); color: var(--texto-medio); cursor: pointer;
+  }
+  .boton-transporte:hover { color: var(--acento); border-color: var(--acento); }
+  .boton-transporte svg { width: 15px; height: 15px; fill: currentColor; stroke: currentColor; stroke-width: 1.4; }
+  .boton-transporte.grande { width: 42px; height: 42px; background: var(--acento); color: var(--sobre-acento); border-color: var(--acento); }
+  .boton-transporte.grande:hover { background: var(--acento-vivo); border-color: var(--acento-vivo); color: var(--sobre-acento); }
+
+  .linea-tiempo { flex: 1; min-width: 160px; }
+  .linea-tiempo input[type="range"] {
+    width: 100%; margin: 0; appearance: none; height: 6px; border-radius: 999px;
+    background: var(--superficie-hueca); cursor: pointer;
+  }
+  .linea-tiempo input[type="range"]::-webkit-slider-thumb {
+    appearance: none; width: 15px; height: 15px; border-radius: 50%;
+    background: var(--acento); border: 2px solid var(--superficie); cursor: grab;
+  }
+  .linea-tiempo input[type="range"]::-moz-range-thumb {
+    width: 13px; height: 13px; border-radius: 50%;
+    background: var(--acento); border: 2px solid var(--superficie); cursor: grab;
+  }
+  .marcas-tiempo {
+    position: relative; height: 13px; margin-top: 3px;
+    font-family: var(--cifra); font-size: .58rem; color: var(--texto-tenue);
+  }
+  .marcas-tiempo span { position: absolute; transform: translateX(-50%); white-space: nowrap; }
+
+  /* La vuelta es lo primero que se lee: ubica todo lo demas. El metro y el
+     reloj de sesion la acompañan en el renglon de abajo. */
+  .reloj { flex: 0 0 auto; text-align: right; font-family: var(--cifra); font-variant-numeric: tabular-nums; }
+  .reloj b { display: block; font-size: 1.05rem; letter-spacing: .01em; }
+  .reloj span { font-size: .66rem; color: var(--texto-tenue); white-space: nowrap; }
+
+  /* Cada vuelta, marcada sobre la linea de tiempo. Con veintidos vueltas
+     rotularlas todas seria ilegible: se rotula una de cada tantas y el resto
+     queda como marca. La vuelta en curso va en el color de acento. */
+  .marca-vuelta { color: var(--texto-tenue); }
+  .marca-vuelta.actual { color: var(--acento); font-weight: 700; }
+
+  /* El indicador de en vivo late, para que no se confunda con una pausa. */
+  .senal-vivo {
+    display: inline-flex; align-items: center; gap: 8px; flex: 0 0 auto;
+    padding: 6px 14px; border-radius: 999px;
+    border: 1px solid var(--critico); color: var(--critico);
+    font-family: var(--titulo); font-size: .82rem; font-weight: 700;
+    letter-spacing: .1em; text-transform: uppercase;
+  }
+  .senal-vivo i {
+    width: 9px; height: 9px; border-radius: 50%; background: currentColor;
+    animation: latido 1.4s ease-in-out infinite;
+  }
+  @keyframes latido { 0%, 100% { opacity: 1; } 50% { opacity: .25; } }
+  @media (prefers-reduced-motion: reduce) { .senal-vivo i { animation: none; } }
+  .detalle-vivo { font-family: var(--cifra); font-variant-numeric: tabular-nums; font-size: .84rem; color: var(--texto-medio); }
+  .nota-vivo { margin-left: auto; max-width: 46ch; font-size: .74rem; color: var(--texto-tenue); text-align: right; }
+
+  /* =====================================================================
+     LA CABINA
+     ---------------------------------------------------------------------
+     Tres columnas de alto fijo: a la izquierda donde esta el vehiculo y en
+     que vuelta va; al centro las señales; a la derecha que le esta pasando
+     al vehiculo y que avisos llegaron. El alto sale de la ventana menos la
+     barra de reproduccion, de modo que las cuatro se leen sin desplazar.
+     ===================================================================== */
+  /* CINCO COLUMNAS, CON EL VEHICULO EN LA DE ENMEDIO.
+     De izquierda a derecha: donde esta y en que vuelta va; dos graficos; el
+     vehiculo; dos graficos; que le pasa y que aviso. Arriba, los mandos de
+     las señales; abajo, motor y energia cruzando el ancho. */
+  .cabina {
+    display: grid;
+    grid-template-columns:
+      minmax(0, 1.02fr) minmax(0, .88fr) minmax(0, 1.22fr) minmax(0, 1.1fr);
+    grid-template-rows: minmax(0, 1fr) minmax(0, .72fr);
+    gap: 14px;
+    /* Lo que queda de la ventana despues del encabezado ---nota plegada,
+       titulo y ciclo de vida, unos 280 px--- y de la barra de reproduccion,
+       que esta fija al pie. El objetivo es que trazado, graficos,
+       aceleraciones y avisos se lean sin desplazar la pagina. */
+    /* Valor de arranque; el alto exacto lo mide `ajustarCabina()` contra la
+       pagina ya dibujada, porque el encabezado cambia de alto segun el modo,
+       el idioma del navegador y si la nota esta desplegada. */
+    height: calc(100vh - 290px);
+    min-height: 380px;
+    margin-bottom: 18px;
+  }
+  .col-cabina { display: flex; flex-direction: column; gap: 14px; min-height: 0; }
+  /* `min-height: 0` en cada panel: sin eso un hijo con contenido largo se
+     niega a encogerse y estira la columna mas alla del alto de la cabina. */
+  .cabina .instrumento { min-height: 0; }
+  .cabina .cuerpo-instrumento { min-height: 0; }
+
+  /* LAS DOS FRANJAS SE QUEDAN CON LO MINIMO.
+     Cada pixel que toman las franjas de arriba y de abajo se lo sacan a la
+     fila del medio, que es donde esta lo que se vigila. La de señales es una
+     barra de mandos: no necesita ni encabezado ni explicacion en pantalla
+     ---la explicacion vive en el titulo del panel---. La de motor entrega sus
+     cuatro medidores y sus cuatro barras en una tira baja. */
+  .cabina .graficos-cabina { grid-column: 1 / -1; }
+  .franja-senales > header { display: none; }
+  .franja-senales .nota { display: none; }
+  .franja-senales .cuerpo-instrumento { padding: 9px 14px; }
+  .franja-senales .controles-traza { margin-bottom: 0; }
+
+  /* La franja de motor es la que mas facil se come el alto: cuatro medidores
+     circulares y cuatro barras. Se aprieta a lo que hace falta para leer la
+     cifra, que es lo unico que se mira de un medidor en marcha. */
+  /* MOTOR Y ENERGIA, EN UNA TIRA.
+     Ocupaba ciento noventa pixeles para mostrar ocho numeros, con el rotulo
+     de cada barra en un renglon propio y los medidores holgados. Ahora cada
+     barra es un solo renglon ---rotulo, segmentos, cifra--- y los medidores
+     ocupan lo que necesitan para leerse. Lo que devuelve, casi cien pixeles,
+     se lo lleva la fila de arriba, que es donde estan los graficos. */
+  /* MOTOR Y ENERGIA EN UNA COLUMNA.
+     Los cuatro medidores en una fila arriba ---regimen, velocidad,
+     temperatura, energia--- y las cuatro barras debajo, cada una en un
+     renglon: rotulo, segmentos y cifra. Es la misma informacion que cruzaba
+     la pantalla, en un cuarto del ancho. */
+  .col-cabina.motor > .instrumento { flex: 1; }
+  .panel-motor > header { padding: 8px 12px 7px; }
+  .panel-motor > header h2 { font-size: .86rem; }
+  .panel-motor .cuerpo-instrumento { padding: 8px 12px 10px; min-height: 0; }
+  /* Los medidores se quedan con el hueco: las barras piden lo que ocupan y
+     el cuadro de medidores crece con lo que sobra, en vez de repartir el aire
+     en tres franjas vacias. */
+  .panel-motor .banco-motor {
+    display: flex; flex-direction: column; gap: 12px; height: 100%;
+  }
+  .panel-motor .barras-medidas { flex: 0 0 auto; }
+  /* DOS POR DOS, NO CUATRO EN FILA.
+     En una columna angosta, cuatro medidores en fila salian de sesenta
+     pixeles cada uno y dejaban el resto del panel vacio. En cuadro tienen el
+     doble de diametro y llenan el hueco que sobraba. */
+  /* `.banco-motor .fila-medidores` fija cuatro columnas y esta mas abajo en
+     la hoja: con la misma especificidad ganaba por orden. Se nombra el banco
+     tambien aca para que este mande. */
+  .panel-motor .banco-motor .fila-medidores {
+    flex: 1; min-height: 0;
     grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-rows: repeat(2, minmax(0, 1fr));
+    gap: 6px 14px; align-content: stretch;
   }
-}
-
-.modo-openf1-activo .trazabilidad-openf1 summary,
-.modo-openf1-activo .trazabilidad-openf1 > p,
-.modo-openf1-activo .nota-openf1 {
-  color: #b7d5e7;
-}
-
-.modo-openf1-activo .contenedor-tabla {
-  overflow-x: auto;
-  border: 1px solid rgba(125, 211, 252, 0.2);
-  border-radius: 10px;
-  background: #081728;
-  scrollbar-color: #3b82a8 #081728;
-}
-
-.modo-openf1-activo #tabla-openf1 th {
-  color: #dbeafe;
-  background: #12324c;
-}
-
-.modo-openf1-activo #tabla-openf1 td {
-  color: #cbd5e1;
-  border-top-color: rgba(148, 163, 184, 0.42);
-}
-
-.modo-openf1-activo #tabla-openf1 td:first-child {
-  color: #22d3ee;
-}
-
-.modo-openf1-activo #tabla-openf1 tbody tr:hover {
-  background: rgba(14, 116, 144, 0.2);
-}
-
-.modo-openf1-activo .grafico-operativo canvas {
-  background: #091827;
-}
-
-.contexto-instante-carrera {
-  display: grid;
-  grid-template-columns: minmax(220px, 0.8fr) minmax(190px, 0.65fr) minmax(0, 1.55fr);
-  gap: 16px;
-  margin-top: 18px;
-  padding: 16px;
-  border: 1px solid rgba(125, 211, 252, 0.22);
-  border-radius: 10px;
-  background: rgba(7, 16, 28, 0.72);
-}
-
-.contexto-instante-carrera h4 {
-  margin: 0;
-  color: #f8fafc;
-  font-size: 0.98rem;
-}
-
-#resumen-instante-carrera {
-  margin: 8px 0 0;
-  color: #94a3b8;
-  font-size: 0.8rem;
-  line-height: 1.45;
-}
-
-.clima-instante-carrera,
-.pilotos-instante-carrera {
-  display: grid;
-  gap: 8px;
-}
-
-.clima-instante-carrera:not(:empty),
-.contexto-piloto-instante {
-  padding: 10px;
-  border: 1px solid rgba(148, 163, 184, 0.24);
-  border-radius: 8px;
-  background: rgba(15, 35, 57, 0.8);
-}
-
-.clima-instante-carrera strong,
-.contexto-piloto-instante strong {
-  color: #f8fafc;
-  font-size: 0.78rem;
-}
-
-.clima-instante-carrera p,
-.contexto-piloto-instante p {
-  margin: 5px 0 0;
-  color: #cbd5e1;
-  font-size: 0.76rem;
-  line-height: 1.45;
-}
-
-.pilotos-instante-carrera {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-}
-
-.contexto-frescura-aged {
-  color: #fbbf24;
-}
-
-.contexto-frescura-unavailable {
-  color: #94a3b8;
-}
-
-.nota-openf1 {
-  margin: 16px 0 0;
-  color: #64748b;
-  font-size: 0.82rem;
-}
-
-.panel {
-  margin-bottom: 18px;
-  padding: 26px;
-  background: rgba(255, 255, 255, 0.92);
-  border: 1px solid rgba(148, 163, 184, 0.34);
-  border-radius: 20px;
-  box-shadow: 0 14px 32px rgba(15, 23, 42, 0.07);
-}
-
-.lista-contexto {
-  display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
-  gap: 14px;
-  margin: 0;
-}
-
-.lista-contexto div {
-  min-width: 0;
-  padding-left: 14px;
-  border-left: 3px solid #cbd5e1;
-}
-
-.lista-contexto dt {
-  color: #64748b;
-  font-size: 0.72rem;
-  font-weight: 800;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-
-.lista-contexto dd {
-  overflow: hidden;
-  margin: 5px 0 0;
-  color: #0f172a;
-  font-weight: 700;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.titulo-seccion {
-  display: flex;
-  justify-content: space-between;
-  gap: 18px;
-  align-items: end;
-  margin-bottom: 18px;
-}
-
-.titulo-seccion h2 {
-  color: #0f172a;
-  font-size: 1.45rem;
-}
-
-.resumen-operativo {
-  margin: 7px 0 0;
-  color: #475569;
-  font-size: 0.93rem;
-}
-
-#estado-carga,
-.detalle-grafico {
-  margin: 0;
-  color: #64748b;
-  font-size: 0.88rem;
-}
-
-.linea-fases {
-  display: grid;
-  grid-template-columns: repeat(7, minmax(132px, 1fr));
-  gap: 10px;
-  overflow-x: auto;
-  padding-bottom: 5px;
-}
-
-.hito-fase {
-  display: flex;
-  gap: 10px;
-  min-height: 86px;
-  padding: 13px;
-  color: inherit;
-  font: inherit;
-  text-align: left;
-  border: 1px solid #dbe3ee;
-  border-radius: 12px;
-  background: #f8fafc;
-  cursor: pointer;
-}
-
-.hito-fase:hover {
-  border-color: #67e8f9;
-}
-
-.hito-fase:focus-visible {
-  outline: 3px solid rgba(8, 145, 178, 0.35);
-  outline-offset: 2px;
-}
-
-.hito-seleccionado {
-  border-color: #0891b2;
-  background: #ecfeff;
-}
-
-.numero-fase {
-  color: #0891b2;
-  font-family: Consolas, monospace;
-  font-size: 0.78rem;
-  font-weight: 800;
-}
-
-.hito-fase strong {
-  display: block;
-  color: #1e293b;
-  font-size: 0.82rem;
-  line-height: 1.25;
-}
-
-.hito-fase p {
-  margin: 6px 0 0;
-  color: #64748b;
-  font-size: 0.75rem;
-}
-
-.contador-fases {
-  color: #0e7490;
-  font-weight: 800;
-}
-
-.mapa-maniobra {
-  display: block;
-  width: 100%;
-  max-width: 760px;
-  margin: 0 auto;
-  overflow: visible;
-}
-
-.tramo-mapa {
-  fill: none;
-  stroke: #cbd5e1;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-  stroke-width: 18;
-  transition: stroke 180ms ease, stroke-width 180ms ease;
-}
-
-.tramo-mapa.tramo-activo {
-  stroke: #22d3ee;
-  stroke-width: 22;
-}
-
-.inicio-mapa,
-.fin-mapa {
-  stroke: #0f172a;
-  stroke-width: 3;
-}
-
-.inicio-mapa {
-  fill: #22d3ee;
-}
-
-.fin-mapa {
-  fill: #f97316;
-}
-
-.mapa-maniobra text {
-  fill: #64748b;
-  font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
-  font-size: 12px;
-  font-weight: 800;
-  letter-spacing: 0.08em;
-}
-
-.nota-mapa {
-  margin: 8px 0 0;
-  color: #64748b;
-  font-size: 0.8rem;
-  text-align: center;
-}
-
-.zona-analisis {
-  display: grid;
-  grid-template-columns: minmax(320px, 0.85fr) minmax(0, 1.35fr);
-  gap: 18px;
-  align-items: start;
-  margin-bottom: 18px;
-}
-
-.zona-analisis .panel {
-  margin-bottom: 18px;
-}
-
-.zona-analisis > .panel,
-.columna-contexto .panel:last-child {
-  margin-bottom: 0;
-}
-
-.panel-graficos-laterales .graficos-coordinados {
-  grid-template-columns: 1fr;
-  gap: 10px;
-}
-
-.panel-graficos-laterales .grafico-coordinado h3 {
-  padding-top: 10px;
-}
-
-.grid-punto-seleccionado {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 14px;
-}
-
-.tarjeta-punto {
-  padding: 16px;
-  border: 1px solid #dbe3ee;
-  border-radius: 14px;
-  background: #f8fafc;
-}
-
-.tarjeta-punto p,
-.tarjeta-punto span {
-  display: block;
-  margin: 0;
-}
-
-.tarjeta-punto p {
-  color: #64748b;
-  font-size: 0.75rem;
-  font-weight: 800;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-}
-
-.tarjeta-punto strong {
-  display: block;
-  margin: 10px 0 3px;
-  color: #0f172a;
-  font-size: 1.55rem;
-  letter-spacing: -0.04em;
-}
-
-.tarjeta-punto.tarjeta-brake_pressed strong {
-  font-size: clamp(1rem, 1.3vw, 1.3rem);
-}
-
-.tarjeta-punto span {
-  min-height: 1.1em;
-  color: #0e7490;
-  font-weight: 700;
-}
-
-#boton-recargar {
-  min-height: 38px;
-  border-radius: 8px;
-  font: inherit;
-}
-
-#boton-recargar {
-  padding: 0 14px;
-  color: white;
-  background: #0f766e;
-  border: 0;
-  cursor: pointer;
-  font-weight: 800;
-}
-
-#boton-recargar:hover {
-  background: #115e59;
-}
-
-.graficos-coordinados {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 14px;
-}
-
-.grafico-coordinado {
-  overflow: hidden;
-  border-radius: 14px;
-  background: #0b1220;
-}
-
-.grafico-coordinado h3 {
-  margin: 0;
-  padding: 14px 16px 0;
-  color: #e2e8f0;
-  font-size: 1rem;
-}
-
-.grafico-coordinado h3 span {
-  color: #94a3b8;
-  font-size: 0.76rem;
-  font-weight: 500;
-}
-
-.grafico-coordinado canvas {
-  display: block;
-  width: 100%;
-  height: auto;
-}
-
-.detalle-grafico {
-  margin-top: 12px;
-}
-
-.contenedor-tabla {
-  overflow-x: auto;
-}
-
-#tabla-telemetria {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 0.88rem;
-}
-
-#tabla-telemetria th,
-#tabla-telemetria td {
-  padding: 11px 12px;
-  text-align: left;
-  border-bottom: 1px solid #e2e8f0;
-  white-space: nowrap;
-}
-
-#tabla-telemetria th {
-  color: #64748b;
-  background: #f8fafc;
-  font-size: 0.72rem;
-  letter-spacing: 0.07em;
-  text-transform: uppercase;
-}
-
-#tabla-telemetria tbody tr:hover {
-  background: #f0fdfa;
-}
-
-#tabla-telemetria tbody tr.fila-seleccionada {
-  background: #e0f7fa;
-}
-
-@media (max-width: 760px) {
-  .dashboard {
-    width: min(100% - 20px, 1240px);
-    padding-top: 10px;
+  .panel-motor .medidor { justify-items: center; align-content: center; }
+  .panel-motor .medidor svg { max-width: 132px; width: 100%; max-height: 100%; }
+  .panel-motor .medidor .rotulo { font-size: .58rem; letter-spacing: .08em; }
+  .panel-motor .medidor { gap: 2px; }
+  .panel-motor .barras-medidas { margin-top: 0; gap: 7px; }
+  .panel-motor .barra-medida {
+    grid-template-columns: minmax(0, auto) minmax(46px, 1fr) auto;
+    gap: 0 8px; align-items: center;
+  }
+  .panel-motor .barra-medida .eyebrow {
+    grid-column: 1; margin: 0; font-size: .54rem; white-space: nowrap;
+    overflow: hidden; text-overflow: ellipsis; max-width: 118px;
+  }
+  .panel-motor .segmentos { gap: 2px; }
+  .panel-motor .segmentos i { height: 7px; }
+  .panel-motor .barra-medida b { font-size: .8rem; }
+  .col-cabina.centro > .instrumento { flex: 1; }
+  .cabina .graficos-cabina { grid-row: 2; }
+  .col-cabina { grid-row: 1; }
+
+  /* EL TRAZADO SE QUEDA CON EL SITIO DE LA LEYENDA.
+     Once nombres de curva ocupaban un tercio del panel y el dibujo quedaba
+     del tamaño de un sello. Los numeros sobre el trazado ya identifican cada
+     curva ---asi las publican los mapas del circuito---; el nombre aparece al
+     apuntar el numero, que es cuando hace falta. */
+  /* Los nombres de curva viven en el globo que aparece al apuntar cada
+     numero. Tenerlos ademas en una lista debajo del dibujo era decir dos
+     veces lo mismo y quitarle al trazado el sitio que necesita. */
+  .leyenda-curvas { display: none; }
+  /* El trazado se lleva algo mas que el cronometraje, pero no el doble: el
+     dibujo conserva su proporcion y darle mas alto del que su ancho admite
+     solo agrega aire arriba y abajo. */
+  /* EL CRONOMETRAJE PIDE LO QUE NECESITA Y NO MAS.
+     Repartiendo la columna en proporciones, cuando la ventana era baja le
+     tocaban noventa pixeles: encabezado mas dos filas de cifras no entran en
+     noventa, y las cifras se cortaban por la mitad. Ahora reclama el alto de
+     su contenido ---dos filas de treinta y ocho--- y lo que sobra es del
+     trazado, que si se aprovecha de crecer. */
+  /* EL TRAZADO, SOLO EN SU COLUMNA.
+     Es una figura ancha: en trescientos cuarenta pixeles de ancho necesita
+     ciento sesenta de alto para dibujarse entera. Compartiendo columna con el
+     cronometraje le quedaban ciento diez y se dibujaba chico por falta de
+     alto, no de ancho. Ahora la columna es suya y el cronometraje acompaña a
+     motor, que le sobraba sitio. */
+  /* El trazado es una figura ancha: con la columna entera le sobraba alto y
+     el dibujo no crecia por eso. La mitad de abajo la ocupa el clima, que es
+     contexto de la vuelta y estaba abajo del todo sin que nadie lo mirara. */
+  .col-cabina.izquierda > .pista { flex: 1.12; min-height: 0; }
+  .col-cabina.izquierda > .clima-mini { flex: 1; min-height: 0; }
+  .cabina .clima-mini .clima { gap: 10px; }
+  .cabina .clima-mini .clima-principal .cifra-grande { font-size: 1.45rem; }
+  .cabina .clima-mini .clima-rejilla { gap: 8px; }
+  /* Las cuatro celdas en una fila: en cuadro pedian el doble de alto y el
+     trazado, que comparte columna, se quedaba sin sitio. */
+  .cabina .clima-mini .clima-rejilla {
+    grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 7px;
+  }
+  /* Una celda por dato, en un renglon cada una: el valor no se parte y el
+     rotulo tampoco, que era lo que hacia crecer la fila hasta desbordar. */
+  .cabina .clima-mini .clima-rejilla div { padding: 6px 6px; min-height: 0; }
+  .cabina .clima-mini .clima-rejilla dt {
+    font-size: .52rem; letter-spacing: .06em; margin-bottom: 2px;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .cabina .clima-mini .clima-rejilla dd { font-size: .84rem; white-space: nowrap; }
+  .cabina .clima-mini .clima-principal .icono { width: 28px; height: 28px; }
+  .cabina .clima-mini .bandera { font-size: .6rem; padding: 2px 7px; }
+  /* Motor se queda con su columna entera: cuatro medidores y cuatro barras
+     no entran compartiendo. El cronometraje, que son cuatro cifras, acompaña
+     a los avisos, que es donde sobraba. */
+  .col-cabina.motor > .panel-motor { flex: 1; }
+  .col-cabina.derecha > .vertical { flex: 0 0 auto; }
+  .col-cabina.derecha > .panel-avisos { flex: 1; min-height: 0; }
+
+  .cabina .pista svg { max-height: none; width: 100%; }
+  .cabina .pista .cuerpo-instrumento { position: relative; padding: 6px 10px 8px; }
+  /* La procedencia del trazado en un renglon: partida en dos le robaba al
+     dibujo el alto que necesita. */
+  .cabina .pista > header { padding-bottom: 7px; }
+  .cabina .pista > header .fuente-canal {
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0;
+  }
+  .cabina .marca-curva { cursor: help; }
+  .cabina .marca-curva:hover circle, .cabina .marca-curva:focus circle { stroke: var(--acento); }
+  .globo-curva {
+    position: absolute; z-index: 12; transform: translate(-50%, -125%);
+    padding: 5px 10px; border: 1px solid var(--acento); border-radius: 8px;
+    background: var(--superficie); color: var(--texto);
+    font-size: .74rem; font-weight: 600; white-space: nowrap;
+    box-shadow: var(--sombra); pointer-events: none;
+  }
+  .globo-curva b { color: var(--acento); margin-right: 6px; font-family: var(--cifra); }
+
+  /* EL VEHICULO SE AJUSTA A SU CELDA.
+     El esquema estaba pensado para un panel que crecia con su contenido; en
+     la cabina el alto lo fija la ventana, y sin esto la silueta y las cuatro
+     esquinas se salian por abajo del panel. La silueta toma el alto que le
+     queda y conserva su proporcion; el bloque de daño se apoya al pie. */
+  .cabina .centro .instrumento:not([data-estado="ausente"]) > .cuerpo-instrumento {
+    display: flex; align-items: stretch; min-height: 0;
+  }
+  .cabina .esquema-auto { flex: 1; min-height: 0; width: 100%; }
+  /* EL VEHICULO, AL CENTRO Y CON SUS CUATRO ESQUINAS ALREDEDOR.
+     Cada caja esta del lado del vehiculo al que corresponde ---delanteras
+     arriba, traseras abajo, izquierdas a la izquierda---, de modo que no hace
+     falta leer el rotulo para saber de que rueda habla. Para eso el dibujo
+     tiene que ocupar las dos filas: si vive solo en la primera, la fila crece
+     hasta su alto y las esquinas quedan descolgadas.
+
+     Y los tres canales de cada esquina se aprietan un punto: el ancho de la
+     celda del centro se reparte entre cinco columnas y «Presión 23.0 psi»
+     tiene que entrar en un renglon. */
+  .cabina .esquema-auto {
+    grid-template-columns: minmax(0, 1fr) 124px minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
+    align-items: stretch; gap: 9px;
+  }
+  .cabina .esquema-auto > div:not(.esquina):not(.silueta) { display: none; }
+  .cabina .esquina { padding: 8px 10px; display: flex; flex-direction: column; justify-content: center; }
+  .cabina .esquina .eyebrow { font-size: .56rem; margin-bottom: 4px; }
+  /* El selector vive en el encabezado del panel, no en la lista de
+     vehiculos: es una propiedad de lo que se esta mirando, no un filtro. */
+  .elige-propio {
+    display: flex; align-items: center; gap: 7px; margin-left: auto;
+    font-size: .58rem; letter-spacing: .12em; text-transform: uppercase;
+    color: var(--texto-tenue);
+  }
+  .elige-propio select {
+    padding: 3px 7px; border: 1px solid var(--linea-fuerte); border-radius: 7px;
+    background: var(--superficie-2); color: var(--texto);
+    font-family: var(--cifra); font-size: .76rem; font-weight: 600;
+    letter-spacing: 0; text-transform: none; cursor: pointer;
+  }
+  .elige-propio select:hover { border-color: var(--acento); }
+
+  .cabina .esquina { overflow: hidden; padding: 7px 10px; }
+  .cabina .esquina .eyebrow { font-size: .55rem; margin-bottom: 4px; }
+  .cabina .esquina .fila-canal { gap: 5px; }
+  .cabina .esquina .fila-canal span { font-size: .6rem; }
+  .cabina .esquina .fila-canal b { font-size: .73rem; white-space: nowrap; }
+  .cabina .esquina .barra-desgaste { margin-top: 4px; height: 3px; }
+  .cabina .esquina .barra-desgaste { margin-top: 5px; }
+  .cabina .esquina[data-esquina="front_left"]  { grid-column: 1; grid-row: 1; }
+  .cabina .esquina[data-esquina="front_right"] { grid-column: 3; grid-row: 1; }
+  .cabina .esquina[data-esquina="rear_left"]   { grid-column: 1; grid-row: 2; }
+  .cabina .esquina[data-esquina="rear_right"]  { grid-column: 3; grid-row: 2; }
+
+  .cabina .silueta {
+    grid-column: 2; grid-row: 1 / span 2;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 8px; min-height: 0; padding: 0;
+  }
+  /* Ancho y alto al cien por ciento, y que `preserveAspectRatio` decida:
+     con el alto dado por flex y el ancho libre, el navegador escalaba el
+     dibujo por su ancho y le cortaba el alerón trasero. */
+  .cabina .silueta svg { flex: 1; min-height: 0; width: 100%; height: 100%; }
+  .cabina .bloque-dano { flex: 0 0 auto; margin: 0; width: 100%; }
+  .cabina .bloque-dano .eyebrow { font-size: .56rem; letter-spacing: .09em; margin-bottom: 5px; }
+  .cabina .leyenda-dano .chip { font-size: .64rem; padding: 2px 7px; gap: 4px; }
+  .cabina .bloque-dano { margin-top: 8px; }
+
+  /* El cronometraje se achica con su panel en vez de desbordarlo. */
+  /* DOS POR DOS, Y LA CIFRA AJUSTADA AL ANCHO DE LA CELDA.
+     En cuatro renglones se leia comodo pero el panel se comia el alto de la
+     columna y al trazado no le quedaba nada. En cuadro entra en la mitad; lo
+     que hacia falta era que «ACTUAL 1:00.74» cupiera en una celda de ciento
+     cincuenta pixeles, y para eso alcanza con bajar un punto las dos cosas.
+     La cifra manda sobre el rotulo, no al reves. */
+  .cabina .vertical .tira-cronometraje {
+    overflow: hidden;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-auto-rows: minmax(28px, auto);
+    gap: 1px;
+  }
+  /* Cuatro cifras no necesitan mas alto del que ocupan: lo que sobre en la
+     columna es de los avisos, que son una lista que crece. */
+  .col-cabina.derecha .vertical .tira-cronometraje div { padding: 5px 10px; }
+  /* El cronometraje cede lo que puede para que al trazado, que esta arriba en
+     la misma columna, le quede alto donde dibujarse. */
+  .cabina .vertical > header { padding: 7px 12px 6px; }
+  /* Rotulo a la izquierda y cifra a la derecha: apilados necesitaban el doble
+     de alto y en un panel corto los cuatro renglones se pisaban entre si. */
+  .cabina .vertical .tira-cronometraje div {
+    flex-direction: row; align-items: baseline; justify-content: space-between;
+    gap: 6px; padding: 6px 10px; overflow: hidden;
+  }
+  /* La cifra manda: si no entran las dos cosas, se recorta el rotulo. */
+  .cabina .vertical .tira-cronometraje dt {
+    font-size: .56rem; letter-spacing: .06em; white-space: nowrap; min-width: 0;
+    overflow: hidden; text-overflow: ellipsis;
+  }
+  .cabina .vertical .tira-cronometraje dd { flex: 0 0 auto; white-space: nowrap; }
+  .cabina .vertical .tira-cronometraje dd { font-size: clamp(.85rem, 1.9vh, 1.15rem); }
+
+  /* El diagrama de aceleraciones se dibuja sobre un cuadrado de 180x180 y
+     hasta ahora tomaba todo el ancho del panel: en la cabina, donde el alto
+     lo fija la ventana y no el contenido, eso lo hacia mas alto que su caja y
+     la estela se salia por arriba. Ahora toma el alto que le deja la lista de
+     canales y se centra dentro de el; el `viewBox` hace el resto. */
+  /* El cuerpo del panel se estira y el diagrama con el: sin esto quedaba un
+     hueco debajo de la lista de canales y el circulo, encogido arriba. */
+  /* OJO CON EL `display` EN LA CAPA DE AUSENTE.
+     Cuando la fuente no tiene la señal, el cuerpo del panel se oculta y en su
+     lugar aparece el motivo. Esa regla es `.instrumento[data-estado=ausente] >
+     .cuerpo-instrumento { display: none }`; cualquier regla de la cabina que
+     fije `display` sobre el mismo cuerpo la gana por especificidad y deja el
+     panel mostrando las dos cosas a la vez. Por eso se excluye el caso. */
+  .cabina .vertical .instrumento:not([data-estado="ausente"]) > .cuerpo-instrumento,
+  .cabina .instrumento.vertical:not([data-estado="ausente"]) > .cuerpo-instrumento {
+    display: flex; flex-direction: column;
+  }
+  .cabina .ejes-g { display: flex; flex-direction: column; flex: 1; min-height: 0; gap: 10px; }
+  .cabina .ejes-g svg { flex: 1; min-height: 0; height: auto; width: 100%; }
+  /* LOS TRES CANALES, EN UNA FILA Y NO EN UNA COLUMNA.
+     Apilados se comian mas de cien pixeles de alto y dejaban el diagrama del
+     tamaño de una moneda; el diagrama es el instrumento y los numeros son su
+     pie. En tres celdas al pie ocupan cuarenta y el circulo se queda con el
+     resto. */
+  .cabina .ejes-g .lista-canales {
+    flex: 0 0 auto; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px;
+  }
+  .cabina .ejes-g .lista-canales div {
+    display: flex; flex-direction: column; align-items: flex-start; gap: 1px;
+    padding: 6px 8px; border-bottom: 0;
+    border: 1px solid var(--linea); border-radius: 8px; background: var(--superficie-2);
+  }
+  .cabina .ejes-g .lista-canales dt {
+    font-size: .55rem; letter-spacing: .02em;
+    overflow: hidden; text-overflow: ellipsis; max-width: 100%;
+  }
+  .cabina .ejes-g .lista-canales dd { font-size: .9rem; white-space: nowrap; }
+
+  /* Aceleraciones y avisos, mitad y mitad. Los avisos se desplazan dentro de
+     su panel: son una lista que crece durante la sesion. */
+  /* El diagrama es el instrumento y los avisos son una lista: el diagrama se
+     lleva la parte mayor porque lo que se lee en el es una forma, y una forma
+     chica no se lee. */
+  .col-cabina.derecha > .panel-avisos { flex: 1; }
+  /* Un minimo alto obligaba al panel a crecer y desbordaba la fila cuando la
+     ventana era baja. El minimo es el que hace que el circulo se siga
+     leyendo, no el que lo hace comodo. */
+  /* En una ventana baja el minimo no puede ser generoso: si el diagrama se
+     niega a encoger, empuja a la lista de canales fuera del panel. Este es el
+     tamaño en el que la forma todavia se distingue. */
+  /* Los paneles de la cabina respiran menos que los de abajo: el margen de un
+     panel que se mira de reojo es alto que le falta al instrumento. */
+  .cabina .instrumento > header { padding: 9px 13px 8px; }
+  .cabina .cuerpo-instrumento { padding: 10px 12px 12px; }
+  .cabina .ejes-g svg { min-height: 40px; }
+  /* Ningun panel derrama sobre el de al lado: si el contenido no entra, se
+     corta dentro de su caja y se ve que falta, en vez de pisar al vecino. */
+  .cabina .instrumento { overflow: hidden; }
+  .cabina .ejes-g .lista-canales div { padding: 4px 7px; }
+  /* En la cabina los avisos viven en una columna angosta: la fecha se pone
+     encima en vez de al costado ---asi el texto del aviso usa el ancho
+     entero--- y lo que no entre en un renglon se parte, en vez de cortarse
+     contra el borde del panel. */
+  .cabina .panel-avisos .cuerpo-instrumento { overflow-y: auto; }
+  .cabina .linea-avisos { max-height: none; }
+  .cabina .aviso { grid-template-columns: 16px minmax(0, 1fr); gap: 2px 8px; padding: 9px 2px 9px 0; }
+  .cabina .aviso .cuando {
+    grid-row: 1; grid-column: 2; text-align: left; font-size: .62rem;
+  }
+  .cabina .aviso .cuando b { display: inline; margin-right: 6px; }
+  .cabina .aviso .marca { grid-row: 1 / 4; grid-column: 1; }
+  .cabina .aviso .que, .cabina .aviso .canal { grid-column: 2; min-width: 0; overflow-wrap: anywhere; }
+  /* El aviso en tres renglones cortos: cuando y donde, que paso, y el
+     detalle. Antes cada uno se iba a cinco o seis renglones y en el panel
+     entraba aviso y medio. */
+  .cabina .aviso { padding: 7px 2px 7px 0; gap: 1px 8px; }
+  .cabina .aviso .que { font-size: .82rem; line-height: 1.25; }
+  .cabina .aviso .canal { font-size: .68rem; line-height: 1.3; }
+  .cabina .panel-avisos > header { flex-wrap: nowrap; }
+  .cabina .panel-avisos > header .fuente-canal { white-space: nowrap; }
+  .sin-avisos { margin: 0; padding: 18px 4px; }
+
+  /* ---------- lo que vive debajo de la cabina ----------
+     Estos paneles se consultan; no tienen por que ocupar media pantalla cada
+     uno. La lista de vehiculos se desplaza dentro de un alto fijo y el clima
+     deja de estirarse hasta igualar al vecino mas alto. */
+  /* Una linea que dice donde termina la pantalla que se vigila y donde
+     empieza lo que se consulta. Sin ella los dos bloques se leen como uno
+     solo y el desplazamiento parece parte de la misma vista. */
+  /* Una linea sola: separa sin explicar. El rotulo decia en voz alta algo
+     que la propia separacion ya dice. */
+  .corte-consulta { height: 1px; margin: 26px 0 18px; background: var(--linea-fuerte); }
+
+  .tablero .lista-autos { max-height: 190px; }
+  .tablero.principal { align-items: start; }
+  .abajo .ejes-g { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; align-items: center; }
+  .abajo .ejes-g svg { max-height: 260px; }
+  /* En una fila de tres, el diagrama vuelve a su forma vertical: circulo
+     arriba y los tres canales debajo. */
+  .abajo .ejes-g { grid-template-columns: minmax(0, 1fr); }
+  .tablero.principal { align-items: stretch; }
+  .tablero.principal .barra-canales .controles-traza {
+    grid-template-columns: repeat(auto-fill, minmax(104px, 1fr));
+  }
+  .abajo .lista-canales { align-content: center; }
+
+  /* La barra de señales es un encabezado, no un panel: ocupa lo suyo y le
+     deja el resto de la columna a los graficos. */
+  .col-cabina.centro > .barra-canales { flex: 0 0 auto; }
+  .col-cabina.centro .barra-canales .nota { display: none; }
+  /* AQUI ESTABA LA DISTORSION.
+     Cada costado del vehiculo es **una** columna con sus dos graficos uno
+     encima del otro. Estaba puesto a dos columnas, y entonces los dos
+     graficos de cada costado se repartian el ancho de una sola columna: cuatro
+     tiras de cien pixeles donde tenia que haber cuatro paneles de trescientos.
+     Por eso las trazas se veian estiradas a lo alto y los titulos no entraban. */
+  /* Una columna por grafico, del ancho que toque. Con cuatro señales son
+     cuatro paneles anchos; con ocho, la linea se parte en dos filas sola. */
+  .graficos-cabina {
+    min-height: 0;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+    grid-auto-rows: minmax(0, 1fr);
+    gap: 14px;
+  }
+  /* El lienzo toma el alto que le deja su celda en vez de los 104 px fijos:
+     asi los graficos crecen con la ventana en lugar de dejar aire debajo. */
+  .graficos-cabina .grafico-chico { min-height: 0; }
+  .graficos-cabina .grafico-chico .cuerpo-instrumento {
+    display: flex; flex-direction: column; min-height: 0;
+  }
+  /* En una columna angosta el titulo empujaba al boton de exportar fuera del
+     panel. El titulo cede ---se corta con puntos suspensivos--- y el boton se
+     queda: un titulo a medias se sigue entendiendo, un boton cortado no. */
+  .graficos-cabina .grafico-chico header { gap: 6px; }
+  .graficos-cabina .grafico-chico header h2 {
+    font-size: .82rem; min-width: 0; overflow: hidden;
+    text-overflow: ellipsis; white-space: nowrap;
+  }
+  .graficos-cabina .acciones-grafico { flex: 0 0 auto; margin-left: auto; }
+  .cabina .fuente-canal { font-size: .56rem; }
+  /* Cuantos graficos hay por columna lo decide quien mira: con cuatro señales
+     encendidas son dos por lado y con ocho, cuatro. El panel tiene que poder
+     achicarse hasta eso sin perder el pie ---que es donde estan el minimo y
+     el maximo, o sea la escala---: lo unico que cede es el alto del trazo. */
+  .lienzo-envoltura { position: relative; flex: 1 1 0; min-height: 26px; display: flex; }
+  /* `.grafico-chico canvas` fija 104 px de alto y esta mas abajo en la hoja:
+     con la misma especificidad ganaba por orden y el lienzo quedaba mas bajo
+     que su envoltura, con la traza apretada arriba. */
+  .graficos-cabina .lienzo-envoltura canvas,
+  .lienzo-envoltura canvas { flex: 1; width: 100%; height: 100%; display: block; }
+  /* La linea del instante, sobre el lienzo y no dentro: se mueve cambiando
+     una propiedad, que es lo que permite reproducir a sesenta cuadros por
+     segundo sin volver a trazar la vuelta entera cada vez. */
+  /* Ya no cruza el grafico de arriba abajo: marca donde esta la punta de lo
+     que se lleva escrito, que es lo unico que hace falta senalar cuando el
+     trazo se dibuja solo. */
+  .cabezal-grafico {
+    position: absolute; top: 0; bottom: 0; left: 0; width: 1px;
+    margin-left: -0.5px; background: var(--acento); opacity: .5;
+    pointer-events: none;
+  }
+  .graficos-cabina .grafico-chico .lienzo-envoltura { min-height: 26px; }
+  .graficos-cabina .grafico-chico .cuerpo-instrumento { padding: 6px 10px 7px; }
+  .graficos-cabina .pie-grafico { flex: 0 0 auto; margin-top: 3px; font-size: .6rem; }
+  .graficos-cabina .grafico-chico > header { padding: 6px 10px 5px; }
+
+  /* Cabina completa: la ventana entera menos la barra de reproduccion, que
+     sigue visible porque es lo que dice donde esta parado lo que se mira. */
+  /* Llega justo hasta el borde superior de la barra de reproduccion: si
+     quedaba un margen, por esa franja se veia la pagina de abajo. */
+  .cabina[data-pantalla="completa"] {
+    position: fixed; inset: 10px 10px 74px 10px;
+    z-index: 45; height: auto; min-height: 0; margin: 0;
+    padding: 0 0 10px; box-sizing: border-box; background: var(--fondo);
   }
 
-  .cabecera-sesion,
-  .titulo-seccion {
-    align-items: flex-start;
-    flex-direction: column;
+  /* Cinco columnas piden ancho. Debajo de eso la cabina deja de ser una
+     pantalla y vuelve a ser una lista, que es lo correcto: apretar cinco
+     columnas en mil pixeles no muestra mas, muestra peor. */
+  /* HASTA 1620 PX LAS CINCO COLUMNAS SIGUEN, APRETANDO EL TEXTO.
+     Lo primero que intente fue apilar el vehiculo ---dibujo arriba, esquinas
+     en cuadro debajo---. Entraba, pero el dibujo quedaba en sesenta pixeles:
+     las dos filas de esquinas se comian el alto del panel. Sale mas barato
+     ganar ancho, porque las esquinas se aprietan bien: «Presión 23.0 psi» en
+     un cuerpo un punto menor entra en ciento treinta pixeles. Asi el dibujo
+     conserva las dos filas y el doble de tamaño.  */
+  @media (max-width: 1620px) {
+    .cabina {
+      grid-template-columns:
+        minmax(0, .98fr) minmax(0, .86fr) minmax(0, 1.24fr) minmax(0, .98fr);
+    }
+    .cabina .esquema-auto { grid-template-columns: minmax(0, 1fr) 124px minmax(0, 1fr); gap: 7px; }
+    .cabina .esquina { padding: 6px 8px; }
+    .cabina .esquina .fila-canal span { font-size: .58rem; }
+    .cabina .esquina .fila-canal b { font-size: .71rem; }
+    .cabina .bloque-dano .eyebrow { font-size: .52rem; }
+    .cabina .leyenda-dano .chip { font-size: .6rem; padding: 2px 6px; }
+  }
+  @media (max-width: 1180px) {
+    .cabina {
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1.25fr);
+      grid-template-rows: auto auto auto auto;
+      height: auto !important; min-height: 0;
+    }
+    .cabina .graficos-cabina, .col-cabina { grid-row: auto; }
+    .cabina .graficos-cabina { grid-auto-rows: minmax(150px, 220px); }
+    .graficos-cabina .grafico-chico canvas { min-height: 104px; }
+    .cabina[data-pantalla="completa"] { position: static; inset: auto; z-index: auto; overflow: visible; }
+  }
+  @media (max-width: 860px) {
+    .cabina { grid-template-columns: minmax(0, 1fr); }
   }
 
-  .cabecera-sesion,
-  .panel {
-    padding: 20px;
-    border-radius: 16px;
+  .tablero {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 14px;
+    align-items: stretch;
+  }
+  .celda-1 { grid-column: span 1; }
+  .celda-2 { grid-column: span 2; }
+  .ancho-total { grid-column: 1 / -1; }
+
+  /* El contenido se reparte dentro del panel para que estirar no deje el
+     texto pegado arriba. */
+  .instrumento { display: flex; flex-direction: column; }
+  .instrumento > .cuerpo-instrumento { flex: 1; }
+
+  @media (max-width: 1180px) {
+    .tablero { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  }
+  @media (max-width: 640px) {
+    .tablero { grid-template-columns: minmax(0, 1fr); }
+    .celda-2 { grid-column: span 1; }
   }
 
-  .lista-contexto,
-  .grid-punto-seleccionado,
-  .graficos-coordinados,
-  .zona-analisis {
-    grid-template-columns: 1fr;
+  /* Diecinueve señales no entran en un renglon ni deben: se reparten en una
+     grilla que llena el ancho del panel, que hasta ahora estaba casi vacio. */
+  .barra-canales .cuerpo-instrumento { padding-top: 12px; }
+  .barra-canales .controles-traza {
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(122px, 1fr));
+    gap: 7px; margin-bottom: 12px;
+  }
+  .barra-canales .controles-traza .boton-menor { width: 100%; justify-content: center; }
+  /* El hueco elastico que separaba los botones de las acciones no tiene
+     sentido en una grilla: las acciones bajan a su propio renglon. */
+  .barra-canales .controles-traza > span { display: none; }
+  .acciones-panel { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  .acciones-panel .nota { flex: 1; min-width: 260px; margin: 0; }
+
+  /* ---------- grafico chico ---------- */
+  .grafico-chico .cuerpo-instrumento { padding: 10px 12px 12px; }
+  .grafico-chico canvas { width: 100%; height: 104px; display: block; }
+  .grafico-chico header h2 { font-size: .82rem; }
+  .grafico-chico .fuente-canal { font-size: .58rem; }
+  .pie-grafico {
+    display: flex; justify-content: space-between; gap: 8px;
+    margin-top: 7px; font-family: var(--cifra);
+    font-variant-numeric: tabular-nums; font-size: .68rem; color: var(--texto-tenue);
+  }
+  .pie-grafico b { color: var(--texto); font-weight: 600; }
+
+  @media (max-width: 720px) {
+    .celda-2 { grid-column: span 1; }
   }
 
-  .controles-analisis-carrera {
-    align-items: flex-start;
-    flex-direction: column;
+  /* ---------- paneles verticales ----------
+     Cronometraje y aceleraciones ocupaban dos y una columna en horizontal y
+     quedaban medio vacios: cuatro cifras y tres canales no llenan un panel
+     ancho. En vertical el mismo contenido ocupa lo que necesita, y libera el
+     centro de la fila para el vehiculo. */
+  /* El panel se estira al alto de su fila; si el contenido no acompana,
+     queda aire abajo. Las filas del cronometraje crecen a partes iguales y
+     lo llenan, que es ademas como se lee un cronometraje: cuatro renglones
+     del mismo peso. */
+  .instrumento > .tira-cronometraje { flex: 1; }
+  .vertical .tira-cronometraje {
+    grid-template-columns: minmax(0, 1fr);
+    grid-auto-rows: minmax(0, 1fr);
+    gap: 1px;
+  }
+  .vertical .tira-cronometraje div {
+    display: flex; align-items: baseline; justify-content: space-between; gap: 10px;
+    padding: 13px 16px;
+  }
+  .vertical .tira-cronometraje dt { margin: 0; }
+  .vertical .tira-cronometraje dd { font-size: 1.3rem; }
+
+  .vertical .ejes-g { grid-template-columns: minmax(0, 1fr); gap: 12px; height: 100%; align-content: space-between; }
+  .vertical .ejes-g svg { max-width: 100%; width: 100%; margin: 0 auto; }
+  .vertical .lista-canales dt { font-size: .66rem; }
+
+  /* La pista no necesita ser grande: lo que se lee en ella es donde esta el
+     vehiculo, no la geometria fina. */
+  /* La pista usa el alto que le deja su fila. La procedencia del trazado
+     ---que canal lo declara y con que resolucion--- pasa al encabezado del
+     panel, que es donde el resto de los instrumentos la declara. */
+  .pista .cuerpo-instrumento { display: flex; flex-direction: column; gap: 10px; }
+  .pista svg { flex: 1; min-height: 0; max-height: 320px; width: 100%; }
+  .pista .leyenda-curvas { margin-top: 0; }
+  .leyenda-curvas span { font-size: .68rem; }
+
+  /* Clima como widget: la temperatura manda y el resto acompana en una
+     tira compacta, no en una rejilla de seis celdas iguales. */
+  .clima-mini .clima { height: 100%; display: flex; flex-direction: column; gap: 14px; }
+  .clima-mini .clima-principal { gap: 10px; }
+  .clima-mini .clima-principal .icono { width: 34px; height: 34px; }
+  .clima-mini .clima-principal .cifra-grande { font-size: 1.6rem; }
+  /* Las celdas se apoyan en el pie del panel en lugar de estirarse con el:
+     al crecer la fila, `flex: 1` las convertia en cajas altas y casi vacias,
+     que es el mismo problema que se venia de arreglar. */
+  .clima-mini .clima-rejilla {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px; flex: 0 0 auto; margin-top: auto;
+  }
+  .clima-mini .clima-rejilla div {
+    display: flex; flex-direction: column; justify-content: center;
+    padding: 14px; min-height: 78px;
+  }
+  .clima-mini .clima-rejilla dt { font-size: .64rem; margin-bottom: 5px; }
+  .clima-mini .clima-rejilla dd { font-size: 1.16rem; }
+  .clima-mini .bandera { font-size: .66rem; padding: 3px 8px; }
+
+  .aviso-descarga {
+    position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%) translateY(10px);
+    z-index: 90; margin: 0; padding: 10px 18px;
+    border: 1px solid var(--acento); border-radius: 999px;
+    background: var(--superficie); color: var(--texto);
+    font-size: .82rem; font-weight: 600; box-shadow: var(--sombra);
+    opacity: 0; pointer-events: none;
+    transition: opacity 220ms ease, transform 220ms ease;
+  }
+  .aviso-descarga[data-visible="si"] { opacity: 1; transform: translateX(-50%) translateY(0); }
+  .aviso-descarga[data-error="si"] { border-color: var(--critico); color: var(--critico); }
+
+  /* Motor y energia: los medidores ocupan las dos columnas del centro, las
+     mismas que el vehiculo de la fila de arriba, y las barras se reparten a
+     los lados. La proporcion 1:2:1 es la de la grilla. */
+  .banco-motor {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 2fr) minmax(0, 1fr);
+    gap: 20px; align-items: center;
+  }
+  .banco-motor .fila-medidores { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
+  .banco-motor .barras-medidas { margin-top: 0; align-content: center; gap: 16px; }
+  @media (max-width: 1180px) { .banco-motor { grid-template-columns: minmax(0, 1fr); } }
+
+  /* ---------- ayuda ----------
+     Las explicaciones largas ocupaban el cuerpo del panel y competian con el
+     instrumento. Pasan a un boton chico en el encabezado: quien ya sabe leer
+     el grafico no las ve, y quien no, las tiene a un clic. */
+  /* La ayuda aparece al pasar el puntero por el signo, y tambien al llegar
+     con el teclado ---por eso `:focus-within` y no solo `:hover`---. Deja de
+     empujar el contenido: flota sobre el panel. */
+  .con-ayuda { position: relative; display: inline-flex; margin-left: 8px; }
+  .btn-ayuda {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 19px; height: 19px; padding: 0;
+    border: 1px solid var(--linea-fuerte); border-radius: 50%;
+    background: transparent; color: var(--texto-tenue);
+    font-family: var(--cuerpo); font-size: .68rem; font-weight: 700;
+    cursor: help; flex: 0 0 auto;
+  }
+  .con-ayuda:hover .btn-ayuda,
+  .con-ayuda:focus-within .btn-ayuda {
+    color: var(--sobre-acento); background: var(--acento); border-color: var(--acento);
+  }
+  .panel-ayuda {
+    position: absolute; top: calc(100% + 8px); right: 0; z-index: 30;
+    width: max(300px, 122%); max-width: min(420px, 84vw); padding: 13px 15px;
+    border: 1px solid var(--acento); border-radius: 10px;
+    background: var(--superficie);
+    box-shadow: var(--sombra);
+    font-size: .76rem; line-height: 1.55; color: var(--texto-medio);
+    font-weight: 400; letter-spacing: 0; text-transform: none;
+    opacity: 0; visibility: hidden; transform: translateY(-4px);
+    transition: opacity 140ms ease, transform 140ms ease, visibility 140ms;
+  }
+  .con-ayuda:hover .panel-ayuda,
+  .con-ayuda:focus-within .panel-ayuda {
+    opacity: 1; visibility: visible; transform: translateY(0);
+  }
+  .panel-ayuda b { color: var(--texto); }
+
+  /* ---------- avisos ---------- */
+  /* Un panel sin contenido colapsa, y la capa que explica su ausencia ---que
+     esta centrada sobre el panel--- se sale por arriba. El alto minimo le da
+     lugar al motivo. */
+  .panel-avisos { min-height: 132px; }
+  /* Los avisos no son un tablero de tarjetas: llegan mientras la carrera
+     ocurre, y lo que importa es cual llego ultimo. Se leen como una linea de
+     tiempo, del mas reciente al mas viejo, con el momento a la izquierda. */
+  .linea-avisos {
+    display: grid; gap: 0;
+    max-height: 268px; overflow-y: auto; padding-right: 4px;
+  }
+  .aviso {
+    position: relative;
+    display: grid; grid-template-columns: 74px 18px 1fr; gap: 2px 10px;
+    padding: 11px 4px 11px 0;
+    border-bottom: 1px solid var(--linea);
+  }
+  .aviso:last-child { border-bottom: 0; }
+  .aviso .cuando {
+    grid-row: 1 / 3; align-self: start; padding-top: 1px;
+    font-family: var(--cifra); font-variant-numeric: tabular-nums;
+    font-size: .68rem; color: var(--texto-tenue); text-align: right;
+  }
+  .aviso .cuando b { display: block; color: var(--texto-medio); font-weight: 600; }
+  /* El riel de la linea de tiempo: une los avisos entre si. */
+  .aviso .marca {
+    grid-row: 1 / 3; align-self: start; position: relative; justify-self: center;
+    width: 9px; height: 9px; margin-top: 5px; border-radius: 50%;
+    background: var(--texto-tenue);
+    box-shadow: 0 0 0 3px var(--superficie);
+  }
+  .aviso .marca::after {
+    content: ""; position: absolute; left: 50%; top: 12px;
+    width: 1px; height: calc(100% + 26px);
+    background: var(--linea); transform: translateX(-50%);
+  }
+  .aviso:last-child .marca::after { display: none; }
+  .aviso.nuevo .que::after {
+    content: "nuevo"; margin-left: 8px; padding: 1px 6px;
+    border-radius: 999px; background: var(--acento); color: var(--sobre-acento);
+    font-size: .58rem; font-weight: 700; letter-spacing: .06em; text-transform: uppercase;
+  }
+  .aviso .que { font-weight: 600; font-size: .84rem; }
+  .aviso .canal { font-family: var(--cifra); font-size: .62rem; color: var(--texto-tenue); }
+  .aviso[data-nivel="critico"] { border-left-color: var(--critico); }
+  .aviso[data-nivel="critico"] .marca { background: var(--critico); }
+  .aviso[data-nivel="critico"] .que { color: var(--critico); }
+  .aviso[data-nivel="alerta"] { border-left-color: var(--alerta); }
+  .aviso[data-nivel="alerta"] .marca { background: var(--alerta); }
+  .aviso[data-nivel="alerta"] .que { color: var(--alerta); }
+  .aviso[data-nivel="ok"] { border-left-color: var(--ok); }
+  .aviso[data-nivel="ok"] .marca { background: var(--ok); }
+  .aviso[data-nivel="info"] { border-left-color: var(--acento); }
+  .aviso[data-nivel="info"] .marca { background: var(--acento); }
+
+  /* CUANDO LLEGA UNO, SE VE QUE LLEGO.
+     Durante la reproduccion los avisos aparecen solos, y uno que aparece sin
+     mas se pierde entre los que ya estaban: quien mira la pista no esta
+     mirando el panel. El renglon se tiñe del color de su gravedad y el tinte
+     se desvanece, que es lo que atrae la vista sin taparla. Se hace con una
+     capa encima y no con el fondo del renglon, para no pisar el color propio
+     de cada nivel. */
+  .aviso { --tinte-aviso: var(--acento); }
+  .aviso[data-nivel="critico"] { --tinte-aviso: var(--critico); }
+  .aviso[data-nivel="alerta"] { --tinte-aviso: var(--alerta); }
+  .aviso[data-nivel="ok"] { --tinte-aviso: var(--ok); }
+  .aviso.recien::before {
+    content: ""; position: absolute; inset: -1px -4px;
+    border-radius: 8px; background: var(--tinte-aviso); pointer-events: none;
+    animation: llega-aviso 1900ms cubic-bezier(.2, .7, .3, 1) forwards;
+  }
+  @keyframes llega-aviso {
+    0% { opacity: .34; }
+    18% { opacity: .26; }
+    100% { opacity: 0; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .aviso.recien::before { animation: none; opacity: 0; }
   }
 
-  .acciones-selector-pilotos {
-    flex-wrap: wrap;
+  /* ---------- buscador de sesiones ---------- */
+  .busca {
+    display: flex; align-items: center; gap: 8px; flex: 1; min-width: 220px; max-width: 420px;
+    padding: 8px 13px; border: 1px solid var(--linea-fuerte); border-radius: 10px;
+    background: var(--superficie-2);
+  }
+  .busca:focus-within { border-color: var(--acento); }
+  .busca .lupa { color: var(--texto-tenue); font-size: 1.05rem; line-height: 1; }
+  .busca input {
+    flex: 1; min-width: 0; border: 0; background: transparent; color: var(--texto);
+    font: inherit; font-size: .84rem; outline: none;
+  }
+  .busca input::placeholder { color: var(--texto-tenue); }
+
+  .tabla-sesiones { display: grid; gap: 8px; }
+  .fila-sesion {
+    display: grid;
+    grid-template-columns: minmax(0, 1.9fr) minmax(0, 1.1fr) repeat(4, minmax(0, 0.9fr)) auto;
+    gap: 10px 16px; align-items: center;
+    padding: 12px 14px;
+    border: 1px solid var(--linea); border-left: 3px solid var(--linea-fuerte);
+    border-radius: 11px; background: var(--superficie-2);
+  }
+  .fila-sesion:hover { border-color: var(--acento); }
+  .fila-sesion[data-abierta="si"] { border-color: var(--acento); background: var(--acento-veta); }
+  .fila-sesion[data-fuente="f1"] { border-left-color: var(--auto-1); }
+  .fila-sesion[data-fuente="openf1"] { border-left-color: var(--auto-3); }
+  .fila-sesion[data-fuente="can"] { border-left-color: var(--auto-4); }
+  .fila-sesion .titulo { font-family: var(--titulo); font-size: 1rem; letter-spacing: .02em; }
+  .fila-sesion .ident {
+    display: block; font-family: var(--cifra); font-size: .64rem; color: var(--texto-tenue);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .fila-sesion .dato { font-family: var(--cifra); font-variant-numeric: tabular-nums; font-size: .84rem; }
+  .fila-sesion .dato small {
+    display: block; font-family: var(--cuerpo); font-size: .6rem;
+    letter-spacing: .1em; text-transform: uppercase; color: var(--texto-tenue);
+  }
+  .cabecera-tabla-sesiones {
+    display: grid;
+    grid-template-columns: minmax(0, 1.9fr) minmax(0, 1.1fr) repeat(4, minmax(0, 0.9fr)) auto;
+    gap: 16px; padding: 0 14px 4px;
+    font-size: .62rem; letter-spacing: .1em; text-transform: uppercase; color: var(--texto-tenue);
+  }
+  /* Las tres fuentes, distinguidas por color **y** por texto. Un color solo
+     no alcanza: quien no lo distinga, o quien mire una captura impresa, tiene
+     que poder saber de que fuente es. */
+  .pastilla-fuente {
+    display: inline-block; padding: 2px 9px; border-radius: 999px;
+    border: 1px solid currentColor;
+    font-family: var(--titulo); font-size: .66rem; font-weight: 700;
+    letter-spacing: .07em; text-transform: uppercase;
+  }
+  .pastilla-fuente.f1 { color: var(--auto-1); }
+  .pastilla-fuente.openf1 { color: var(--auto-3); }
+  .pastilla-fuente.can { color: var(--auto-4); }
+  .tipo-sesion {
+    display: block; margin-top: 4px; font-size: .78rem; color: var(--texto-medio);
+  }
+  .fila-sesion[data-fuente="f1"] { border-left-width: 5px; }
+  .fila-sesion[data-fuente="openf1"] { border-left-width: 5px; }
+  .fila-sesion[data-fuente="can"] { border-left-width: 5px; }
+
+  .sin-resultados { padding: 34px 14px; text-align: center; color: var(--texto-tenue); }
+
+  @media (max-width: 900px) {
+    .fila-sesion, .cabecera-tabla-sesiones { grid-template-columns: minmax(0, 1fr); }
+    .cabecera-tabla-sesiones { display: none; }
   }
 
-  .contexto-instante-carrera,
-  .pilotos-instante-carrera {
-    grid-template-columns: 1fr;
+  /* ---------- exportar ---------- */
+  .acciones-grafico { display: flex; gap: 4px; margin-left: auto; }
+  .boton-icono {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 22px; height: 22px; padding: 0;
+    border: 1px solid var(--linea); border-radius: 6px;
+    background: var(--superficie-2); color: var(--texto-tenue);
+    cursor: pointer; line-height: 1;
   }
-}
-
-/* Analisis automatico por vuelta y por stint.
-   Estilos deliberadamente sobrios: el refinamiento visual integral del dashboard
-   corresponde al Dia 27. Aqui solo se busca que los tres niveles de evidencia se
-   distingan entre si y que las advertencias no pasen desapercibidas. */
-.controles-analisis-vuelta {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 16px;
-  margin: 12px 0 18px;
-}
-
-.controles-analisis-vuelta label {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  color: #64748b;
-  font-size: 0.72rem;
-  font-weight: 800;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-
-.controles-analisis-vuelta select {
-  min-width: 120px;
-  padding: 7px 10px;
-  border: 1px solid #cbd5e1;
-  border-radius: 8px;
-  background: #ffffff;
-  color: #0f172a;
-  font-size: 0.9rem;
-  font-weight: 700;
-}
-
-.bloques-analisis {
-  display: grid;
-  gap: 18px;
-  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-}
-
-.bloque-analisis {
-  padding: 16px;
-  border: 1px solid #e2e8f0;
-  border-radius: 12px;
-  background: #f8fafc;
-}
-
-.bloque-analisis h4 {
-  margin: 0;
-  color: #0f172a;
-  font-size: 0.95rem;
-}
-
-.nota-analisis {
-  margin: 6px 0 14px;
-  color: #64748b;
-  font-size: 0.78rem;
-  line-height: 1.45;
-}
-
-.grilla-analisis {
-  display: grid;
-  gap: 10px 18px;
-  margin: 0;
-  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-}
-
-.grilla-analisis dt {
-  color: #64748b;
-  font-size: 0.68rem;
-  font-weight: 800;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-}
-
-.grilla-analisis dd {
-  margin: 3px 0 0;
-  color: #0f172a;
-  font-weight: 700;
-}
-
-/* Las advertencias sobre ventanas estimadas o interpretaciones no validadas se
-   destacan porque condicionan como debe leerse el resto del bloque. */
-.aviso-analisis {
-  margin: 0 0 16px;
-  padding: 10px 14px;
-  border-left: 4px solid #f59e0b;
-  border-radius: 6px;
-  background: #fffbeb;
-  color: #92400e;
-  font-size: 0.82rem;
-  line-height: 1.5;
-}
-
-/* Seleccion de sesion y de corrida.
-   La sesion y la corrida eran constantes en `app.js`, de modo que este bloque no
-   existia. Se ubica arriba del panel porque condiciona todo lo que sigue: cambiar
-   de sesion cambia el circuito, los pilotos y la resolucion espacial declarada. */
-.selector-sesion-replay {
-  margin: 0 0 18px;
-  padding: 14px;
-  border: 1px solid rgba(125, 211, 252, 0.16);
-  border-radius: 10px;
-  background: #071829;
-}
-
-.selector-sesion-replay legend {
-  padding: 0 6px;
-  color: #b7d5e7;
-  font-size: 0.78rem;
-  font-weight: 800;
-  letter-spacing: 0.07em;
-  text-transform: uppercase;
-}
-
-.controles-sesion-replay {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 16px;
-}
-
-.controles-sesion-replay label {
-  display: flex;
-  flex: 1 1 280px;
-  flex-direction: column;
-  gap: 6px;
-  color: #b7d5e7;
-  font-size: 0.72rem;
-  font-weight: 800;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-
-.controles-sesion-replay select {
-  padding: 7px 10px;
-  border: 1px solid #285b7b;
-  border-radius: 8px;
-  background: #06111f;
-  color: #e2e8f0;
-  font-size: 0.88rem;
-  font-weight: 700;
-}
-
-.controles-sesion-replay select:disabled {
-  color: #94a3b8;
-  background: #0a1a2b;
-}
-
-/* Declaracion de disponibilidad. Cuando la sesion no tiene telemetria el aviso
-   cambia de color y de tono: la ausencia se afirma, no se deja deducir de un
-   panel vacio. */
-.declaracion-telemetria {
-  margin: 12px 0 0;
-  color: #9fc3d8;
-  font-size: 0.8rem;
-  line-height: 1.5;
-}
-
-.declaracion-telemetria.declaracion-ausente {
-  padding: 10px 14px;
-  border-left: 4px solid #f59e0b;
-  border-radius: 6px;
-  background: rgba(245, 158, 11, 0.1);
-  color: #fcd9a0;
-}
-
-/* --------------------------------------------------------------------------
-   Camino en vivo
-   --------------------------------------------------------------------------
-   El dato es simulado y la interfaz lo declara de forma permanente, no solo en
-   los metadatos: un valor suelto en pantalla debe seguir siendo atribuible. */
-
-.panel-vivo {
-  display: flex;
-  flex-direction: column;
-  gap: 1.25rem;
-}
-
-.cabecera-vivo {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 1rem;
-  flex-wrap: wrap;
-}
-
-.marca-simulado {
-  align-self: center;
-  padding: 0.35rem 0.85rem;
-  border: 1px solid #b8860b;
-  border-radius: 999px;
-  color: #d9a441;
-  font-size: 0.75rem;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  white-space: nowrap;
-}
-
-.aviso-vivo {
-  margin: 0;
-  padding: 0.75rem 1rem;
-  border-left: 3px solid #4a6fa5;
-  background: rgba(74, 111, 165, 0.08);
-  font-size: 0.9rem;
-}
-
-.aviso-vivo.aviso-error {
-  border-left-color: #b8860b;
-  background: rgba(184, 134, 11, 0.1);
-}
-
-.tarjetas-vivo {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr));
-  gap: 0.75rem;
-}
-
-.tarjeta-vivo {
-  display: flex;
-  flex-direction: column;
-  gap: 0.2rem;
-  padding: 0.85rem 1rem;
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 0.5rem;
-  background: rgba(255, 255, 255, 0.03);
-}
-
-.tarjeta-vivo .rotulo {
-  font-size: 0.7rem;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  opacity: 0.7;
-}
-
-.tarjeta-vivo strong {
-  /* Cifras tabulares: sin esto los numeros bailan al cambiar veinte veces por
-     segundo y la lectura se vuelve imposible. */
-  font-variant-numeric: tabular-nums;
-  font-size: 1.6rem;
-  line-height: 1.1;
-}
-
-.tarjeta-vivo.destacada strong {
-  font-size: 2.4rem;
-}
-
-.tarjeta-vivo .unidad {
-  font-size: 0.75rem;
-  opacity: 0.6;
-}
-
-/* Trazas en vivo -----------------------------------------------------------
-   El catalogo se arma solo con las senales que llegan, de modo que estos
-   estilos no pueden depender de cuantas haya ni de cuales sean. */
-
-.graficas-vivo {
-  margin-top: 1rem;
-}
-
-/* Los fondos usan gris neutro con transparencia y no blanco: el dashboard
-   tiene hoy una vista clara y otra oscura, y un valor pensado para una de las
-   dos desaparece en la otra. */
-.selector-trazas {
-  padding: 0.75rem 0.9rem;
-  background: rgba(127, 127, 127, 0.06);
-  border: 1px solid rgba(127, 127, 127, 0.22);
-  border-radius: 0.6rem;
-}
-
-.cabecera-selector {
-  display: flex;
-  align-items: baseline;
-  gap: 0.75rem;
-  margin-bottom: 0.6rem;
-}
-
-.cabecera-selector .rotulo {
-  font-size: 0.72rem;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  opacity: 0.7;
-}
-
-.conteo-senales {
-  font-size: 0.72rem;
-  opacity: 0.5;
-  font-variant-numeric: tabular-nums;
-}
-
-.boton-tenue {
-  margin-left: auto;
-  padding: 0.2rem 0.6rem;
-  font-size: 0.7rem;
-  color: inherit;
-  background: transparent;
-  border: 1px solid rgba(127, 127, 127, 0.35);
-  border-radius: 0.3rem;
-  cursor: pointer;
-  opacity: 0.7;
-}
-
-.boton-tenue:hover {
-  opacity: 1;
-  border-color: rgba(127, 127, 127, 0.6);
-}
-
-.catalogo-trazas {
-  display: flex;
-  flex-direction: column;
-  gap: 0.55rem;
-  max-height: 13rem;
-  overflow-y: auto;
-}
-
-.grupo-catalogo {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 0.3rem;
-}
-
-.titulo-grupo {
-  width: 100%;
-  font-size: 0.65rem;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  opacity: 0.45;
-}
-
-/* Un boton por senal. Elegido y no elegido se distinguen por relleno y no solo
-   por color, para que la diferencia se vea sin depender de la vista de color. */
-.chip-senal {
-  padding: 0.2rem 0.55rem;
-  font-size: 0.72rem;
-  color: inherit;
-  background: transparent;
-  border: 1px solid rgba(127, 127, 127, 0.35);
-  border-radius: 1rem;
-  cursor: pointer;
-  opacity: 0.65;
-  white-space: nowrap;
-}
-
-.chip-senal:hover {
-  opacity: 0.9;
-}
-
-.chip-elegido {
-  opacity: 1;
-  color: #0b1120;
-  background: #4ea8ff;
-  border-color: #4ea8ff;
-  font-weight: 600;
-}
-
-.grilla-trazas {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(20rem, 1fr));
-  gap: 1rem;
-  margin-top: 1rem;
-}
-
-.grafica-vivo {
-  margin: 0;
-  padding: 0.75rem 0.9rem 0.5rem;
-  background: rgba(127, 127, 127, 0.06);
-  border: 1px solid rgba(127, 127, 127, 0.22);
-  border-radius: 0.6rem;
-}
-
-.grafica-vivo figcaption {
-  /* Envuelve en lugar de superponerse: con cuatro ruedas en la leyenda y un
-     titulo largo, la version en una sola linea las encimaba. */
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: 0.2rem 0.45rem;
-  margin-bottom: 0.4rem;
-  font-size: 0.72rem;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  opacity: 0.7;
-  min-height: 1.6em;
-}
-
-.grafica-vivo canvas {
-  display: block;
-  width: 100%;
-  height: 110px;
-}
-
-/* Un grafico ampliado ocupa el ancho entero de la grilla y triplica su alto.
-   Existe porque una miniatura de trescientos cincuenta pixeles alcanza para ver
-   la forma de una senal y no para leer un instante: con el eje de la sesion
-   completa, media hora repartida en ese ancho deja cada segundo en menos de un
-   pixel. Ampliar no agrega datos, reparte los mismos sobre mas espacio. */
-.grafica-vivo.ampliada {
-  grid-column: 1 / -1;
-}
-
-.grafica-vivo.ampliada canvas {
-  height: 340px;
-}
-
-/* El titulo se comporta como un control, porque lo es: al tocarlo amplia. */
-.grafica-vivo figcaption {
-  cursor: zoom-in;
-}
-
-.grafica-vivo.ampliada figcaption {
-  cursor: zoom-out;
-}
-
-.grafica-vivo .lupa {
-  margin-left: auto;
-  opacity: 0.55;
-  font-size: 0.85em;
-}
-
-.grafica-vivo .leyenda {
-  margin-left: auto;
-  display: flex;
-  align-items: center;
-  gap: 0.3rem;
-  text-transform: none;
-  letter-spacing: 0;
-  font-size: 0.68rem;
-}
-
-/* El cuadrito de color ata cada nombre a su traza: sin el, varias lineas en el
-   mismo lienzo obligan a adivinar cual es cual. */
-.grafica-vivo .leyenda i {
-  display: inline-block;
-  width: 0.55rem;
-  height: 0.55rem;
-  border-radius: 0.15rem;
-  margin-left: 0.35rem;
-}
-
-.aviso-vacio {
-  grid-column: 1 / -1;
-  margin: 0;
-  padding: 1.5rem;
-  text-align: center;
-  font-size: 0.8rem;
-  opacity: 0.5;
-}
-
-/* Flujo detenido ----------------------------------------------------------
-   Los valores se atenuan ademas de mostrarse el aviso: el texto explica, la
-   atenuacion impide leerlos de reojo como si fueran actuales. */
-
-.aviso-detenido {
-  border-left: 3px solid #fbbf24;
-  color: #fbbf24;
-  background: rgba(251, 191, 36, 0.08);
-  padding: 0.5rem 0.75rem;
-  border-radius: 0.3rem;
-}
-
-.flujo-detenido .tarjetas-vivo,
-.flujo-detenido .grilla-trazas {
-  opacity: 0.45;
-  transition: opacity 0.3s ease;
-}
-
-/* Marcas de la vista en vivo ---/* Marcas de la vista en vivo ----------------------------------------------
-   La de simulacion nunca cambia; la de origen si, porque el mismo canal
-   transporta la consola y la reproduccion de una captura. */
-
-.marcas-vivo {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  gap: 0.35rem;
-}
-
-.marca-origen {
-  padding: 0.2rem 0.55rem;
-  border-radius: 0.3rem;
-  font-size: 0.62rem;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  border: 1px solid rgba(74, 222, 128, 0.45);
-  color: #4ade80;
-  background: rgba(74, 222, 128, 0.08);
-}
-
-/* La reproduccion se distingue por color: leerla como si estuviera ocurriendo
-   es el error que la marca existe para impedir. */
-.marca-origen-reproducido {
-  border-color: rgba(251, 191, 36, 0.5);
-  color: #fbbf24;
-  background: rgba(251, 191, 36, 0.08);
-}
-
-.diagnostico-vivo {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr));
-  gap: 0.75rem 1.5rem;
-  margin: 0;
-  padding-top: 0.75rem;
-  border-top: 1px solid rgba(255, 255, 255, 0.08);
-  font-size: 0.8rem;
-}
-
-.diagnostico-vivo dt {
-  opacity: 0.65;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  font-size: 0.7rem;
-}
-
-.diagnostico-vivo dd {
-  margin: 0.15rem 0 0;
-  font-variant-numeric: tabular-nums;
-}
-
-
-/* Matriz de fuentes --------------------------------------------------------
-   Los colores de nivel no son decorativos: separan de donde sale la medicion.
-   A es el bus de un vehiculo, B una fuente deportiva ya procesada, C un
-   simulador. Que se distingan de un vistazo es el punto de la vista. */
-
-.tarjetas-fuente {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
-  gap: 0.9rem;
-  margin: 1rem 0 1.6rem;
-}
-
-.tarjeta-fuente {
-  padding: 0.9rem 1rem;
-  background: rgba(127, 127, 127, 0.06);
-  border: 1px solid rgba(127, 127, 127, 0.22);
-  border-left-width: 3px;
-  border-radius: 0.4rem;
-}
-
-.tarjeta-fuente[data-nivel="A"] { border-left-color: #4ade80; }
-.tarjeta-fuente[data-nivel="B"] { border-left-color: #fbbf24; }
-.tarjeta-fuente[data-nivel="C"] { border-left-color: #4ea8ff; }
-
-.tarjeta-fuente .nivel {
-  font-size: 0.66rem;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  opacity: 0.6;
-}
-
-.tarjeta-fuente h3 {
-  margin: 0.15rem 0 0.3rem;
-  font-size: 1rem;
-}
-
-.tarjeta-fuente .detalle {
-  margin: 0 0 0.6rem;
-  font-size: 0.78rem;
-  opacity: 0.7;
-}
-
-.tarjeta-fuente .cifras-fuente {
-  display: flex;
-  gap: 1.1rem;
-  font-size: 0.76rem;
-  font-variant-numeric: tabular-nums;
-}
-
-.tarjeta-fuente .cifras-fuente b { display: block; font-size: 0.95rem; }
-
-.envoltorio-matriz { overflow-x: auto; }
-
-table.matriz {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 0.84rem;
-  min-width: 44rem;
-}
-
-table.matriz th,
-table.matriz td {
-  padding: 0.5rem 0.7rem;
-  text-align: left;
-  border-bottom: 1px solid rgba(127, 127, 127, 0.2);
-  vertical-align: top;
-}
-
-table.matriz th {
-  font-size: 0.68rem;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  opacity: 0.6;
-  font-weight: 500;
-}
-
-table.matriz tr.familia-nueva td { border-top: 2px solid rgba(127, 127, 127, 0.35); }
-
-.celda-magnitud { font-weight: 600; }
-
-.celda-magnitud .familia {
-  display: block;
-  font-weight: 400;
-  font-size: 0.68rem;
-  opacity: 0.5;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-}
-
-/* Presente y ausente se distinguen por forma ademas de por color: la ausencia
-   lleva su motivo, que es la parte que importa. */
-.presente { font-variant-numeric: tabular-nums; }
-
-.presente .unidad-hz {
-  display: block;
-  font-size: 0.74rem;
-  opacity: 0.65;
-}
-
-.ausente { opacity: 0.55; }
-
-.ausente .motivo {
-  display: block;
-  font-size: 0.72rem;
-  font-style: italic;
-}
-
-.nota-magnitud {
-  font-size: 0.74rem;
-  opacity: 0.7;
-  font-style: italic;
-  padding-top: 0.15rem;
-}
-
-.pie-matriz {
-  margin-top: 1.2rem;
-  font-size: 0.76rem;
-  opacity: 0.6;
-}
-
-/* Anotaciones en tiempo real.
-   ---------------------------------------------------------------------------
-   Siguen la convencion del resto de la vista: los grises se escriben como
-   rgba(127, 127, 127, x) y el texto hereda el color, de modo que la misma regla
-   sirve con fondo claro y con fondo oscuro sin dos juegos de variables.
-
-   Los dos unicos colores propios son los que distinguen un hecho de un estado, y
-   estan elegidos con suficiente saturacion para leerse sobre los dos fondos: no
-   son decoracion, son la unica diferencia visible entre "esto ya paso" y "sobre
-   esto todavia se puede decidir". */
-.anotaciones-vivo {
-  margin-top: 1rem;
-  padding: 0.75rem 0.9rem;
-  background: rgba(127, 127, 127, 0.06);
-  border: 1px solid rgba(127, 127, 127, 0.22);
-  border-radius: 0.6rem;
-}
-
-.cabecera-anotaciones {
-  display: flex;
-  align-items: baseline;
-  gap: 0.75rem;
-  margin-bottom: 0.6rem;
-}
-
-.cabecera-anotaciones .rotulo {
-  font-size: 0.72rem;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  opacity: 0.7;
-}
-
-/* Que reglas no pudieron evaluarse. Se muestra arriba de la lista y no al pie
-   porque cambia como se lee la lista entera: una lista vacia con reglas ciegas
-   no dice que no paso nada. */
-.aviso-reglas {
-  margin: 0 0 0.6rem;
-  padding: 0.4rem 0.55rem;
-  font-size: 0.72rem;
-  line-height: 1.45;
-  opacity: 0.75;
-  background: rgba(127, 127, 127, 0.08);
-  border-radius: 0.35rem;
-}
-
-.lista-anotaciones {
-  display: flex;
-  flex-direction: column;
-  gap: 0.4rem;
-  max-height: 18rem;
-  margin: 0;
-  padding: 0;
-  overflow-y: auto;
-  list-style: none;
-}
-
-.anotacion {
-  padding: 0.45rem 0.6rem 0.45rem 0.7rem;
-  background: rgba(127, 127, 127, 0.07);
-  border-left: 3px solid rgba(127, 127, 127, 0.4);
-  border-radius: 0.3rem;
-}
-
-.anotacion-incidente { border-left-color: #d1495b; }
-.anotacion-aviso     { border-left-color: #d99000; }
-
-/* Un incidente todavia abierto: su duracion es la medida hasta ahora y va a
-   crecer. Se marca con un pulso tenue para que no se lea como definitivo. */
-.anotacion-abierta {
-  animation: latido-anotacion 1.4s ease-in-out infinite;
-}
-
-@keyframes latido-anotacion {
-  0%, 100% { background: rgba(209, 73, 91, 0.10); }
-  50%      { background: rgba(209, 73, 91, 0.22); }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .anotacion-abierta {
-    animation: none;
-    background: rgba(209, 73, 91, 0.16);
+  .boton-icono:hover { color: var(--acento); border-color: var(--acento); }
+  .boton-icono svg { width: 12px; height: 12px; }
+
+  /* ---------- modal ---------- */
+  /* Por encima de la barra fija: una confirmacion tiene que bloquear todo,
+     tambien el reproductor. */
+  .velo-modal { position: fixed; inset: 0; display: none; align-items: center; justify-content: center; padding: 20px; background: rgba(3, 10, 18, .72); z-index: 96; }
+  .velo-modal[data-abierto="si"] { display: flex; }
+  .modal { width: min(520px, 100%); border: 1px solid var(--linea-fuerte); border-radius: 16px; background: var(--superficie); box-shadow: 0 30px 80px rgba(0,0,0,.5); overflow: hidden; }
+  .modal header { padding: 18px 22px 12px; border-bottom: 1px solid var(--linea); }
+  .modal header h3 { margin: 0; font-family: var(--titulo); font-size: 1.2rem; letter-spacing: .03em; text-transform: uppercase; color: var(--critico); }
+  .modal .cuerpo { padding: 18px 22px; }
+  .modal .cuerpo p { margin: 0 0 12px; color: var(--texto-medio); }
+  .modal .cuerpo p:last-child { margin-bottom: 0; }
+  .modal .cuerpo b { color: var(--texto); }
+  .modal footer { display: flex; gap: 10px; justify-content: flex-end; padding: 14px 22px 18px; }
+
+  /* ---------- comparacion a pantalla completa ---------- */
+  /* La comparacion tapa la pagina pero no la barra de reproduccion: se sigue
+     viendo en que vuelta y en que metro esta lo que se compara. */
+  .velo-comparacion { position: fixed; inset: 0 0 74px 0; display: none; flex-direction: column; background: var(--fondo); z-index: 50; }
+  .velo-comparacion[data-abierto="si"] { display: flex; }
+  .cab-comparacion { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; padding: 14px 20px; border-bottom: 1px solid var(--linea); background: var(--superficie); }
+  .cab-comparacion h3 { margin: 0; margin-right: auto; font-family: var(--titulo); font-size: 1.25rem; letter-spacing: .03em; text-transform: uppercase; }
+  .cab-comparacion h3 small { display: block; font-family: var(--cuerpo); font-size: .74rem; font-weight: 400; letter-spacing: 0; text-transform: none; color: var(--texto-tenue); }
+  .panel-comparacion { flex: 1; overflow: auto; padding: 14px 20px 20px; }
+  .lienzo-comparacion { width: 100%; display: block; cursor: crosshair; }
+  .pilotos-comparacion { display: flex; flex-wrap: wrap; gap: 10px; padding: 12px 20px; border-top: 1px solid var(--linea); background: var(--superficie); }
+  .tarjeta-piloto { display: flex; align-items: center; gap: 10px; padding: 8px 14px; border: 1px solid var(--linea); border-left: 4px solid; border-radius: 10px; background: var(--superficie-2); }
+  .tarjeta-piloto .nom { font-family: var(--titulo); font-size: 1rem; letter-spacing: .04em; text-transform: uppercase; }
+  .tarjeta-piloto .eq { font-size: .72rem; color: var(--texto-tenue); }
+  .tarjeta-piloto .dato { margin-left: 14px; font-family: var(--cifra); font-variant-numeric: tabular-nums; font-weight: 600; }
+  .metricas-comparacion { display: flex; flex-wrap: wrap; gap: 6px; }
+
+  /* Elegir con quien se compara sin salir de la vista: antes habia que
+     cerrarla, cambiar la seleccion en el panel de vehiculos y volver a
+     abrirla. */
+  .elige-pilotos { display: flex; flex-wrap: wrap; gap: 4px; max-width: 420px; }
+  .elige-pilotos button {
+    padding: 5px 9px; border: 1px solid var(--linea); border-radius: 7px;
+    background: var(--superficie-2); color: var(--texto-medio);
+    font-family: var(--cuerpo); font-size: .72rem; font-weight: 700;
+    letter-spacing: .03em; cursor: pointer;
   }
-}
+  .elige-pilotos button:hover { border-color: var(--acento); color: var(--texto); }
+  .elige-pilotos button[aria-pressed="true"] {
+    color: var(--sobre-acento); border-color: transparent;
+  }
+  .elige-pilotos button .propio-marca { font-size: .6rem; opacity: .85; }
 
-.anotacion strong {
-  display: block;
-  font-size: 0.82rem;
-  font-weight: 600;
-}
+  @media (max-width: 1120px) {
+    .rejilla { grid-template-columns: minmax(0,1fr) minmax(0,1fr); }
+    .columna:last-child { grid-column: 1 / -1; }
+  }
+  @media (max-width: 720px) {
+    .rejilla { grid-template-columns: minmax(0,1fr); }
+    .columna:last-child { grid-column: auto; }
+    .fila-medidores, .fila-clima, .tira-cronometraje { grid-template-columns: repeat(2, minmax(0,1fr)); }
+    .esquema-auto { grid-template-columns: 1fr 1fr; }
+    .silueta { grid-column: 1 / -1; order: -1; }
+  }
+  @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
 
-.anotacion-donde {
-  margin-left: 0.5rem;
-  font-size: 0.72rem;
-  font-weight: 400;
-  opacity: 0.55;
-  font-variant-numeric: tabular-nums;
-}
+  /* ---------- estado de la conexion con la API ----------
+     El tablero depende por completo del backend: si no puede hablar con el,
+     hay que decirlo arriba de todo y con el motivo que dio, no dejar los
+     paneles vacios como si la sesion no tuviera datos. */
+  .estado-api {
+    margin: 10px 0 9px; padding: 7px 12px;
+    border: 1px solid var(--linea-fuerte); border-left: 3px solid var(--ok);
+    border-radius: 10px; background: var(--superficie-2);
+    font-size: .76rem; color: var(--texto-medio);
+  }
+  .estado-api[data-error="si"] { border-left-color: var(--critico); color: var(--critico); }
 
-.anotacion-detalle {
-  margin: 0.15rem 0 0;
-  font-size: 0.75rem;
-  line-height: 1.45;
-  opacity: 0.8;
-  font-variant-numeric: tabular-nums;
-}
 
-/* La sospecha se destaca del detalle sin gritar: es la parte que hay que leer
-   cuando algo paso, y a la vez la parte que puede estar equivocada. */
-.anotacion-sospecha {
-  margin: 0.35rem 0 0;
-  padding: 0.3rem 0.45rem;
-  font-size: 0.74rem;
-  line-height: 1.5;
-  background: rgba(127, 127, 127, 0.09);
-  border-radius: 0.25rem;
-}
-
-.anotacion-sospecha strong {
-  display: inline;
-  font-size: inherit;
-}
-
-.anotacion-fundamento {
-  margin: 0.25rem 0 0;
-  font-size: 0.68rem;
-  font-style: italic;
-  opacity: 0.5;
-}
-
-/* La anotacion senalada: la que las trazas estan marcando. */
-.anotacion { cursor: pointer; }
-.anotacion:hover  { background: rgba(127, 127, 127, 0.12); }
-.anotacion:focus-visible { outline: 2px solid #4ea8ff; outline-offset: 2px; }
-
-.anotacion-senalada {
-  background: rgba(209, 73, 91, 0.14);
-  border-left-width: 5px;
-}
-
-/* Selector de conductor.
-   ---------------------------------------------------------------------------
-   Aparece solo con mas de un conductor en la sesion. Cada pastilla lleva el
-   color con que ese conductor se dibuja en las trazas, de modo que la relacion
-   entre el control y la linea no haya que recordarla. */
-.selector-conductores {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.4rem;
-  margin-bottom: 0.7rem;
-}
-
-.pastilla-conductor {
-  padding: 0.3rem 0.75rem;
-  font-size: 0.75rem;
-  color: inherit;
-  background: transparent;
-  border: 1px solid var(--color-conductor, rgba(127, 127, 127, 0.4));
-  border-radius: 999px;
-  cursor: pointer;
-  opacity: 0.55;
-}
-
-.pastilla-conductor::before {
-  content: "";
-  display: inline-block;
-  width: 0.5rem;
-  height: 0.5rem;
-  margin-right: 0.4rem;
-  background: var(--color-conductor, currentColor);
-  border-radius: 50%;
-  vertical-align: middle;
-}
-
-.pastilla-conductor.elegida { opacity: 1; font-weight: 600; }
-.pastilla-conductor:hover   { opacity: 0.85; }
-
-/* La de comparar no representa a un conductor, y por eso no lleva punto. */
-.pastilla-comparar::before { display: none; }
-.pastilla-comparar { border-style: dashed; }
-
-/* A quien le paso cada anotacion, cuando se comparan dos. */
-.anotacion-conductor {
-  margin-right: 0.45rem;
-  font-size: 0.68rem;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-}
-
-/* Recorrido reconstruido del vehiculo de calle.
-   El lienzo es cuadrado a proposito: el recorrido se dibuja con la misma escala
-   en los dos ejes, porque estirarlo haria parecer sinuoso un tramo recto. */
-.panel-recorrido canvas {
-  display: block;
-  width: 100%;
-  max-width: 760px;
-  margin: 0 auto 12px;
-  background: #0b1220;
-  border-radius: 14px;
-}
-
-/* La advertencia va con el dibujo y no en una nota al pie: quien mira el
-   recorrido tiene que saber en el acto que no es una posicion medida. */
-.advertencia-derivado {
-  margin: 12px 0 0;
-  padding: 12px 14px;
-  color: #7c4a03;
-  background: rgba(251, 191, 36, 0.14);
-  border-left: 3px solid rgba(217, 119, 6, 0.7);
-  border-radius: 8px;
-  font-size: 0.86rem;
-  line-height: 1.5;
-}
+  /* El mando de la ventana es hermano del de velocidad y se lee igual. */
+  #tr-ventana button { padding: 7px 10px; font-size: .76rem; }
+  .marca-auto.propio { stroke: var(--superficie); stroke-width: 1.5; }
