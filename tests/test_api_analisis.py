@@ -152,5 +152,69 @@ class HerramientasTests(unittest.TestCase):
         self.assertIn("requisitos", primera)
 
 
+class VigilanciaTests(unittest.TestCase):
+    """La ruta que no mira el valor del dato sino su ausencia."""
+
+    def _vigilada(self, vigilancias):
+        from backend.analisis import criticidad as cr
+        return cr.Vigilada(fuente="f1_25_udp_simulation", session_id="s1",
+                           vigilancias=vigilancias,
+                           medido_sobre="vehiculo / corrida",
+                           conteo={"critica": 1, "atencion": 0,
+                                   "informativa": 0})
+
+    def _una(self, **kw):
+        from backend.analisis import criticidad as cr
+        base = dict(magnitud="Velocidad del vehiculo",
+                    nivel_seguridad=cr.ATENCION, nivel_analisis=cr.CRITICA,
+                    senal="speed", hz=20.0, silencio_para_alarmar_s=0.2,
+                    aviso_perdido="el ritmo", percepcion_del_conductor="la ve",
+                    cita="", herramientas_que_inhabilita=3)
+        base.update(kw)
+        return cr.Vigilancia(**base)
+
+    def test_cada_fila_llega_con_su_nivel_y_con_su_eje(self) -> None:
+        """Sin el eje, un tablero pintaria de rojo la velocidad del vehiculo
+        ---critica porque inhabilita tres herramientas--- y se leeria como un
+        peligro que no es."""
+
+        with patch.object(api_analisis.criticidad, "vigilar",
+                          return_value=self._vigilada([self._una()])):
+            d = api_analisis.analisis_vigilancia("f1_25:session:1")
+
+        fila = d["vigilancias"][0]
+        self.assertEqual(fila["nivel"], "critica")
+        self.assertEqual(fila["eje"], "analisis")
+        # Los dos ejes siguen viajando por separado, no solo el peor.
+        self.assertEqual(fila["nivel_seguridad"], "atencion")
+        self.assertEqual(fila["nivel_analisis"], "critica")
+
+    def test_la_terna_medida_viaja_con_la_respuesta(self) -> None:
+        with patch.object(api_analisis.criticidad, "vigilar",
+                          return_value=self._vigilada([self._una()])):
+            d = api_analisis.analisis_vigilancia("f1_25:session:1")
+        self.assertEqual(d["medido_sobre"], "vehiculo / corrida")
+
+    def test_una_sesion_sin_muestras_es_422_con_su_motivo(self) -> None:
+        """No un 500 ni una tabla vacia: la sesion existe, lo que no hay es
+        con que derivar cuanto silencio tolera cada canal."""
+
+        with patch.object(api_analisis.criticidad, "vigilar",
+                          return_value=self._vigilada([])):
+            with self.assertRaises(HTTPException) as caja:
+                api_analisis.analisis_vigilancia("f1_25:session:1")
+        self.assertEqual(caja.exception.status_code, 422)
+        self.assertIn("silencio", caja.exception.detail["motivo"])
+
+    def test_por_omision_no_pide_las_ausentes(self) -> None:
+        """Una magnitud que la fuente nunca entrega no es una alarma sino una
+        ausencia declarada."""
+
+        with patch.object(api_analisis.criticidad, "vigilar",
+                          return_value=self._vigilada([self._una()])) as espia:
+            api_analisis.analisis_vigilancia("f1_25:session:1")
+        self.assertFalse(espia.call_args.kwargs["incluir_ausentes"])
+
+
 if __name__ == "__main__":
     unittest.main()

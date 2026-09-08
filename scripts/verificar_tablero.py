@@ -20,6 +20,19 @@ veintidos falsos positivos no se mira**, con lo cual deja de proteger.
 La lista explicita no tiene ese problema. Cuesta una linea cuando se agrega una
 funcion, y a cambio detecta con certeza el unico defecto que ocurrio de verdad:
 que una funcion desaparezca.
+
+POR QUE LA LISTA SE REHIZO ENTERA
+---------------------------------
+La reconstruccion del tablero sobre datos de sesion reales cambio el vocabulario:
+de las veinticinco funciones que esta lista vigilaba **quedaba una**, y las otras
+veinticuatro existen con otro nombre o repartidas distinto. El tablero no estaba
+roto; la lista miraba la version anterior.
+
+Eso es peor que no tener la comprobacion. Veinticuatro fallos en cada corrida son
+exactamente los «veintidos falsos positivos» que este mismo archivo dice mas
+arriba que vuelven inutil una comprobacion, y durante ese lapso no protegio nada.
+De ahi que al reescribir un panel corresponda reescribir tambien lo que lo vigila,
+en el mismo cambio.
 """
 
 from __future__ import annotations
@@ -36,24 +49,41 @@ TABLERO = RAIZ / "dashboard" / "app.js"
 #: Estan agrupadas por lo que sostienen, de modo que un fallo diga que parte de
 #: la pantalla se rompio y no solo que falta un nombre.
 REQUERIDAS = {
-    "las trazas": [
-        "dibujarTrazas", "dibujarUnaTraza", "entradasDelCatalogo",
-        # La vista de sesion completa, que reemplaza el eje que se desplaza.
-        "traerResumenDeSesion", "duracionDeLaSesion", "dibujarEjeDeTiempo",
-        "dibujarMarcasDeAnotacion",
-        "dibujarCatalogo", "rangoDe", "conversionDe", "instanteDe",
+    "el ciclo de la sesion": [
+        "abrirSesionGuardada", "pintarSesiones", "cambiarFuente",
+        "olvidarCaches", "recordarSesion", "sesionActual",
     ],
-    "las anotaciones": [
-        "registrarAnotacion", "dibujarAnotaciones", "sembrarAnotaciones",
-        "textoDeUbicacion",
+    "el transporte y el cabezal": [
+        "reproducir", "detener", "moverCabezal", "moverCabezalesGraficos",
+        "instante", "calcularInstante", "pintarTransporte",
+    ],
+    "las trazas": [
+        "dibujarTraza", "pintarControlesTraza", "pintarLeyendaTraza",
+        "asegurarVuelta", "asegurarGraficosChicos", "serieDeCanal",
+        "canalesDibujados", "ampliarGrafico",
+    ],
+    "la cabina": [
+        "pintarMedidores", "pintarClima", "pintarAvisos", "pintarG",
+        "pintarPista", "pintarEsquinas", "pintarCronometraje",
+        "encuadrarCabina", "ajustarCabina",
     ],
     "los conductores": [
-        "registrarConductor", "dibujarSelectorDeConductor", "vehiculosADibujar",
-        "serieDe", "tiemposDe",
+        "pintarAutos", "poblarPropio", "elegirPropio", "armarAutos",
+        "autoPropio", "serieDelPropio",
+    ],
+    "la comparacion": [
+        "abrirComparacion", "dibujarComparacion", "pintarPilotosComparacion",
+        "asegurarDatosComparacion", "exportarComparacion",
     ],
     "el flujo en vivo": [
-        "conectarFlujoEnVivo", "desconectarFlujoEnVivo", "sembrarHistoria",
-        "registrarMensajeEnVivo", "declararEstadoEnVivo",
+        "conectarFlujoEnVivo", "cerrarFlujoEnVivo", "vaciarVivo",
+        "incorporarTelemetriaViva", "vigilarEnVivo",
+    ],
+    "la disponibilidad declarada": [
+        "aplicarDisponibilidad", "anotarDisponibles", "avisosDeLaFuente",
+    ],
+    "que vigilar si se corta": [
+        "asegurarVigilancia", "pintarVigilancia", "textoNivel",
     ],
 }
 

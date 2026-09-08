@@ -9,6 +9,7 @@ sea un numero elegido en lugar de derivado.
 from __future__ import annotations
 
 import unittest
+from pathlib import Path
 
 from backend.analisis import criticidad as cr
 
@@ -134,6 +135,40 @@ class FundamentoTest(unittest.TestCase):
 
         for c in cr.CRITERIOS:
             self.assertTrue(c.percepcion_del_conductor.strip())
+
+    def test_ninguna_cita_apunta_a_una_clave_inexistente(self):
+        """El guardian que faltaba, escrito despues de fallar la verificacion.
+
+        Al fundar el criterio se atribuyo a una pagina sobre medicion de
+        temperatura de frenos una frase que esa pagina no dice: venia de otro
+        resultado de busqueda y se mezclo al resumir. Abrirla lo desmintio.
+
+        Una clave inventada es peor que un campo vacio, porque el informe la
+        compila igual y la afirmacion queda pareciendo respaldada. De modo que
+        toda cita tiene que resolver contra la bibliografia real.
+        """
+
+        import re
+        bib = (Path(__file__).resolve().parents[1] / "informe" / "tesis"
+               / "bibliografia.bib").read_text(encoding="utf-8")
+        claves = set(re.findall(r"@\w+\{([^,\s]+)\s*,", bib))
+        self.assertGreater(len(claves), 100, "no se leyo la bibliografia")
+        for c in cr.CRITERIOS:
+            if c.cita:
+                self.assertIn(c.cita, claves,
+                              f"{c.magnitud}: cita inexistente {c.cita!r}")
+
+    def test_el_reparto_se_declara_como_criterio_propio(self):
+        """Mientras las filas no tengan cita, el modulo tiene que decirlo.
+
+        No es una prueba sobre el codigo sino sobre lo que el codigo afirma de
+        si mismo: si alguien llenara las citas sin tocar la explicacion, o al
+        reves, quedarian contradiciendose.
+        """
+
+        sin_citar = [c.magnitud for c in cr.CRITERIOS if not c.cita]
+        if sin_citar:
+            self.assertIn("criterio propio", cr.__doc__)
 
     def test_toda_magnitud_del_catalogo_existe(self):
         """Un nombre mal escrito seria una alarma que nunca se evalua."""

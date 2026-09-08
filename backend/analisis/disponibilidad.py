@@ -633,3 +633,100 @@ def evaluar_todas(fuente: str, session_id: str) -> list[Disponibilidad]:
     """Las siete herramientas contra una sesion, en orden de construccion."""
 
     return [evaluar(h.clave, fuente, session_id) for h in HERRAMIENTAS]
+
+
+@dataclass
+class Frecuencias:
+    """Los hercios de cada senal de una sesion, y sobre que se midieron.
+
+    **La terna viaja con las cifras y no aparte.** Una frecuencia medida sobre
+    un recorte que no se nombra no es verificable, y en este trabajo esa
+    omision ya produjo dos errores: contar juntos los veintitres conductores de
+    la fuente deportiva declaraba 84,9 Hz para un canal de 3,7, y contar juntas
+    sus cuatro reinyecciones declaraba 7,4. Los dos numeros eran plausibles.
+    """
+
+    fuente: str
+    session_id: str
+    #: Hercios por nombre de senal. `None` cuando la senal existe en el mapa de
+    #: la fuente pero la sesion no tiene muestras suyas.
+    por_senal: dict[str, float | None] = field(default_factory=dict)
+    #: Conductor, vehiculo y corrida sobre los que se midio.
+    contexto: tuple[str | None, str | None, str | None] = (None, None, None)
+    medido_sobre: str = ""
+
+
+def frecuencias(fuente: str, session_id: str,
+                magnitudes: tuple[str, ...] | None = None) -> Frecuencias:
+    """Mide de una sola vez los hercios de las senales de una sesion.
+
+    `evaluar` ya media, pero **por herramienta y solo lo que esa herramienta
+    necesita**: siete llamadas repetian la eleccion de terna y median de nuevo
+    las senales compartidas. Para clasificar criticidad hace falta lo contrario,
+    la sesion entera en una pasada, de modo que la frecuencia de cada canal se
+    mida una vez y sobre el mismo recorte que las demas.
+
+    Sin `magnitudes` recorre las del contrato interno que la fuente publique.
+    """
+
+    nombres = magnitudes if magnitudes is not None else tuple(_POR_MAGNITUD)
+    resultado = Frecuencias(fuente=fuente, session_id=session_id)
+
+    with db.obtener_conexion() as conexion, conexion.cursor() as cursor:
+        contexto = _contexto(cursor, fuente, session_id)
+        resultado.contexto = contexto
+        resultado.medido_sobre = " / ".join(
+            p for p in (contexto[1] or contexto[0], contexto[2]) if p)
+        if contexto[0] is None and contexto[1] is None:
+            return resultado
+
+        senales: list[str] = []
+        for magnitud in nombres:
+            senal, _ = _senal_de(magnitud, fuente)
+            if senal is not None and senal not in senales:
+                senales.append(senal)
+        if not senales:
+            return resultado
+
+        # UNA consulta agrupada y no una por senal.
+        #
+        # `_medir` pregunta canal por canal porque cada herramienta necesita de
+        # cada uno cosas distintas ---si es continuo, cuantos valores distintos
+        # tiene--- y son pocos. Aca son veintiuno, y veintiuna consultas contra
+        # la tabla de ochenta y siete millones de filas tardaban **13,1 s**
+        # sobre la sesion de simulacion. La ventana es la misma para todos, de
+        # modo que agrupar por nombre de senal da lo mismo en una sola pasada.
+        conductor, vehiculo, corrida = contexto
+        cursor.execute(
+            """select signal_name, count(*),
+                      extract(epoch from (max(timestamp) - min(timestamp)))
+               from telemetry_messages
+               where source_type = %s and session_id = %s
+                 and signal_name = any(%s)
+                 and driver_id is not distinct from %s
+                 and vehicle_id is not distinct from %s
+                 and replay_run_id is not distinct from %s
+                 and timestamp > (
+                     select max(timestamp) - make_interval(secs => %s)
+                     from telemetry_messages
+                     where source_type = %s and session_id = %s
+                       and driver_id is not distinct from %s
+                       and vehicle_id is not distinct from %s
+                       and replay_run_id is not distinct from %s)
+               group by signal_name""",
+            (fuente, session_id, senales, conductor, vehiculo, corrida,
+             VENTANA_MEDICION_S, fuente, session_id, conductor, vehiculo,
+             corrida),
+        )
+        medidas = {f[0]: (f[1], f[2]) for f in cursor.fetchall()}
+
+    for senal in senales:
+        muestras, ventana = medidas.get(senal, (0, None))
+        # Sin muestras la senal figura con `None` y no se omite: que la fuente
+        # la publique y esta sesion no la tenga es informacion, y omitirla la
+        # confundiria con una senal que la fuente no publica.
+        resultado.por_senal[senal] = (
+            round(muestras / float(ventana), 1)
+            if muestras and ventana and float(ventana) > 0 else None)
+
+    return resultado

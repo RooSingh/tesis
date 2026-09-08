@@ -260,5 +260,90 @@ class CatalogoTest(unittest.TestCase):
             _evaluar("no_existe", "f1_25_udp_simulation", {})
 
 
+class CursorAgrupadoFalso:
+    """Para `frecuencias`, que pide **una** consulta agrupada y no una por senal.
+
+    Es un simulacro distinto del de arriba a proposito: si compartiera el
+    cursor, una regresion que volviera a consultar de a una senal pasaria
+    inadvertida.
+    """
+
+    def __init__(self, filas):
+        self.filas = filas
+        self._proxima = None
+        self._agrupadas = 0
+
+    def execute(self, consulta, parametros):
+        if "group by 1, 2, 3" in consulta:
+            self._proxima = ("conductor", "vehiculo", "corrida")
+            return
+        assert "group by signal_name" in consulta, (
+            "frecuencias tiene que agrupar, no medir de a una senal")
+        self._agrupadas += 1
+        self._proxima = self.filas
+
+    def fetchone(self):
+        return self._proxima if isinstance(self._proxima, tuple) else None
+
+    def fetchall(self):
+        return self._proxima
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_):
+        return False
+
+
+class FrecuenciasTest(unittest.TestCase):
+    """Los hercios de toda la sesion, en una sola pasada."""
+
+    def _frecuencias(self, filas, fuente="f1_25_udp_simulation"):
+        cursor = CursorAgrupadoFalso(filas)
+        with mock.patch.object(disp.db, "obtener_conexion",
+                               return_value=ConexionFalsa(cursor)):
+            return disp.frecuencias(fuente, "sesion-de-prueba"), cursor
+
+    def test_una_sola_consulta_para_todas_las_senales(self):
+        """Veintiuna consultas contra la tabla tardaban 13,1 s; agrupadas, 2,8.
+
+        La prueba no mide tiempo ---eso depende de la maquina--- sino que
+        cuenta consultas, que es la causa.
+        """
+
+        r, cursor = self._frecuencias([("speed", 2400, 120.0),
+                                       ("lap_number", 2400, 120.0)])
+        self.assertEqual(cursor._agrupadas, 1)
+        self.assertEqual(r.por_senal["speed"], 20.0)
+
+    def test_la_senal_sin_muestras_figura_en_nulo_y_no_se_omite(self):
+        """Que la fuente la publique y esta sesion no la tenga es informacion.
+
+        Omitirla la confundiria con una senal que la fuente **no publica**, que
+        es una situacion distinta y se resuelve en otro lado.
+        """
+
+        r, _ = self._frecuencias([("speed", 2400, 120.0)])
+        self.assertEqual(r.por_senal["speed"], 20.0)
+        self.assertIn("lap_number", r.por_senal)
+        self.assertIsNone(r.por_senal["lap_number"])
+
+    def test_la_terna_medida_viaja_con_las_cifras(self):
+        """Una frecuencia medida sobre un recorte que no se nombra no es
+        verificable, y este trabajo ya publico dos cifras plausibles y falsas
+        por no nombrarlo."""
+
+        r, _ = self._frecuencias([("speed", 2400, 120.0)])
+        self.assertIn("vehiculo", r.medido_sobre)
+        self.assertIn("corrida", r.medido_sobre)
+
+    def test_ventana_nula_no_inventa_frecuencia(self):
+        """Una sola muestra no tiene ventana, y dividir por cero o por nada
+        daria un numero donde no hay medicion."""
+
+        r, _ = self._frecuencias([("speed", 1, None)])
+        self.assertIsNone(r.por_senal["speed"])
+
+
 if __name__ == "__main__":
     unittest.main()

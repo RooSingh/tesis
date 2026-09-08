@@ -31,6 +31,7 @@ from fastapi import APIRouter, HTTPException
 
 from backend.analisis import (
     consistencia,
+    criticidad,
     degradacion,
     delta,
     disponibilidad,
@@ -156,3 +157,42 @@ def analisis_traccion(session_id: str, vuelta: int,
     """Aplicacion de potencia a la salida de curva y deslizamiento asociado."""
     return _correr(traccion.analizar, _fuente_de(session_id), session_id,
                    vuelta, derivar_deslizamiento)
+
+
+@router.get("/analisis/{session_id}/vigilancia")
+def analisis_vigilancia(session_id: str, incluir_ausentes: bool = False) -> Any:
+    """Que senales, si se pierden, merecen alarma y cuales solo aviso.
+
+    ES LA UNICA RUTA QUE NO MIRA EL VALOR DEL DATO
+    ----------------------------------------------
+    Las demas responden que dice la telemetria. Esta responde **que pasa si
+    deja de decir algo**, que es una pregunta que un vehiculo no tiene: alli el
+    sensor y el tablero estan cableados juntos y un canal que no llega significa
+    que el vehiculo se apago. En una plataforma el canal puede desaparecer con
+    el vehiculo perfectamente bien, y entonces la ausencia de dato se parece a
+    un dato tranquilo.
+
+    DOS EJES, Y EL CLIENTE TIENE QUE PODER DISTINGUIRLOS
+    ----------------------------------------------------
+    Cada senal viaja con `nivel_seguridad` y `nivel_analisis`, y ademas con el
+    peor de los dos ya resuelto en `nivel` **acompanado de `eje`**. Sin el eje,
+    un tablero pintaria de rojo la velocidad del vehiculo ---critica porque
+    inhabilita tres herramientas--- y se leeria como un peligro que no es.
+
+    Por omision devuelve solo lo que la fuente publica: una magnitud que nunca
+    entrega no es una alarma sino una ausencia declarada.
+    """
+    fuente = _fuente_de(session_id)
+    try:
+        vigilada = criticidad.vigilar(fuente, session_id,
+                                      incluir_ausentes=incluir_ausentes)
+    except Exception as error:  # pragma: no cover - depende del estado de la base
+        raise HTTPException(status_code=500, detail=str(error)) from error
+
+    if not vigilada.vigilancias:
+        raise HTTPException(status_code=422, detail={
+            "motivo": "la sesion no tiene muestras sobre las que medir "
+                      "frecuencias, de modo que no se puede derivar cuanto "
+                      "silencio tolera cada canal",
+            "fuente": fuente, "session_id": session_id})
+    return vigilada.como_dict()

@@ -86,7 +86,7 @@ const estado = {
 
 //: Cuantos puntos se piden por vuelta. La vuelta tiene unas 2.600 muestras y
 //: el grafico mide trescientos pixeles: pedir mas es transferir para tirar.
-const PUNTOS_POR_VUELTA = 500;
+const PUNTOS_POR_VUELTA = 300;
 
 
 const FUENTES = {
@@ -3238,6 +3238,7 @@ function abrirSesionGuardada(id) {
   estado.puesta = null; estado.avisos = []; estado.disponibles = new Set();
   estado.vehiculoClave = null;
   estado.climaMotivo = ""; estado.vehiculoMotivo = ""; estado.avisosMotivo = "";
+  estado.vigilancia = null; estado.vigilanciaMotivo = "";
   estado.cargando = true;
   PISTA = { path: "", curvas: [], largo_m: null, desnivel_m: null, muestras: null };
   CURVAS = [];
@@ -3324,29 +3325,47 @@ function instanteUtc() {
    desgaste no cambian sesenta veces por segundo, y son dos consultas a la base
    cada una. */
 let _contextoDe = "";
+let _contextoEnVuelo = false;
+let _contextoUltimo = 0;
 
+/* ESTAS DOS CONSULTAS SON LAS MAS CARAS DEL TABLERO.
+   `/vehiculo` resuelve cuarenta señales con `DISTINCT ON` y tarda unos dos
+   segundos y medio; `/avisos` casi tres. Pedirlas en cada cambio de vuelta
+   ---que a diez veces la velocidad ocurre cada nueve segundos--- deja al
+   navegador con una consulta pesada permanentemente en vuelo, y eso es lo que
+   se siente como trabazon.
+
+   Se acotan por dos lados: una sola en vuelo a la vez, y no mas de una cada
+   tres segundos. El desgaste del neumatico y el clima no cambian mas rapido
+   que eso. */
 function refrescarContexto() {
-  if (!estado.abierta) return;
+  if (!estado.abierta || _contextoEnVuelo) return;
+  const ahora = performance.now();
+  if (ahora - _contextoUltimo < 3000) return;
   const t = instante();
   const clave = estado.abierta.session_id + "|" + t.vuelta;
   if (clave === _contextoDe) return;
   _contextoDe = clave;
+  _contextoUltimo = ahora;
+  _contextoEnVuelo = true;
   const cuando = instanteUtc();
   if (!cuando) return;
   const ruta = "/sesiones/" + encodeURIComponent(estado.abierta.session_id);
   const hasta = "?hasta=" + encodeURIComponent(cuando);
+  let pendientes = 2;
+  const listo = () => { if (--pendientes <= 0) _contextoEnVuelo = false; };
   pedir(ruta + "/clima" + hasta).then(d => {
     estado.clima = d.clima || null;
     estado.climaMotivo = d.motivo_ausencia || "";
     _firmaClima = "";
     pintarClima();
-  }).catch(() => {});
+  }).catch(() => {}).then(listo);
   pedir(ruta + "/vehiculo" + hasta).then(d => {
     estado.vehiculo = d.esquinas ? d : null;
     estado.vehiculoMotivo = d.motivo_ausencia || "";
     _firmaEsquinas = "";
     pintarEsquinas();
-  }).catch(() => {});
+  }).catch(() => {}).then(listo);
 }
 
 /* Cada aviso trae vuelta y metro; para colocarlo en la linea de tiempo hace
@@ -3740,11 +3759,18 @@ function moverCabezal(fraccion) {
   const vActual = instante().vuelta;
   if (vActual !== _ultimaVueltaDibujada) {
     _ultimaVueltaDibujada = vActual;
+    /* Primero lo que se necesita **ahora**; lo de la vuelta siguiente sale
+       cuando lo de esta ya llego. Pedir las dos juntas ponia ocho consultas en
+       vuelo a la vez y el navegador solo abre seis: la que hacia falta para
+       dibujar quedaba haciendo cola detras de una que todavia no se mira. */
     asegurarVuelta(vActual);
-    asegurarVuelta(vActual + 1);
     asegurarPosiciones(vActual);
-    asegurarPosiciones(vActual + 1);
     refrescarContexto();
+    clearTimeout(_relojSiguiente);
+    _relojSiguiente = setTimeout(() => {
+      asegurarVuelta(vActual + 1);
+      asegurarPosiciones(vActual + 1);
+    }, 1200);
   }
   /* Los graficos no se vuelven a trazar: su traza es la de la vuelta y no
      cambia al avanzar el cabezal. Lo unico que se mueve es la linea. */
@@ -3771,6 +3797,7 @@ function moverCabezal(fraccion) {
 let _ultimaComparacion = 0;
 let _ultimaVueltaDibujada = -1;
 let _ultimaTraza = 0;
+let _relojSiguiente = null;
 
 /* Cuantos metros de vuelta entran en cada grafico. Cero es la vuelta entera.
    Es el mando que decide si se mira una frenada o la vuelta completa: con
@@ -3837,6 +3864,21 @@ function reproducir() {
     detener();
     moverCabezal(Number(e.target.value) / 10000);
   });
+  /* Cuantos metros de vuelta entran en cada grafico. Vive al lado del mando de
+     velocidad porque las dos son decisiones sobre el tiempo: una dice a que
+     ritmo avanza la reproduccion, la otra cuanto del pasado se sigue viendo. */
+  const mandoVentana = document.getElementById("tr-ventana");
+  if (mandoVentana) {
+    mandoVentana.addEventListener("click", e => {
+      const b = e.target.closest("button"); if (!b) return;
+      ventanaTraza = Number(b.dataset.ventana);
+      marcar(mandoVentana, "ventana", b.dataset.ventana);
+      _ultimaTraza = 0;
+      dibujarTraza();
+      moverCabezalesGraficos();
+    });
+  }
+
   document.getElementById("tr-velocidad").addEventListener("click", e => {
     const b = e.target.closest("button"); if (!b) return;
     velocidadRep = Number(b.dataset.vel);
@@ -4015,6 +4057,112 @@ function pintarMatriz() {
   }
 }
 
+/* ---------------- qué vigilar si se corta ---------------- */
+
+/* LA ÚNICA CONSULTA DEL TABLERO QUE NO MIRA EL VALOR DEL DATO.
+   Las demás preguntan qué dice la telemetría; ésta pregunta qué pasa si deja
+   de decir algo. Es una pregunta que un auto no tiene ---allí el sensor y el
+   tablero están cableados juntos--- y que sólo aparece cuando el dato viaja.
+
+   SE PIDE UNA VEZ POR SESIÓN, NO EN CADA RENDER. Mide la frecuencia real de
+   cada canal sobre una ventana del final de la sesión, y eso cuesta unos tres
+   segundos contra la tabla de ochenta y siete millones de filas. Es una
+   propiedad de la sesión y no del cabezal: no cambia mientras se reproduce. */
+let _vigilanciaPedida = null;
+
+function asegurarVigilancia() {
+  if (!estado.abierta) return;
+  const id = estado.abierta.session_id;
+  if (_vigilanciaPedida === id) return;
+  _vigilanciaPedida = id;
+  pedir("/analisis/" + encodeURIComponent(id) + "/vigilancia")
+    .then(d => {
+      if (_vigilanciaPedida !== id) return;   // cambió la sesión mientras tanto
+      estado.vigilancia = d;
+      estado.vigilanciaMotivo = "";
+      render();
+    })
+    .catch(e => {
+      if (_vigilanciaPedida !== id) return;
+      estado.vigilancia = null;
+      /* El backend explica por qué no puede, y ese motivo está escrito para
+         leerse. Reemplazarlo por «no disponible» sería perder la explicación. */
+      estado.vigilanciaMotivo = (e && (e.motivo || e.message)) || "";
+      render();
+    });
+}
+
+/* Sin abreviar el eje. «crítica» a secas volvería a fundir los dos ejes, que
+   es exactamente lo que el módulo separa: la velocidad del vehículo es crítica
+   **para el análisis** y no es un peligro. */
+function textoNivel(v) {
+  const eje = v.eje === "seguridad" ? "seguridad" : "análisis";
+  if (v.nivel === "critica") return "alarma · " + eje;
+  if (v.nivel === "atencion") return "aviso · " + eje;
+  return "informativa";
+}
+
+function pintarVigilancia() {
+  const panel = document.getElementById("panel-vigilancia");
+  if (!panel) return;
+  const cuerpo = document.getElementById("cuerpo-vigilancia");
+  const canal = document.getElementById("canal-vigilancia");
+  const conteo = document.getElementById("conteo-vigilancia");
+  const nota = document.getElementById("nota-vigilancia");
+
+  if (!estado.abierta) {
+    panel.dataset.vacio = "si";
+    cuerpo.innerHTML = "";
+    conteo.innerHTML = "";
+    canal.textContent = "—";
+    nota.textContent = "Se calcula sobre una sesión abierta: sin sesión no hay frecuencias que medir.";
+    return;
+  }
+
+  asegurarVigilancia();
+  const d = estado.vigilancia;
+
+  if (!d) {
+    panel.dataset.vacio = "si";
+    cuerpo.innerHTML = "";
+    conteo.innerHTML = "";
+    canal.textContent = estado.vigilanciaMotivo ? "no se pudo medir" : "midiendo…";
+    nota.textContent = estado.vigilanciaMotivo ||
+      "Midiendo la frecuencia real de cada canal sobre el final de la sesión.";
+    return;
+  }
+
+  panel.dataset.vacio = "no";
+  const c = d.conteo || {};
+  conteo.innerHTML =
+    '<span class="pastilla-nivel critica">' + (c.critica || 0) + ' de alarma</span>' +
+    '<span class="pastilla-nivel atencion">' + (c.atencion || 0) + ' de aviso</span>' +
+    '<span class="pastilla-nivel informativa">' + (c.informativa || 0) + ' informativas</span>';
+
+  cuerpo.innerHTML = (d.vigilancias || []).map(v => {
+    const hz = v.hz == null ? "—" : cifra(v.hz, 1) + " Hz";
+    const sil = v.silencio_para_alarmar_s == null
+      ? "sin medir"
+      : cifra(v.silencio_para_alarmar_s, 2) + " s";
+    return '<tr data-nivel="' + v.nivel + '">' +
+      '<td><b>' + v.magnitud + '</b><small><code>' + (v.senal || "—") + '</code></small></td>' +
+      '<td class="nivel"><span class="punto-nivel"></span>' + textoNivel(v) + '</td>' +
+      '<td class="aviso">' + v.aviso_perdido +
+        '<small>' + v.percepcion_del_conductor + '</small></td>' +
+      '<td class="num">' + hz + '</td>' +
+      '<td class="num">' + sil + '</td>' +
+    '</tr>';
+  }).join("");
+
+  canal.textContent = (d.vigilancias || []).length + " canales medidos";
+  /* La terna medida viaja con las cifras y no aparte: una frecuencia medida
+     sobre un recorte que no se nombra no es verificable, y en este trabajo esa
+     omisión ya produjo dos cifras plausibles y falsas. */
+  nota.innerHTML = d.medido_sobre
+    ? '<strong>Medido sobre:</strong> <code>' + d.medido_sobre + '</code>, en una ventana del final de la sesión.'
+    : "";
+}
+
 /* ---------------- render ---------------- */
 function render() {
   /* La vuelta que se anuncia es siempre la del cabezal. Al cambiar de fuente
@@ -4025,6 +4173,7 @@ function render() {
   pintarCiclo(); aplicarDisponibilidad(); pintarAutos(); pintarEsquinas();
   pintarTransporte(); pintarCronometraje();
   pintarMedidores(); pintarClima(); pintarAvisos(); pintarG(); pintarPista(); pintarControlesTraza();
+  pintarVigilancia();
   pintarLeyendaTraza(); dibujarTraza(); moverCabezalesGraficos();
   if (compAbierta()) { pintarPilotosComparacion(); dibujarComparacion(); }
 }

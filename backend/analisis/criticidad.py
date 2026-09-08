@@ -417,6 +417,61 @@ def vigilancias_presentes(fuente: str,
     return [v for v in vigilancias(fuente, mediciones) if v.senal is not None]
 
 
+@dataclass
+class Vigilada:
+    """Que vigilar en una sesion concreta, ya medida."""
+
+    fuente: str
+    session_id: str
+    vigilancias: list[Vigilancia] = field(default_factory=list)
+    #: Sobre que conductor, vehiculo y corrida se midieron las frecuencias.
+    #: **Viaja con el resultado**, porque un umbral de silencio derivado de una
+    #: frecuencia medida sobre un recorte que no se nombra no es verificable.
+    medido_sobre: str = ""
+    #: Cuantas hay en cada nivel, ya cruzados los dos ejes.
+    conteo: dict[str, int] = field(default_factory=dict)
+
+    def como_dict(self) -> dict[str, Any]:
+        return {
+            "fuente": self.fuente,
+            "session_id": self.session_id,
+            "medido_sobre": self.medido_sobre,
+            "conteo": self.conteo,
+            "vigilancias": [
+                dict(v.como_dict(), nivel=peor(v)[0], eje=peor(v)[1])
+                for v in self.vigilancias
+            ],
+        }
+
+
+def vigilar(fuente: str, session_id: str, incluir_ausentes: bool = False,
+            ) -> Vigilada:
+    """Mide la sesion y clasifica que merece alarma y que merece aviso.
+
+    Es la entrada que usa el tablero. Mide **una vez** y clasifica sobre esa
+    medicion, en lugar de pedir la frecuencia canal por canal.
+
+    Por omision devuelve solo lo que la fuente publica. Una magnitud que la
+    fuente nunca entrega no es una alarma sino una ausencia declarada, y
+    mezclarlas haria que el bus de un vehiculo de calle encendiera una alarma
+    critica en cada arranque por no tener datos de vuelta.
+    """
+
+    from backend.analisis import disponibilidad as disp
+
+    medidas = disp.frecuencias(fuente, session_id,
+                               tuple(c.magnitud for c in CRITERIOS))
+    vistas = (vigilancias(fuente, medidas.por_senal) if incluir_ausentes
+              else vigilancias_presentes(fuente, medidas.por_senal))
+
+    conteo: dict[str, int] = {n: 0 for n in (CRITICA, ATENCION, INFORMATIVA)}
+    for v in vistas:
+        conteo[peor(v)[0]] += 1
+
+    return Vigilada(fuente=fuente, session_id=session_id, vigilancias=vistas,
+                    medido_sobre=medidas.medido_sobre, conteo=conteo)
+
+
 def resumen(fuente: str, vistas: list[Vigilancia]) -> str:
     """Una linea por nivel, con cuantas magnitudes hay en cada uno."""
 
