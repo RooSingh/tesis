@@ -24,6 +24,93 @@ const API = (function () {
   return location.protocol + "//" + location.hostname + ":8000";
 })();
 
+/* ============================================================
+   QUE ESTA ESPERANDO
+   ------------------------------------------------------------
+   Un panel que espera una consulta y un panel sin dato se ven igual si
+   ninguno de los dos lo dice, y son dos afirmaciones distintas: uno todavia
+   no sabe y el otro sabe que la fuente no lo publica. Todo este tablero se
+   apoya en esa diferencia, de modo que la espera necesita su propia marca.
+
+   Cada consulta declara **que panel** deja esperando. Un mismo panel puede
+   estar esperando dos cosas ---el vehiculo espera su estado y la serie de su
+   vuelta--- y por eso se cuenta, no se marca con un booleano. */
+const PANELES_DE = {
+  catalogo: [],
+  vueltas: ["cronometraje"],
+  trazado: ["trazado"],
+  clima: ["clima"],
+  vehiculo: ["vehiculo"],
+  puesta: ["puesta"],
+  avisos: ["avisos"],
+  series: ["motor", "cronometraje", "aceleraciones", "graficos"],
+  posiciones: ["trazado", "vehiculos"],
+  curvas: ["trazado"],
+};
+
+/* Esto se contaba con dos llamadas apareadas ---una al empezar y otra al
+   terminar--- y el par se puede romper de tres maneras: una salida temprana
+   entre las dos, una excepcion en el medio, o una consulta que no vuelve
+   nunca. Las tres dejan al panel diciendo que espera algo que ya no espera, y
+   se vio: el tablero mostraba los ocho paneles cargando sobre datos dibujados.
+
+   Un indicador de espera que se traba es peor que no tenerlo, porque miente
+   sobre lo unico que tiene que decir. Asi que la espera ya no se cuenta: se
+   entrega un vale por consulta, el vale se devuelve solo cuando la promesa se
+   asienta ---salga bien o mal--- y ademas vence. Un vale que nadie devolvio en
+   treinta segundos corresponde a una consulta que fracaso sin avisar. */
+const LIMITE_ESPERA_MS = 30000;
+const _vales = new Map();
+let _proximoVale = 0;
+let _relojVales = null;
+
+/* Envuelve una consulta con su marca de espera. Recibe la funcion que la
+   lanza, no la promesa ya lanzada, para que una excepcion al construirla
+   tambien devuelva el vale. */
+function conCarga(claves, lanzar) {
+  const cl = Array.isArray(claves) ? claves : [claves];
+  const vale = ++_proximoVale;
+  _vales.set(vale, { claves: cl, vence: Date.now() + LIMITE_ESPERA_MS });
+  vigilarVales();
+  pintarCargas();
+  const soltar = () => { if (_vales.delete(vale)) pintarCargas(); };
+  let p;
+  try { p = lanzar(); } catch (e) { soltar(); throw e; }
+  if (!p || typeof p.then !== "function") { soltar(); return p; }
+  return p.then(v => { soltar(); return v; }, e => { soltar(); throw e; });
+}
+
+/* El vencimiento necesita que alguien mire el reloj. El vigilante existe solo
+   mientras hay vales: sin esperas no hay temporizador corriendo. */
+function vigilarVales() {
+  if (_relojVales || !_vales.size) return;
+  _relojVales = setInterval(() => {
+    if (!_vales.size) { clearInterval(_relojVales); _relojVales = null; return; }
+    const ahora = Date.now();
+    let vencio = false;
+    _vales.forEach((v, k) => { if (v.vence <= ahora) { _vales.delete(k); vencio = true; } });
+    if (vencio) pintarCargas();
+  }, 1000);
+}
+
+/* Marca cada panel que este esperando algo. Es un atributo y no una clase
+   porque la hoja lo lee con un selector de atributo, igual que el estado de
+   ausencia: los dos son estados del panel y se leen juntos. */
+function pintarCargas() {
+  const activos = new Set();
+  _vales.forEach(v => {
+    v.claves.forEach(que => (PANELES_DE[que] || []).forEach(p => activos.add(p)));
+  });
+  document.querySelectorAll("[data-panel]").forEach(el => {
+    el.dataset.cargando = activos.has(el.dataset.panel) ? "si" : "no";
+  });
+  // Los graficos no son un panel: son varios, y se marcan todos juntos.
+  const graficos = activos.has("graficos");
+  document.querySelectorAll(".grafico-chico").forEach(el => {
+    el.dataset.cargando = graficos ? "si" : "no";
+  });
+}
+
 /* Una consulta a la API. Devuelve el cuerpo ya interpretado, o lanza con el
    motivo que dio el backend: los mensajes de error de esta API estan escritos
    para leerse, y taparlos con un «error de red» seria perder informacion. */
@@ -46,8 +133,34 @@ async function mandar(ruta, metodo, cuerpo) {
   return d;
 }
 
-async function pedir(ruta) {
-  const r = await fetch(API + ruta, { headers: { "Accept": "application/json" } });
+/* Una sesion que se cierra deja consultas en el aire. Dos problemas
+   distintos: gastan una de las seis conexiones que el navegador da por origen
+   ---justo las que necesita la sesion nueva--- y pueden llegar tarde y pisar
+   lo que ya se dibujo. `senal` las corta. El corte por tiempo se agrega
+   siempre: una consulta que no vuelve nunca es un panel esperando para
+   siempre. */
+async function pedir(ruta, opciones) {
+  const o = opciones || {};
+  const corte = new AbortController();
+  const reloj = setTimeout(() => corte.abort(), o.limite_ms || LIMITE_ESPERA_MS);
+  if (o.senal) {
+    if (o.senal.aborted) corte.abort();
+    else o.senal.addEventListener("abort", () => corte.abort(), { once: true });
+  }
+  try {
+    return await pedirCrudo(ruta, corte.signal);
+  } finally {
+    clearTimeout(reloj);
+  }
+}
+
+/* Se anulo a proposito: no es un fallo y no se avisa como tal. */
+function fueAnulada(e) {
+  return !!e && e.name === "AbortError";
+}
+
+async function pedirCrudo(ruta, senal) {
+  const r = await fetch(API + ruta, { headers: { "Accept": "application/json" }, signal: senal });
   let cuerpo = null;
   try { cuerpo = await r.json(); } catch (e) { cuerpo = null; }
   if (!r.ok) {
@@ -87,6 +200,134 @@ const estado = {
 //: Cuantos puntos se piden por vuelta. La vuelta tiene unas 2.600 muestras y
 //: el grafico mide trescientos pixeles: pedir mas es transferir para tirar.
 const PUNTOS_POR_VUELTA = 300;
+
+/* ============================================================
+   CUANTO SE TRAE, Y CUANTO SE GUARDA
+   ------------------------------------------------------------
+   Mirar una vuelta y comparar una carrera son dos necesidades distintas, y
+   pedirlas igual hace que una de las dos este mal.
+
+   Con una vuelta se quiere resolucion: trescientos puntos sobre siete
+   kilometros son unos veintitres metros por muestra, que alcanza para ver una
+   frenada.
+
+   Con la carrera entera no se quiere resolucion, se quiere **la forma**: donde
+   se perdio tiempo, en que vuelta cambio el ritmo. Pedir veintidos vueltas a
+   trescientos puntos son 6.600 puntos por señal y por vehiculo, y ademas
+   chocaba de frente con la poda: la poda deja ocho vueltas, la comparacion
+   pedia veintidos, y las que se expulsaban se volvian a pedir enseguida ---un
+   ciclo de descargar y tirar que no termina nunca y que ademas no dibuja bien,
+   porque en cada momento faltan catorce.
+
+   Se resuelve declarando el presupuesto en vez de descubrirlo: **2.400 puntos
+   por señal y vehiculo**, repartidos entre las vueltas que se vayan a mirar.
+   Veintidos vueltas dan 109 puntos cada una, unos 64 m por muestra. Y la poda
+   no toca lo que la comparacion esta usando.
+
+   El detalle sigue disponible: al volver a una sola vuelta se la pide de nuevo
+   a trescientos puntos, porque la respuesta declara con cuantos vino y una
+   copia mas gruesa no se hace pasar por la fina.
+   ============================================================ */
+/* TRES COSAS DISTINTAS, QUE ANTES ERAN UNA.
+
+   1. **Resolucion objetivo de la vista**: cuantos puntos por vuelta se piden
+      para lo que se va a dibujar. Depende de cuantas vueltas entren en la
+      pantalla, no de cuantas hay en la sesion.
+
+   2. **Limite de almacenamiento de detalle**: cuantos puntos se guardan en
+      total. Es un limite sobre la memoria, y se hace cumplir podando; sin eso
+      un presupuesto es una intencion.
+
+   3. **Representacion reducida de carrera**: la vista de carrera completa no
+      guarda el detalle de cada vuelta, guarda cada vuelta a la resolucion que
+      el presupuesto permite. Es otra cosa que el detalle, y por eso se
+      declara aparte.
+
+   EL DEFECTO QUE ESTO CORRIGE. `Math.max(60, floor(2400 / vueltas))` no acota:
+   el piso de sesenta gana a la division y el total se dispara. Medido:
+
+   | vueltas | puntos/vuelta | total | dentro de 2.400 |
+   |---------|---------------|-------|------------------|
+   |      22 |           109 | 2.398 | si               |
+   |      40 |            60 | 2.400 | si               |
+   |      60 |            60 | 3.600 | **no**, +1.200   |
+   |     100 |            60 | 6.000 | **no**, +3.600   |
+
+   Y no era un caso hipotetico: una carrera de F1 llega a setenta y ocho
+   vueltas. El presupuesto estaba escrito como techo y no lo era. */
+const PRESUPUESTO_DE_PUNTOS = 2400;
+
+/* Piso absoluto por vuelta. Es lo que hace falta para que una vuelta siga
+   siendo una linea y no dos puntos unidos: con veinte muestras sobre siete
+   kilometros, cada una cubre 350 m, que alcanza para ver el ritmo de una
+   vuelta ---que es lo que se compara en la vista de carrera--- y no para ver
+   una frenada, que es lo que se mira vuelta por vuelta.
+
+   Este piso si puede ganarle al presupuesto, y hay que decir cuando: por
+   encima de 120 vueltas. Ninguna carrera de F1 llega ahi ---el maximo
+   historico es 78--- pero la cifra queda escrita para que el limite sea
+   comprobable en vez de suponerse. */
+const PUNTOS_MINIMOS_POR_VUELTA = 20;
+const VUELTAS_HASTA_ROMPER_EL_PRESUPUESTO =
+  Math.floor(PRESUPUESTO_DE_PUNTOS / PUNTOS_MINIMOS_POR_VUELTA);
+
+/* Cuantos puntos se guardan en total, sumando todas las vueltas cargadas. Es
+   el presupuesto de la vista de carrera **mas** un conjunto de trabajo de
+   vueltas en detalle: quien mira una carrera completa y ademas abre una vuelta
+   en detalle tiene las dos cosas, y ninguna expulsa a la otra.
+
+   Se expresa en puntos y no en vueltas porque una vuelta no ocupa siempre lo
+   mismo: a 300 puntos ocupa quince veces lo que a 20. Contar vueltas dejaba
+   pasar 8 x 300 = 2.400 puntos o 8 x 20 = 160, y llamaba «ocho» a las dos. */
+const LIMITE_DE_DETALLE_PUNTOS =
+  PRESUPUESTO_DE_PUNTOS + PUNTOS_POR_VUELTA * 4;
+//: Cuantas consultas de series pueden estar en vuelo a la vez. El navegador
+//: abre seis conexiones por origen; dejando tres para las series, las otras
+//: tres quedan para el trazado, el contexto y las posiciones, que son las que
+//: hacen falta para que la pantalla se dibuje.
+const SERIES_A_LA_VEZ = 3;
+
+/* La resolucion objetivo de la vista. El presupuesto manda; el piso solo se
+   aplica cuando hay tantas vueltas que respetarlo dejaria menos de veinte
+   muestras por vuelta, y en ese caso se sabe cuantas hacen falta para llegar
+   ahi: `VUELTAS_HASTA_ROMPER_EL_PRESUPUESTO`. */
+function puntosParaVueltas(cuantas) {
+  if (cuantas <= 1) return PUNTOS_POR_VUELTA;
+  const porPresupuesto = Math.floor(PRESUPUESTO_DE_PUNTOS / cuantas);
+  if (porPresupuesto >= PUNTOS_POR_VUELTA) return PUNTOS_POR_VUELTA;
+  return Math.max(PUNTOS_MINIMOS_POR_VUELTA, porPresupuesto);
+}
+
+/* Cuantos puntos ocupa lo que hay cargado. Se usa `puntos_pedidos` y no la
+   longitud real porque es lo que la vuelta reservo: una vuelta pedida a 300
+   ocupa el sitio de 300 aunque la fuente haya entregado 280. */
+function puntosGuardados() {
+  let total = 0;
+  Object.keys(estado.series).forEach(n => {
+    const b = estado.series[n];
+    if (b) total += b.puntos_pedidos || PUNTOS_POR_VUELTA;
+  });
+  return total;
+}
+
+/* Corre las tareas de a `cuantas`, no todas juntas. `Promise.all` sobre
+   veintidos vueltas pone veintidos consultas en vuelo; el navegador abre seis
+   y las otras dieciseis hacen cola, de modo que la primera vuelta ---la que se
+   va a dibujar antes--- termina esperando detras de las que no se ven. */
+function enTandas(lista, cuantas, hacer) {
+  const salida = new Array(lista.length);
+  let siguiente = 0;
+  const obrero = () => {
+    if (siguiente >= lista.length) return Promise.resolve();
+    const i = siguiente++;
+    return Promise.resolve(hacer(lista[i], i))
+      .then(r => { salida[i] = r; })
+      .then(obrero);
+  };
+  const obreros = [];
+  for (let i = 0; i < Math.min(cuantas, lista.length); i++) obreros.push(obrero());
+  return Promise.all(obreros).then(() => salida);
+}
 
 
 const FUENTES = {
@@ -148,15 +389,30 @@ function claveCorta(clave) {
   return m ? m[1] : String(clave).split(":").pop();
 }
 
+/* EL PROPIO NO ES EL PRIMERO DE LA LISTA.
+   Cuando llegan las posiciones se rehace la lista con todos los vehiculos que
+   publican posicion, y ordenada da «car:0» primero. Marcar a ese como propio
+   cambiaba de quien se leen las señales, y como de el la fuente publica
+   posicion pero no telemetria, el tablero se quedaba en blanco: los graficos
+   decian «sin dato» y los medidores una raya.
+
+   El propio es el vehiculo del que **hay serie**, que es el que la consulta de
+   series devolvio primero. Si todavia no llego ninguna, el primero de la
+   lista. */
 function armarAutos(claves) {
   const tintas = ["--auto-1", "--auto-2", "--auto-3", "--auto-4"];
+  const conTelemetria = estado.vehiculoClave;
+  const anterior = AUTOS.find(a => a.propio);
+  const propio = (conTelemetria && claves.indexOf(conTelemetria) !== -1) ? conTelemetria
+               : (anterior && claves.indexOf(anterior.id) !== -1) ? anterior.id
+               : claves[0];
   AUTOS = claves.map((c, i) => ({
     id: c,
     nombre: claveCorta(c),
-    equipo: "vehículo declarado por la fuente",
+    equipo: c === propio ? "telemetría completa" : "solo posición en pista",
     tinta: tintas[i % tintas.length],
     color: "var(" + tintas[i % tintas.length] + ")",
-    propio: i === 0,
+    propio: c === propio,
   }));
 }
 
@@ -366,7 +622,9 @@ function accionDeLaFuente() {
       ? { ruta: "/captura/detener", metodo: "POST", cuerpo: undefined,
           hecho: d => "Captura detenida. " + (d.capturas_cerradas !== undefined
             ? d.capturas_cerradas + " sesiones cerradas" : "Sin sesiones nuevas") }
-      : { ruta: "/captura/iniciar", metodo: "POST", cuerpo: { parrilla_completa: true },
+      // Encender el capturador es el acto explicito que pone a este tablero a
+      // seguir el flujo. Sin eso, el objetivo queda sin fijar.
+      : { ruta: "/captura/iniciar", metodo: "POST", cuerpo: { parrilla_completa: true }, sigueVivo: true,
           hecho: d => "Capturador escuchando" + (d.puerto ? " en el puerto " + d.puerto : "") +
                       (d.trabajo ? " · trabajo " + d.trabajo : "") };
   }
@@ -398,6 +656,10 @@ document.getElementById("btn-accion").addEventListener("click", () => {
   boton.disabled = true;
   mandar(a.ruta, a.metodo, a.cuerpo)
     .then(d => {
+      /* Encender la captura es pedir seguir la sesion que se cree. Todavia no
+         se sabe cual es ---el capturador la nombra al recibir el primer
+         paquete--- asi que se habilita adoptar la proxima y fijarla. */
+      if (a.sigueVivo) { vivo.objetivo = null; vivo.aceptaNueva = true; vivo.otra = null; }
       avisar(a.hecho(d), false);
       // Lo que cambio en la base se ve pidiendo el catalogo de nuevo.
       pedir("/sesiones?limite=400")
@@ -626,7 +888,25 @@ function aplicarDisponibilidad() {
     const partes = [cifra(PISTA.largo_m, 0) + " m"];
     if (PISTA.desnivel_m) partes.push(cifra(PISTA.desnivel_m, 1) + " m de desnivel");
     if (PISTA.muestras) partes.push(cifra(PISTA.muestras, 0) + " muestras");
+    /* De donde sale el dibujo. Un recorrido a medio medir y un circuito
+       completo se ven parecidos y no son lo mismo: el primero termina donde va
+       el coche y el segundo cierra. */
+    if (PISTA.enConstruccion) partes.push("recorrido en construcción, medido en vivo");
+    else if (PISTA.medidoEnVivo) partes.push("medido en vivo, primera vuelta cerrada");
+    /* Si la marca del vehiculo se esta dibujando entre dos muestras, se dice.
+       Es una representacion y no una medicion: el dato guardado y lo que se
+       exporta siguen siendo las muestras, sin tocar. */
+    if (_huboInterpolacion) partes.push("posición interpolada entre muestras");
     cabPista.textContent = partes.join(" · ");
+  } else if (estadoSesion === "vivo") {
+    /* En vivo, sin trazado todavia, la espera tiene una razon concreta y un
+       final: se esta midiendo. Decir «sin trazado» a secas se leeria como que
+       la fuente no lo publica, que es otra cosa. */
+    const clave = claveVehiculoPropio();
+    const n = (clave && vivo.recorrido.get(clave) || []).length;
+    cabPista.textContent = n
+      ? "midiendo el recorrido: " + cifra(n, 0) + " posiciones"
+      : "esperando la primera posición del vehículo";
   } else {
     cabPista.textContent = fuente === "can" ? "recorrido reconstruido" : "sin trazado";
   }
@@ -1146,8 +1426,14 @@ function pintarPista() {
     }
   }
 
-  const largo = linea.getTotalLength();
+  /* SIN RECORRIDO NO HAY DONDE UBICAR A NADIE.
+     El trazado llega despues que la sesion ---hay que saber que vueltas hay
+     para elegir una sin saltos---, de modo que este panel se dibuja al menos
+     una vez con el camino vacio. Preguntarle un punto a un camino vacio lanza,
+     y esa excepcion caia dentro de una promesa que la absorbia. */
+  const largo = PISTA.path ? linea.getTotalLength() : 0;
   const g = document.getElementById("marcas-pista");
+  if (!largo) { g.innerHTML = ""; g.dataset.firma = ""; return; }
   if (estadoSesion === "vacio") { g.innerHTML = ""; g.dataset.firma = ""; return; }
 
   /* LAS CURVAS SE DIBUJAN UNA VEZ.
@@ -1269,17 +1555,45 @@ function pintarPista() {
   const f = instante().fraccion;
   const enPistaAhora = posicionesAhora();
   const largoVuelta = PISTA.largo_m || 1;
+  TESTIGO.pintadosDePista++;
+  let seMovio = false;
   marcas.forEach((grupo, i) => {
     let frac = f;
     const clave = grupo.dataset.clave;
     if (enPistaAhora && enPistaAhora[clave] !== undefined) {
       frac = Math.max(0, Math.min(1, enPistaAhora[clave] / largoVuelta));
     }
-    const p = linea.getPointAtLength(largo * frac);
+    /* MIENTRAS SE MIDE EL RECORRIDO, EL COCHE VA POR SU POSICION.
+       El camino dibujado se rehace cada veinticinco puntos ---rehacerlo en cada
+       uno recalcula la orientacion de la nube y el dibujo salta---, pero la
+       posicion del vehiculo es un dato que llega veinte veces por segundo y no
+       tiene por que esperar al dibujo. Se la proyecta con la misma
+       transformacion del camino vigente. */
+    let p = null;
+    if (PISTA.enConstruccion && PISTA.proyectarMundo) {
+      const suyo = vivo.recorrido.get(clave);
+      if (suyo && suyo.length) {
+        const ult = suyo[suyo.length - 1];
+        const q = PISTA.proyectarMundo(ult[0], ult[1]);
+        p = { x: q[0], y: q[1] };
+      }
+    }
+    if (!p) p = linea.getPointAtLength(largo * frac);
     const c = grupo.firstChild, t = grupo.lastChild;
-    c.setAttribute("cx", p.x.toFixed(1)); c.setAttribute("cy", p.y.toFixed(1));
-    t.setAttribute("x", p.x.toFixed(1)); t.setAttribute("y", (p.y - 10).toFixed(1));
+    const px = p.x.toFixed(1), py = p.y.toFixed(1);
+    /* Se compara contra lo que el elemento ya tenia. Escribir el mismo valor
+       no mueve nada, y contar ese pintado como movimiento es justo el error
+       que este testigo existe para no cometer. */
+    /* Un pintado que no mueve la marca no es una posicion perdida: casi
+       siempre es que se pinto mas veces de las que llegaron posiciones. Se
+       cuenta como lo que es ---pintados sin cambio--- y no como redondeo, que
+       era una atribucion sin medir. */
+    if (c.getAttribute("cx") !== px || c.getAttribute("cy") !== py) seMovio = true;
+    else TESTIGO.pintadosSinCambio++;
+    c.setAttribute("cx", px); c.setAttribute("cy", py);
+    t.setAttribute("x", px); t.setAttribute("y", (p.y - 10).toFixed(1));
   });
+  if (seMovio) TESTIGO.movimientosDeCoche++;
 }
 
 /* El globo con el nombre de la curva. Se coloca sobre la marca apuntada,
@@ -1327,7 +1641,11 @@ function pintarPista() {
       hacia abajo y en el mundo hacia arriba, y sin esto el circuito sale
       espejado. La API declara en `para_dibujarlo` si toca invertir.
    ============================================================ */
-function trazadoAPath(puntos, invertirY) {
+/* `cerrar` en falso deja el camino abierto. Hace falta para el recorrido que
+   se esta construyendo: cerrarlo dibujaria una cuerda recta desde el ultimo
+   punto medido hasta el primero, y esa linea **no se recorrio**. Es la
+   diferencia entre un circuito y un tramo. */
+function trazadoAPath(puntos, invertirY, cerrar) {
   if (!puntos || puntos.length < 3) return { path: "", proyectar: null };
 
   // 1. El eje principal de la nube, por su matriz de covarianza.
@@ -1357,12 +1675,21 @@ function trazadoAPath(puntos, invertirY) {
   const ox = (W - (x1 - x0) * k) / 2 - x0 * k;
   const oy = (H - (y1 - y0) * k) / 2 - y0 * k;
   const proyectar = p => [p[0] * k + ox, p[1] * k + oy];
+  /* La misma transformacion, pero desde coordenadas del mundo. Hace falta para
+     poder ubicar un punto **que todavia no esta en el camino dibujado**: en
+     vivo el coche va por delante del trazo, que se rehace cada tantos puntos.
+     Sin esto, la marca solo se movia cuando se redibujaba el camino entero, y
+     eso son menos de dos veces por segundo. */
+  const proyectarMundo = (px, py) => {
+    const dx = px - mx, dy = (py - my) * (invertirY ? -1 : 1);
+    return proyectar([dx * cos - dy * sen, dx * sen + dy * cos]);
+  };
 
   const d = giro.map((p, i) => {
     const q = proyectar(p);
     return (i === 0 ? "M" : "L") + q[0].toFixed(1) + " " + q[1].toFixed(1);
-  }).join(" ") + " Z";
-  return { path: d, proyectar: proyectar };
+  }).join(" ") + (cerrar === false ? "" : " Z");
+  return { path: d, proyectar: proyectar, proyectarMundo: proyectarMundo };
 }
 
 /* ---------------- series ---------------- */
@@ -1388,12 +1715,221 @@ function senalesCandidatas() {
   return vistas;
 }
 
+/* ============================================================
+   EL ALCANCE: QUE ADQUISICION Y QUE FASE SE ESTA MIRANDO
+   ------------------------------------------------------------
+   Un `session_id` sale del identificador que el juego le da a la sesion, de
+   modo que **volver a capturarla produce filas con el mismo identificador**. En
+   `f1_25:session:3731090176871608020` conviven tres adquisiciones: la carrera
+   original del 5 de septiembre y dos pruebas de parrilla del 8.
+
+   Juntas, la vuelta 1 abarca tres dias y `/posiciones` reparte 260.454 s en
+   doscientos cubos ---mil trescientos segundos cada uno--- mientras el
+   reproductor recorre 283. El coche no se mueve, y no porque el tablero este
+   mal: porque le estan dando tres carreras como si fueran una.
+
+   Ademas, dentro de la original el reloj del juego se reinicia en la largada.
+   Las fases ---formacion, espera de luces, carrera--- se solapan en UTC, y solo
+   el reloj monotonico de captura las separa.
+
+   Este alcance viaja en **todas** las consultas de datos. Filtrar unas si y
+   otras no seria peor que no filtrar: el tablero mostraria la traza de una
+   adquisicion sobre las posiciones de otra.
+   ============================================================ */
+const corrida = { adquisicion: null, fase: null, disponibles: null, mezclada: false };
+/* Con que se vuelve a abrir el elector. Elegir no es un acto unico: la primera
+   eleccion se hace sin haber visto nada, y lo normal es querer cambiarla
+   despues ---mirar la formacion, volver a la carrera---. Se guarda lo que hace
+   falta para volver a preguntar sin reabrir la sesion entera. */
+let _contextoDeCorrida = null;
+
+/* La cadena que se agrega a cada consulta. Vacia mientras no haya eleccion, que
+   es el comportamiento de siempre. */
+function sufijoDeCorrida(yaTieneParametros) {
+  const partes = [];
+  if (corrida.adquisicion) partes.push("adquisicion=" + encodeURIComponent(corrida.adquisicion));
+  if (corrida.fase) partes.push("fase=" + corrida.fase);
+  if (!partes.length) return "";
+  return (yaTieneParametros ? "&" : "?") + partes.join("&");
+}
+
 function claveVehiculoPropio() { return estado.vehiculoClave; }
+
+/* ============================================================
+   UN NUMERO MEDIDO, O NADA
+   ------------------------------------------------------------
+   `Number(null)`, `Number("")` y `Number(false)` valen **cero**, y cero es un
+   valor legitimo de casi todos estos canales: el freno suelto marca cero, la
+   distancia marca cero al cruzar la linea. Convertir con `Number` a secas mete
+   ceros que nadie midio justo donde no se distinguen de los medidos ---y una
+   distancia falsa en cero no ensucia un punto: reubica todas las muestras que
+   vengan detras.
+
+   Un booleano si es una medicion: es una bandera, y vale 1 o 0 por definicion
+   de la fuente, no por conversion.
+   ============================================================ */
+function numeroMedido(v) {
+  if (typeof v === "number") return Number.isFinite(v) ? v : null;
+  if (typeof v === "boolean") return v ? 1 : 0;
+  if (typeof v === "string") {
+    const t = v.trim();
+    if (!t) return null;
+    const n = Number(t);
+    return Number.isFinite(n) ? n : null;
+  }
+  return null;
+}
+
+/* De quien hay traza para dibujar. En vivo sale del flujo; con una sesion
+   guardada, de la vuelta que se trajo. Preguntarselo siempre al historico
+   dejaba los graficos en blanco durante una sesion en vivo, que es cuando la
+   fuente esta entregando dato. */
+function vehiculosConTraza() {
+  if (estadoSesion === "vivo") return [...vivo.series.keys()];
+  return Object.keys((estado.series[vueltaElegida] || {}).vehiculos || {});
+}
+
+/* Hasta donde llega el eje horizontal, mirando **todas** las listas que se van
+   a dibujar. Se tomaba de la primera, y de ahi salian dos errores: con el
+   primer vehiculo mas corto que el segundo se recortaba al segundo, y sin
+   velocidad la primera lista medía cero y no se dibujaba nada de nada. */
+function extremosDeDistancia(listas) {
+  let a = Infinity, b = -Infinity;
+  for (let i = 0; i < listas.length; i++) {
+    const l = listas[i];
+    for (let j = 0; j < l.length; j++) {
+      const x = l[j][0];
+      if (typeof x !== "number" || !Number.isFinite(x)) continue;
+      if (x < a) a = x;
+      if (x > b) b = x;
+    }
+  }
+  return (Number.isFinite(a) && Number.isFinite(b)) ? [a, b] : null;
+}
+
+/* ============================================================
+   REDUCIR PARA DIBUJAR SIN BORRAR LOS PICOS
+   ------------------------------------------------------------
+   Un lienzo de 240 px no puede mostrar 2.500 muestras: sobran diez por
+   columna. Dibujarlas todas no es mas fiel, es mas lento y ademas engaña, y
+   quedarse con una de cada diez ---que es lo que hace un muestreo uniforme---
+   puede borrar justo el pico de una muestra, que es lo que una anotacion
+   señala. Un bloqueo de rueda dura milisegundos.
+
+   Por columna de pixel se conservan el minimo y el maximo de lo que cae ahi.
+   Cuesta lo mismo que quedarse con uno y **no puede perder un extremo**: si
+   hubo un pico en esa columna, esta. El trazo pasa a tener un tramo vertical
+   donde el dato oscila, que es lo que de verdad ocurrio.
+
+   Se aplica solo cuando hay mas muestras que pixeles. Con menos, la serie se
+   dibuja tal cual y esto no interviene.
+   ============================================================ */
+function reducirAAncho(serie, ini, fin, ancho) {
+  const columnas = Math.max(1, Math.floor(ancho));
+  if (serie.length <= columnas * 2) return serie;
+  const largo = fin - ini;
+  if (!(largo > 0)) return serie;
+
+  const salida = [];
+  let col = -1, mn = null, mx = null, xMn = 0, xMx = 0;
+  const cerrar = () => {
+    if (mn === null) return;
+    // Se emiten en el orden en que ocurrieron, para que el trazo no invierta
+    // el sentido de la oscilacion.
+    if (xMn <= xMx) { salida.push([xMn, mn]); if (xMx !== xMn) salida.push([xMx, mx]); }
+    else { salida.push([xMx, mx]); salida.push([xMn, mn]); }
+  };
+  for (let i = 0; i < serie.length; i++) {
+    const x = serie[i][0], y = serie[i][1];
+    const c = Math.min(columnas - 1, Math.floor(((x - ini) / largo) * columnas));
+    if (c !== col) { cerrar(); col = c; mn = mx = y; xMn = xMx = x; continue; }
+    if (y < mn) { mn = y; xMn = x; }
+    if (y > mx) { mx = y; xMx = x; }
+  }
+  cerrar();
+  return salida;
+}
+
+/* Recorta por dominio ---metros--- y no por indice. Un indice significa cosas
+   distintas en cada señal: `slice(0, 300)` sobre una señal de 300 muestras es
+   la vuelta entera y sobre una de 900 es el primer tercio. De paso se sueltan
+   los puntos no finitos, que no se pueden ubicar en ningun eje. */
+function recortarPorDominio(serie, ini, fin) {
+  const salida = [];
+  for (let i = 0; i < serie.length; i++) {
+    const x = serie[i][0], y = serie[i][1];
+    if (typeof x !== "number" || !Number.isFinite(x)) continue;
+    if (typeof y !== "number" || !Number.isFinite(y)) continue;
+    if (ini !== null && x < ini) continue;
+    if (fin !== null && x > fin) continue;
+    salida.push(serie[i]);
+  }
+  return salida;
+}
+
+/* La escala vertical, o `null` si no hay nada finito que escalar. Devolver
+   `null` es el punto: con las listas vacias esto daba `Infinity`/`-Infinity`,
+   de ahi `pad = NaN`, y el pie del grafico terminaba escribiendo «NaN» como si
+   fuera una medicion. */
+function escalaDe(listas, holgura) {
+  let mn = Infinity, mx = -Infinity;
+  for (let i = 0; i < listas.length; i++) {
+    const l = listas[i];
+    for (let j = 0; j < l.length; j++) {
+      const y = l[j][1];
+      if (typeof y !== "number" || !Number.isFinite(y)) continue;
+      if (y < mn) mn = y;
+      if (y > mx) mx = y;
+    }
+  }
+  if (!Number.isFinite(mn) || !Number.isFinite(mx)) return null;
+  // Una señal constante necesita alto igual: sin esto la division por cero
+  // manda la traza al infinito.
+  if (mx - mn < 1e-6) { mx = mn + 1; }
+  const pad = (mx - mn) * (holgura || 0.1);
+  return { mn: mn - pad, mx: mx + pad, minReal: mn, maxReal: mx };
+}
+
+/* El tramo de metros que se muestra. `ampliado` era un recorte de arreglo: el
+   mismo par de indices caia en metros distintos en cada señal. Ahora es lo que
+   siempre quiso decir, un tramo de la vuelta. */
+function dominioAmpliado(extremos) {
+  if (!extremos) return [null, null];
+  if (!ampliado) return [null, null];
+  const [a, b] = extremos;
+  const largo = b - a;
+  return [a + largo * 0.34, a + largo * 0.58];
+}
 
 /* Una señal de una vuelta, como pares [metro, valor]. Devuelve `null` si la
    vuelta todavia no llego y `[]` si llego pero la fuente no trae ese canal:
    quien dibuja tiene que poder distinguir «no hay dato» de «todavia no
    llego». */
+/* ============================================================
+   LA SERIE SE ARMA UNA VEZ POR VUELTA, NO POR LECTURA
+   ------------------------------------------------------------
+   La API entrega cada vuelta como columnas paralelas ---un arreglo de
+   distancias y uno de valores por señal, con huecos en nulo--- y dibujar
+   necesita pares. Armar los pares recorre las trescientas muestras y crea
+   trescientos arreglos de dos.
+
+   Se hacia en cada lectura. `calcularInstante` llama diecisiete veces para
+   armar un instante, de modo que **leer un valor** costaba cinco mil
+   escrituras y diecisiete arreglos nuevos. Un instante por cuadro a sesenta
+   cuadros son trescientas mil escrituras por segundo para mostrar diecisiete
+   numeros que ya estaban en memoria.
+
+   El bloque de una vuelta no cambia mientras esta cargado, asi que el
+   resultado se guarda. El sello sube cuando `estado.series` cambia ---llega
+   una tanda nueva, se poda una vuelta, se cierra la sesion--- y con eso todo
+   lo guardado deja de valer sin tener que buscar que entrada invalidar.
+   ============================================================ */
+let _selloSeries = 0;
+let _selloDeLoArmado = -1;
+const _seriesArmadas = new Map();
+
+function cambiaronLasSeries() { _selloSeries++; }
+
 function serieDeCanal(canal, vuelta, clave) {
   if (estadoSesion === "vivo") {
     const vehiculo = vivo.series.get(clave || claveVehiculoPropio());
@@ -1403,14 +1939,26 @@ function serieDeCanal(canal, vuelta, clave) {
   if (!bloque) return null;
   const veh = bloque.vehiculos[clave];
   if (!veh) return [];
-  const ys = veh[nombreDeSenal(canal)];
+  const senal = nombreDeSenal(canal);
+
+  if (_selloDeLoArmado !== _selloSeries) {
+    _seriesArmadas.clear();
+    _selloDeLoArmado = _selloSeries;
+  }
+  const guardada = vuelta + "|" + clave + "|" + senal;
+  const hecha = _seriesArmadas.get(guardada);
+  if (hecha) return hecha;
+
+  const ys = veh[senal];
   const xs = veh.distancia_m;
   if (!ys || !xs) return [];
   const salida = [];
-  for (let i = 0; i < xs.length; i++) {
+  const n = Math.min(xs.length, ys.length);
+  for (let i = 0; i < n; i++) {
     if (ys[i] === null || ys[i] === undefined) continue;
     salida.push([xs[i], ys[i]]);
   }
+  _seriesArmadas.set(guardada, salida);
   return salida;
 }
 
@@ -1418,14 +1966,134 @@ function serieVelocidad(clave, vuelta) {
   return serieDeCanal("speed", vuelta || vueltaElegida || 1, clave) || [];
 }
 
+/* ============================================================
+   LO QUE SE GUARDA Y LO QUE SE SUELTA
+   ------------------------------------------------------------
+   Cada vuelta traida se guarda para no volver a pedirla, y eso esta bien: es
+   justo lo que hace que volver atras sea instantaneo. Pero guardadas todas,
+   una carrera larga deja en memoria la sesion entera medida a trescientos
+   puntos por vuelta y por señal, que es lo que se quiso evitar al pedirlas de
+   a una.
+
+   Se sueltan las mas lejanas al cabezal, no las mas viejas. Alguien que mira
+   la vuelta 12 va a volver a la 11 o a pasar a la 13 mucho antes que a la 2, y
+   la distancia dice eso mejor que el orden en que se pidieron.
+   ============================================================ */
+const VUELTAS_EN_MEMORIA = 8;
+
+function podarVueltas() {
+  const centro = instante().vuelta || 1;
+  const enComparacion = compAbierta() ? new Set(vueltasParaComparar()) : new Set();
+
+  /* LAS SERIES SE PODAN POR PUNTOS, NO POR CANTIDAD DE VUELTAS.
+     Contar vueltas dejaba pasar ocho de 300 puntos o ocho de 20 y llamaba
+     «ocho» a las dos. Y proteger sin limite todo lo que la comparacion usa
+     convertia la proteccion en una excepcion al limite: quien recorria veinte
+     vueltas en detalle y despues abria la carrera se quedaba con veinte
+     bloques de 300 puntos protegidos para siempre.
+
+     Se sueltan primero las que la comparacion no usa, de la mas lejana al
+     cabezal hacia adentro; recien si con eso no alcanza se tocan las de la
+     comparacion, tambien por lejania. La vuelta que se esta mirando no se
+     suelta nunca.
+
+     Que no haya ciclo de descargar y expulsar no es una esperanza: el limite
+     es el presupuesto de la carrera **mas** cuatro vueltas en detalle, de modo
+     que la carrera entera entra sin desalojar a nadie. */
+  let total = puntosGuardados();
+  if (total > LIMITE_DE_DETALLE_PUNTOS) {
+    const nums = Object.keys(estado.series).map(Number).filter(n => !isNaN(n));
+    const orden = nums
+      .filter(n => n !== centro)
+      .sort((a, b) => {
+        const ca = enComparacion.has(a) ? 1 : 0, cb = enComparacion.has(b) ? 1 : 0;
+        if (ca !== cb) return ca - cb;                  // primero lo que no se compara
+        return Math.abs(b - centro) - Math.abs(a - centro);   // y lo mas lejano
+      });
+    for (let i = 0; i < orden.length && total > LIMITE_DE_DETALLE_PUNTOS; i++) {
+      const n = orden[i];
+      total -= (estado.series[n].puntos_pedidos || PUNTOS_POR_VUELTA);
+      delete estado.series[n];
+    }
+    cambiaronLasSeries();
+  }
+
+  /* LAS POSICIONES SE PODAN APARTE Y NO LAS PROTEGE LA COMPARACION.
+     Son para el trazado, que muestra **una** vuelta por vez; la comparacion no
+     las lee. Protegerlas por estar en su alcance guardaba doscientos puntos por
+     vuelta por veinte vehiculos de vueltas que nadie iba a dibujar. */
+  const pos = Object.keys(estado.posiciones).map(Number).filter(n => !isNaN(n));
+  if (pos.length > VUELTAS_EN_MEMORIA) {
+    pos.filter(n => n !== centro)
+       .sort((a, b) => Math.abs(b - centro) - Math.abs(a - centro))
+       .slice(0, pos.length - VUELTAS_EN_MEMORIA)
+       .forEach(n => { delete estado.posiciones[n]; });
+  }
+}
+
+/* ============================================================
+   QUE CONSULTAS SIGUEN SIENDO UTILES
+   ------------------------------------------------------------
+   Cambiar de sesion invalida todo lo que estaba pidiendo la anterior. No
+   alcanza con ignorar la respuesta cuando llegue: mientras viaja ocupa una
+   conexion de las seis que el navegador da por origen, y son justo las que
+   necesita la sesion nueva para dibujarse.
+
+   La vuelta se trata distinto, a proposito. Una respuesta de la vuelta 5 que
+   llega cuando ya estas en la 12 **no se tira**: se guarda en
+   `estado.series[5]`, que es donde corresponde, y sirve entera si volves.
+   Anularla seria pagar la consulta y despues romperla. Lo que no puede pasar
+   es que pise el instante que se esta mirando, y eso lo resuelve la clave por
+   vuelta, no la anulacion.
+   ============================================================ */
+let _mandoSesion = null;
+
+/* ============================================================
+   CADA APERTURA ES UNA, Y SE LA NUMERA
+   ------------------------------------------------------------
+   Comprobar el `session_id` antes de aplicar un resultado no alcanza. Abrir A,
+   pasar a B y volver a A ---dos clics, cosa de segundos--- deja viajando la
+   consulta de la **primera** A. Cuando vuelve, el identificador coincide y el
+   resultado se aplica sobre la segunda A como si fuera suyo, con la vuelta que
+   se estaba mirando entonces y con el vehiculo que estaba elegido entonces.
+
+   Un numero de apertura no tiene ese agujero: la primera A y la segunda A son
+   aperturas distintas aunque sean la misma sesion. Todo lo que vuelva de la
+   red se pregunta si la apertura que lo pidio sigue siendo la vigente antes de
+   tocar nada.
+   ============================================================ */
+let _aperturaActual = 0;
+
+function nuevaSesionEnCurso() {
+  if (_mandoSesion) _mandoSesion.abort();
+  _mandoSesion = new AbortController();
+  return ++_aperturaActual;
+}
+
+function aperturaVigente() { return _aperturaActual; }
+
+function sigueVigente(apertura) { return apertura === _aperturaActual; }
+
+function senalDeSesion() {
+  if (!_mandoSesion) _mandoSesion = new AbortController();
+  return _mandoSesion.signal;
+}
+
 /* Pide una vuelta si no esta y no se esta pidiendo ya. */
-function asegurarVuelta(numero) {
+function asegurarVuelta(numero, puntos) {
   if (!estado.abierta || numero < 1) return Promise.resolve(null);
-  const conocidos = estado.series[numero] && estado.series[numero].vehiculos || {};
+  const quiere = puntos || PUNTOS_POR_VUELTA;
+  const bloque = estado.series[numero];
+  const conocidos = bloque && bloque.vehiculos || {};
   const pedidos = [...seleccion].filter(x => typeof x === "string");
   const faltantes = pedidos.filter(id => !conocidos[id]);
-  if (estado.series[numero] && (!pedidos.length || !faltantes.length)) {
-    return Promise.resolve(estado.series[numero]);
+  /* Una copia mas gruesa no se hace pasar por la fina. La respuesta declara
+     con cuantos puntos vino; si la guardada tiene menos de los que ahora se
+     quieren, se vuelve a pedir. Sin esto, mirar la carrera entera y despues
+     una sola vuelta dejaba esa vuelta dibujada a 109 puntos para siempre. */
+  const bastaLaGuardada = bloque && (bloque.puntos_pedidos || 0) >= quiere;
+  if (bastaLaGuardada && (!pedidos.length || !faltantes.length)) {
+    return Promise.resolve(bloque);
   }
   if (estado.pidiendo[numero]) return estado.pidiendo[numero];
   /* La API admite doce señales por consulta ---un limite razonable, porque
@@ -1435,14 +2103,36 @@ function asegurarVuelta(numero) {
   const todas = senalesCandidatas();
   const tandas = [];
   for (let i = 0; i < todas.length; i += 12) tandas.push(todas.slice(i, i + 12));
-  const autos = estado.series[numero] ? faltantes : pedidos;
-  const sesionPedida = estado.abierta.session_id;
+
+  /* EL VEHICULO DEL QUE HAY TELEMETRIA VA SIEMPRE.
+     `seleccion` dice a quien dibujar sobre el trazado, y ahi entran vehiculos
+     de los que la fuente publica **posicion y nada mas**. Usarla tal cual para
+     pedir las series hacia que el tablero pidiera las señales de un vehiculo
+     que no las tiene: la API contestaba con la lista vacia, correctamente, y
+     los cuatro graficos quedaban diciendo «sin dato» sobre una vuelta que si
+     estaba en la base.
+
+     Se pide siempre por el vehiculo del que hay serie. Si todavia no se sabe
+     cual es, no se acota y la API los devuelve todos, que es como se aprende. */
+  const propio = estado.vehiculoClave;
+  const conPropio = (estado.series[numero] ? faltantes : pedidos).slice();
+  if (propio && conPropio.indexOf(propio) === -1) conPropio.push(propio);
+  const autos = propio ? conPropio : [];
+  const apertura = aperturaVigente();
   const base = "/sesiones/" + encodeURIComponent(estado.abierta.session_id) +
                "/series?vuelta=" + numero +
                (autos.length ? "&vehiculos=" + encodeURIComponent(autos.join(",")) : "") +
-               "&puntos=" + PUNTOS_POR_VUELTA + "&senales=";
+               "&puntos=" + quiere + sufijoDeCorrida(true) + "&senales=";
 
-  const peticion = Promise.all(tandas.map(t => pedir(base + encodeURIComponent(t.join(",")))))
+  /* La señal de sesion tambien acota estas consultas. Cambiar de sesion las
+     invalida por completo ---la caché por vuelta se vacia con ella--- y
+     mientras viajan ocupan las conexiones que necesita la sesion nueva.
+
+     Lo que **no** se anula es un cambio de vuelta: la respuesta de la vuelta 5
+     se guarda en `estado.series[5]`, que es su lugar, y sirve entera si se
+     vuelve. Anularla seria pagar la consulta y despues romperla. */
+  const peticion = Promise.all(tandas.map(t =>
+      pedir(base + encodeURIComponent(t.join(",")), { senal: senalDeSesion() })))
     .then(partes => {
       const d = partes[0];
       // Las tandas siguientes aportan sus columnas al mismo vehiculo.
@@ -1457,21 +2147,56 @@ function asegurarVuelta(numero) {
       return d;
     })
     .then(d => {
-      if (!estado.abierta || estado.abierta.session_id !== sesionPedida) return null;
+      // Vigencia por apertura, no por identificador: A -> B -> A es la misma
+      // sesion y dos aperturas distintas.
+      if (!estado.abierta || !sigueVigente(apertura)) return null;
+      cambiaronLasSeries();
       const anterior = estado.series[numero];
-      if (anterior) {
+      // Si lo que llega es mas fino que lo guardado, manda lo nuevo.
+      if (anterior && (anterior.puntos_pedidos || 0) < (d.puntos_pedidos || 0)) {
+        estado.series[numero] = d;
+      } else if (anterior) {
         Object.assign(anterior.vehiculos, d.vehiculos || {});
         anterior.submuestreado = anterior.submuestreado || d.submuestreado;
         d = anterior;
       } else {
         estado.series[numero] = d;
       }
+      /* LOS VEHICULOS DE LA SERIE SE SUMAN, NO SOLO CUANDO LA LISTA ESTA VACIA.
+         Decia `if (!AUTOS.length)`, y eso perdia vehiculos segun **cual de dos
+         consultas contestara primero**: si `/posiciones` llegaba antes con un
+         solo vehiculo, la lista quedaba armada con ese uno y las series de los
+         demas ya no la ampliaban. El tablero terminaba conociendo un vehiculo
+         de los dos que tenia el dato en la mano, y «Comparar pilotos» quedaba
+         apagado sin motivo.
+
+         Se veia como una prueba intermitente: `test_dashboard_browser` fallaba
+         una de cada veinte corridas, y solo cuando `/posiciones` ganaba la
+         carrera. La lista se completa con lo que traiga cada respuesta, venga
+         en el orden que venga. */
       const claves = Object.keys(d.vehiculos);
-      if (!AUTOS.length && claves.length) {
-        armarAutos(claves);
-        seleccion = new Set([claves[0]]);
+      const nuevas = claves.filter(c => !AUTOS.some(a => a.id === c));
+      if (nuevas.length) {
+        const vacia = !AUTOS.length;
+        armarAutos(AUTOS.map(a => a.id).concat(nuevas).sort());
+        if (vacia) seleccion = new Set([claves[0]]);
       }
+      /* Las posiciones pueden llegar antes que las series, y entonces la lista
+         de vehiculos se armo sin saber cual tiene telemetria. Al llegar la
+         serie se sabe, y se corrige quien es el propio: es este el unico
+         momento en que el dato lo dice. */
       if (!estado.vehiculoClave) estado.vehiculoClave = claves[0] || null;
+      if (estado.vehiculoClave && AUTOS.length) {
+        const yaEsta = AUTOS.some(a => a.propio && a.id === estado.vehiculoClave);
+        if (!yaEsta && AUTOS.some(a => a.id === estado.vehiculoClave)) {
+          AUTOS.forEach(a => {
+            a.propio = a.id === estado.vehiculoClave;
+            a.equipo = a.propio ? "telemetría completa" : "solo posición en pista";
+          });
+          const sel = document.getElementById("sel-propio");
+          if (sel) sel.dataset.firma = "";
+        }
+      }
       anotarDisponibles(d);
       olvidarCaches();
       render();
@@ -1485,14 +2210,28 @@ function asegurarVuelta(numero) {
       return d;
     })
     .catch(e => {
+      // Una vuelta anulada no es una vuelta que fallo: se cancelo porque su
+      // sesion se cerro, y avisarlo seria un error donde no lo hubo.
+      if (fueAnulada(e)) return null;
       // Una vuelta que no se puede traer no rompe el tablero: se avisa y se
       // sigue con las que si estan.
       avisar("Vuelta " + numero + ": " + e.message, true);
       return null;
-    })
-    .finally(() => { delete estado.pidiendo[numero]; });
-  estado.pidiendo[numero] = peticion;
-  return peticion;
+    });
+
+  /* LA MARCA LA BORRA SU DUEÑA.
+     `delete estado.pidiendo[numero]` a secas lo borraba sin mirar de quien
+     era: una peticion vieja que termina tarde borraba la marca de la peticion
+     **nueva** de la misma vuelta, y a partir de ahi todo pedido de esa vuelta
+     arrancaba una consulta mas porque la marca ya no estaba. Se compara la
+     identidad antes de borrar. */
+  const registrada = conCarga("series", () => peticion);
+  estado.pidiendo[numero] = registrada;
+  registrada.catch(() => null).then(() => {
+    if (estado.pidiendo[numero] === registrada) delete estado.pidiendo[numero];
+    podarVueltas();
+  });
+  return registrada;
 }
 
 /* ============================================================
@@ -1506,32 +2245,88 @@ function asegurarVuelta(numero) {
    ============================================================ */
 function asegurarPosiciones(numero) {
   if (!estado.abierta || estado.posiciones[numero] || estado.pidiendoPos[numero]) return;
-  estado.pidiendoPos[numero] = true;
+  const apertura = aperturaVigente();
+  estado.pidiendoPos[numero] = apertura;
+  conCarga("posiciones", () =>
   pedir("/sesiones/" + encodeURIComponent(estado.abierta.session_id) +
-        "/posiciones?vuelta=" + numero + "&puntos=200")
+        "/posiciones?vuelta=" + numero + "&puntos=200" + sufijoDeCorrida(true),
+        { senal: senalDeSesion() })
     .then(d => {
+      if (!sigueVigente(apertura)) return;
       estado.posiciones[numero] = d;
       // Los rivales entran a la lista de vehiculos aunque no tengan telemetria
       // privada: de ellos se muestra donde estan, que es lo que la fuente
       // entrega de todos.
       const claves = Object.keys(d.vehiculos || {});
+      // Los rivales se suman a la lista; quien es el propio ya esta decidido.
       if (claves.length > AUTOS.length) armarAutos(claves.sort());
       render();
     })
     // Un fallo de red aca no es grave; uno de dibujo si, y no puede quedar mudo.
-    .catch(e => { if (e instanceof TypeError) console.error(e); })
-    .then(() => { delete estado.pidiendoPos[numero]; });
+    .catch(e => { if (!fueAnulada(e) && e instanceof TypeError) console.error(e); })
+    .then(() => {
+      if (estado.pidiendoPos[numero] === apertura) delete estado.pidiendoPos[numero];
+      podarVueltas();
+    }));
 }
 
 /* Donde esta cada vehiculo en este instante, en metros de la vuelta. */
+/* ============================================================
+   LA POSICION SE INTERPOLA ENTRE MUESTRAS VALIDAS
+   ------------------------------------------------------------
+   `/posiciones` entrega doscientos puntos por vuelta. Elegir el mas cercano
+   deja al coche quieto entre muestra y muestra y despues lo teletransporta:
+   sobre una vuelta de noventa segundos son unos dos movimientos por segundo, y
+   se ve como una figura que salta.
+
+   Medido el 2026-09-08 antes de esto: en 300 s de reproduccion el trazado se
+   pinto 17.844 veces y la marca del vehiculo cambio de sitio **34**. Cero coma
+   uno por segundo. Los sesenta cuadros por segundo eran ciertos y no
+   significaban nada: se estaba redibujando lo mismo.
+
+   QUE SE INTERPOLA Y QUE NO. Solo entre **dos muestras validas y
+   consecutivas**, y solo si la distancia entre ellas es la de un intervalo
+   normal. No se une por encima de un hueco de captura ---ahi no se sabe por
+   donde fue--- ni del cruce de meta, donde la distancia vuelve a cero: en los
+   dos casos se muestra la ultima posicion medida y se deja de inventar.
+
+   ESTO ES REPRESENTACION, NO DATO. `estado.posiciones` queda intacto: lo que
+   se interpola es donde se pinta el circulo, y el panel lo declara. Nada de
+   esto llega al analisis ni a la exportacion, que siguen leyendo las muestras.
+   ============================================================ */
+let _huboInterpolacion = false;
+
 function posicionesAhora() {
   const t = instante();
   const d = estado.posiciones[t.vuelta];
   if (!d) return null;
   const salida = {};
+  const largo = PISTA.largo_m || 0;
+  _huboInterpolacion = false;
   Object.keys(d.vehiculos).forEach(clave => {
     const serie = d.vehiculos[clave];
-    const i = Math.min(serie.length - 1, Math.max(0, Math.round(t.fraccion * (serie.length - 1))));
+    const n = serie.length;
+    if (!n) return;
+    const x = t.fraccion * (n - 1);
+    const i = Math.min(n - 2, Math.max(0, Math.floor(x)));
+    const u = Math.min(1, Math.max(0, x - i));
+    const a = serie[i], b = n > 1 ? serie[i + 1] : null;
+    const hayA = a !== null && a !== undefined;
+    const hayB = b !== null && b !== undefined;
+
+    if (hayA && hayB) {
+      const salto = b - a;
+      // Tres veces el intervalo esperado: por encima de eso es un hueco o la
+      // vuelta que se cierra, no una muestra que sigue a la anterior.
+      const tope = largo ? (largo / n) * 3 : Infinity;
+      if (salto >= 0 && salto <= tope) {
+        salida[clave] = a + salto * u;
+        if (u > 0) _huboInterpolacion = true;
+        return;
+      }
+      salida[clave] = a;
+      return;
+    }
     // El intervalo puede venir vacio: se busca hacia atras el ultimo con dato.
     for (let k = i; k >= 0; k--) {
       if (serie[k] !== null && serie[k] !== undefined) { salida[clave] = serie[k]; break; }
@@ -1856,20 +2651,24 @@ function exportarPng(canalId) {
 
   // --- datos ---
   // La vuelta que se esta mirando: cada una tiene su propia traza.
-  const series = ids.map(id => serieVelocidad(id, vueltaElegida));
-  const total = series[0].length;
-  const desde = ampliado ? Math.floor(total * 0.34) : 0;
-  const hasta = ampliado ? Math.floor(total * 0.58) : total;
   const bin = fuente === "can";
-  let datos = series.map((s, si) => derivar(null, canalId, vueltaElegida, ids[si]).slice(desde, hasta));
+  const crudas = ids.map(id => derivar(null, canalId, vueltaElegida, id));
+  const extremos = extremosDeDistancia(crudas);
+  const [ampIni, ampFin] = dominioAmpliado(extremos);
+  let datos = crudas.map(d => recortarPorDominio(d, ampIni, ampFin));
   if (bin && (canalId === "throttle" || canalId === "brake")) {
     datos = datos.map(d => d.map(p => [p[0], p[1] > 40 ? 1 : 0]));
   }
-  let mn = Infinity, mx = -Infinity;
-  datos.forEach(d => d.forEach(p => { if (p[1] < mn) mn = p[1]; if (p[1] > mx) mx = p[1]; }));
-  if (mx - mn < 1e-6) mx = mn + 1;
-  const pad = (mx - mn) * 0.08; mn -= pad; mx += pad;
-  const d0 = datos[0][0][0], d1 = datos[0][datos[0].length - 1][0];
+  const escala = escalaDe(datos, 0.08);
+  const vistos = extremosDeDistancia(datos);
+  // Una lamina de un canal sin muestras no se exporta: seria una hoja con ejes
+  // y nada adentro, firmada como si fuera una medicion.
+  if (!escala || !vistos) {
+    avisar("Ese canal no tiene muestras en esta vuelta: no hay lámina que exportar", true);
+    return;
+  }
+  const mn = escala.mn, mx = escala.mx;
+  const d0 = vistos[0], d1 = vistos[1];
   const dec = ["glong", "glat", "gvert", "gap", "slip", "steer"].indexOf(canalId) !== -1 ? 2 : 0;
 
   // --- rejilla y eje vertical ---
@@ -1935,10 +2734,17 @@ function exportarPng(canalId) {
 
   // --- trazas ---
   const paleta = ["--auto-1", "--auto-2", "--auto-3", "--auto-4"];
+  /* EL EJE ES LA DISTANCIA, NO LA POSICION EN EL ARREGLO.
+     `i / (d.length - 1)` estira cada serie hasta ocupar todo el ancho: dos
+     vehiculos con distinta cantidad de muestras quedaban dibujados uno encima
+     del otro **como si estuvieran alineados**, y sobre una lamina que se
+     exporta y se mira despues eso no se puede notar. */
+  const anchoX = Math.max(1e-9, d1 - d0);
+  const enXLamina = m => X0 + ((m - d0) / anchoX) * ancho;
   datos.forEach((d, ai) => {
     ctx.beginPath();
-    d.forEach((p, i) => {
-      const x = X0 + (i / (d.length - 1)) * ancho;
+    reducirAAncho(d, d0, d1, ancho).forEach((p, i) => {
+      const x = enXLamina(p[0]);
       const y = Y1 - ((p[1] - mn) / (mx - mn)) * alto;
       i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
     });
@@ -2015,29 +2821,47 @@ function exportarComparacion() {
     FUENTES[fuente].nombre + " · " + activas.length + " métricas · " + fechaAr(new Date()),
     IZQ, 98);
 
-  // La vuelta que se esta mirando: cada una tiene su propia traza.
-  const series = ids.map(id => serieVelocidad(id, vueltaElegida));
-  const total = series[0].length;
-  const desde = zoom ? Math.floor(zoom[0] * total) : 0;
-  const hasta = zoom ? Math.ceil(zoom[1] * total) : total;
+  /* EL ZOOM ES UN TRAMO DE METROS, NO UN TRAMO DE ARREGLO.
+     `zoom` viene como dos fracciones de la vuelta, y se las convertia en
+     indices sobre la velocidad del primer vehiculo. Ese par de indices se
+     aplicaba despues a **todos** los canales de **todos** los vehiculos, que
+     no tienen ni la misma cantidad de muestras ni las mismas distancias. El
+     resultado es que cada panel de la comparacion mostraba un tramo distinto
+     de la vuelta, alineados solo en apariencia ---y comparar es exactamente lo
+     que esta pantalla existe para hacer. */
   const bin = fuente === "can";
   const paleta = ["--auto-1", "--auto-2", "--auto-3", "--auto-4"];
-  const d0 = series[0][desde][0];
-  const d1 = series[0][Math.min(hasta, total) - 1][0];
+  const todasCrudas = [];
+  activas.forEach(m => ids.forEach(id => todasCrudas.push(derivar(null, m.id, vueltaElegida, id))));
+  const extremosVuelta = extremosDeDistancia(todasCrudas);
+  if (!extremosVuelta) {
+    avisar("No hay muestras para comparar en esta vuelta", true);
+    return;
+  }
+  const largoVuelta = extremosVuelta[1] - extremosVuelta[0];
+  const d0 = zoom ? extremosVuelta[0] + zoom[0] * largoVuelta : extremosVuelta[0];
+  const d1 = zoom ? extremosVuelta[0] + zoom[1] * largoVuelta : extremosVuelta[1];
 
   activas.forEach((m, pi) => {
     const Y0 = ARRIBA + pi * ALTO_PANEL;
     const Y1 = Y0 + ALTO_PANEL - 34;
     const alto = Y1 - Y0;
 
-    let datos = series.map((s, si) => derivar(null, m.id, vueltaElegida, ids[si]).slice(desde, hasta));
+    let datos = ids.map(id => recortarPorDominio(
+      derivar(null, m.id, vueltaElegida, id), d0, d1));
     if (bin && (m.id === "throttle" || m.id === "brake")) {
       datos = datos.map(d => d.map(p => [p[0], p[1] > 40 ? 1 : 0]));
     }
-    let mn = Infinity, mx = -Infinity;
-    datos.forEach(d => d.forEach(p => { if (p[1] < mn) mn = p[1]; if (p[1] > mx) mx = p[1]; }));
-    if (mx - mn < 1e-6) mx = mn + 1;
-    const pad = (mx - mn) * 0.08; mn -= pad; mx += pad;
+    const escalaM = escalaDe(datos, 0.08);
+    // Un canal sin muestras en el tramo elegido deja su panel rotulado y
+    // vacio: es distinto de dibujar una linea plana en cero.
+    if (!escalaM) {
+      ctx.fillStyle = tinta("--texto-tenue");
+      ctx.font = "22px 'IBM Plex Sans', sans-serif";
+      ctx.fillText("sin muestras en este tramo", IZQ + 12, Y0 + alto / 2);
+      return;
+    }
+    const mn = escalaM.mn, mx = escalaM.mx;
     const dec = ["glong", "glat", "gvert", "gap", "slip", "steer"].indexOf(m.id) !== -1 ? 2 : 0;
 
     ctx.strokeStyle = tinta("--linea");
@@ -2079,10 +2903,13 @@ function exportarComparacion() {
       ctx.setLineDash([]); ctx.globalAlpha = 1;
     }
 
+    // Mismo criterio que en la lamina: el eje es el tramo de metros elegido,
+    // y comparar es justamente lo que esta pantalla existe para hacer.
+    const anchoX = Math.max(1e-9, d1 - d0);
     datos.forEach((d, ai) => {
       ctx.beginPath();
-      d.forEach((p, i) => {
-        const x = IZQ + (i / (d.length - 1)) * ancho;
+      reducirAAncho(d, d0, d1, ancho).forEach((p, i) => {
+        const x = IZQ + ((p[0] - d0) / anchoX) * ancho;
         const y = Y1 - ((p[1] - mn) / (mx - mn)) * alto;
         i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
       });
@@ -2153,24 +2980,61 @@ function exportarComparacion() {
   }, "image/png");
 }
 
+/* ============================================================
+   LA EXPORTACION SE ALINEA POR DISTANCIA
+   ------------------------------------------------------------
+   Esto recorria las columnas por posicion: `col[i]` contra la muestra `i` de
+   la velocidad del primer vehiculo. Y las columnas **no tienen la misma
+   longitud**: `serieDeCanal` descarta las muestras nulas, de modo que un canal
+   con huecos queda mas corto y desde el primer hueco todo lo que sigue se
+   corre un lugar. Una fila del archivo podia juntar los 100 m de velocidad con
+   los 300 m de acelerador, con aspecto perfectamente normal.
+
+   Es el peor sitio posible para ese error, porque el archivo se abre despues
+   en otra herramienta, donde ya no hay forma de notarlo.
+
+   Ahora la distancia es la clave, no el indice. Cada columna se consulta por
+   el metro de la fila; si ese canal no tiene medicion en ese metro, la celda
+   queda **vacia**. Una celda vacia dice «no se midio»; un cero diria otra
+   cosa.
+   ============================================================ */
 function exportarCsv() {
   const ids = [...seleccion];
   const canales = canalesDeLaFuente().filter(id => elegidos()[id]);
-  // La vuelta que se esta mirando: cada una tiene su propia traza.
-  const series = ids.map(id => serieVelocidad(id, vueltaElegida));
+  if (!ids.length || !canales.length) {
+    avisar("No hay canales seleccionados para exportar", true);
+    return;
+  }
+
   const cab = ["distancia_m"];
+  const columnas = [];
   ids.forEach(id => {
     const a = AUTOS.find(x => x.id === id) || AUTOS[0];
-    canales.forEach(c => cab.push(a.nombre + "_" + nombreDeSenal(c)));
+    canales.forEach(c => {
+      cab.push((a ? a.nombre : id) + "_" + nombreDeSenal(c));
+      const porMetro = new Map();
+      derivar(null, c, vueltaElegida, id).forEach(p => {
+        if (Number.isFinite(p[0]) && Number.isFinite(p[1])) porMetro.set(p[0], p[1]);
+      });
+      columnas.push(porMetro);
+    });
   });
-  const columnas = [];
-  ids.forEach((id, ai) => canales.forEach(c => columnas.push(derivar(null, c, vueltaElegida, ids[ai]))));
-  const filas = [cab.join(",")];
-  for (let i = 0; i < series[0].length; i++) {
-    const fila = [series[0][i][0]];
-    columnas.forEach(col => fila.push(col[i][1].toFixed(3)));
-    filas.push(fila.join(","));
+
+  // El eje de filas es la union de las distancias que de verdad se midieron.
+  const metros = new Set();
+  columnas.forEach(col => col.forEach((_v, m) => metros.add(m)));
+  if (!metros.size) {
+    avisar("No hay muestras que exportar en esta vuelta", true);
+    return;
   }
+  const orden = [...metros].sort((a, b) => a - b);
+
+  const filas = [cab.join(",")];
+  orden.forEach(m => {
+    const fila = [m];
+    columnas.forEach(col => fila.push(col.has(m) ? col.get(m).toFixed(3) : ""));
+    filas.push(fila.join(","));
+  });
   guardar("traza-vuelta.csv", filas.join("\n"), "Datos guardados");
 }
 
@@ -2249,41 +3113,57 @@ function dibujarTraza() {
      bloque de esa vuelta**, no si tiene velocidad: una fuente puede traer
      acelerador y no velocidad, y preguntando por una sola señal el tablero
      se quedaba diciendo «sin dato» con los datos ya en la mano. */
-  if (!estado.series[vueltaElegida]) { pintarEsperando(); return; }
+  /* EN VIVO NO HAY UNA VUELTA CONSULTADA, Y NO TIENE QUE HABERLA.
+     Esto exigia el bloque historico de la vuelta para dibujar cualquier cosa.
+     Durante una sesion en vivo `estado.series` esta vacio a proposito ---se lo
+     limpia al cambiar de sesion--- de modo que las muestras que estaban
+     llegando por el flujo no se dibujaban nunca: los cuatro graficos decian
+     «sin dato» mientras la fuente entregaba mil setecientas señales por
+     segundo. */
+  const enVivo = estadoSesion === "vivo";
+  if (!enVivo && !estado.series[vueltaElegida]) { pintarEsperando(); return; }
 
-  /* Sin seleccion no hay a quien graficar, y `series[0]` reventaba dentro de
-     una promesa cuyo `.catch` se traga el error: los graficos quedaban en
-     blanco sin decir nada en la consola. Si no hay nadie elegido se grafica el
-     propio, que es de quien siempre hay serie. */
-  const ids = seleccion.size ? [...seleccion] : [claveVehiculoPropio()].filter(Boolean);
+  /* SE GRAFICA A QUIEN TIENE SERIE, NO A QUIEN ESTA SELECCIONADO.
+     La seleccion decide a quien mostrar sobre el trazado, y ahi hay vehiculos
+     de los que la fuente publica posicion y nada mas. Tomarla tal cual dejaba
+     los cuatro graficos en blanco sobre una vuelta que si estaba cargada.
+
+     Ademas `series[0]` reventaba con la lista vacia, dentro de una promesa
+     cuyo `.catch` se traga el error: quedaba en blanco sin decir nada. */
+  const disponibles = vehiculosConTraza();
+  let ids = [...seleccion].filter(id => disponibles.indexOf(id) !== -1);
+  if (!ids.length && disponibles.length) {
+    const propio = claveVehiculoPropio();
+    ids = [disponibles.indexOf(propio) !== -1 ? propio : disponibles[0]];
+  }
   if (!ids.length) { pintarEsperando(); return; }
   const paleta = ["--auto-1", "--auto-2", "--auto-3", "--auto-4"];
-  // La vuelta que se esta mirando: cada una tiene su propia traza.
-  const series = ids.map(id => serieVelocidad(id, vueltaElegida));
-  const total = series[0].length;
-  const desde = ampliado ? Math.floor(total * 0.34) : 0;
-  const hasta = ampliado ? Math.floor(total * 0.58) : total;
   const bin = fuente === "can";
 
   activos.forEach(canal => {
     const cv = LIENZOS[canal];
     if (!cv) return;
     const m = METRICAS.find(x => x.id === canal);
-    const ctx = cv.getContext("2d");
-    const dpr = window.devicePixelRatio || 1;
     const w = cv.clientWidth || 240, h = cv.clientHeight || 104;
-    cv.width = w * dpr; cv.height = h * dpr;
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    const ctx = ajustarLienzo(cv, w, h);
     ctx.clearRect(0, 0, w, h);
 
-    let datos = series.map((s, si) => derivar(null, canal, vueltaElegida, ids[si]).slice(desde, hasta));
+    /* CADA CANAL SE RECORTA CON SU PROPIO DOMINIO.
+       Cada vehiculo trae este canal con la cantidad de muestras que trae, que
+       no es la de otro vehiculo ni la de otra señal. */
+    const crudas = ids.map(id => derivar(null, canal, vueltaElegida, id));
+    const extremos = extremosDeDistancia(crudas);
+    const [ampIni, ampFin] = dominioAmpliado(extremos);
+    let datos = crudas.map(d => recortarPorDominio(d, ampIni, ampFin));
     if (bin && (canal === "throttle" || canal === "brake")) {
       datos = datos.map(d => d.map(p => [p[0], p[1] > 40 ? 1 : 0]));
     }
-    let mn = Infinity, mx = -Infinity;
-    datos.forEach(d => d.forEach(p => { if (p[1] < mn) mn = p[1]; if (p[1] > mx) mx = p[1]; }));
-    if (mx - mn < 1e-6) mx = mn + 1;
-    const pad = (mx - mn) * 0.1; mn -= pad; mx += pad;
+    /* Este canal no tiene ni una muestra: se dice, y se sigue con los otros.
+       Antes se seguia igual, con `mn = Infinity` y `mx = -Infinity`, y el pie
+       del grafico terminaba escribiendo «NaN» donde va una medicion. */
+    const escala = escalaDe(datos, 0.1);
+    if (!escala) { vaciarLienzo(canal, enVivo ? "esperando esta señal" : "sin dato en esta vuelta"); return; }
+    const mn = escala.mn, mx = escala.mx, pad = (escala.maxReal - escala.minReal) * 0.1;
 
     // rejilla
     ctx.strokeStyle = tinta("--linea"); ctx.lineWidth = 1;
@@ -2297,6 +3177,8 @@ function dibujarTraza() {
       const ti = instante();
       const vF = ventanaTraza ? ti.metro : (datos[0].length ? datos[0][datos[0].length - 1][0] : 1);
       const vI = ventanaTraza ? Math.max(0, ti.metro - ventanaTraza) : 0;
+      /* Sin ventana, el borde derecho es el ultimo metro que hay de cualquier
+         serie dibujada, no el de la primera. */
       const an = Math.max(1, vF - vI);
       ctx.strokeStyle = tinta("--linea-fuerte");
       ctx.globalAlpha = .35; ctx.setLineDash([2, 3]);
@@ -2325,18 +3207,44 @@ function dibujarTraza() {
     const metroAhora = t.metro;
     // Los dos extremos de lo que se ve. Con ventana, los ultimos N metros
     // recorridos; sin ventana, la vuelta entera.
-    const vFin = ventanaTraza ? metroAhora : (datos[0].length ? datos[0][datos[0].length - 1][0] : 1);
+    const vistos = extremosDeDistancia(datos);
+    const vFin = ventanaTraza ? metroAhora : (vistos ? vistos[1] : 1);
     const vIni = ventanaTraza ? Math.max(0, metroAhora - ventanaTraza) : 0;
     const anchoV = Math.max(1, vFin - vIni);
     const enX = m => ((m - vIni) / anchoV) * w;
 
+    /* CUANDO EL PRIMER GRAFICO SIRVE PARA ALGO.
+       Es una medida distinta de «cuanto tardaron las consultas»: entre que la
+       respuesta llega y que hay un trazo dibujado hay trabajo, y confundir las
+       dos hace parecer rapido lo que no lo es. Se sella una sola vez, la
+       primera vez que un canal tiene de verdad algo que trazar. */
+    if (!document.body.dataset.primerTrazoMs && datos.some(d => d.length > 1)) {
+      document.body.dataset.primerTrazoMs = String(Math.round(performance.now()));
+    }
+    TESTIGO.dibujosDeTraza++;
     datos.forEach((d, ai) => {
       ctx.beginPath();
       let primero = true;
-      for (let i = 0; i < d.length; i++) {
-        if (d[i][0] < vIni || d[i][0] > vFin) continue;
-        const x = enX(d[i][0]);
-        const y = (h - 6) - ((d[i][1] - mn) / (mx - mn)) * (h - 12) + 3;
+      // Reducida al ancho del lienzo, conservando minimo y maximo por columna:
+      // un pico de una muestra sobrevive, que es lo que una anotacion señala.
+      const dd = reducirAAncho(recortarPorDominio(d, vIni, vFin), vIni, vFin, w);
+      /* EL TESTIGO MIRA LO QUE SE DIBUJA, NO LO QUE SE TENIA.
+         La primera version firmaba el arreglo **antes** de recortarlo por la
+         ventana: con la vuelta entera cargada ese arreglo no cambia nunca, de
+         modo que el testigo decia «cero trazas con dato nuevo» mientras la
+         ventana movil se desplazaba correctamente. Un testigo que mide otra
+         cosa es peor que ninguno, porque parece evidencia. */
+      if (ai === 0) {
+        const fin = dd.length ? dd[dd.length - 1] : null;
+        const firma = dd.length + ":" + (fin ? fin[0].toFixed(1) + ":" + fin[1] : "-");
+        if (cv.dataset.firmaTestigo !== firma) {
+          cv.dataset.firmaTestigo = firma;
+          TESTIGO.trazasConDatoNuevo++;
+        }
+      }
+      for (let i = 0; i < dd.length; i++) {
+        const x = enX(dd[i][0]);
+        const y = (h - 6) - ((dd[i][1] - mn) / (mx - mn)) * (h - 12) + 3;
         primero ? (ctx.moveTo(x, y), primero = false) : ctx.lineTo(x, y);
       }
       ctx.strokeStyle = tinta(paleta[ai % 4]);
@@ -2350,11 +3258,49 @@ function dibujarTraza() {
     const pie = document.getElementById("pie-" + canal);
     if (pie) {
       pie.innerHTML =
-        '<span>mín <b>' + (mn + pad).toFixed(dec) + '</b></span>' +
+        '<span>mín <b>' + escala.minReal.toFixed(dec) + '</b></span>' +
         '<span>' + m.unidad + '</span>' +
-        '<span>máx <b>' + (mx - pad).toFixed(dec) + '</b></span>';
+        '<span>máx <b>' + escala.maxReal.toFixed(dec) + '</b></span>';
     }
   });
+}
+
+/* ============================================================
+   EL LIENZO SE REDIMENSIONA CUANDO CAMBIA, NO CUANDO SE DIBUJA
+   ------------------------------------------------------------
+   Asignar `canvas.width` reasigna el buffer y borra el contenido **aunque el
+   valor sea el mismo**. Estaba en cada dibujo de cada grafico: con ocho
+   lienzos a sesenta cuadros por segundo son cuatrocientas ochenta
+   reasignaciones por segundo de buffers que no cambiaron de tamano.
+
+   La transformacion si se aplica siempre: es barata y depende del contexto,
+   que se puede haber reseteado por otro motivo.
+   ============================================================ */
+function ajustarLienzo(cv, w, h) {
+  const dpr = window.devicePixelRatio || 1;
+  const aw = Math.max(1, Math.round(w * dpr));
+  const ah = Math.max(1, Math.round(h * dpr));
+  const ctx = cv.getContext("2d");
+  if (cv.width !== aw || cv.height !== ah) { cv.width = aw; cv.height = ah; }
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  return ctx;
+}
+
+/* Un solo grafico sin dato. Se separa de `pintarEsperando` porque la ausencia
+   es **por canal**: que no haya velocidad no dice nada sobre el regimen, y
+   apagar los cuatro porque falta uno era exactamente el defecto. */
+function vaciarLienzo(id, texto) {
+  const cv = LIENZOS[id];
+  if (!cv) return;
+  const ctx = cv.getContext("2d");
+  const w = cv.clientWidth || 240, h = cv.clientHeight || 104;
+  ajustarLienzo(cv, w, h);
+  ctx.clearRect(0, 0, w, h);
+  ctx.fillStyle = tinta("--texto-tenue");
+  ctx.font = "11px 'IBM Plex Sans', sans-serif";
+  ctx.fillText(texto, 10, h / 2);
+  const pie = document.getElementById("pie-" + id);
+  if (pie) pie.innerHTML = "<span>—</span><span></span><span>—</span>";
 }
 
 /* Mientras la vuelta viaja, cada grafico dice que esta esperando en vez de
@@ -2364,11 +3310,8 @@ function pintarEsperando() {
   Object.keys(LIENZOS).forEach(id => {
     const cv = LIENZOS[id];
     if (!cv) return;
-    const ctx = cv.getContext("2d");
-    const dpr = window.devicePixelRatio || 1;
     const w = cv.clientWidth || 240, h = cv.clientHeight || 104;
-    cv.width = w * dpr; cv.height = h * dpr;
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    const ctx = ajustarLienzo(cv, w, h);
     ctx.clearRect(0, 0, w, h);
     ctx.fillStyle = tinta("--texto-tenue");
     ctx.font = "11px 'IBM Plex Sans', sans-serif";
@@ -2653,7 +3596,18 @@ function vueltasParaComparar() {
 
 function asegurarDatosComparacion() {
   if (fuente !== "f1") return Promise.resolve([]);
-  return Promise.all(vueltasParaComparar().map(asegurarVuelta));
+  const cuales = vueltasParaComparar();
+  const puntos = puntosParaVueltas(cuales.length);
+
+  /* LO QUE SE VE PRIMERO SE PIDE PRIMERO.
+     La vuelta bajo el cabezal es la que alguien esta mirando: si sale al final
+     de la cola, la comparacion tarda en mostrar algo aunque ya hayan llegado
+     quince vueltas que estan fuera de la pantalla. */
+  const orden = cuales.slice().sort((a, b) =>
+    Math.abs(a - vueltaElegida) - Math.abs(b - vueltaElegida));
+
+  return enTandas(orden, SERIES_A_LA_VEZ, v => asegurarVuelta(v, puntos))
+    .then(r => { pedirPintado("trazas"); return r; });
 }
 
 function segmentosComparacion(metrica, vehiculo) {
@@ -2685,6 +3639,20 @@ function segmentosComparacion(metrica, vehiculo) {
   return segmentos;
 }
 
+/* Un aviso centrado sobre el lienzo de comparacion. Tres sitios decian lo
+   mismo con el mismo codigo repetido. */
+function avisoDeComparacion(cv, ctx, texto) {
+  const w = cv.clientWidth;
+  if (cv.style.height !== "200px") cv.style.height = "200px";
+  ajustarLienzo(cv, w, 200);
+  ctx.clearRect(0, 0, w, 200);
+  ctx.fillStyle = tinta("--texto-tenue");
+  ctx.font = "14px 'IBM Plex Sans', sans-serif";
+  ctx.fillText(texto, 20, 100);
+  const pie = document.getElementById("nota-comparacion");
+  if (pie) pie.textContent = "";
+}
+
 function dibujarComparacion() {
   const cv = document.getElementById("lienzo-comparacion");
   const ctx = cv.getContext("2d");
@@ -2707,21 +3675,36 @@ function dibujarComparacion() {
     return;
   }
   if (fuente !== "f1") {
-    const w0 = cv.clientWidth, dpr0 = window.devicePixelRatio || 1;
-    cv.width = w0 * dpr0; cv.height = 200 * dpr0; cv.style.height = "200px";
-    ctx.setTransform(dpr0, 0, 0, dpr0, 0, 0); ctx.clearRect(0, 0, w0, 200);
-    ctx.fillStyle = tinta("--texto-tenue"); ctx.font = "14px 'IBM Plex Sans', sans-serif";
-    ctx.fillText("Esta vista espacial requiere distancia medida y solo está disponible para F1 25.", 20, 100);
+    avisoDeComparacion(cv, ctx,
+      "Esta vista espacial requiere distancia medida y solo está disponible para F1 25.");
+    return;
+  }
+
+  /* LA COMPARACION TRABAJA SOBRE VUELTAS GUARDADAS, Y HAY QUE DECIRLO.
+     Compara **vueltas cerradas** entre si: lee `estado.series`, que en vivo
+     esta vacio a proposito. Los cuatro graficos chicos si leen el flujo, de
+     modo que durante una sesion en vivo la pantalla mostraba unos paneles con
+     dato y este en blanco, sin explicar la diferencia.
+
+     No se la conecta al flujo porque no hay que conectar: en vivo hay **una**
+     vuelta y esta a medio correr, y comparar una vuelta incompleta contra nada
+     no es una comparacion. Lo que corresponde es decir que espera a que la
+     vuelta cierre. */
+  if (estadoSesion === "vivo" && !Object.keys(estado.series).length) {
+    avisoDeComparacion(cv, ctx,
+      "La comparación trabaja sobre vueltas ya cerradas. Esta sesión está en curso: " +
+      "en cuanto se guarde la primera vuelta completa aparece acá.");
     return;
   }
   const activas = METRICAS.filter(m => m.activa && estado.disponibles.has(nombreDeSenal(m.id)));
   if (!activas.length) return;
-  const dpr = window.devicePixelRatio || 1;
   const w = cv.clientWidth;
   const altoPanel = Math.max(84, Math.min(150, (window.innerHeight - 260) / activas.length));
   const h = altoPanel * activas.length + 26;
-  cv.width = w * dpr; cv.height = h * dpr; cv.style.height = h + "px";
-  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  // Este si cambia de alto ---depende de cuantas metricas hay--- pero solo
+  // cuando cambia: `ajustarLienzo` no toca el buffer si el tamano es el mismo.
+  if (cv.style.height !== h + "px") cv.style.height = h + "px";
+  ajustarLienzo(cv, w, h);
   ctx.clearRect(0, 0, w, h);
 
   const margenIzq = 62, margenDer = 12;
@@ -2937,6 +3920,7 @@ const FUENTE_CORTA = {
 /* El vivo se mantiene separado del historico: una muestra que acaba de llegar
    no se hace pasar por una fila ya consultada a la base. */
 const MAX_MUESTRAS_VIVO = 600;
+const MUESTRAS_RECORDADAS = 600;
 const vivo = {
   eventSource: null,
   sesion: null,
@@ -2944,13 +3928,218 @@ const vivo = {
   series: new Map(),
   distancia: new Map(),
   vuelta: new Map(),
-  repintado: false,
+  //: Reloj de la ultima muestra aplicada, por vehiculo y por señal. Es lo que
+  //: permite decir que un canal esta viejo aunque esten llegando otros, y
+  //: descartar una muestra atrasada sin descartar la que la sigue.
+  reloj: new Map(),
+  //: Identidades ya incorporadas, para no aplicar dos veces la misma muestra
+  //: cuando la recuperacion y el flujo se solapan.
+  vistos: new Set(),
+  ordenVistos: [],
+  //: A QUE SESION SE SIGUE. No es un booleano: «seguir el vivo» tiene que
+  //: significar seguir **una** sesion, no alternar entre todas las que
+  //: publiquen. Con un booleano, dos productores simultaneos hacian que el
+  //: tablero cambiara de sesion en cada mensaje.
+  //:
+  //: Nulo quiere decir que todavia no se eligio. Una vez elegida, queda fija
+  //: hasta un acto explicito: abrir otra del catalogo, o encender una captura.
+  objetivo: null,
+  //: Si se puede adoptar la primera sesion que aparezca y fijarla como
+  //: objetivo. Lo pone en verdadero el arranque sin nada abierto y el boton de
+  //: empezar a capturar; nunca un mensaje.
+  aceptaNueva: true,
+  //: El recorrido que se va midiendo, por vehiculo: pares [x, z] del mundo,
+  //: en el orden en que llegaron. Es la **misma senal** con la que el backend
+  //: arma el trazado de una sesion guardada ---`world_position_x` y
+  //: `world_position_z`--- de modo que no es una geometria inventada ni una
+  //: forma de catalogo: son las posiciones que el vehiculo declara.
+  recorrido: new Map(),
+  //: Cuantos puntos habia la ultima vez que se rehizo el dibujo. Rehacerlo en
+  //: cada punto significa recalcular la orientacion de la nube entera, y el
+  //: dibujo salta de sitio a cada paso.
+  recorridoDibujado: 0,
+  //: Una sesion viva distinta de la que se mira, para poder decirlo.
+  otra: null,
+  //: Que conexion de flujo esta vigente. Cada `EventSource` lleva su numero, y
+  //: lo que su apertura haya pedido se descarta cuando el numero cambia.
+  conexion: 0,
+  mandoFlujo: null,
   silencio: null,
 };
 
 function vaciarVivo(sesion) {
   vivo.sesion = sesion || null;
   vivo.ultimos.clear(); vivo.series.clear(); vivo.distancia.clear(); vivo.vuelta.clear();
+  vivo.reloj.clear(); vivo.vistos.clear(); vivo.ordenVistos.length = 0;
+  /* El recorrido es de la sesion que se deja: reusarlo dibujaria el circuito
+     anterior debajo del coche de la nueva. */
+  vivo.recorrido.clear();
+  vivo.recorridoDibujado = 0;
+}
+
+/* ============================================================
+   QUE MUESTRA ES CUAL
+   ------------------------------------------------------------
+   La marca temporal sola no identifica una muestra: con la parrilla completa
+   hay veinte vehiculos publicando la misma señal en el mismo instante, y a mil
+   setecientas señales por segundo un mismo vehiculo puede repetir marca dentro
+   de una señal. La identidad es la tupla completa.
+
+   Queda un caso que esto no separa: dos muestras del mismo vehiculo, la misma
+   señal y la misma marca temporal. Se descarta la segunda. Es una perdida
+   acotada y consciente ---un punto de un canal que ya tiene un punto en ese
+   instante--- y solo puede ocurrir en la recuperacion, que es donde la
+   duplicacion importa mas que la completitud. La persistencia no pasa por
+   aca: la escribe otro proceso desde el mismo flujo.
+   ============================================================ */
+function identidadDeMuestra(m) {
+  return m.source_type + "|" + m.session_id + "|" + m.vehicle_id + "|" +
+         m.signal_name + "|" + m.timestamp;
+}
+
+function recordarVista(id) {
+  vivo.vistos.add(id);
+  vivo.ordenVistos.push(id);
+  while (vivo.ordenVistos.length > MUESTRAS_RECORDADAS) {
+    vivo.vistos.delete(vivo.ordenVistos.shift());
+  }
+}
+
+/* ============================================================
+   UNA SESION EN VIVO NO SE APROPIA DE LA PANTALLA
+   ------------------------------------------------------------
+   Esto adoptaba cualquier sesion que apareciera en el flujo: quien estuviera
+   revisando una carrera guardada veia el tablero cambiar solo, con otra
+   sesion, otro vehiculo y la caché de vueltas vaciada, porque alguien encendio
+   el capturador en otra maquina. Peor con dos productores publicando a la vez:
+   el tablero oscilaba entre los dos, adoptando la sesion de cada mensaje.
+
+   Se adopta en tres casos, y los tres son una decision de quien mira:
+   se pidio seguir el vivo, no hay nada abierto que pisar, o la sesion que
+   emite es justamente la que se esta mirando.
+   ============================================================ */
+function puedeAdoptarVivo(sesionId) {
+  // Ya se eligio a quien seguir: solo esa.
+  if (vivo.objetivo) return vivo.objetivo === sesionId;
+  // La sesion que se esta mirando, si justo empieza a emitir.
+  if (estado.abierta) return estado.abierta.session_id === sesionId;
+  // Nada abierto y permiso para elegir: se adopta la primera y **se fija**.
+  return vivo.aceptaNueva === true;
+}
+
+/* El reloj de la muestra en milisegundos, o `null` si la fuente no lo declara
+   legible. Nunca `Date.now()`: la hora en que esto se entero no es la hora en
+   que se midio, y confundirlas hace que dos muestras que llegaron juntas
+   parezcan simultaneas cuando no lo fueron. */
+/* ============================================================
+   EL RECORRIDO SE MIDE, NO SE SUPONE
+   ------------------------------------------------------------
+   Con una sesion guardada, `/trazado` devuelve el recorrido porque las
+   posiciones ya estan en la base. En vivo no hay nada que consultar: la sesion
+   todavia se esta corriendo. El tablero quedaba sin trazado y, sin trazado,
+   `pintarPista` sale temprano y **el coche no se dibuja en ningun lado**.
+
+   La solucion no es inventar una geometria de catalogo ni dibujar un circuito
+   generico. El flujo trae `world_position_x` y `world_position_z`, que son las
+   mismas dos senales con las que el backend arma el trazado guardado. Asi que
+   se dibuja lo que se midio, y **se declara que esta a medio recorrer**: un
+   tramo abierto que crece, con el coche en su punta.
+
+   Al cerrar la primera vuelta el recorrido pasa a ser el circuito: se congela,
+   se cierra el camino y desde ahi el coche se ubica por su distancia medida,
+   igual que en una sesion guardada.
+   ============================================================ */
+const MAX_PUNTOS_DE_RECORRIDO = 4000;
+const PUNTOS_ENTRE_REDIBUJOS = 25;
+
+function anotarPosicionViva(vehiculo, marca) {
+  const ultimos = vivo.ultimos.get(vehiculo);
+  if (!ultimos) return;
+  const mx = ultimos.get("world_position_x");
+  const mz = ultimos.get("world_position_z");
+  // Las dos, y de la misma muestra.
+  if (!mx || !mz || mx.timestamp !== marca || mz.timestamp !== marca) {
+    TESTIGO.paresRotos++;
+    return;
+  }
+  const x = numeroMedido(mx.value), z = numeroMedido(mz.value);
+  if (x === null || z === null) return;
+
+  if (!vivo.recorrido.has(vehiculo)) vivo.recorrido.set(vehiculo, []);
+  const puntos = vivo.recorrido.get(vehiculo);
+  TESTIGO.posicionesConLasDos++;
+  const ultimo = puntos.length ? puntos[puntos.length - 1] : null;
+  // Un vehiculo detenido publica la misma posicion muchas veces por segundo.
+  if (ultimo && ultimo[0] === x && ultimo[1] === z) return;
+  TESTIGO.posicionesDistintas++;
+  puntos.push([x, z]);
+  if (puntos.length > MAX_PUNTOS_DE_RECORRIDO) puntos.shift();
+}
+
+/* Rehace el dibujo del recorrido si crecio lo suficiente. Devuelve si cambio. */
+function armarTrazadoVivo() {
+  if (estadoSesion !== "vivo") return false;
+  // Un trazado guardado, o uno ya congelado, manda sobre este.
+  if (PISTA.path && !PISTA.enConstruccion) return false;
+  const clave = claveVehiculoPropio();
+  const puntos = clave ? vivo.recorrido.get(clave) : null;
+  if (!puntos || puntos.length < 3) return false;
+  if (puntos.length - vivo.recorridoDibujado < PUNTOS_ENTRE_REDIBUJOS
+      && vivo.recorridoDibujado > 0) {
+    return false;
+  }
+  vivo.recorridoDibujado = puntos.length;
+
+  const armado = trazadoAPath(puntos, false, false);
+  if (!armado.path) return false;
+  PISTA = {
+    path: armado.path,
+    largo_m: vivo.distancia.get(clave) || null,
+    desnivel_m: null,
+    muestras: puntos.length,
+    vuelta: vivo.vuelta.get(clave) || null,
+    curvas: CURVAS,
+    enConstruccion: true,
+    // Con esto la marca del vehiculo se ubica por su ultima posicion medida,
+    // sin esperar a que el camino se vuelva a dibujar.
+    proyectarMundo: armado.proyectarMundo,
+  };
+  const svg = document.getElementById("linea-pista");
+  if (svg && svg.ownerSVGElement) delete svg.ownerSVGElement.dataset.ajustado;
+  const g = document.getElementById("marcas-pista");
+  if (g) g.dataset.firma = "";
+  return true;
+}
+
+/* Al cerrar una vuelta, lo recorrido **es** el circuito: se cierra el camino y
+   se deja de crecer. Desde ahi el coche se ubica por su distancia, que es lo
+   que permite verlo dar vueltas en vez de alargar una linea. */
+function congelarTrazadoVivo(largoDeLaVuelta) {
+  const clave = claveVehiculoPropio();
+  const puntos = clave ? vivo.recorrido.get(clave) : null;
+  if (!puntos || puntos.length < 20) return;
+  const armado = trazadoAPath(puntos, false, true);
+  if (!armado.path) return;
+  PISTA = {
+    path: armado.path,
+    largo_m: largoDeLaVuelta || PISTA.largo_m,
+    desnivel_m: null,
+    muestras: puntos.length,
+    vuelta: vivo.vuelta.get(clave) || null,
+    curvas: CURVAS,
+    enConstruccion: false,
+    medidoEnVivo: true,
+  };
+  const svg = document.getElementById("linea-pista");
+  if (svg && svg.ownerSVGElement) delete svg.ownerSVGElement.dataset.ajustado;
+  const g = document.getElementById("marcas-pista");
+  if (g) g.dataset.firma = "";
+}
+
+function relojDeMuestra(m) {
+  if (!m || !m.timestamp) return null;
+  const t = Date.parse(m.timestamp);
+  return Number.isFinite(t) ? t : null;
 }
 
 function mapaVivo(contenedor, vehiculo) {
@@ -2958,9 +4147,53 @@ function mapaVivo(contenedor, vehiculo) {
   return contenedor.get(vehiculo);
 }
 
-function incorporarTelemetriaViva(m) {
-  if (!m || FUENTE_CORTA[m.source_type] !== "f1" || !m.session_id || !m.vehicle_id || !m.signal_name) return;
+function incorporarTelemetriaViva(m, recuperando) {
+  if (!m || FUENTE_CORTA[m.source_type] !== "f1" || !m.session_id || !m.vehicle_id || !m.signal_name) {
+    TESTIGO.descarteFuente++;
+    return;
+  }
+  if (m.signal_name === "world_position_x") TESTIGO.llegaronX++;
+  else if (m.signal_name === "world_position_z") TESTIGO.llegaronZ++;
+
+  // La misma muestra dos veces no aporta un punto: aporta un punto repetido.
+  const identidad = identidadDeMuestra(m);
+  if (vivo.vistos.has(identidad)) { TESTIGO.descarteDuplicado++; return; }
+
   if (vivo.sesion !== m.session_id) {
+    /* UN SNAPSHOT NO ELIGE SESION.
+       `/live/recent` describe lo que el difusor tenia guardado, que puede ser
+       de otra sesion y de hace rato. Adoptar desde ahi cambiaba la sesion del
+       tablero con un dato viejo, y ademas ocurria **antes** del filtro por
+       reloj, de modo que ni siquiera se comprobaba que fuera reciente. La
+       recuperacion sirve para completar la sesion que ya se sigue. */
+    if (recuperando) return;
+    if (!puedeAdoptarVivo(m.session_id)) {
+      // Se declara y no se toca nada. Abrirla del catalogo es lo que la adopta.
+      TESTIGO.descarteNoAdoptada++;
+      if (vivo.otra !== m.session_id) {
+        vivo.otra = m.session_id;
+        avisar("Está entrando telemetría de otra sesión (" + m.session_id +
+               "). Abrila del catálogo para verla en vivo.", false);
+        pintarTransporte();
+      }
+      return;
+    }
+    vivo.otra = null;
+    /* La eleccion queda fija. Antes esto era un booleano y adoptar la sesion
+       que ya se estaba mirando ---que es correcto--- convertia al tablero en
+       seguidor de cualquier otra que apareciera despues. */
+    vivo.objetivo = m.session_id;
+    vivo.aceptaNueva = false;
+    /* Y lo que estaba pidiendo la sesion anterior deja de valer. Sin esto, una
+       consulta historica en vuelo volvia despues del cambio, pasaba la
+       comprobacion de vigencia ---porque el numero de apertura no habia
+       cambiado--- y escribia las series de la sesion vieja sobre la nueva. */
+    nuevaSesionEnCurso();
+    /* Y el dibujo de la pista tambien: es de la sesion que se deja. Sin esto,
+       el circuito anterior queda debajo del coche de la sesion nueva, que es
+       una afirmacion falsa sobre donde esta el vehiculo. */
+    PISTA = { path: "", curvas: [], largo_m: null, desnivel_m: null, muestras: null };
+    CURVAS = [];
     vaciarVivo(m.session_id);
     fuente = "f1";
     sesionAbierta = m.session_id;
@@ -2969,16 +4202,58 @@ function incorporarTelemetriaViva(m) {
       filas: 0, procedencia: {},
     };
     estado.series = {}; estado.pidiendo = {}; estado.posiciones = {}; estado.pidiendoPos = {};
+    cambiaronLasSeries();
     estado.disponibles = new Set();
     AUTOS = []; seleccion = new Set(); estado.vehiculoClave = null;
     marcar(document.getElementById("sel-fuente"), "fuente", fuente);
   }
 
+  /* UNA MUESTRA ATRASADA NO PISA A UNA MAS NUEVA.
+     `/live/recent` devuelve lo ultimo que el difusor tenia guardado, y se pide
+     al abrir el flujo: para cuando llega, el flujo ya entrego muestras mas
+     nuevas. Aplicadas sin mirar el reloj, esas muestras viejas hacen retroceder
+     los ultimos valores ---y una distancia que retrocede dispara el corte por
+     vuelta nueva, que **borra la serie viva entera**. */
+  const reloj = relojDeMuestra(m);
+  const relojes = mapaVivo(vivo.reloj, m.vehicle_id);
+  const relojPrevio = relojes.get(m.signal_name);
+  if (recuperando && reloj !== null && relojPrevio !== undefined && reloj <= relojPrevio) {
+    TESTIGO.descarteRecuperacionVieja++;
+    return;
+  }
+
+  recordarVista(identidad);
+  if (reloj !== null && (relojPrevio === undefined || reloj > relojPrevio)) {
+    relojes.set(m.signal_name, reloj);
+  }
+
+  /* Cuando llego, medido con el reloj de esta maquina. Es lo unico con lo que
+     se puede calcular la antiguedad de lo que se ve: el reloj de la fuente no
+     tiene origen comparable con este. */
+  m._recibidoEnMs = performance.now();
   const ultimo = mapaVivo(vivo.ultimos, m.vehicle_id);
   ultimo.set(m.signal_name, m);
   estado.disponibles.add(m.signal_name);
 
+  /* LAS DOS COORDENADAS VIENEN EN MENSAJES SEPARADOS, Y EL ORDEN IMPORTA.
+     El paquete de movimiento se normaliza a una senal por eje, con la misma
+     marca temporal. El par se anota cuando las dos estan y comparten marca:
+     con una sola no hay punto que dibujar, y aparearlas por orden de llegada
+     mezclaria la x de una muestra con la z de la siguiente.
+
+     Esto **tiene que ir despues** de guardar la muestra en `vivo.ultimos`.
+     Estaba antes, y entonces al llegar la z la x de esa misma marca todavia no
+     se habia guardado: la comprobacion fallaba y el par no se anotaba nunca.
+     Medido el 2026-09-08 con carga real: la fuente entrega 20,0 posiciones por
+     segundo y llegaban **4,3**. Los movimientos del coche no se perdian al
+     dibujar; se perdian tres lineas antes. */
+  if (m.signal_name === "world_position_x" || m.signal_name === "world_position_z") {
+    anotarPosicionViva(m.vehicle_id, m.timestamp);
+  }
+
   if (!AUTOS.some(a => a.id === m.vehicle_id)) {
+    // Un vehiculo nuevo si es un cambio de estructura: hay una lista mas.
+    pedirPintado("estructura");
     const ids = AUTOS.map(a => a.id).concat(m.vehicle_id);
     const propio = estado.vehiculoClave || m.vehicle_id;
     armarAutos(ids);
@@ -2988,25 +4263,46 @@ function incorporarTelemetriaViva(m) {
     if (estado.abierta) estado.abierta.vehiculos = AUTOS.length;
   }
 
-  const numero = Number(m.value);
-  if (m.signal_name === "lap_number" && Number.isFinite(numero)) {
+  /* Ver `numeroMedido`: `Number(null)` da cero, y una vuelta cero o una
+     distancia cero inventadas no se distinguen de las medidas. */
+  const numero = numeroMedido(m.value);
+  if (m.signal_name === "lap_number" && numero !== null) {
     const anterior = vivo.vuelta.get(m.vehicle_id);
     vivo.vuelta.set(m.vehicle_id, numero);
-    if (anterior !== undefined && anterior !== numero) vivo.series.delete(m.vehicle_id);
+    // Un snapshot de recuperacion nunca abre una vuelta: describe la que ya
+    // paso. Dejarlo cortar aca borraria las muestras nuevas que se recuperan.
+    if (!recuperando && anterior !== undefined && anterior !== numero) {
+      vivo.series.delete(m.vehicle_id);
+      /* Se cerro una vuelta: lo recorrido hasta aca es el circuito. El largo
+         es la ultima distancia declarada antes de volver a cero. */
+      if (m.vehicle_id === claveVehiculoPropio() && PISTA.enConstruccion) {
+        congelarTrazadoVivo(vivo.distancia.get(m.vehicle_id));
+      }
+    }
   }
-  if (m.signal_name === "lap_distance" && Number.isFinite(numero)) {
+  if (m.signal_name === "lap_distance" && numero !== null) {
     const anterior = vivo.distancia.get(m.vehicle_id);
-    if (anterior !== undefined && numero + 20 < anterior) vivo.series.delete(m.vehicle_id);
-    vivo.distancia.set(m.vehicle_id, numero);
+    if (!recuperando && anterior !== undefined && numero + 20 < anterior) {
+      vivo.series.delete(m.vehicle_id);
+    }
+    // Con la recuperacion, la distancia solo avanza: una muestra vieja no
+    // reubica las que ya se dibujaron.
+    if (!recuperando || anterior === undefined || numero > anterior) {
+      vivo.distancia.set(m.vehicle_id, numero);
+    }
   }
 
   const distancia = vivo.distancia.get(m.vehicle_id);
-  const valor = typeof m.value === "boolean" ? Number(m.value) : Number(m.value);
-  if (Number.isFinite(distancia) && Number.isFinite(valor)) {
+  const valor = numeroMedido(m.value);
+  if (Number.isFinite(distancia) && valor !== null) {
     const porSenal = mapaVivo(vivo.series, m.vehicle_id);
     if (!porSenal.has(m.signal_name)) porSenal.set(m.signal_name, []);
     const serie = porSenal.get(m.signal_name);
-    serie.push([distancia, valor]);
+    /* El tercer elemento es el reloj de la fuente, en milisegundos. No se
+       dibuja: sirve para saber **cuando** se midio cada punto, que es lo unico
+       que permite decir si un canal esta viejo y ordenar lo que llega tarde.
+       Sin eso, dos muestras de la misma distancia son indistinguibles. */
+    serie.push([distancia, valor, relojDeMuestra(m)]);
     if (serie.length > MAX_MUESTRAS_VIVO) serie.splice(0, serie.length - MAX_MUESTRAS_VIVO);
   }
 
@@ -3015,14 +4311,21 @@ function incorporarTelemetriaViva(m) {
   vivo.silencio = setTimeout(() => {
     if (estadoSesion === "vivo") { estadoSesion = estado.abierta ? "cargado" : "vacio"; render(); }
   }, 10000);
-  if (!vivo.repintado) {
-    vivo.repintado = true;
-    requestAnimationFrame(() => {
-      vivo.repintado = false;
-      _instanteClave = null; _ultimaTraza = 0;
-      render();
-    });
-  }
+  /* Una muestra cambia valores y trazas, nunca la estructura. La unica
+     excepcion es un vehiculo que aparece por primera vez, y eso se pide donde
+     ocurre, no en cada mensaje. */
+  /* LA LATENCIA SE ABRE AQUI Y SE CIERRA AL PINTAR.
+     Se anota **la primera** muestra todavia no reflejada, no la ultima: lo que
+     interesa es cuanto espera el dato mas viejo que ya deberia verse. */
+  TESTIGO.muestrasIncorporadas++;
+  TESTIGO.pendientes++;
+  if (TESTIGO.pendienteDesde === null) TESTIGO.pendienteDesde = performance.now();
+
+  // El recorrido crece con las posiciones que llegan.
+  if (armarTrazadoVivo()) pedirPintado("estructura");
+
+  _instanteClave = null; _ultimaTraza = 0;
+  pedirPintado(["valores", "trazas"]);
 }
 
 function datoEvento(e) {
@@ -3031,17 +4334,44 @@ function datoEvento(e) {
 
 function conectarFlujoEnVivo() {
   if (vivo.eventSource || typeof EventSource === "undefined" || fuente !== "f1") return;
+  /* Cada conexion lleva su numero y su mando de cancelacion. Lo que esta
+     apertura pida ---el snapshot de recuperacion--- deja de valer en cuanto la
+     conexion se cierra o se abre otra: sin eso, un snapshot pedido por una
+     conexion vieja llegaba despues de reconectar y se incorporaba como si
+     fuera de la nueva. */
+  const miConexion = ++vivo.conexion;
+  const mando = new AbortController();
+  vivo.mandoFlujo = mando;
   const canal = new EventSource(API + "/live/stream");
   vivo.eventSource = canal;
   canal.addEventListener("estado", e => { const d = datoEvento(e); if (d) { estado.vivo = d; pintarTransporte(); } });
-  canal.addEventListener("telemetria", e => incorporarTelemetriaViva(datoEvento(e)));
+  canal.addEventListener("telemetria", e => {
+    TESTIGO.eventosSSE++;
+    incorporarTelemetriaViva(datoEvento(e));
+  });
   canal.addEventListener("latido", e => {
     const d = datoEvento(e);
     if (d) estado.vivo = Object.assign({}, estado.vivo || {}, { mensajes_recibidos: d.recibidos });
     pintarTransporte();
   });
   canal.onopen = () => {
-    pedir("/live/recent?limite=100").then(lista => lista.forEach(incorporarTelemetriaViva)).catch(() => {});
+    /* RECUPERAR NO ES VOLVER ATRAS.
+       El servidor devuelve su ventana corta en el orden en que la guardo, y
+       este navegador puede llevar ya varios segundos de flujo. Se ordena por
+       el reloj de la fuente ---no por el de llegada, que es otra cosa--- y se
+       incorpora en modo recuperacion: lo que sea mas viejo que lo que ya se
+       muestra se descarta en vez de pisarlo. */
+    pedir("/live/recent?limite=100", { senal: mando.signal })
+      .then(lista => {
+        // El dueño del snapshot es esta conexion. Si ya no es la vigente, lo
+        // que traiga describe un estado que este tablero dejo atras.
+        if (miConexion !== vivo.conexion) return;
+        (lista || [])
+          .slice()
+          .sort((a, b) => (relojDeMuestra(a) || 0) - (relojDeMuestra(b) || 0))
+          .forEach(m => incorporarTelemetriaViva(m, true));
+      })
+      .catch(e => { if (!fueAnulada(e) && e instanceof TypeError) console.error(e); });
   };
   canal.onerror = () => {
     estado.vivo = Object.assign({}, estado.vivo || {}, { motivo: "Flujo interrumpido; reconectando." });
@@ -3052,6 +4382,12 @@ function conectarFlujoEnVivo() {
 function cerrarFlujoEnVivo() {
   if (vivo.eventSource) vivo.eventSource.close();
   vivo.eventSource = null;
+  /* Cerrar el flujo tiene que cancelar lo que el flujo pidio. El snapshot de
+     recuperacion viaja por HTTP y no se entera de que el `EventSource` se
+     cerro: sin esto llegaba despues, se incorporaba, y podia reabrir una
+     sesion que se acababa de dejar. */
+  vivo.conexion++;
+  if (vivo.mandoFlujo) { vivo.mandoFlujo.abort(); vivo.mandoFlujo = null; }
   if (vivo.silencio) clearTimeout(vivo.silencio);
   vivo.silencio = null;
 }
@@ -3227,11 +4563,29 @@ function pintarSesiones() {
    dibujar es la lista de vueltas, porque sin ella no se sabe cuanto dura la
    sesion ni donde empieza cada vuelta.
    ============================================================ */
-function abrirSesionGuardada(id) {
-  const s = SESIONES.find(x => x.session_id === id);
-  if (!s) return;
+/* El alcance elegido, soltado. Distinto de `olvidarLoDeLaCorrida`, que suelta
+   los **datos** de la etapa: esto suelta la eleccion misma. */
+function olvidarLaCorrida() {
+  corrida.adquisicion = null;
+  corrida.fase = null;
+  corrida.disponibles = null;
+  corrida.mezclada = false;
+  _contextoDeCorrida = null;
+  declararAlcance();
+  pintarBotonDeCorrida();
+  try {
+    const u = new URL(location.href);
+    u.searchParams.delete("adquisicion");
+    u.searchParams.delete("fase");
+    history.replaceState(null, "", u.toString());
+  } catch (e) { /* sin historial se sigue igual */ }
+}
 
-  estado.abierta = s;
+/* TODO LO QUE DEPENDE DEL ALCANCE, Y NADA MAS.
+   Se usa en dos sitios: al abrir una sesion y al cambiar de adquisicion o de
+   etapa dentro de la misma. Lo que queda afuera es la identidad ---cual sesion
+   esta abierta, que fuente es--- porque eso no cambia al cambiar de etapa. */
+function olvidarLoDeLaCorrida() {
   estado.vueltas = []; estado.series = {}; estado.pidiendo = {};
   estado.posiciones = {}; estado.pidiendoPos = {};
   estado.trazado = null; estado.curvas = []; estado.clima = null; estado.vehiculo = null;
@@ -3239,49 +4593,430 @@ function abrirSesionGuardada(id) {
   estado.vehiculoClave = null;
   estado.climaMotivo = ""; estado.vehiculoMotivo = ""; estado.avisosMotivo = "";
   estado.vigilancia = null; estado.vigilanciaMotivo = "";
+  /* La vigilancia se pide una vez por sesion y se recuerda cual. Al cambiar de
+     etapa la sesion es la misma, asi que sin esto no se volveria a pedir y el
+     panel seguiria mostrando lo medido sobre la etapa anterior. */
+  _vigilanciaPedida = null;
+  _esencialResuelta = false;
   estado.cargando = true;
   PISTA = { path: "", curvas: [], largo_m: null, desnivel_m: null, muestras: null };
   CURVAS = [];
+  vivo.recorrido.clear();
+  vivo.recorridoDibujado = 0;
   AUTOS = [];
   seleccion = new Set();
-  sesionAbierta = id;
-  recordarSesion(id);
   cabezal = 0;
   detener();
   olvidarCaches();
+  const svg = document.getElementById("linea-pista");
+  if (svg && svg.ownerSVGElement) delete svg.ownerSVGElement.dataset.ajustado;
+}
 
+function abrirSesionGuardada(id) {
+  const s = SESIONES.find(x => x.session_id === id);
+  if (!s) return;
+
+  /* EL ALCANCE NO SE HEREDA DE LA SESION ANTERIOR.
+     `original` es la clave de toda captura que no declara reproduccion, o sea
+     casi todas: dejar puesto `adquisicion=original&fase=3` al pasar a otra
+     sesion la habria abierto en su tercera fase ---o en ninguna, si no tiene
+     tres--- sin que nadie lo pidiera. La direccion se limpia junto con el
+     estado, porque si no la vuelve a leer la consulta de adquisiciones.
+
+     Solo al **cambiar** de sesion: al abrir la primera, `?adquisicion=` de la
+     direccion es una eleccion explicita de quien comparte el enlace. */
+  if (sesionAbierta && sesionAbierta !== id) olvidarLaCorrida();
+
+  estado.abierta = s;
+  olvidarLoDeLaCorrida();
+  sesionAbierta = id;
+  recordarSesion(id);
+
+  TESTIGO.aperturas++;
   const corta = FUENTE_CORTA[s.fuente] || "can";
   if (corta !== fuente) { fuente = corta; marcar(document.getElementById("sel-fuente"), "fuente", fuente); }
   estadoSesion = "cargado";
   document.getElementById("velo-sesiones").dataset.abierto = "no";
-  const svgPista = document.getElementById("linea-pista");
-  if (svgPista && svgPista.ownerSVGElement) delete svgPista.ownerSVGElement.dataset.ajustado;
   render();
 
   const ruta = "/sesiones/" + encodeURIComponent(id);
   const conMotivo = (p, guardar) => p.then(guardar).catch(e => guardar({ error: e.message }));
 
-  Promise.all([
-    pedir(ruta + "/vueltas").catch(e => ({ vueltas: [], error: e.message })),
-    pedir(ruta + "/trazado?puntos=600").catch(e => ({ puntos: [], motivo: e.message })),
-    pedir(ruta + "/clima").catch(e => ({ clima: null, motivo_ausencia: e.message })),
-    pedir(ruta + "/vehiculo").catch(e => ({ esquinas: null, motivo_ausencia: e.message })),
-    pedir(ruta + "/puesta-a-punto").catch(e => ({ puesta_a_punto: null })),
-    pedir(ruta + "/avisos").catch(e => ({ avisos: [], motivo: e.message })),
-  ]).then(([vueltas, trazado, clima, vehiculo, puesta, avisos]) => {
+  // Lo que quedo pidiendo la sesion anterior ya no le sirve a nadie.
+  const apertura = nuevaSesionEnCurso();
+  /* Abrir una sesion guardada es un acto explicito: fija el objetivo del vivo
+     en esa sesion si es la que esta emitiendo, y lo suelta si no. En ningun
+     caso queda «siguiendo lo que aparezca». */
+  vivo.objetivo = (vivo.sesion && vivo.sesion === id) ? id : null;
+  vivo.aceptaNueva = false;
+  /* LO QUE HACE FALTA PARA ABRIR, Y LO QUE PUEDE LLEGAR DESPUES.
+     Abrir la sesion esperaba a las seis consultas, y una de ellas ---los
+     avisos--- tarda cuatro segundos: recorre la sesion entera buscando el
+     primer instante en que se cumple cada condicion. Durante esos cuatro
+     segundos el tablero no mostraba nada, aunque las vueltas ya estuvieran.
+
+     Lo unico que hace falta para empezar a dibujar son las vueltas: sin ellas
+     no se sabe cuanto dura la sesion ni donde empieza cada una. El resto
+     aparece cuando llega, cada panel con su marca de espera. */
+  /* ANTES DE PEDIR NADA, SABER QUE SE ESTA MIRANDO.
+     Si la sesion tiene mas de una adquisicion, pedir sus vueltas sin elegir
+     devuelve las tres juntas y el tablero las dibuja como una carrera continua.
+     Asi que primero se pregunta, y si hay ambiguedad **no se pide nada mas**
+     hasta que alguien elija: mostrar una mezcla sin decirlo es peor que no
+     mostrar. La eleccion se pasa por la direccion, `?adquisicion=` y `?fase=`,
+     que ademas es lo que permite compartir un enlace a lo que uno mira. */
+  conCarga("cronometraje", () =>
+    pedir(ruta + "/adquisiciones", { senal: senalDeSesion() })
+      .then(a => {
+        if (!sigueVigente(apertura) || !a) return;
+        corrida.disponibles = a.adquisiciones || [];
+        corrida.mezclada = !!a.mezclada;
+        /* Con que volver a preguntar. Se guarda aca y no solo al abrir el
+           elector: si la direccion ya traia una eleccion, el elector no llega a
+           abrirse y el boton del encabezado se quedaria sin nada que reabrir. */
+        _contextoDeCorrida = { ruta: ruta, s: s };
+        pintarBotonDeCorrida();
+        if (!a.mezclada) {
+          declararAlcance();
+          cargarDatosDeSesion(ruta, apertura, senalDeSesion(), s);
+          return;
+        }
+
+        const p = new URLSearchParams(location.search);
+        const pedida = p.get("adquisicion");
+        const fasePedida = p.get("fase");
+        const existe = (corrida.disponibles || []).some(x => x.clave === pedida);
+        if (pedida && existe) {
+          corrida.adquisicion = pedida;
+          corrida.fase = fasePedida ? Number(fasePedida) : null;
+          declararAlcance();
+          pintarBotonDeCorrida();
+          decirEstadoApi("Mirando la adquisición «" + pedida + "»" +
+            (corrida.fase ? ", fase " + corrida.fase : "") + " de " +
+            corrida.disponibles.length + " que hay en esta sesión.", false);
+          cargarDatosDeSesion(ruta, apertura, senalDeSesion(), s);
+          return;
+        }
+
+        /* Ambigua y sin elegir: se pregunta. No se adivina cual, y **no es un
+           error**: es una eleccion pendiente, y marcarla en rojo diria que algo
+           salio mal cuando lo que falta es una decision. */
+        estadoSesion = "vacio";
+        estado.cargando = false;
+        estado.motivo =
+          "Esta sesión guarda " + corrida.disponibles.length + " adquisiciones " +
+          "distintas bajo el mismo identificador del juego. Juntas no son una " +
+          "carrera continua, así que hay que elegir cuál mirar.";
+        decirEstadoApi(estado.motivo + " Elegí abajo.", false);
+        abrirElectorDeCorrida(ruta, apertura, s);
+        render();
+      })
+      .catch(e => {
+        /* Si la ruta no esta ---una API mas vieja--- se sigue como siempre: no
+           se rompe por no poder preguntar. */
+        if (fueAnulada(e)) return;
+        cargarDatosDeSesion(ruta, apertura, senalDeSesion(), s);
+      }));
+}
+
+/* ============================================================
+   ELEGIR ADQUISICION Y FASE, SIN EDITAR LA DIRECCION
+   ------------------------------------------------------------
+   La proteccion contra mezclar adquisiciones tiene que dejar seguir. Pedirle a
+   alguien que escriba `?adquisicion=original&fase=3` a mano es trasladarle un
+   detalle de la implementacion y, sobre todo, exige saber que existen esas
+   fases y como se numeran.
+
+   Se listan con lo que hace falta para decidir: cuantas muestras, cuantos
+   vehiculos, cuando se capturo, y para cada fase su duracion. La direccion se
+   actualiza con lo elegido ---sin recargar--- para que el enlace siga sirviendo
+   para compartir lo que uno mira.
+   ============================================================ */
+/* Un largo de tramo, dicho como lo diria una persona. «2.827 s» obliga a
+   dividir mentalmente por sesenta para saber si son minutos o casi una hora. */
+function duracionCorta(segundos) {
+  const t = Math.max(0, Math.round(numeroMedido(segundos) || 0));
+  if (t < 90) return t + " s";
+  const m = Math.floor(t / 60);
+  const r = t % 60;
+  if (m < 60) return m + " min " + (r < 10 ? "0" : "") + r + " s";
+  return Math.floor(m / 60) + " h " + ((m % 60) < 10 ? "0" : "") + (m % 60) + " min";
+}
+
+/* Que es cada tramo, en una linea. El nombre solo no alcanza: «Fase 2» no dice
+   nada, y «Carrera» no dice que las vueltas cronometradas empiezan ahi. */
+function queEsLaFase(a, f) {
+  const fases = a.fases || [];
+  if (fases.length <= 1) return "la adquisición entera; el reloj del juego no se reinicia";
+  if (f.orden === 1) return "antes de la largada: vuelta de formación y parrilla";
+  if (f.orden === fases.length) return "desde la largada: acá empiezan las vueltas cronometradas";
+  if (f.duracion_de_captura_s < 30) return "el coche detenido en la grilla, esperando las luces";
+  return "tramo " + f.orden + ", entre dos reinicios del reloj del juego";
+}
+
+function abrirElectorDeCorrida(ruta, apertura, s) {
+  const velo = document.getElementById("velo-corridas");
+  const cont = document.getElementById("tabla-corridas");
+  const sub = document.getElementById("sub-corridas");
+  const nota = document.getElementById("nota-corridas");
+  if (!velo || !cont) return;
+  _contextoDeCorrida = { ruta: ruta, s: s };
+
+  const lista = corrida.disponibles || [];
+  if (sub) {
+    sub.textContent = corrida.adquisicion
+      ? "mirando « " + etiquetaDeCorrida() + " », de " + lista.length + " adquisiciones"
+      : lista.length + " adquisiciones bajo el mismo identificador";
+  }
+  if (nota) {
+    nota.textContent =
+      "Una adquisición es cada vez que esta sesión se capturó o se reprodujo. " +
+      "Las etapas son los tramos entre reinicios del reloj del juego: en una " +
+      "carrera, la formación, la espera de luces y la carrera propiamente dicha. " +
+      "Se puede cambiar cuando se quiera, con el botón del encabezado.";
+  }
+
+  /* Lo elegido se marca. Un menu que no dice donde estas parado obliga a
+     acordarse, y al volver a abrirlo para cambiar de etapa es lo primero que
+     hace falta saber. */
+  const elegida = (clave, f) => (corrida.adquisicion === clave &&
+    (corrida.fase || null) === (f || null))
+    ? ' data-elegida="si" aria-pressed="true"' : ' aria-pressed="false"';
+
+  cont.innerHTML = lista.map(a => {
+    const cuando = a.desde_utc ? fechaAr(new Date(a.desde_utc)) : "sin fecha";
+    const que = a.es_reproduccion ? "reproducción de prueba" : "captura original";
+    const etapas = a.fases || [];
+    const total = etapas.reduce((t, f) => t + (f.duracion_de_captura_s || 0), 0);
+    /* Con una sola etapa, «Todo» y «Fase unica» son la misma cosa: dos botones
+       que hacen lo mismo obligan a pararse a decidir entre ellos para nada. */
+    const fases = (etapas.length <= 1 ? [] : etapas).map(f =>
+      '<button type="button" class="boton secundario opcion-fase" data-corrida="' +
+      a.clave + '" data-fase="' + f.orden + '" title="' + queEsLaFase(a, f) + '"' +
+      elegida(a.clave, f.orden) + "><b>" + nombreDeFase(a, f) + "</b><small>" +
+      duracionCorta(f.duracion_de_captura_s) + "</small></button>").join("");
+    return '<div class="fila-sesion fila-corrida" data-fuente="f1"' +
+      (corrida.adquisicion === a.clave ? ' data-elegida="si"' : "") + ">" +
+      "<span><b>" + (a.es_reproduccion ? a.clave : "Original") + "</b><br>" +
+      "<small>" + que + " · " + cuando + "</small></span>" +
+      "<span>" + a.vehiculos + (a.vehiculos === 1 ? " vehículo" : " vehículos") +
+      "<br><small>" + cifra(a.muestras_de_vuelta, 0) + " muestras · " +
+      (etapas.length === 1 ? "una sola etapa" : etapas.length + " etapas") +
+      "</small></span>" +
+      '<span class="acciones-corrida">' +
+        '<button type="button" class="boton secundario opcion-fase" data-corrida="' + a.clave +
+        '" data-fase="" title="las etapas seguidas, como se capturaron"' +
+        elegida(a.clave, null) + "><b>Todo</b><small>" + duracionCorta(total) +
+        "</small></button>" + fases +
+      "</span></div>";
+  }).join("");
+
+  cont.querySelectorAll("button[data-corrida]").forEach(b => {
+    b.addEventListener("click", () => {
+      elegirCorrida(b.dataset.corrida, b.dataset.fase ? Number(b.dataset.fase) : null);
+    });
+  });
+
+  velo.dataset.abierto = "si";
+  pintarBotonDeCorrida();
+}
+
+/* CAMBIAR DE ETAPA ES VOLVER A ABRIR, NO SUPERPONER.
+   Las vueltas, las series, las posiciones y el trazado que hay en pantalla son
+   de la etapa anterior. Si no se sueltan, la primera vuelta de la carrera queda
+   dibujada sobre el trazado de la formacion y la linea de tiempo mezcla las
+   dos. Se olvida lo que depende del alcance ---no la sesion, que es la misma---
+   y se anula lo que quedo pedido, que ya no le sirve a nadie. */
+function elegirCorrida(clave, fase) {
+  if (!_contextoDeCorrida) return;
+  const velo = document.getElementById("velo-corridas");
+  if (velo) velo.dataset.abierto = "no";
+
+  corrida.adquisicion = clave;
+  corrida.fase = fase || null;
+
+  /* La direccion refleja lo elegido, sin recargar: el enlace tiene que seguir
+     sirviendo para volver a esto mismo. */
+  try {
+    const u = new URL(location.href);
+    u.searchParams.set("adquisicion", corrida.adquisicion);
+    if (corrida.fase) u.searchParams.set("fase", String(corrida.fase));
+    else u.searchParams.delete("fase");
+    history.replaceState(null, "", u.toString());
+  } catch (e) { /* sin historial se sigue igual */ }
+
+  olvidarLoDeLaCorrida();
+  estadoSesion = "cargado";
+  estado.cargando = true;
+  declararAlcance();
+  pintarBotonDeCorrida();
+  decirEstadoApi("Mirando « " + etiquetaDeCorrida() + " », de " +
+                 (corrida.disponibles || []).length + " adquisiciones.", false);
+  render();
+  cargarDatosDeSesion(_contextoDeCorrida.ruta, nuevaSesionEnCurso(),
+                      senalDeSesion(), _contextoDeCorrida.s);
+}
+
+/* El boton del encabezado dice que se esta mirando y sirve para cambiarlo.
+   Solo aparece cuando hay algo que elegir: en una sesion de una sola
+   adquisicion seria un control que no hace nada. */
+function pintarBotonDeCorrida() {
+  const b = document.getElementById("btn-corrida");
+  if (!b) return;
+  const hay = (corrida.disponibles || []).length > 1;
+  b.hidden = !hay;
+  if (!hay) return;
+  b.textContent = corrida.adquisicion
+    ? "Etapa: " + etiquetaDeCorrida()
+    : "Elegir qué mirar";
+  b.title = corrida.adquisicion
+    ? "Cambiar la adquisición o la etapa que se está mirando"
+    : "Esta sesión guarda varias adquisiciones: elegí cuál mirar";
+}
+
+/* El nombre de una fase se deduce de su sitio y su largo, y se dice como tal:
+   son los tramos que el reloj del juego separa, no etiquetas que la fuente
+   declare. Con una sola fase no hay nada que nombrar. */
+function nombreDeFase(a, f) {
+  const fases = a.fases || [];
+  if (fases.length <= 1) return "Fase única";
+  if (f.orden === fases.length) return "Carrera";
+  if (f.orden === 1) return "Formación";
+  if (f.duracion_de_captura_s < 30) return "Espera de luces";
+  return "Fase " + f.orden;
+}
+
+/* El alcance queda escrito en el documento. No es adorno: permite comprobar
+   desde afuera ---una prueba, el banco de medicion--- que lo que el tablero
+   esta pidiendo es lo que se eligio, en vez de suponerlo por lo que se pulso. */
+function declararAlcance() {
+  try { document.body.dataset.alcanceEnCurso = etiquetaDeCorrida(); } catch (e) {}
+}
+
+function etiquetaDeCorrida() {
+  if (!corrida.adquisicion) return "todo junto";
+  const a = (corrida.disponibles || []).find(x => x.clave === corrida.adquisicion);
+  const base = a && !a.es_reproduccion ? "Original" : corrida.adquisicion;
+  if (!corrida.fase || !a) return base;
+  const f = (a.fases || []).find(x => x.orden === corrida.fase);
+  return base + " · " + (f ? nombreDeFase(a, f) : "fase " + corrida.fase);
+}
+
+/* Lo que se pide una vez resuelto el alcance.
+   Recibe la sesion del catalogo porque la necesita para nombrarla al terminar:
+   dejarla implicita del ambito de `abrirSesion` funcionaba mientras el cuerpo
+   vivia ahi, y al separarlo lanzaba un `ReferenceError` que se veia como «la
+   sesion se abrio a medias». */
+function cargarDatosDeSesion(ruta, apertura, senal, s) {
+  /* Los avisos no hacen falta para dibujar y su consulta puede durar veinte
+     segundos reteniendo una conexion. Se piden cuando ya hay un grafico. */
+  cuandoHayaGrafico(() =>
+  conCarga("avisos", () => pedir(ruta + "/avisos" + sufijoDeCorrida(false), { senal: senal })
+    .then(d => {
+      if (!sigueVigente(apertura)) return;
+      ubicarAvisos(d.avisos || []); estado.avisosMotivo = d.motivo_ausencia || ""; render();
+    })
+    .catch(e => { if (!fueAnulada(e) && e instanceof TypeError) console.error(e); })));
+
+  /* UNA CONSULTA ANULADA NO ES UNA CONSULTA QUE FALLO.
+     Estos `catch` convertian cualquier error en una respuesta de respaldo
+     ---vueltas vacias, clima nulo--- y la cadena seguia. Con la anulacion eso
+     significa que cancelar una apertura no la detiene: escribe igual, encima
+     de la sesion que si esta abierta, un estado vacio con un motivo de error.
+     Se distingue: anulada corta la cadena, fallada declara el motivo. */
+  /* EL CONTEXTO NO PUEDE MATAR LA APERTURA.
+     Estaba dentro del mismo `Promise.all` que las vueltas, y su anulacion
+     cortaba la continuacion entera: sin vueltas, sin trazado, sin coche y sin
+     que la vuelta avanzara. Medido el 2026-09-08 sobre
+     `f1_25:session:10802737583091545160`: `/contexto` tarda **31,42 s** y el
+     corte por tiempo de `pedir` es de 30, de modo que se anulaba **siempre** y
+     esa sesion no se abria nunca del todo. En Spa la misma ruta tarda 0,35 s y
+     por eso el defecto no se veia.
+
+     Clima, estado del vehiculo y puesta a punto son paneles: no hace falta
+     ninguno para dibujar una traza. Se piden aparte y cada uno declara su
+     ausencia si no llega. Lo unico que la apertura necesita esperar son las
+     vueltas. */
+  /* El contexto **tambien** espera. Estaba fuera de la espera porque no mata
+     la apertura, pero no matarla no es lo mismo que no estorbarla: corriendo al
+     lado de `/vueltas` le duplica el tiempo, y ninguno de sus tres paneles hace
+     falta para dibujar una traza. */
+  cuandoHayaGrafico(() =>
+  conCarga(["clima", "vehiculo", "puesta"], () =>
+    pedir(ruta + "/contexto" + sufijoDeCorrida(false), { senal: senal })
+      .then(ctx => {
+        if (!sigueVigente(apertura) || !ctx) return;
+        estado.clima = ctx.clima || null;
+        estado.climaMotivo = ctx.clima_motivo || "";
+        estado.vehiculo = (ctx.esquinas && Object.keys(ctx.esquinas).length)
+          ? { esquinas: ctx.esquinas, carroceria: ctx.carroceria } : null;
+        estado.vehiculoMotivo = ctx.vehiculo_motivo || "";
+        estado.puesta = (ctx.campos && ctx.campos.length) ? ctx : null;
+        if (estado.clima) estado.disponibles.add("air_temperature");
+        if (estado.vehiculo) estado.disponibles.add("tyre_temperature_surface_front_left");
+        _firmaClima = ""; _firmaEsquinas = ""; _firmaPuesta = "";
+        pintarClima(); pintarEsquinas(); pintarPuestaAPunto();
+      })
+      .catch(e => {
+        if (fueAnulada(e)) {
+          estado.climaMotivo = "la consulta de contexto se anuló; se reintenta al mover el cabezal";
+        } else {
+          estado.climaMotivo = e.message || "";
+        }
+        _firmaClima = "";
+        pintarClima();
+      })));
+
+  conCarga(["vueltas"], () => Promise.all([
+    pedir(ruta + "/vueltas" + sufijoDeCorrida(false), { senal: senal })
+      .catch(e => (fueAnulada(e) ? null : { vueltas: [], error: e.message })),
+    Promise.resolve(null),
+    Promise.resolve({}),
+  ]).then(([vueltas, trazado, ctx]) => {
+    /* La conexion que ocupaba lo esencial quedo libre: lo secundario puede
+       salir, haya llegado o no. */
+    laEsencialTermino();
+    if (!sigueVigente(apertura)) {
+      TESTIGO.cortes.vigencia++; TESTIGO.ultimoCorte = "otra apertura la reemplazo";
+      return;
+    }
+    if (vueltas === null) {
+      TESTIGO.cortes.vueltasNulas++; TESTIGO.ultimoCorte = "/vueltas anulada";
+      return;
+    }
+
     estado.vueltas = vueltas.vueltas || [];
+
+    /* QUIEN ES EL VEHICULO PROPIO SE DECIDE UNA VEZ Y ACA.
+       Lo venian decidiendo dos consultas distintas ---la de series y la de
+       posiciones--- segun cual contestara primero, y como la vuelta 1 de una
+       sesion con dos capturas pegadas trae veinte vehiculos, a veces ganaba
+       uno del que la fuente publica posicion y nada mas. El tablero quedaba
+       pidiendo las señales de un vehiculo que no las tiene.
+
+       `/vueltas` ya elige el mas muestreado ---que es el que se conduce, porque
+       de los rivales solo hay cronometraje--- y ahora lo declara. Esa es la
+       respuesta autoritativa y ninguna otra la pisa. */
+    if (vueltas.vehiculo) {
+      estado.vehiculoClave = vueltas.vehiculo;
+      seleccion = new Set([vueltas.vehiculo]);
+      armarAutos([vueltas.vehiculo]);
+    }
+    /* Si alguna vuelta tiene un salto, se dice arriba: es un problema del dato
+       y no del tablero, y quien mira tiene que saberlo antes de sacar una
+       conclusion de la linea de tiempo. */
+    const rotas = estado.vueltas.filter(v => v.continua === false);
+    if (rotas.length) {
+      decirEstadoApi(
+        rotas.length + (rotas.length === 1 ? " vuelta tiene" : " vueltas tienen") +
+        " un salto entre muestras seguidas ---vuelta " +
+        rotas.map(v => v.numero).join(", ") + "---. La reproducción usa la duración " +
+        "de conducción continua; la diferencia contra el tiempo total está declarada " +
+        "en la respuesta de la API.", true);
+    }
     poblarVueltas();
-    estado.clima = clima.clima || null;
-    estado.climaMotivo = clima.motivo_ausencia || "";
-    estado.vehiculo = (vehiculo && vehiculo.esquinas) ? vehiculo : null;
-    estado.vehiculoMotivo = (vehiculo && vehiculo.motivo_ausencia) || "";
-    estado.puesta = (puesta && puesta.puesta_a_punto) || null;
-    estado.avisosMotivo = (avisos && avisos.motivo_ausencia) || "";
-
-    // Que instrumentos se pueden llenar: lo dice lo que vino.
-    if (estado.clima) estado.disponibles.add("air_temperature");
-    if (estado.vehiculo) estado.disponibles.add("tyre_temperature_surface_front_left");
-
+    // Clima, vehiculo y puesta los aplica su propia consulta, arriba.
+    pedirTrazado(ruta);
     if (trazado && trazado.puntos && trazado.puntos.length) {
       estado.trazado = trazado;
       const armado = trazadoAPath(trazado.puntos,
@@ -3296,7 +5031,9 @@ function abrirSesionGuardada(id) {
       };
     }
 
-    ubicarAvisos(avisos.avisos || []);
+    // Los avisos llegan por su cuenta; aca solo se recolocan los que ya haya,
+    // porque ubicarlos necesita las vueltas y recien ahora estan.
+    ubicarAvisos(estado.avisos.map(a => a));
     pedirCurvas(s);
     const primera = estado.vueltas.length ? estado.vueltas[0].numero : 1;
     vueltaElegida = primera;
@@ -3305,7 +5042,15 @@ function abrirSesionGuardada(id) {
     estado.cargando = false;
     render();
     avisar("Sesión abierta: " + nombreDeSesion(s), false);
-  });
+  }).catch(e => {
+    /* Una excepcion aca dejaba la apertura a medias **en silencio**: el
+       `.then` no tenia captura y el fallo se perdia como rechazo no atendido.
+       Se veia como un tablero sin trazado y sin vueltas, sin ningun error. */
+    TESTIGO.cortes.excepcion++;
+    TESTIGO.ultimoCorte = (e && e.message) ? e.message : String(e);
+    console.error("apertura interrumpida:", e);
+    avisar("La sesión se abrió a medias: " + TESTIGO.ultimoCorte, true);
+  }));
 }
 
 /* EL INSTANTE QUE SE ESTA MIRANDO, EN HORA UTC.
@@ -3345,27 +5090,100 @@ function refrescarContexto() {
   const t = instante();
   const clave = estado.abierta.session_id + "|" + t.vuelta;
   if (clave === _contextoDe) return;
+  /* El instante se resuelve **antes** de anotar que hay una consulta en curso.
+     Al reves ---como estaba--- una sesion sin instante utc dejaba la marca
+     puesta y el contexto no se volvia a pedir nunca. */
+  const cuando = instanteUtc();
+  if (!cuando) return;
   _contextoDe = clave;
   _contextoUltimo = ahora;
   _contextoEnVuelo = true;
-  const cuando = instanteUtc();
-  if (!cuando) return;
+  const apertura = aperturaVigente();
   const ruta = "/sesiones/" + encodeURIComponent(estado.abierta.session_id);
-  const hasta = "?hasta=" + encodeURIComponent(cuando);
-  let pendientes = 2;
-  const listo = () => { if (--pendientes <= 0) _contextoEnVuelo = false; };
-  pedir(ruta + "/clima" + hasta).then(d => {
-    estado.clima = d.clima || null;
-    estado.climaMotivo = d.motivo_ausencia || "";
-    _firmaClima = "";
-    pintarClima();
-  }).catch(() => {}).then(listo);
-  pedir(ruta + "/vehiculo" + hasta).then(d => {
-    estado.vehiculo = d.esquinas ? d : null;
-    estado.vehiculoMotivo = d.motivo_ausencia || "";
-    _firmaEsquinas = "";
-    pintarEsquinas();
-  }).catch(() => {}).then(listo);
+
+  /* UNA SOLA CONSULTA PARA LAS TRES PARTES DEL CONTEXTO.
+     Clima, estado del vehiculo y puesta a punto se piden siempre juntos y
+     siempre al mismo instante. Eran tres viajes de red y tres idas a la base
+     para responder la misma pregunta, en cada cambio de vuelta.
+
+     Y no es solo velocidad: pedidos por separado pueden volver de instantes
+     distintos si uno tarda mas que otro, y el panel mostraria el clima de un
+     momento y el neumatico de otro. */
+  conCarga(["clima", "vehiculo", "puesta"], () =>
+    pedir(ruta + "/contexto?hasta=" + encodeURIComponent(cuando) + sufijoDeCorrida(true),
+          { senal: senalDeSesion() })
+      .then(d => {
+        if (!sigueVigente(apertura)) return;
+        estado.clima = d.clima || null;
+        estado.climaMotivo = d.clima_motivo || "";
+        estado.vehiculo = (d.esquinas && Object.keys(d.esquinas).length)
+          ? { esquinas: d.esquinas, carroceria: d.carroceria } : null;
+        estado.vehiculoMotivo = d.vehiculo_motivo || "";
+        estado.puesta = (d.campos && d.campos.length) ? d : null;
+        _firmaClima = ""; _firmaEsquinas = ""; _firmaPuesta = "";
+        pintarClima(); pintarEsquinas(); pintarPuestaAPunto();
+      })
+      .catch(e => {
+        // Si fallo, la clave se limpia para que el proximo intento vuelva a
+        // pedirlo en vez de creer que ya lo tiene.
+        _contextoDe = "";
+        if (!fueAnulada(e) && e instanceof TypeError) console.error(e);
+      })
+      .then(() => { _contextoEnVuelo = false; }));
+}
+
+/* ============================================================
+   LA PUESTA A PUNTO
+   ------------------------------------------------------------
+   Cinco campos, y la mitad del valor de este panel esta en decir cuales de
+   ellos son una medicion legible y cuales son un codigo que el trabajo
+   todavia no puede traducir. Un panel que muestra «compuesto: 7» sin decir
+   que 7 es un codigo invita a leerlo como una cantidad.
+   ============================================================ */
+const ROTULO_PUESTA = {
+  sesgo_de_freno_pct: "Sesgo de freno",
+  mezcla_de_combustible: "Mezcla de combustible",
+  modo_de_despliegue_ers: "Modo de ERS",
+  compuesto: "Compuesto",
+  edad_del_neumatico_vueltas: "Edad del neumático",
+};
+
+let _firmaPuesta = "";
+
+function pintarPuestaAPunto() {
+  const cont = document.getElementById("lista-puesta");
+  if (!cont) return;
+  const d = estado.puesta;
+  const campos = (d && d.campos) || [];
+  const firma = [estadoSesion, JSON.stringify(campos), tinta("--acento")].join("|");
+  if (firma === _firmaPuesta) return;
+  _firmaPuesta = firma;
+
+  const motivo = document.getElementById("motivo-puesta");
+  if (motivo) motivo.textContent = (d && d.motivo_ausencia) ||
+    "Esta fuente no publica configuración del vehículo.";
+
+  cont.innerHTML = campos.map(c => {
+    const rot = ROTULO_PUESTA[c.clave] || c.clave;
+    const valor = c.decodificado
+      ? cifra(c.valor, c.clave === "sesgo_de_freno_pct" ? 0 : 0) + " " + (c.unidad || "")
+      : '<span class="codigo-crudo">' + cifra(c.valor, 0) + '</span>';
+    return '<div title="Canal: ' + c.canal + '"><dt>' + rot + '</dt><dd>' + valor + '</dd></div>';
+  }).join("");
+
+  const sinDecodificar = (d && d.sin_decodificar) || [];
+  const nota = document.getElementById("nota-puesta");
+  if (nota) {
+    nota.textContent = sinDecodificar.length
+      ? "Los valores en gris son códigos de la especificación del juego. El " +
+        "trabajo todavía no cita la tabla que los traduce, y traducirlos de " +
+        "memoria pondría una anotación sin fuente donde hoy hay una medición."
+      : "";
+  }
+  const cab = document.getElementById("canal-puesta");
+  if (cab) cab.textContent = campos.length
+    ? campos.length + " campos · " + (campos.length - sinDecodificar.length) + " legibles"
+    : "—";
 }
 
 /* Cada aviso trae vuelta y metro; para colocarlo en la linea de tiempo hace
@@ -3383,16 +5201,67 @@ function ubicarAvisos(lista) {
   }).sort((x, y) => x.en - y.en);
 }
 
+/* EL TRAZADO SE DIBUJA CON UNA VUELTA COMPLETA Y SIN SALTOS.
+   Sin elegir vuelta, la API contesta con la primera, y si esa vuelta tiene un
+   salto de horas ---dos cargas de la misma sesion pegadas--- el recorrido sale
+   con tramos que no se recorrieron: el circuito se ve deformado. Se elige la
+   primera vuelta que sea continua y completa; si no hay ninguna, se pide sin
+   elegir y se declara. */
+function pedirTrazado(ruta) {
+  const buena = estado.vueltas.find(v => v.continua !== false && v.completa);
+  const cual = buena ? "&vuelta=" + buena.numero : "";
+  TESTIGO.trazadosPedidos++;
+  conCarga("trazado", () =>
+  pedir(ruta + "/trazado?puntos=600" + cual + sufijoDeCorrida(true), { senal: senalDeSesion() })
+    .then(t => {
+      if (!t || !t.puntos || !t.puntos.length) { TESTIGO.trazadosDescartados++; return; }
+      TESTIGO.trazadosAplicados++;
+      estado.trazado = t;
+      const armado = trazadoAPath(t.puntos,
+        /invertir/i.test(t.para_dibujarlo || "") &&
+        !/no invertir/i.test(t.para_dibujarlo || ""));
+      PISTA = {
+        path: armado.path,
+        largo_m: t.largo_m,
+        desnivel_m: t.desnivel_m,
+        muestras: t.muestras_originales,
+        vuelta: t.vuelta,
+        curvas: CURVAS,
+      };
+      const svg = document.getElementById("linea-pista");
+      if (svg && svg.ownerSVGElement) delete svg.ownerSVGElement.dataset.ajustado;
+      const g = document.getElementById("marcas-pista");
+      if (g) g.dataset.firma = "";
+      render();
+    })
+    .catch(e => { if (e instanceof TypeError) console.error(e); }));
+}
+
 /* Los nombres de curva son anotacion externa citada: se piden por circuito y
    solo si la sesion declara cual es. Sin procedencia no hay nombres, y el
    trazado se dibuja igual con sus metros. */
 function pedirCurvas(s) {
   const circuito = (s.procedencia && s.procedencia.circuito) || s.circuito;
   if (!circuito) { CURVAS = []; return; }
-  pedir("/circuitos/" + encodeURIComponent(circuito) + "/curvas")
+  conCarga("curvas", () =>
+  pedir("/circuitos/" + encodeURIComponent(circuito) + "/curvas", { senal: senalDeSesion() })
     .then(d => { CURVAS = d.curvas || []; PISTA.curvas = CURVAS; render(); })
-    .catch(() => { CURVAS = []; });
+    .catch(() => { CURVAS = []; }));
 }
+
+(function controlesDelElector() {
+  const cerrar = document.getElementById("btn-cerrar-corridas");
+  if (cerrar) cerrar.addEventListener("click", () => {
+    document.getElementById("velo-corridas").dataset.abierto = "no";
+  });
+  /* Volver a abrirlo. Sin esto la unica forma de cambiar de etapa era editar la
+     direccion, que es justo lo que el elector vino a evitar. */
+  const abrir = document.getElementById("btn-corrida");
+  if (abrir) abrir.addEventListener("click", () => {
+    if (!_contextoDeCorrida) return;
+    abrirElectorDeCorrida(_contextoDeCorrida.ruta, aperturaVigente(), _contextoDeCorrida.s);
+  });
+})();
 
 document.getElementById("btn-abrir").addEventListener("click", () => {
   document.getElementById("velo-sesiones").dataset.abierto = "si";
@@ -3553,10 +5422,32 @@ function calcularInstante() {
     };
     const velocidad = leer("speed");
     const vuelta = vivo.vuelta.get(vehiculo) || 1;
-    const metro = vivo.distancia.get(vehiculo) || 0;
+    /* `|| 0` convertia «todavia no se» en el metro cero, que es una posicion
+       de la pista como cualquier otra. Se distingue: sin distancia declarada,
+       la fraccion no se calcula y el coche no se coloca en ningun lado. */
+    const hayMetro = vivo.distancia.has(vehiculo);
+    const metro = hayMetro ? vivo.distancia.get(vehiculo) : 0;
     return {
       listo: velocidad !== null, indice: 0, vuelta: vuelta,
-      vueltas: Math.max(vuelta, estado.vueltas.length || 1), fraccion: 1,
+      vueltas: Math.max(vuelta, estado.vueltas.length || 1),
+      /* DONDE VA EL COCHE EN VIVO, Y SON DOS CASOS DISTINTOS.
+
+         Mientras el recorrido se esta midiendo, el camino dibujado **termina
+         donde esta el coche**: el ultimo punto del trazo es su ultima posicion
+         medida, de modo que la fraccion es uno y eso es exacto, no un relleno.
+
+         Una vez congelado el circuito ---al cerrar la primera vuelta--- el
+         camino ya no crece y el coche se ubica por la distancia que declara,
+         igual que en una sesion guardada.
+
+         Antes esto estaba fijo en uno **siempre**, incluido el caso del
+         circuito completo, y ahi si era el final del trazado para siempre:
+         medido el 2026-09-08, 283.768 muestras en 300 s y la marca se movio
+         tres veces. */
+      fraccion: PISTA.enConstruccion
+        ? 1
+        : ((hayMetro && PISTA.largo_m && Number.isFinite(metro))
+            ? Math.max(0, Math.min(1, metro / PISTA.largo_m)) : 0),
       fraccionSesion: 1, segundos: 0, metro: metro, velocidad: velocidad,
       acelerador: leer("throttle"), freno: leer("brake"), rpm: leer("rpm"),
       marcha: leer("gear"), gLong: leer("glong"), gLat: leer("glat"),
@@ -3579,14 +5470,23 @@ function calcularInstante() {
   const parte = total > 0 ? duracionDeVuelta(vuelta) / total : 0;
   const dentro = parte > 0 ? Math.max(0, Math.min(1, (cabezal - ini) / parte)) : 0;
 
-  const dist = serieDeCanal("speed", vuelta);
+  /* LA CLAVE DEL VEHICULO VA SIEMPRE.
+     `serieDeCanal` exige saber de que vehiculo se pide la señal, y esta bien
+     que lo exija: en una sesion con varios, «la serie» sin decir de quien no
+     significa nada. Pero aca se la estaba llamando sin ella y devolvia vacio,
+     de modo que el instante entero quedaba sin datos: los medidores mostraban
+     rayas, el transporte decia «0 m» y los graficos ---que si pasaban la
+     clave--- dibujaban su escala y ningun trazo, porque la ventana movil se
+     apoya en ese metro que valia cero. */
+  const propioAqui = claveVehiculoPropio();
+  const dist = serieDeCanal("speed", vuelta, propioAqui);
   const listo = !!(dist && dist.length);
   const idx = listo ? Math.min(dist.length - 1, Math.round(dentro * (dist.length - 1))) : 0;
 
   // Lee una señal en el mismo punto de la vuelta. Cada señal puede tener su
   // propia cantidad de muestras: se ubica por fraccion, no por indice.
   const leer = (canal) => {
-    const s = serieDeCanal(canal, vuelta);
+    const s = serieDeCanal(canal, vuelta, propioAqui);
     if (!s || !s.length) return null;
     return s[Math.min(s.length - 1, Math.round(dentro * (s.length - 1)))][1];
   };
@@ -3623,7 +5523,8 @@ function calcularInstante() {
     frenando: (v !== null && sig !== null) ? Math.max(0, v - sig) : 0,
     avance: cabezal,
     vueltasRestantes: Math.max(0, n - vuelta),
-    sesgoFreno: estado.puesta ? estado.puesta.sesgo_de_freno_pct : null,
+    sesgoFreno: (estado.puesta && estado.puesta.puesta_a_punto)
+      ? estado.puesta.puesta_a_punto.sesgo_de_freno_pct : null,
   };
 }
 
@@ -3693,8 +5594,17 @@ function pintarTransporte() {
     for (let v = 1; v <= n; v++) {
       const x = ((v - 1) / n) * 100;
       const rotula = (v === 1) || (v % cada === 0);
+      /* Una vuelta con un salto entre muestras no se rodo de corrido: hay
+         tiempo que no esta. Se marca sobre la propia linea de tiempo, porque
+         es ahi donde alguien se pregunta por que el cabezal se comporta raro. */
+      const datos = estado.vueltas[v - 1] || {};
+      const rota = datos.continua === false;
+      const cuanto = rota ? Math.round(datos.hueco_mayor_s / 60) : 0;
       html += '<span class="marca-vuelta' + (v === t.vuelta ? " actual" : "") +
-        '" style="left:' + x.toFixed(2) + '%" title="Vuelta ' + v + '">' +
+        (rota ? " rota" : "") + '" style="left:' + x.toFixed(2) + '%" title="Vuelta ' + v +
+        (rota ? ": tiene un salto de " + cifra(cuanto, 0) +
+                " minutos entre dos muestras seguidas. La duración que se usa es la " +
+                "de conducción continua." : "") + '">' +
         (rotula ? v : "·") + '</span>';
     }
     marcas.innerHTML = html;
@@ -3725,6 +5635,7 @@ function olvidarCaches() {
   _firmaAvisos = "";
   _firmaEsquinas = "";
   _firmaClima = "";
+  _firmaPuesta = "";
   _ultimaVueltaDibujada = -1;
   const g = document.getElementById("marcas-pista");
   if (g) g.dataset.firma = "";
@@ -3759,18 +5670,35 @@ function moverCabezal(fraccion) {
   const vActual = instante().vuelta;
   if (vActual !== _ultimaVueltaDibujada) {
     _ultimaVueltaDibujada = vActual;
-    /* Primero lo que se necesita **ahora**; lo de la vuelta siguiente sale
-       cuando lo de esta ya llego. Pedir las dos juntas ponia ocho consultas en
-       vuelo a la vez y el navegador solo abre seis: la que hacia falta para
-       dibujar quedaba haciendo cola detras de una que todavia no se mira. */
-    asegurarVuelta(vActual);
-    asegurarPosiciones(vActual);
-    refrescarContexto();
-    clearTimeout(_relojSiguiente);
-    _relojSiguiente = setTimeout(() => {
-      asegurarVuelta(vActual + 1);
-      asegurarPosiciones(vActual + 1);
-    }, 1200);
+    /* NO SE PIDE NADA MIENTRAS EL CABEZAL SE MUEVE.
+       Arrastrando la linea de tiempo se cruzan diez vueltas en un segundo, y
+       cada cruce disparaba las consultas de esa vuelta: diez tandas de datos
+       que nadie va a mirar, todas compitiendo con la unica que importa, que es
+       la del sitio donde uno solto el cursor.
+
+       Se espera a que el cabezal se quede quieto. Doscientos milisegundos
+       alcanzan para distinguir un arrastre de una parada, y son invisibles
+       reproduciendo, donde entre vuelta y vuelta pasan segundos. */
+    clearTimeout(_relojPedidos);
+    _relojPedidos = setTimeout(() => {
+      const v = instante().vuelta;
+      asegurarVuelta(v);
+      asegurarPosiciones(v);
+      refrescarContexto();
+      /* Lo de la vuelta siguiente sale cuando lo de esta ya esta en camino:
+         pedir las dos juntas ponia ocho consultas en vuelo y el navegador
+         abre seis, de modo que la que hacia falta para dibujar quedaba
+         haciendo cola detras de una que todavia no se mira. */
+      clearTimeout(_relojSiguiente);
+      _relojSiguiente = setTimeout(() => {
+        /* Solo si esa vuelta existe. En la ultima vuelta de la sesion esto
+           pedia la siguiente igual: dos consultas por cada final de carrera
+           que la API solo puede contestar con una lista vacia. */
+        if (!estado.vueltas.some(x => x.numero === v + 1)) return;
+        asegurarVuelta(v + 1);
+        asegurarPosiciones(v + 1);
+      }, 1200);
+    }, 200);
   }
   /* Los graficos no se vuelven a trazar: su traza es la de la vuelta y no
      cambia al avanzar el cabezal. Lo unico que se mueve es la linea. */
@@ -3798,6 +5726,7 @@ let _ultimaComparacion = 0;
 let _ultimaVueltaDibujada = -1;
 let _ultimaTraza = 0;
 let _relojSiguiente = null;
+let _relojPedidos = null;
 
 /* Cuantos metros de vuelta entran en cada grafico. Cero es la vuelta entera.
    Es el mando que decide si se mira una frenada o la vuelta completa: con
@@ -4017,10 +5946,33 @@ function pintarCronometraje() {
    que frecuencia. Es la afirmacion central del trabajo y no puede depender
    de que alguien acuerde de actualizar una tabla.
    ============================================================ */
+const INTENTOS_DE_MATRIZ = 12;
+
+function pedirMatriz(intento) {
+  pedir("/fuentes/matriz")
+    .then(m => {
+      estado.matriz = m;
+      pintarMatriz();
+      if (m && m.sin_medir && intento < INTENTOS_DE_MATRIZ) {
+        setTimeout(() => pedirMatriz(intento + 1), 10000);
+      }
+    })
+    .catch(e => { if (!fueAnulada(e) && e instanceof TypeError) console.error(e); });
+}
+
 function pintarMatriz() {
   const m = estado.matriz;
   const tabla = document.querySelector("table.disponibilidad");
   if (!m || !tabla) return;
+
+  /* Todavia no hay medicion. Se dice, con su motivo, en vez de dibujar una
+     tabla vacia que se leeria como "ninguna fuente sostiene nada". */
+  if (m.sin_medir) {
+    const inst = tabla.closest(".instrumento");
+    const pieSin = inst ? inst.querySelector(".fuente-canal") : null;
+    if (pieSin) pieSin.textContent = m.motivo_ausencia || "midiendo...";
+    return;
+  }
 
   const orden = ["f1_25_udp_simulation", "openf1_historical_replay", "can_real_replay"];
   const fuentes = orden
@@ -4070,12 +6022,115 @@ function pintarMatriz() {
    propiedad de la sesión y no del cabezal: no cambia mientras se reproduce. */
 let _vigilanciaPedida = null;
 
+/* NO SE PIDE MIENTRAS LA SESION SE ESTA ABRIENDO.
+   Medido en el navegador el 2026-09-08, sobre la sesion de Spa y con el backend
+   recien arrancado: esta consulta tarda 29,8 s en frio, y mientras corre
+   **bloquea a todas las demas**. `/fuentes/matriz`, que sola tarda 0,01 s,
+   tardo 30 s en esa misma corrida; `/vueltas`, que sola tarda 1,4 s, tardo 16,7.
+   No es la base: es trabajo de Python sobre muchas filas, que retiene el
+   interprete mientras dura.
+
+   Es un panel secundario ---que senales, si se pierden, merecen alarma--- y no
+   hace falta para dibujar nada. Se pide despues, cuando el tablero ya tiene su
+   primer trazo y las consultas que si hacen falta ya volvieron.
+
+   Es una espera declarada, no un descarte: el panel dice que la esta esperando,
+   y la respuesta se guarda en el backend, de modo que la segunda visita a la
+   misma sesion la tiene enseguida. */
+/* ============================================================
+   LO SECUNDARIO ESPERA A QUE HAYA UN GRAFICO
+   ------------------------------------------------------------
+   Un navegador abre **seis conexiones por origen**. El flujo en vivo retiene
+   una para siempre, y al abrir una sesion hay quince consultas que hacer. Con
+   dos de ellas ---avisos y vigilancia--- ocupando una conexion cada una
+   durante veinte segundos, quedan tres para todo lo demas, incluida la unica
+   que hace falta para dibujar.
+
+   Medido el 2026-09-08 y es lo que lo demuestra: `/fuentes/matriz` tardo
+   4,04 s vistos desde el navegador y **no figura entre las consultas lentas
+   que el backend registro**. Ese tiempo no lo paso siendo atendida: lo paso
+   esperando una conexion libre.
+
+   El backend no era el problema. Medido en la misma corrida: el retraso del
+   bucle de asyncio fue de 8,7 ms de mediana y 23,5 ms el peor, y el pico de
+   peticiones simultaneas fue cinco. Con una consulta pesada corriendo al lado,
+   `/series` pasa de 1,91 s a 3,17 s ---1,7x, reparto normal de una base--- y no
+   de 1,9 a 12.
+
+   Asi que lo secundario espera. No se cancela ni se descarta: se pide en cuanto
+   hay un trazo dibujado, o a los doce segundos si no llega a haberlo, para que
+   un tablero sin datos no deje de pedir lo que si podria mostrar.
+   ============================================================ */
+/* DOCE SEGUNDOS NO ERAN LA CONDICION CORRECTA.
+   La espera se soltaba por reloj, y en una sesion grande eso cae **en medio**
+   de la consulta que hace falta para dibujar: lo secundario arrancaba mientras
+   `/vueltas` todavia estaba corriendo, que es exactamente lo que se queria
+   evitar.
+
+   Medido el 2026-09-08 sobre Spa en `original`, fase 3, con el proceso recien
+   arrancado. De a una y en caliente: `/vueltas` 3,07 s, `/contexto` 2,59 s,
+   `/avisos` 0,01 s. Las mismas cuatro ---con `/vigilancia`--- lanzadas juntas
+   desde el navegador: 45,3, 45,8, 41,2 y 42,5 s **cada una**, medidas del lado
+   del servidor. No es reparto: la base es el recurso serie y correr cuatro
+   consultas pesadas a la vez no las hace terminar antes, hace que terminen
+   todas tarde. El navegador corto las cuatro a los 30 s y no se dibujo nada.
+
+   Asi que la condicion pasa a ser la que importa: **que lo esencial ya este
+   resuelto**, con o sin exito. El tope por reloj se conserva como red ---si
+   `/vueltas` se colgara--- pero por encima del corte de 30 s de `pedir`, de
+   modo que en la practica siempre se suelta por la primera condicion. */
+const ESPERA_MAXIMA_DE_CORTESIA_MS = 35000;
+let _enEspera = [];
+let _relojCortesia = null;
+let _esencialResuelta = false;
+
+/* Lo esencial son las vueltas: sin ellas no hay eje ni duracion, y con ellas
+   ya se puede dibujar. Se marca tanto si llegaron como si fallaron: lo que
+   libera a lo secundario no es el exito, es que la conexion quedo libre. */
+function laEsencialTermino() {
+  _esencialResuelta = true;
+  if (!_enEspera.length) return;
+  const cola = _enEspera;
+  _enEspera = [];
+  cola.forEach(f => { try { f(); } catch (e) { console.error(e); } });
+}
+
+function cuandoHayaGrafico(hacer) {
+  if (document.body.dataset.primerTrazoMs || _esencialResuelta) { hacer(); return; }
+  _enEspera.push(hacer);
+  if (_relojCortesia) return;
+  const desde = performance.now();
+  const mirar = () => {
+    const listo = !!document.body.dataset.primerTrazoMs || _esencialResuelta;
+    if (listo || performance.now() - desde > ESPERA_MAXIMA_DE_CORTESIA_MS) {
+      _relojCortesia = null;
+      const cola = _enEspera;
+      _enEspera = [];
+      cola.forEach(f => { try { f(); } catch (e) { console.error(e); } });
+      return;
+    }
+    _relojCortesia = setTimeout(mirar, 250);
+  };
+  _relojCortesia = setTimeout(mirar, 250);
+}
+
+const ESPERA_ANTES_DE_VIGILANCIA_MS = 4000;
+let _relojVigilancia = null;
+
 function asegurarVigilancia() {
   if (!estado.abierta) return;
   const id = estado.abierta.session_id;
   if (_vigilanciaPedida === id) return;
   _vigilanciaPedida = id;
-  pedir("/analisis/" + encodeURIComponent(id) + "/vigilancia")
+  clearTimeout(_relojVigilancia);
+  cuandoHayaGrafico(() => {
+    _relojVigilancia = setTimeout(() => pedirVigilancia(id), ESPERA_ANTES_DE_VIGILANCIA_MS);
+  });
+}
+
+function pedirVigilancia(id) {
+  if (_vigilanciaPedida !== id) return;
+  pedir("/analisis/" + encodeURIComponent(id) + "/vigilancia", { senal: senalDeSesion() })
     .then(d => {
       if (_vigilanciaPedida !== id) return;   // cambió la sesión mientras tanto
       estado.vigilancia = d;
@@ -4083,7 +6138,7 @@ function asegurarVigilancia() {
       render();
     })
     .catch(e => {
-      if (_vigilanciaPedida !== id) return;
+      if (_vigilanciaPedida !== id || fueAnulada(e)) return;
       estado.vigilancia = null;
       /* El backend explica por qué no puede, y ese motivo está escrito para
          leerse. Reemplazarlo por «no disponible» sería perder la explicación. */
@@ -4163,19 +6218,205 @@ function pintarVigilancia() {
     : "";
 }
 
+/* ============================================================
+   TESTIGOS: EVIDENCIA DE QUE ALGO CAMBIO EN PANTALLA
+   ------------------------------------------------------------
+   Un contador de `requestAnimationFrame` demuestra que el navegador entrego
+   cuadros. No demuestra que el coche se haya movido, ni que un grafico haya
+   mostrado un dato nuevo, ni que lo que se ve sea reciente. Son afirmaciones
+   distintas, y hasta ahora la primera se estaba usando para sostener las
+   otras: sesenta cuadros por segundo dibujando exactamente lo mismo dan el
+   mismo numero que sesenta cuadros dibujando telemetria que avanza.
+
+   Esto anota lo que de verdad cambio. Cuesta un puñado de comparaciones por
+   cuadro y tiene memoria acotada ---contadores y un anillo de mil latencias,
+   no un registro por mensaje---, de modo que puede quedar siempre encendido:
+   una instrumentacion que hay que activar no esta cuando hace falta.
+
+   SOBRE LA LATENCIA QUE MIDE. Es **de la recepcion del evento en el navegador
+   hasta el pintado que lo incluye**, y nada mas. No es extremo a extremo: el
+   reloj de la captura y el de esta maquina no tienen un origen comparable, y
+   restarlos daria un numero con aspecto de medicion. Tampoco es el instante en
+   que la pantalla se ilumina: es la llamada de dibujo, que ocurre antes.
+   ============================================================ */
+const LATENCIAS_RECORDADAS = 1000;
+const TESTIGO = {
+  //: Cuantas veces se ejecuto el dibujo del trazado.
+  pintadosDePista: 0,
+  //: De esas, cuantas movieron de verdad alguna marca de vehiculo.
+  movimientosDeCoche: 0,
+  //: Cuantas veces se redibujaron las trazas, y cuantas con dato distinto.
+  dibujosDeTraza: 0,
+  trazasConDatoNuevo: 0,
+  //: Camino vivo.
+  muestrasIncorporadas: 0,
+  pintadosDeValores: 0,
+  //: Anillo de latencias recepcion -> pintado, en milisegundos.
+  latencias: [],
+  //: Cuando llego la primera muestra todavia no reflejada en pantalla.
+  pendienteDesde: null,
+  //: El camino de la posicion, tramo por tramo. Sin esto no se puede decir
+  //: donde se pierden: la fuente entrega veinte por segundo y el marcador se
+  //: movia ocho, y atribuirlo a la fuente sin medir seria adivinar.
+  //: LA CUENTA DEL CAMINO VIVO, TRAMO POR TRAMO.
+  //: Sin separar los motivos, «llegan 675 de 1.856» no dice donde buscar.
+  eventosSSE: 0,            // el manejador del EventSource se ejecuto
+  descarteFuente: 0,        // no es F1 25, o le falta un campo obligatorio
+  descarteDuplicado: 0,     // ya se habia incorporado esa identidad
+  descarteNoAdoptada: 0,    // es de una sesion que este tablero no sigue
+  descarteRecuperacionVieja: 0,
+  //: Cuantas x y cuantas z llegaron. El par necesita las dos de la misma
+  //: marca, de modo que una perdida del 50 % en cada una deja un cuarto de
+  //: los pares: el emparejamiento amplifica la perdida al cuadrado.
+  llegaronX: 0,
+  llegaronZ: 0,
+  paresRotos: 0,            // llego una y su companera no tenia la misma marca
+  posicionesConLasDos: 0,   // llego el par (x, z) con la misma marca
+  posicionesDistintas: 0,   // y ademas distinto del punto anterior
+  pintadosSinCambio: 0,     // se pinto y la marca ya estaba donde va
+  //: Cuantas veces se abrio una sesion y cuantas se pidio y se aplico el
+  //: trazado. Abrir de mas no es solo trabajo repetido: cada apertura anula la
+  //: anterior, y el trazado que venia en camino se pierde con ella.
+  aperturas: 0,
+  //: Por que se corto una apertura, si se corto. Una apertura que termina
+  //: temprano deja el tablero a medias sin decir nada, y sin esto la unica
+  //: pista es que faltan cosas en pantalla.
+  cortes: { vigencia: 0, vueltasNulas: 0, contextoNulo: 0, excepcion: 0 },
+  ultimoCorte: "",
+  trazadosPedidos: 0,
+  trazadosAplicados: 0,
+  trazadosDescartados: 0,
+  //: Cuantas muestras se juntaron en el pintado anterior. Con agrupamiento,
+  //: una actualizacion visual representa varias muestras y solo muestra la
+  //: ultima de cada canal: contar una por muestra seria falso.
+  muestrasPorPintado: [],
+  pendientes: 0,
+};
+
+function anotarLatencia(ms) {
+  TESTIGO.latencias.push(ms);
+  if (TESTIGO.latencias.length > LATENCIAS_RECORDADAS) TESTIGO.latencias.shift();
+}
+
+/* Lo publica en el objeto global para que un banco de medicion externo pueda
+   leerlo: las variables de modulo no son propiedades de `window`. */
+/* Antiguedad de lo que se esta mostrando, canal por canal. Un tablero puede
+   tener sesenta cuadros por segundo y estar mostrando un valor de hace diez
+   segundos: son dos cosas distintas y hay que poder preguntarlas por separado.
+
+   Se mide contra el reloj de esta maquina y contra el instante de recepcion,
+   nunca contra la marca de la fuente: esa viene de otro reloj. */
+TESTIGO.antiguedades = function () {
+  const salida = {};
+  try {
+    const clave = estado.vehiculoClave;
+    const ultimos = vivo.ultimos.get(clave);
+    if (!ultimos) return salida;
+    const ahora = performance.now();
+    ultimos.forEach((m, senal) => {
+      if (m && typeof m._recibidoEnMs === "number") {
+        salida[senal] = Math.round(ahora - m._recibidoEnMs);
+      }
+    });
+  } catch (e) { /* sin sesion viva no hay nada que declarar */ }
+  return salida;
+};
+
+window.TESTIGO = TESTIGO;
+
 /* ---------------- render ---------------- */
+/* ============================================================
+   TRES CLASES DE TRABAJO, Y UN SOLO CUADRO
+   ------------------------------------------------------------
+   No todo lo que dibuja este tablero cuesta lo mismo ni cambia con la misma
+   frecuencia. Hay tres cosas distintas mezcladas en una sola pasada:
+
+   * **estructura**: que paneles existen, que vehiculos hay, que canales tiene
+     la fuente, que opciones traen las listas. Cambia al abrir una sesion, al
+     cambiar de fuente y al elegir otro vehiculo. Nunca por una muestra;
+
+   * **valores**: los numeros de los instrumentos. Cambian con el cabezal, o
+     sea muchas veces por segundo;
+
+   * **trazas**: los lienzos. Cambian con el cabezal y con la ventana.
+
+   Estaban las tres juntas, de modo que **cada muestra que llegaba en vivo
+   rehacia las listas desplegables**. Ademas de trabajo, eso pisa el foco del
+   teclado: quien estuviera tipeando en el buscador de sesiones lo perdia.
+
+   `pedirPintado` junta lo que se pida dentro del mismo cuadro y lo hace una
+   sola vez. Se piden capas, no funciones, y pedir dos veces la misma capa en
+   el mismo cuadro la dibuja una vez.
+   ============================================================ */
+let _pedidoDePintado = 0;
+const _capasPedidas = { estructura: false, valores: false, trazas: false };
+
+function pedirPintado(capas) {
+  (Array.isArray(capas) ? capas : [capas]).forEach(c => { _capasPedidas[c] = true; });
+  /* Con la pestana oculta no hay nada que mirar, y el navegador no entrega
+     cuadros igual: el pedido quedaria en cola y se acumularia. Lo pedido se
+     conserva ---no se pierde la ultima actualizacion--- y se dibuja de una sola
+     vez al volver, con lo que haya en ese momento, que es lo correcto: lo
+     intermedio ya no le sirve a nadie. */
+  if (typeof document !== "undefined" && document.hidden) return;
+  if (_pedidoDePintado) return;
+  _pedidoDePintado = requestAnimationFrame(() => {
+    _pedidoDePintado = 0;
+    const pedidas = Object.assign({}, _capasPedidas);
+    _capasPedidas.estructura = _capasPedidas.valores = _capasPedidas.trazas = false;
+    if (pedidas.estructura) pintarEstructura();
+    if (pedidas.valores) pintarValores();
+    if (pedidas.trazas) pintarTrazas();
+  });
+}
+
+function pintarEstructura() {
+  pintarCiclo(); aplicarDisponibilidad(); pintarAutos();
+  pintarControlesTraza(); pintarLeyendaTraza();
+  if (compAbierta()) pintarPilotosComparacion();
+}
+
+function pintarValores() {
+  TESTIGO.pintadosDeValores++;
+  if (TESTIGO.pendienteDesde !== null) {
+    anotarLatencia(performance.now() - TESTIGO.pendienteDesde);
+    /* Cuantas muestras representa este pintado. Con agrupamiento una
+       actualizacion visual refleja varias y solo se ve la ultima de cada
+       canal: contar una actualizacion por muestra seria falso. */
+    TESTIGO.muestrasPorPintado.push(TESTIGO.pendientes);
+    if (TESTIGO.muestrasPorPintado.length > LATENCIAS_RECORDADAS) {
+      TESTIGO.muestrasPorPintado.shift();
+    }
+    TESTIGO.pendienteDesde = null;
+    TESTIGO.pendientes = 0;
+  }
+  if (estadoSesion !== "vacio") vueltaElegida = instante().vuelta;
+  pintarEsquinas(); pintarTransporte(); pintarCronometraje();
+  pintarMedidores(); pintarClima(); pintarAvisos(); pintarG();
+  pintarVigilancia(); pintarPuestaAPunto();
+}
+
+function pintarTrazas() {
+  pintarPista(); dibujarTraza(); moverCabezalesGraficos();
+  /* En vivo la comparacion no lee nada de lo que llega ---trabaja sobre
+     vueltas cerradas--- asi que repintarla en cada muestra es trabajo por un
+     dibujo identico. Se la repinta cuando cambia lo que si lee. */
+  if (compAbierta() && !(estadoSesion === "vivo" && !Object.keys(estado.series).length)) {
+    dibujarComparacion();
+  }
+}
+
+/* La pasada completa. Se conserva ---y se sigue llamando en todo lo que cambia
+   la estructura--- porque hay orden entre las capas: los valores necesitan la
+   vuelta que fija `pintarValores`, y las trazas la necesitan ya fijada. */
 function render() {
   /* La vuelta que se anuncia es siempre la del cabezal. Al cambiar de fuente
      cambia cuantas vueltas tiene la sesion, y sin esto el encabezado seguia
      anunciando la vuelta de la fuente anterior mientras el cronometraje ya
      mostraba la nueva: dos respuestas a la misma pregunta. */
-  if (estadoSesion !== "vacio") vueltaElegida = instante().vuelta;
-  pintarCiclo(); aplicarDisponibilidad(); pintarAutos(); pintarEsquinas();
-  pintarTransporte(); pintarCronometraje();
-  pintarMedidores(); pintarClima(); pintarAvisos(); pintarG(); pintarPista(); pintarControlesTraza();
-  pintarVigilancia();
-  pintarLeyendaTraza(); dibujarTraza(); moverCabezalesGraficos();
-  if (compAbierta()) { pintarPilotosComparacion(); dibujarComparacion(); }
+  pintarEstructura();
+  pintarValores();
+  pintarTrazas();
 }
 /* La ayuda se despliega por CSS al pasar el puntero o al recibir el foco:
    no hace falta codigo. */
@@ -4208,6 +6449,10 @@ let yaEncuadrada = false;
 function encuadrarCabina() {
   const cabina = document.getElementById("cabina");
   if (!cabina || yaEncuadrada || window.innerWidth <= 1180) return;
+  // `?quieto=1` deja la pagina donde esta. Sirve para mirar el encabezado y el
+  // estado de la conexion, que es lo primero que hay que leer cuando algo no
+  // aparece y lo que el encuadre automatico deja fuera de la vista.
+  if (new URLSearchParams(location.search).get("quieto")) { yaEncuadrada = true; return; }
   if (window.scrollY > 4) { yaEncuadrada = true; return; }  // ya la movieron
   window.scrollTo(0, Math.max(0, cabina.offsetTop - 8));
   yaEncuadrada = true;
@@ -4237,8 +6482,23 @@ window.addEventListener("resize", () => {
 let _relojVivo = null;
 
 function vigilarEnVivo() {
+  /* EL LATIDO ESPERA SU PROPIA RESPUESTA.
+     Era un `setInterval` de tres segundos. Medido el 2026-09-08, en frio
+     `/sesion/activa` tarda 14,8 s: cada tres segundos se abria otra consulta
+     de quince, sin que la anterior hubiera vuelto. A los treinta segundos hay
+     diez en vuelo, cada una con su conexion a la base, y todo lo demas ---las
+     vueltas, el trazado, las series--- hace cola detras. **El tablero se
+     ahogaba solo**, y se veia como si la base fuera lenta.
+
+     Encadenado, nunca hay mas de uno. Si la respuesta tarda quince segundos, el
+     latido late cada quince: es lo que el sistema puede, y fingir tres no lo
+     hace mas rapido. */
   const mirar = () => {
-    if (!estado.abierta) return;
+    if (!estado.abierta) { _relojVivo = null; return; }
+    const otraVez = () => {
+      if (document.hidden) { _relojVivo = null; return; }
+      _relojVivo = setTimeout(mirar, 3000);
+    };
     Promise.all([
       pedir("/sesion/activa?fuente=" + encodeURIComponent(estado.abierta.fuente)).catch(() => null),
       pedir("/live/status").catch(() => null),
@@ -4248,13 +6508,33 @@ function vigilarEnVivo() {
       // El estado decorativo no convierte una sesion historica en viva. Solo
       // una muestra SSE correlacionada tiene autoridad para hacerlo.
       pintarTransporte();
-    });
+    }).catch(() => {}).then(otraVez);
   };
-  if (_relojVivo) clearInterval(_relojVivo);
+  if (_relojVivo) { clearInterval(_relojVivo); clearTimeout(_relojVivo); }
+  _relojVivo = null;
   mirar();
-  // Cada tres segundos: es un latido, no una consulta de datos.
-  _relojVivo = setInterval(mirar, 3000);
 }
+
+/* El latido son dos consultas cada tres segundos ---mil doscientas por hora---
+   y con la pestana en segundo plano nadie las mira. Se corta al ocultarse y se
+   retoma al volver, preguntando de entrada para no mostrar el estado viejo.
+
+   La reproduccion no necesita nada de esto: `requestAnimationFrame` no entrega
+   cuadros en una pestana oculta, asi que se detiene sola. Y al volver, el
+   avance se calcula con el tiempo transcurrido de verdad, con un tope de
+   250 ms por cuadro, de modo que una hora en segundo plano no salta la sesion
+   hasta el final. */
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) {
+    if (_relojVivo) { clearInterval(_relojVivo); _relojVivo = null; }
+  } else {
+    // Al volver se dibuja lo que quedo pedido mientras no se miraba.
+    if (_capasPedidas.estructura || _capasPedidas.valores || _capasPedidas.trazas) {
+      pedirPintado([]);
+    }
+    if (estado.abierta && !_relojVivo) vigilarEnVivo();
+  }
+});
 
 function decirEstadoApi(texto, esError) {
   const el = document.getElementById("estado-api");
@@ -4296,6 +6576,29 @@ function arrancar() {
       const conEje = SESIONES.filter(s => s.fuente === "f1_25_udp_simulation");
       const elegida = SESIONES.find(s => s.session_id === recordada) ||
         (conEje.length ? conEje : SESIONES).slice().sort((a, b) => b.filas - a.filas)[0];
+
+      /* SI YA HAY UNA SESION VIVA ADOPTADA, NO SE ABRE UNA GUARDADA ENCIMA.
+         El catalogo tarda mas en llegar que la primera muestra del flujo. Al
+         abrir el tablero con telemetria entrando, el vivo se adoptaba primero
+         ---correctamente, no habia nada abierto--- y despues esta linea abria
+         una sesion guardada **arriba**: quedaba el trazado de una carrera
+         historica bajo el coche de la sesion en curso, `estado.vehiculoClave`
+         en nulo, y el recorrido que se estaba midiendo borrado.
+
+         Medido el 2026-09-08 con carga viva y el tablero abierto de cero:
+         436.423 muestras incorporadas en 300 s y la marca del vehiculo se movio
+         **siete veces**. Con la sesion viva ya elegida, abrir otra encima no es
+         una preferencia: es pisar lo que se esta mirando.
+
+         Salvo que la pidan por nombre: `?sesion=` es un acto explicito y manda.
+         Tambien se declara, porque el catalogo sigue estando y la sesion
+         guardada se puede abrir a mano. */
+      if (vivo.sesion && !pedida) {
+        estado.motivo = "";
+        decirEstadoApi(SESIONES.length + " sesiones en el catálogo · siguiendo la " +
+                       "sesión en vivo " + vivo.sesion, false);
+        return;
+      }
       abrirSesionGuardada(elegida.session_id);
     })
     .catch(e => {
@@ -4307,7 +6610,14 @@ function arrancar() {
     });
 
   // La matriz de fuentes tarda: se pide aparte y se dibuja cuando llega.
-  pedir("/fuentes/matriz").then(m => { estado.matriz = m; pintarMatriz(); }).catch(() => {});
+  /* LA MATRIZ SE PIDE HASTA QUE ESTE.
+     Se mide recorriendo lo persistido y tarda decenas de segundos. Con el
+     backend recien arrancado contesta `sin_medir` en vez de retener la
+     conexion ---era una de las seis que el navegador da por origen, ocupada
+     cuarenta segundos por el pie de pagina---. Se vuelve a preguntar cada diez
+     segundos, un punado de veces: no es un sondeo permanente, es esperar a que
+     un calculo que ya arranco termine. */
+  cuandoHayaGrafico(() => pedirMatriz(0));
   vigilarEnVivo();
   conectarFlujoEnVivo();
 }

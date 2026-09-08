@@ -49,6 +49,9 @@
     </div>
     <button class="boton" id="btn-accion" type="button"></button>
     <button class="boton secundario" id="btn-abrir" type="button">Abrir sesión guardada</button>
+    <!-- Solo aparece cuando la sesion guarda mas de una adquisicion: dice cual
+         etapa se esta mirando y sirve para cambiarla sin recargar. -->
+    <button class="boton secundario" id="btn-corrida" type="button" hidden></button>
     <button class="boton secundario" id="btn-comparar" type="button">Comparar pilotos</button>
     <button class="boton peligro" id="btn-limpiar" type="button">Limpiar sesión</button>
     <span class="sin-api" title="Las acciones se ejecutan mediante la API">API</span>
@@ -178,7 +181,7 @@
 
     <!-- Dónde está y en qué vuelta va. -->
     <div class="col-cabina izquierda">
-      <section class="instrumento pista en-cabina">
+      <section class="instrumento pista en-cabina" data-panel="trazado">
       <header><h2>Trazado</h2><span class="fuente-canal" id="canal-pista"></span></header>
       <div class="cuerpo-instrumento">
         <svg viewBox="0 0 360 170" role="img"
@@ -191,7 +194,7 @@
       </div>
     </section>
 
-      <section class="instrumento clima-mini" data-necesita="air_temperature">
+      <section class="instrumento clima-mini" data-panel="clima" data-necesita="air_temperature">
       <header><h2>Clima y pista</h2></header>
       <div class="cuerpo-instrumento"><div class="clima" id="clima"></div></div>
       <div class="capa-ausente"><strong>Sin clima</strong><span id="motivo-clima"></span></div>
@@ -209,7 +212,7 @@
          es lo que se mira mientras la sesion corre.
          ============================================================ -->
     <div class="col-cabina motor">
-      <section class="instrumento panel-motor" data-necesita="engine_speed">
+      <section class="instrumento panel-motor" data-panel="motor" data-necesita="engine_speed">
       <header><h2>Motor y energía</h2><span class="fuente-canal" id="canal-motor"></span></header>
       <div class="cuerpo-instrumento">
         <!-- Tres zonas: barras, medidores, barras. Los medidores quedan
@@ -228,7 +231,7 @@
 
     <!-- El vehículo, con sus cuatro esquinas alrededor. -->
     <div class="col-cabina centro">
-      <section class="instrumento en-cabina" data-necesita="tyre_temperature_surface_front_left">
+      <section class="instrumento en-cabina" data-panel="vehiculo" data-necesita="tyre_temperature_surface_front_left">
       <!-- ============================================================
            DE QUE PILOTO ES ESTE VEHICULO
            ------------------------------------------------------------
@@ -294,7 +297,7 @@
 
     <!-- En qué vuelta va, y lo que interrumpió la lectura. -->
     <div class="col-cabina derecha">
-      <section class="instrumento vertical en-cabina">
+      <section class="instrumento vertical en-cabina" data-panel="cronometraje">
       <header><h2>Cronometraje</h2></header>
       <dl class="tira-cronometraje">
         <div><dt>Vehículo</dt><dd class="destacado">—</dd></div>
@@ -303,7 +306,7 @@
         <div><dt>Al líder</dt><dd class="negativo">−1.075</dd></div>
       </dl>
     </section>
-      <section class="instrumento panel-avisos en-cabina" data-necesita="tyre_temperature_surface_front_left">
+      <section class="instrumento panel-avisos en-cabina" data-panel="avisos" data-necesita="tyre_temperature_surface_front_left">
       <header>
         <h2>Avisos</h2>
         <span class="fuente-canal" id="canal-avisos"></span>
@@ -363,7 +366,7 @@
     <!-- Los tres a la par: quien esta en sesion, como quedo la huella de
          aceleraciones y que señales se grafican arriba. Los tres se
          consultan, ninguno se vigila. -->
-    <section class="instrumento celda-1">
+    <section class="instrumento celda-1" data-panel="vehiculos">
       <header><h2>Vehículos</h2><span class="fuente-canal" id="canal-autos"></span></header>
       <div class="cuerpo-instrumento">
         <div class="segmentado" id="sel-alcance" role="group" aria-label="Cuántos vehículos">
@@ -374,7 +377,7 @@
         <div class="lista-autos" id="lista-autos"></div>
       </div>
     </section>
-    <section class="instrumento celda-1 vertical abajo" data-necesita="g_force_lateral">
+    <section class="instrumento celda-1 vertical abajo" data-panel="aceleraciones" data-necesita="g_force_lateral">
       <header>
         <h2>Aceleraciones</h2>
         <span class="fuente-canal" id="canal-g"></span>
@@ -426,7 +429,36 @@
       </div>
       <div class="capa-ausente"><strong>Sin acelerómetro</strong><span id="motivo-g"></span></div>
     </section>
-    <section class="instrumento celda-2 barra-canales">
+    <!-- ============================================================
+         LA PUESTA A PUNTO CON LA QUE SE RODO
+         ------------------------------------------------------------
+         El menu del juego publica valores intermedios mientras alguien lo
+         navega. Lo que se muestra aca es el ultimo valor persistido hasta el
+         instante que se esta mirando ---la configuracion con la que se rodo---
+         y nunca los intermedios, que serian declarar como puesta a punto algo
+         que no llego a la pista.
+
+         Tres de los cinco campos son codigos de la especificacion del juego
+         que el trabajo todavia no cita. Se muestran como codigos y se dice que
+         lo son: traducirlos de memoria pondria una anotacion sin fuente donde
+         hoy hay una medicion.
+         ============================================================ -->
+    <section class="instrumento celda-1" data-panel="puesta" data-necesita="brake_bias_front">
+      <header>
+        <h2>Puesta a punto</h2>
+        <span class="fuente-canal" id="canal-puesta"></span>
+      </header>
+      <div class="cuerpo-instrumento">
+        <dl class="lista-canales" id="lista-puesta"></dl>
+        <p class="nota" id="nota-puesta"></p>
+      </div>
+      <div class="capa-ausente">
+        <strong>Sin puesta a punto</strong>
+        <span id="motivo-puesta"></span>
+      </div>
+    </section>
+
+    <section class="instrumento ancho-total barra-canales">
       <header>
         <h2>Señales</h2>
         <span class="fuente-canal" id="canal-traza"></span>
@@ -555,6 +587,24 @@
      haber perdido lo anterior. Nunca se perdio nada ---el dato esta
      persistido--- pero no era descubrible, que en la practica se parece
      bastante. -->
+<!-- ELEGIR QUE ADQUISICION Y QUE FASE SE MIRA.
+     Una sesion puede tener mas de una adquisicion bajo el mismo identificador
+     del juego: la captura original y las reproducciones de prueba. Y dentro de
+     la original, fases separadas por reinicios del reloj. Mezcladas no son una
+     carrera continua, asi que se elige. Reusa el mismo velo y las mismas
+     clases que el buscador de sesiones. -->
+<div class="velo-comparacion" id="velo-corridas" role="dialog" aria-modal="true"
+     aria-label="Adquisiciones de la sesión" data-abierto="no">
+  <div class="cab-comparacion">
+    <h3>Qué se mira de esta sesión<small id="sub-corridas"></small></h3>
+    <button class="boton secundario" id="btn-cerrar-corridas" type="button">Cerrar</button>
+  </div>
+  <div class="panel-comparacion">
+    <div class="tabla-sesiones" id="tabla-corridas"></div>
+    <p class="nota" id="nota-corridas"></p>
+  </div>
+</div>
+
 <div class="velo-comparacion" id="velo-sesiones" role="dialog" aria-modal="true"
      aria-label="Sesiones guardadas">
   <div class="cab-comparacion">
@@ -626,6 +676,20 @@
   </div>
   <div class="pilotos-comparacion" id="pilotos-comparacion"></div>
 </div>
-<script src="app.js"></script>
+<!-- EL TABLERO NO SE PUBLICA CON HUELLA EN EL NOMBRE, ASI QUE SE PIDE FRESCO.
+     No hay paso de compilacion: `app.js` se sirve siempre con el mismo nombre,
+     de modo que el navegador puede quedarse con una copia vieja y mostrarla sin
+     avisar. Eso no se ve como una copia vieja: se ve como un defecto del
+     tablero. Paso de verdad el 2026-09-08 ---una pestana abierta desde antes de
+     un cambio seguia pidiendo que se editara la direccion a mano, cuando la
+     version nueva ya preguntaba con un elector---.
+
+     Se carga con `document.write` y no creando el elemento a mano porque asi se
+     conserva la semantica exacta de la etiqueta que reemplaza: bloquea el
+     analizador en este mismo punto, al final del cuerpo, con el documento ya
+     armado. Un `appendChild` correria despues y cambiaria el orden. -->
+<script>
+  document.write('<scr' + 'ipt src="app.js?v=' + Date.now() + '"><\/scr' + 'ipt>');
+</script>
 </body>
 </html>

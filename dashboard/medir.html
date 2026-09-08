@@ -1,0 +1,654 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Medición del tablero</title>
+<!--
+  Banco de medicion del tablero.
+
+  CRITERIO. Mide **dentro del tablero**, no alrededor. La primera version
+  contaba los cuadros de esta pagina contenedora, que no dibuja nada: los
+  numeros describian el marco, no lo que pasa adentro. Ahora el contador de
+  cuadros, el observador de tareas largas y la lectura de memoria se instalan en
+  la ventana del marco, que es donde corre `app.js`.
+
+  Lo que informa es lo que el navegador midio. Nada de esto es una estimacion, y
+  nada de esto demuestra capacidad bajo una carga que no se ejercito.
+
+  Se abre en `http://127.0.0.1:3000/medir.html`.
+-->
+<style>
+  :root { color-scheme: light dark; font: 14px/1.5 system-ui, sans-serif; }
+  body { margin: 0; padding: 18px; }
+  h1 { font-size: 1.1rem; margin: 0 0 4px; }
+  p.nota { margin: 0 0 6px; opacity: .75; }
+  p.aviso { margin: 0 0 14px; font-size: .9em; opacity: .6; }
+  iframe { width: 1521px; height: 826px; border: 1px solid #8884; max-width: 100%; }
+  pre { background: #8881; padding: 12px; border-radius: 6px; overflow-x: auto;
+        white-space: pre; font: 12px/1.45 ui-monospace, monospace; }
+  b.mal { color: #c33; }
+</style>
+
+<h1>Medición del tablero</h1>
+<p class="nota" id="estado">preparando…</p>
+<p class="aviso">
+  Conviene abrirlo en una ventana nueva sin caché residual: una respuesta
+  guardada de una corrida anterior puede hacer que el tablero no vuelva a pedir
+  el catálogo, y entonces esto mide una página vacía.
+</p>
+<pre id="salida">—</pre>
+<iframe id="marco" title="tablero bajo medición"></iframe>
+
+<script>
+(function () {
+  const params = new URLSearchParams(location.search);
+  /* Duracion de la observacion. Quince segundos alcanzan para ver cuadros y
+     tareas largas; **no alcanzan para afirmar nada sobre la memoria**, que hay
+     que mirar sostenida. Con `?segundos=300` se hace una corrida larga. */
+  const SEGUNDOS = Math.max(3, Number(params.get("segundos") || 15));
+  const sesion = params.get("sesion");
+  /* Con `?reproducir=1` se mide **durante la reproduccion**, no en reposo.
+     Son dos cosas distintas y mezclarlas da una cifra que no describe ninguna:
+     con el tablero quieto no hay nada que dibujar y los cuadros salen
+     perfectos aunque la reproduccion se trabe. */
+  const reproducir = params.get("reproducir") === "1";
+  /* Si el tablero no carga o no abre sesion, esto no puede quedarse esperando
+     para siempre: informa lo que haya y dice que no llego a medir. */
+  const PACIENCIA_MS = Math.max(20000, Number(params.get("paciencia") || 45000));
+  /* Cuanto se espera a que haya un trazo antes de empezar a contar igual. Con
+     la API recien arrancada el primer trazo llega cerca de los nueve segundos;
+     veinte deja margen sin colgar la corrida si nunca llega. */
+  const ESPERA_MAXIMA_DE_TRAZO_MS = Math.max(5000, Number(params.get("espera_trazo") || 20000));
+  /* Que elegir si el tablero pregunta por adquisicion y fase. `?elegir=original`
+     toma la adquisicion entera; `?elegir=original:3`, su tercera fase. Se pulsa
+     el mismo boton que pulsaria una persona ---no se escribe la direccion---
+     porque lo que hay que comprobar es justamente que el camino del clic
+     funciona sin editar la URL. */
+  const ELEGIR = params.get("elegir") || "";
+  /* Varias separadas por coma ejercitan el **cambio** de eleccion: la primera
+     se pulsa en el elector que abre solo, y las siguientes reabriendo el menu
+     desde el boton del encabezado, que es el camino que tiene una persona. */
+  const ELECCIONES = ELEGIR ? ELEGIR.split(",").map(x => x.trim()).filter(Boolean) : [];
+
+  const salida = document.getElementById("salida");
+  const cartel = document.getElementById("estado");
+  const marco = document.getElementById("marco");
+
+  let cabezalAlEmpezar = null;
+  let vueltaAlEmpezar = null;
+  /* Memoria acotada. Una corrida de media hora a sesenta cuadros son 108.000
+     intervalos, y un instrumento que crece con lo que mide termina midiendose
+     a si mismo. Se conservan los ultimos y se cuenta el total aparte, que es
+     lo que hace falta para los percentiles y para el recuento. */
+  const TOPE_MUESTRAS = 20000;
+  const cuadros = [];
+  let cuadrosTotales = 0;
+  let cuadrosSobre16 = 0, cuadrosSobre33 = 0, cuadrosSobre50 = 0;
+  let peorCuadro = 0;
+  const tareasLargas = [];
+  const memoria = [];
+  let observando = false;
+  let terminado = false;
+  let observador = null;
+  let arranqueObservacion = 0;
+  let motivoDeCorte = "";
+  /* Una eleccion pendiente **no es un corte**: el tablero hizo lo correcto al
+     preguntar. Se anota aparte para no teñir de rojo una corrida que solo
+     estaba esperando una decision. */
+  let eleccionPendiente = "";
+  const eleccionesHechas = [];
+
+  function n(x, d) {
+    return (x === null || x === undefined || !isFinite(x))
+      ? "—" : x.toFixed(d === undefined ? 1 : d);
+  }
+  /* El cabezal, en fraccion de sesion, leido del control del transporte. */
+  function leerCabezal(ventana) {
+    try {
+      const c = ventana.document.getElementById("tr-cabezal");
+      return c ? Number(c.value) / 10000 : null;
+    } catch (e) { return null; }
+  }
+
+  function percentil(xs, p) {
+    if (!xs.length) return null;
+    const o = xs.slice().sort((a, b) => a - b);
+    return o[Math.min(o.length - 1, Math.floor((p / 100) * o.length))];
+  }
+
+  /* ------------------------------------------------------------------
+     Los instrumentos se instalan EN LA VENTANA DEL TABLERO
+     ------------------------------------------------------------------ */
+  function instrumentar(ventana) {
+    // Cuadros: los que el tablero pide, no los de esta pagina.
+    let anterior = 0;
+    const paso = (ahora) => {
+      if (terminado) return;
+      if (observando && anterior) {
+        const dt = ahora - anterior;
+        cuadrosTotales++;
+        if (dt > 16.7) cuadrosSobre16++;
+        if (dt > 33.3) cuadrosSobre33++;
+        if (dt > 50) cuadrosSobre50++;
+        if (dt > peorCuadro) peorCuadro = dt;
+        cuadros.push(dt);
+        if (cuadros.length > TOPE_MUESTRAS) cuadros.shift();
+      }
+      anterior = ahora;
+      ventana.requestAnimationFrame(paso);
+    };
+    ventana.requestAnimationFrame(paso);
+
+    /* Tareas largas del hilo principal. El hilo es uno solo para el documento
+       y su marco, pero el observador tiene que crearse en el contexto que se
+       quiere atribuir: creado afuera, informa las de afuera. */
+    if (typeof ventana.PerformanceObserver !== "undefined") {
+      try {
+        observador = new ventana.PerformanceObserver(lista => {
+          if (!observando) return;
+          lista.getEntries().forEach(e => {
+            tareasLargas.push(e.duration);
+            if (tareasLargas.length > 500) tareasLargas.shift();
+          });
+        });
+        observador.observe({ type: "longtask", buffered: false });
+      } catch (e) { observador = null; }
+    }
+
+    // Memoria: una muestra por segundo, para poder ver si crece.
+    const mirarMemoria = () => {
+      if (terminado) return;
+      if (observando && ventana.performance && ventana.performance.memory) {
+        memoria.push(ventana.performance.memory.usedJSHeapSize / 1048576);
+        if (memoria.length > 4000) memoria.shift();
+      }
+      setTimeout(mirarMemoria, 1000);
+    };
+    mirarMemoria();
+  }
+
+  /* ------------------------------------------------------------------
+     El informe
+     ------------------------------------------------------------------ */
+  function informar(ventana) {
+    if (terminado) return;
+    terminado = true;
+    observando = false;
+    if (observador) { try { observador.disconnect(); } catch (e) {} }
+
+    const transcurrido = arranqueObservacion
+      ? (performance.now() - arranqueObservacion) / 1000 : 0;
+
+    /* Se lee del documento y no de una variable del modulo: `estadoSesion` es
+       un `let` de modulo y no es propiedad de `window`. Ademas la pastilla es
+       lo que ve una persona, que es el criterio que corresponde. */
+    let estadoVivo = false;
+    let detalleVivo = "";
+    try {
+      const past = ventana.document.getElementById("pastilla-estado");
+      estadoVivo = !!past && past.textContent.trim() === "recibiendo";
+      const det = ventana.document.getElementById("detalle-vivo");
+      detalleVivo = det ? det.textContent.trim() : "";
+    } catch (e) {}
+
+    let testigo = null;
+    try { testigo = ventana.TESTIGO || null; } catch (e) {}
+
+    let protocolos = "?";
+    let rec = [], bytes = 0, dur = [];
+    try {
+      rec = (ventana.performance.getEntriesByType("resource") || [])
+        .filter(r => /:800[01]\//.test(r.name));
+      /* El limite de conexiones por origen depende del protocolo: seis es de
+         HTTP/1.1. Afirmarlo sin mirar seria suponer. */
+      const vistos = {};
+      rec.forEach(r => { vistos[r.nextHopProtocol || "?"] = 1; });
+      protocolos = Object.keys(vistos).join(", ") || "?";
+      bytes = rec.reduce((s, r) => s + (r.transferSize || 0), 0);
+      dur = rec.map(r => r.duration);
+    } catch (e) { /* otro origen: no deberia pasar, se declara abajo */ }
+
+    let avanzo = null, vueltaIni = null, vueltaFin = null;
+    try {
+      if (reproducir && cabezalAlEmpezar !== null) {
+        const ahoraC = leerCabezal(ventana);
+        avanzo = (ahoraC === null) ? null : ahoraC - cabezalAlEmpezar;
+        vueltaIni = vueltaAlEmpezar;
+        vueltaFin = ventana.instante().vuelta;
+      }
+    } catch (e) {}
+
+    let primerTrazo = null;
+    try {
+      const marca = ventana.document.body.dataset.primerTrazoMs;
+      if (marca) primerTrazo = Number(marca);
+    } catch (e) {}
+
+    /* La cadencia de `requestAnimationFrame` en reposo es la mejor
+       aproximacion disponible a la frecuencia de la pantalla: no hay una API
+       que la declare. Se informa como observada, no como dato del monitor. */
+    const cadencia = percentil(cuadros, 50);
+
+    const f = [];
+    f.push("ENTORNO");
+    f.push("  navegador          " + (navigator.userAgent || "?").slice(0, 88));
+    f.push("  cadencia observada " + n(cadencia) + " ms entre cuadros" +
+           (cadencia ? "  (~" + n(1000 / cadencia, 0) + " Hz)" : ""));
+    f.push("  pantalla           " + (screen.width + "x" + screen.height) +
+           "  dpr " + (window.devicePixelRatio || 1));
+    f.push("  protocolo HTTP     " + protocolos);
+    f.push("  QUE NO MIDE ESTO:");
+    f.push("    * el instante en que la pantalla se ilumina: lo que se mide es");
+    f.push("      la llamada de dibujo, que ocurre antes;");
+    f.push("    * latencia extremo a extremo: el reloj de la captura y el de");
+    f.push("      esta maquina no tienen origen comparable y restarlos daria");
+    f.push("      un numero con aspecto de medicion;");
+    f.push("    * nada sobre la persistencia, que corre en otro proceso.");
+    f.push("");
+    f.push("CORRIDA");
+    f.push("  duracion pedida    " + SEGUNDOS + " s");
+    f.push("  duracion real      " + n(transcurrido) + " s");
+    f.push("  sesion             " + (sesion || "la que el tablero elija"));
+    f.push("  fase               " + (reproducir
+      ? "REPRODUCCION x1 (con la vuelta ya cargada)"
+      : (estadoVivo ? "TELEMETRIA VIVA entrando"
+                    : "reposo tras la carga (el tablero no reproduce)")));
+    if (reproducir) {
+      f.push("  cabezal            " + (avanzo === null ? "no se pudo leer"
+        : "avanzo " + n(avanzo * 100, 2) + " % de la sesion durante la observacion"));
+      f.push("  vuelta             " + (vueltaIni === null ? "—"
+        : vueltaIni + " -> " + vueltaFin + (vueltaFin !== vueltaIni ? "  (hubo cruce)" : "")));
+    }
+    /* Si el trazo llego despues de que empezara la medicion, el aviso deja de
+       ser cierto: se lo retira en vez de dejar una advertencia que contradice
+       la linea de arriba. */
+    if (motivoDeCorte && primerTrazo !== null &&
+        motivoDeCorte.indexOf("sin que hubiera un trazo") !== -1) {
+      motivoDeCorte = "";
+      f.push("  nota               el trazo llegó " + n(primerTrazo) +
+             " ms después de cargar, ya empezada la observación");
+    }
+    if (motivoDeCorte) f.push("  CORTE              " + motivoDeCorte);
+    if (eleccionPendiente) f.push("  ELECCION PENDIENTE " + eleccionPendiente);
+    if (eleccionesHechas.length) {
+      f.push("  eleccion            se pulsó « " + eleccionesHechas.join(" » y luego « ") +
+             " » en el menú, sin tocar la dirección");
+    }
+    /* SI HABIA CARGA VIVA, NO SE PUEDE DECIR QUE NO. Se pregunta al tablero
+       en vez de afirmarlo: la linea anterior estaba escrita a mano y decia
+       "ninguna" incluso en una corrida con telemetria entrando, que es
+       exactamente la clase de dato falso que este instrumento existe para no
+       producir. */
+    if (estadoVivo) {
+      f.push("  carga en vivo      SI, el tablero declara «recibiendo»");
+      if (detalleVivo) f.push("                     " + detalleVivo.slice(0, 90));
+    } else {
+      f.push("  carga en vivo      ninguna: esto mide el tablero sobre datos");
+      f.push("                     guardados. No dice nada de su capacidad con");
+      f.push("                     telemetria entrando.");
+    }
+    /* El flujo de apertura: si la sesion tiene mas de una adquisicion, el
+       tablero tiene que preguntar cual, no bloquearse ni adivinar. */
+    let elector = null;
+    try {
+      const velo = ventana.document.getElementById("velo-corridas");
+      if (velo) {
+        const botones = velo.querySelectorAll("button[data-corrida]");
+        /* Que alcance quedo pidiendo el tablero, leido de sus propias
+           peticiones y no de lo que se creyo elegir. La direccion se informa
+           para poder comprobar que la refleja **despues** del clic: si no la
+           reflejara, el enlace no serviria para volver. */
+        let alcance = "";
+        try { alcance = velo.ownerDocument.body.dataset.alcanceEnCurso || ""; } catch (e) {}
+        /* El boton del encabezado: si esta oculto, no hay forma de cambiar de
+           etapa sin recargar. */
+        const cambiar = ventana.document.getElementById("btn-corrida");
+        elector = {
+          boton: !cambiar ? "no existe"
+            : (cambiar.hidden ? "oculto" : "« " + cambiar.textContent.trim() + " »"),
+          marcadas: velo.querySelectorAll("button[data-elegida=\'si\']").length,
+          abierto: velo.dataset.abierto === "si",
+          opciones: botones.length,
+          etiquetas: Array.prototype.slice.call(botones, 0, 6)
+            .map(b => b.textContent.trim()).join(" | "),
+          alcance: alcance,
+          direccion: (ventana.location.search || "").slice(0, 120),
+        };
+      }
+    } catch (e) {}
+    if (elector && (elector.abierto || elector.opciones)) {
+      f.push("");
+      f.push("ELECTOR DE ADQUISICION Y FASE");
+      f.push("  abierto            " + (elector.abierto ? "si" : "no"));
+      f.push("  opciones ofrecidas " + elector.opciones);
+      if (elector.etiquetas) f.push("  " + elector.etiquetas.slice(0, 150));
+      f.push("  opcion marcada     " + elector.marcadas +
+             (elector.marcadas === 1 ? "" : "   <-- deberia ser exactamente una"));
+      f.push("  botón para cambiar " + elector.boton);
+      f.push("  alcance en curso   " + (elector.alcance || "no declarado"));
+      f.push("  direccion          " + (elector.direccion || "—"));
+    }
+    f.push("");
+    f.push("PRIMER DIBUJO UTIL");
+    f.push("  primer trazo       " + (primerTrazo === null
+      ? "no llego a dibujarse durante la observacion"
+      : n(primerTrazo) + " ms desde que cargo el documento"));
+    f.push("  (es distinto del tiempo de las consultas: entre que la respuesta");
+    f.push("   llega y que hay un trazo hay trabajo)");
+    f.push("");
+    /* ------------------------------------------------------------------
+       Lo que de verdad cambio. Sin esto, los cuadros por segundo describen al
+       navegador y no al tablero.
+       ------------------------------------------------------------------ */
+    f.push("CAMBIO REAL EN PANTALLA");
+    if (!testigo) {
+      f.push("  el tablero no publica testigos: no se puede afirmar que algo");
+      f.push("  se haya movido, solo que hubo cuadros");
+    } else {
+      const movPct = testigo.pintadosDePista
+        ? 100 * testigo.movimientosDeCoche / testigo.pintadosDePista : 0;
+      f.push("  pintados del trazado     " + testigo.pintadosDePista);
+      f.push("  de esos, movieron el coche " + testigo.movimientosDeCoche +
+             "  (" + n(movPct) + " %)");
+      const seg = transcurrido || 1;
+      f.push("");
+      f.push("  LA CUENTA DEL CAMINO VIVO, por segundo:");
+      f.push("    eventos SSE que llegaron   " + n(testigo.eventosSSE / seg));
+      f.push("    descartados por fuente     " + n(testigo.descarteFuente / seg));
+      f.push("    descartados por duplicado  " + n(testigo.descarteDuplicado / seg));
+      f.push("    de sesion no adoptada      " + n(testigo.descarteNoAdoptada / seg));
+      f.push("    recuperacion mas vieja     " + n(testigo.descarteRecuperacionVieja / seg));
+      f.push("    INCORPORADAS               " + n(testigo.muestrasIncorporadas / seg));
+      f.push("");
+      f.push("  EL PAR DE COORDENADAS:");
+      f.push("    llegaron x / z             " + n(testigo.llegaronX / seg) + " / " +
+             n(testigo.llegaronZ / seg) + "  (la fuente emite 20,0 de cada una)");
+      f.push("    pares rotos                " + n(testigo.paresRotos / seg));
+      f.push("  posiciones (x,z) recibidas " + n(testigo.posicionesConLasDos / seg) + " /s");
+      f.push("  de esas, distintas         " + n(testigo.posicionesDistintas / seg) + " /s");
+      f.push("  pintados sin cambio        " + n(testigo.pintadosSinCambio / seg) + " /s");
+      f.push("  movimientos por segundo  " +
+             n(transcurrido ? testigo.movimientosDeCoche / transcurrido : 0));
+      f.push("  dibujos de traza         " + testigo.dibujosDeTraza +
+             ", con dato nuevo " + testigo.trazasConDatoNuevo);
+      if (testigo.ultimoCorte) {
+        f.push("  APERTURA CORTADA         " + testigo.ultimoCorte);
+        f.push("    vigencia " + testigo.cortes.vigencia +
+               "  vueltas nulas " + testigo.cortes.vueltasNulas +
+               "  contexto nulo " + testigo.cortes.contextoNulo +
+               "  excepcion " + testigo.cortes.excepcion);
+      }
+      f.push("  aperturas de sesion      " + testigo.aperturas +
+             (testigo.aperturas > 1 ? "   <-- deberia ser 1" : ""));
+      f.push("  trazado pedido/aplicado  " + testigo.trazadosPedidos + " / " +
+             testigo.trazadosAplicados +
+             (testigo.trazadosAplicados === 0 ? "   <-- sin recorrido no hay coche" : ""));
+      if (testigo.muestrasIncorporadas) {
+        f.push("  muestras vivas incorporadas " + testigo.muestrasIncorporadas);
+        f.push("  pintados de valores         " + testigo.pintadosDeValores);
+        const mpp = testigo.muestrasPorPintado || [];
+        if (mpp.length) {
+          const suma = mpp.reduce((a, b) => a + b, 0);
+          f.push("  muestras por pintado        p50 " + percentil(mpp, 50) +
+                 "  p95 " + percentil(mpp, 95) + "  media " + n(suma / mpp.length));
+          f.push("  (una actualizacion visual representa varias muestras y solo");
+          f.push("   muestra la ultima de cada canal: contar una por muestra");
+          f.push("   seria falso)");
+        }
+      }
+    }
+    f.push("");
+    f.push("ANTIGUEDAD DE LO QUE SE VE, POR CANAL");
+    let ant = null;
+    try { ant = testigo && testigo.antiguedades ? testigo.antiguedades() : null; } catch (e) {}
+    if (!ant || !Object.keys(ant).length) {
+      f.push("  sin sesion viva: no aplica");
+    } else {
+      const claves = Object.keys(ant).sort((a, b) => ant[b] - ant[a]);
+      f.push("  canales con valor mostrado  " + claves.length);
+      f.push("  los mas viejos:");
+      claves.slice(0, 6).forEach(k => {
+        f.push("    " + String(ant[k]).padStart(7) + " ms   " + k);
+      });
+      const frescos = claves.filter(k => ant[k] < 2000).length;
+      f.push("  con menos de 2 s            " + frescos + " de " + claves.length);
+      f.push("  (un canal viejo no es un fallo si la fuente lo publica poco;");
+      f.push("   lo es si un canal frecuente se queda atras)");
+    }
+    f.push("");
+    f.push("LATENCIA: RECEPCION DEL EVENTO -> PINTADO QUE LO INCLUYE");
+    if (!testigo || !testigo.latencias || !testigo.latencias.length) {
+      f.push("  sin muestras vivas en esta corrida");
+    } else {
+      const L = testigo.latencias;
+      f.push("  muestras           " + L.length + " (anillo de los ultimos 1000)");
+      f.push("  p50 / p95 / p99    " + n(percentil(L, 50)) + " / " +
+             n(percentil(L, 95)) + " / " + n(percentil(L, 99)) + " ms");
+      f.push("  maxima             " + n(Math.max.apply(null, L)) + " ms");
+      const mitad = Math.floor(L.length / 2);
+      const p1 = percentil(L.slice(0, mitad), 50), p2 = percentil(L.slice(mitad), 50);
+      f.push("  primera mitad p50  " + n(p1) + " ms");
+      f.push("  segunda mitad p50  " + n(p2) + " ms" +
+             (p1 !== null && p2 !== null
+               ? (p2 > p1 * 1.5 ? "   <-- CRECE" : "   (no crece)") : ""));
+      f.push("  tramo medido: llegada del evento al navegador -> llamada de");
+      f.push("  dibujo. No incluye red antes del navegador ni presentacion.");
+    }
+    f.push("");
+    f.push("CUADROS (medidos dentro del tablero)");
+    f.push("  medidos            " + cuadrosTotales +
+           (cuadros.length < cuadrosTotales
+             ? "  (percentiles sobre los ultimos " + cuadros.length + ")" : ""));
+    f.push("  por segundo        " + n(transcurrido ? cuadrosTotales / transcurrido : 0));
+    f.push("  p50 / p95 / p99    " + n(percentil(cuadros, 50)) + " / " +
+           n(percentil(cuadros, 95)) + " / " + n(percentil(cuadros, 99)) + " ms");
+    f.push("  peor cuadro        " + n(peorCuadro) + " ms");
+    const pc = (x) => cuadrosTotales ? n(100 * x / cuadrosTotales) + " %" : "—";
+    f.push("  sobre 16,7 / 33,3 / 50 ms   " + pc(cuadrosSobre16) + " / " +
+           pc(cuadrosSobre33) + " / " + pc(cuadrosSobre50));
+    f.push("  (a " + n(cadencia) + " ms de cadencia, un cuadro de 16,7 ms es lo");
+    f.push("   normal y no un fallo)");
+    f.push("");
+    f.push("TAREAS LARGAS DEL HILO PRINCIPAL (>50 ms)");
+    if (!observador) {
+      f.push("  este navegador no las declara");
+    } else {
+      f.push("  cuantas            " + tareasLargas.length);
+      f.push("  la mas larga       " + n(Math.max.apply(null, tareasLargas.concat([0]))) + " ms");
+      f.push("  suma bloqueada     " + n(tareasLargas.reduce((a, b) => a + b, 0)) + " ms");
+    }
+    f.push("");
+    f.push("CONSULTAS A LA API");
+    f.push("  cuantas            " + rec.length);
+    f.push("  bytes transferidos " + bytes + " (ya comprimidos)" +
+           (bytes === 0 && rec.length
+             ? "  <-- opaco: falta Timing-Allow-Origin en la API" : ""));
+    f.push("  p50 / p95          " + n(percentil(dur, 50)) + " / " + n(percentil(dur, 95)) + " ms");
+    /* Un p95 alto no dice **cual**. Sin el nombre de la consulta lenta, la
+       cifra sirve para preocuparse y no para arreglar nada. */
+    const lentas = rec.slice().sort((a, b) => b.duration - a.duration).slice(0, 6);
+    if (lentas.length) {
+      f.push("  las mas lentas, con el desglose que importa:");
+      f.push("    espera = cola del navegador + conexion; servidor = hasta el");
+      f.push("    primer byte; bajada = el resto");
+      lentas.forEach(r => {
+        const espera = Math.max(0, r.requestStart - r.startTime);
+        const servidor = Math.max(0, r.responseStart - r.requestStart);
+        const bajada = Math.max(0, r.responseEnd - r.responseStart);
+        const ruta = decodeURIComponent(r.name.replace(/^.*:800[01]/, ""))
+          .replace(/senales=[^&]*/, "senales=…").slice(0, 58);
+        f.push("    total " + n(r.duration).padStart(8) + "  espera " +
+               n(espera).padStart(8) + "  servidor " + n(servidor).padStart(8) +
+               "  bajada " + n(bajada).padStart(6) + "   " + ruta);
+      });
+    }
+    f.push("");
+    f.push("MEMORIA DEL MONTON DE JAVASCRIPT");
+    if (!memoria.length) {
+      f.push("  este navegador no la declara (solo Chrome y derivados)");
+    } else {
+      f.push("  muestras           " + memoria.length + " (una por segundo)");
+      f.push("  inicial            " + n(memoria[0]) + " MB");
+      f.push("  maxima             " + n(Math.max.apply(null, memoria)) + " MB");
+      f.push("  final              " + n(memoria[memoria.length - 1]) + " MB");
+      f.push("  variacion          " + n(memoria[memoria.length - 1] - memoria[0]) + " MB");
+      if (transcurrido < 120) {
+        f.push("  ATENCION: " + n(transcurrido) + " s no alcanzan para afirmar nada");
+        f.push("  sobre la memoria. Para eso hace falta una corrida sostenida:");
+        f.push("  ?segundos=300 o mas.");
+      }
+    }
+
+    const texto = f.join("\n");
+    salida.textContent = texto;
+
+    /* CON `?reportar=1`, ADEMAS SE MANDA EL RESULTADO A LA API.
+       Un navegador sin ventana no tiene a quien mostrarle esto. Se lo manda en
+       trozos por la cadena de consulta de `/health`, que el servidor anota en
+       su registro de acceso: es un canal de vuelta que existe siempre, no
+       necesita tiempo virtual ---que falsearia justamente los tiempos que se
+       quieren medir--- y no agrega ninguna ruta al backend. */
+    if (params.get("reportar")) {
+      /* Siempre al 8000, aunque se este midiendo otro backend con `?api=`.
+         Es a proposito: mandar el informe por la misma pila que se mide seria
+         agregarle trafico justo al final de la medicion. Quien mide una pila
+         aislada tiene que buscar el informe en el registro del 8000, no en el
+         de la pila medida. */
+      const API = "http://127.0.0.1:8000";
+      const TROZO = 900;
+      const trozos = [];
+      for (let i = 0; i < texto.length; i += TROZO) trozos.push(texto.slice(i, i + TROZO));
+      trozos.forEach((t, i) => {
+        fetch(API + "/health?MEDICION=" + i + "_de_" + trozos.length + "&t=" +
+              encodeURIComponent(t)).catch(() => {});
+      });
+    }
+
+    cartel.innerHTML = motivoDeCorte
+      ? '<b class="mal">terminó con corte: ' + motivoDeCorte + "</b>"
+      : "listo. Copiá el bloque de arriba.";
+  }
+
+  /* ------------------------------------------------------------------
+     Ciclo
+     ------------------------------------------------------------------ */
+  /* `?api=` se pasa al tablero tal cual. Sirve para medir contra una pila
+     aislada ---otro backend, otro intermediario, sin consumidor--- sin tocar la
+     de produccion. */
+  const api = params.get("api");
+  const partes = [];
+  if (sesion) partes.push("sesion=" + encodeURIComponent(sesion));
+  if (api) partes.push("api=" + encodeURIComponent(api));
+  marco.src = "/" + (partes.length ? "?" + partes.join("&") : "");
+
+  // Corte duro: si nada de esto ocurre, se informa igual y se dice por que.
+  const cortePorPaciencia = setTimeout(() => {
+    motivoDeCorte = "el tablero no llegó a cargar y medir en " +
+      Math.round(PACIENCIA_MS / 1000) + " s";
+    try { informar(marco.contentWindow); } catch (e) { cartel.textContent = motivoDeCorte; }
+  }, PACIENCIA_MS + SEGUNDOS * 1000);
+
+  marco.addEventListener("load", () => {
+    const ventana = marco.contentWindow;
+    cartel.textContent = "el tablero cargó; esperando a que abra la sesión…";
+    instrumentar(ventana);
+
+    /* Se empieza a contar cuando el tablero ya dibujo algo, no cuando cargo el
+       documento: los primeros segundos son la apertura de la sesion, y
+       mezclarlos con el regimen normal ensucia los percentiles. Si no dibuja
+       nada, se empieza igual a los diez segundos y se declara. */
+    let limite = performance.now() + ESPERA_MAXIMA_DE_TRAZO_MS;
+    /* El elector, visto desde afuera: abierto es `data-abierto="si"`. */
+    const electorAbierto = (v) => {
+      try {
+        const velo = v.document.getElementById("velo-corridas");
+        return !!velo && velo.dataset.abierto === "si";
+      } catch (e) { return false; }
+    };
+    /* Pulsa la opcion pedida. `clave` o `clave:fase`; la clave se compara por
+       prefijo para no tener que escribir el identificador completo de una
+       reproduccion. Devuelve si encontro el boton. */
+    /* El boton del encabezado que vuelve a abrir el menu. */
+    const reabrirElector = (v) => {
+      try {
+        const b = v.document.getElementById("btn-corrida");
+        if (!b || b.hidden) return false;
+        b.click();
+        return true;
+      } catch (e) { return false; }
+    };
+    const pulsarEleccion = (v, pedido) => {
+      try {
+        const [clave, fase] = String(pedido).split(":");
+        const bs = v.document.querySelectorAll("#velo-corridas button[data-corrida]");
+        for (const b of bs) {
+          const c = b.dataset.corrida || "";
+          if (c !== clave && c.indexOf(clave) !== 0) continue;
+          if ((b.dataset.fase || "") !== (fase || "")) continue;
+          b.click();
+          return true;
+        }
+      } catch (e) {}
+      return false;
+    };
+    const esperar = () => {
+      if (terminado) return;
+      let listo = false;
+      try { listo = !!ventana.document.body.dataset.primerTrazoMs; } catch (e) {}
+      /* Si el tablero abrio el elector, o se elige y se sigue esperando, o se
+         declara la espera como lo que es. */
+      const abierto = electorAbierto(ventana);
+      const falta = ELECCIONES[eleccionesHechas.length];
+      if (abierto && falta && pulsarEleccion(ventana, falta)) {
+        eleccionesHechas.push(falta);
+        cartel.textContent = "elegido « " + falta + " »; esperando el trazo…";
+        limite = performance.now() + ESPERA_MAXIMA_DE_TRAZO_MS;
+        setTimeout(esperar, 120);
+        return;
+      }
+      /* Ya hay dibujo y falta cambiar de etapa: se reabre el menu por donde lo
+         reabriria una persona ---el boton del encabezado---, no llamando a la
+         funcion interna. */
+      if (!abierto && listo && falta && eleccionesHechas.length && reabrirElector(ventana)) {
+        limite = performance.now() + ESPERA_MAXIMA_DE_TRAZO_MS;
+        setTimeout(esperar, 120);
+        return;
+      }
+      if ((listo && !falta) || performance.now() > limite) {
+        if (!listo && abierto) {
+          eleccionPendiente = ELEGIR
+            ? "se pidió « " + ELEGIR + " » y el elector seguía abierto"
+            : "el tablero pide elegir adquisición y fase, y nadie eligió";
+        } else if (!listo) {
+          motivoDeCorte = "se empezó a medir sin que hubiera un trazo todavía";
+        }
+        /* ARRANCA LA REPRODUCCION ANTES DE CONTAR.
+           Se pulsa el mismo boton que pulsaria una persona: no se llama a una
+           funcion interna, porque lo que hay que medir es el camino completo.
+           El cabezal se anota para poder comprobar despues que **avanzo**: si
+           no avanzo, los cuadros perfectos no significan nada. */
+        if (reproducir) {
+          try {
+            /* Se lee el control del reproductor y no la variable interna:
+               `cabezal` es un `let` de modulo y no es propiedad de `window`.
+               Ademas el control es lo que ve una persona, que es lo que
+               interesa comprobar. */
+            cabezalAlEmpezar = leerCabezal(ventana);
+            vueltaAlEmpezar = ventana.instante().vuelta;
+            const boton = ventana.document.getElementById("tr-play");
+            if (boton) boton.click();
+          } catch (e) { motivoDeCorte = "no se pudo arrancar la reproducción"; }
+        }
+        observando = true;
+        arranqueObservacion = performance.now();
+        cartel.textContent = "midiendo " + SEGUNDOS + " s…";
+        setTimeout(() => {
+          clearTimeout(cortePorPaciencia);
+          informar(ventana);
+        }, SEGUNDOS * 1000);
+        return;
+      }
+      setTimeout(esperar, 200);
+    };
+    esperar();
+  });
+})();
+</script>

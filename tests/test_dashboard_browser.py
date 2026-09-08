@@ -7,6 +7,7 @@ import re
 import shutil
 import subprocess
 import tempfile
+import time
 import threading
 import unittest
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
@@ -49,6 +50,17 @@ class ApiDashboardFalsa(SimpleHTTPRequestHandler):
                 "desde_utc": "2026-09-07T10:00:00+00:00",
                 "hasta_utc": "2026-09-07T10:01:30+00:00", "completa": True}]})
         if ruta.endswith("/series"):
+            # LAS SERIES CONTESTAN ULTIMAS, A PROPOSITO.
+            #
+            # Las series traen dos vehiculos y las posiciones, uno. Con las
+            # posiciones ganando la carrera, el tablero armaba la lista con ese
+            # uno y ya no la ampliaba: quedaba conociendo un vehiculo de los dos
+            # que tenia el dato en la mano, y «Comparar pilotos» apagado. Se
+            # veia como una prueba intermitente ---fallaba una de cada veinte
+            # corridas--- porque dependia de cual respuesta llegara primero.
+            # Con este retardo el orden malo es el unico posible, y la prueba
+            # cubre el caso en vez de tropezarselo de vez en cuando.
+            time.sleep(0.15)
             senales = parse_qs(pedido.query).get("senales", ["speed"])[0].split(",")
             vehiculo = {"distancia_m": [0, 1000], "distancia_sesion_m": [0, 1000],
                         "timestamp_utc": ["2026-09-07T10:00:00+00:00", "2026-09-07T10:01:30+00:00"]}
@@ -75,6 +87,17 @@ class ApiDashboardFalsa(SimpleHTTPRequestHandler):
             return self._json({"avisos": [], "motivo": "Sin avisos."})
         if ruta.startswith("/circuitos/"):
             return self._json({"curvas": []})
+        if ruta.endswith("/adquisiciones"):
+            # Una sola adquisicion: la sesion no esta mezclada y el tablero
+            # sigue de largo. El caso mezclado tiene su propia prueba.
+            return self._json({
+                "adquisiciones": [{"clave": "original", "replay_run_id": None,
+                                    "es_reproduccion": False,
+                                    "muestras_de_vuelta": 100, "vehiculos": 1,
+                                    "desde_utc": None, "hasta_utc": None,
+                                    "fases": [{"orden": 1, "desde_us": 0,
+                                                "hasta_us": 1000}]}],
+                "mezclada": False})
         if ruta == "/fuentes/matriz":
             return self._json({"fuentes": [], "magnitudes": []})
         if ruta == "/sesion/activa":
@@ -116,7 +139,26 @@ class DashboardBrowserTests(unittest.TestCase):
         self.assertEqual(proceso.returncode, 0, proceso.stderr)
         self.assertIn("Circuito de prueba", proceso.stdout)
         self.assertIn('id="aviso-descarga"', proceso.stdout)
-        self.assertIn('data-visible="si" data-error="no"', proceso.stdout)
+        # QUE EL AVISO **DIGA** LO QUE CORRESPONDE, NO QUE SIGA EN PANTALLA.
+        #
+        # Antes se exigia `data-visible="si"`, y eso es una carrera contra el
+        # temporizador que lo esconde a los 4,2 s. El volcado ocurre cuando se
+        # agota `--virtual-time-budget`, que **no** es un reloj fiable para
+        # esto: medido, con 3.000 ms el aviso aparecia visible 8 de 8 veces y
+        # con 6.000, 0 de 8; y con la maquina cargada, el mismo presupuesto de
+        # 3.000 fallaba 3 de 12 porque el tiempo virtual se adelanta cuando hay
+        # tareas reales pendientes. La prueba fallaba sin que el tablero se
+        # portara mal.
+        #
+        # Lo que importa es que la apertura **se anuncie**, y el texto lo
+        # demuestra igual: solo lo escribe `avisar()`, y sobrevive a que el
+        # aviso se esconda. La condicion de error si es estable.
+        aviso = re.search(r'id="aviso-descarga"[^>]*data-error="(\w+)"[^>]*>([^<]*)<',
+                          proceso.stdout)
+        self.assertIsNotNone(aviso, "no esta el aviso en el DOM")
+        self.assertEqual(aviso.group(1), "no", "la apertura se anuncio como error")
+        self.assertIn("Circuito de prueba", aviso.group(2),
+                      "la apertura no se anuncio: el aviso quedo vacio")
         comparar = re.search(
             r'<button class="boton secundario" id="btn-comparar"([^>]*)>',
             proceso.stdout,

@@ -1272,6 +1272,41 @@
     border-radius: 11px; background: var(--superficie-2);
   }
   .fila-sesion:hover { border-color: var(--acento); }
+  /* Los botones de adquisicion y fase van en la ultima columna de la misma
+     fila, envolviendo si no entran. Reusa la fila de sesiones para no inventar
+     otro componente. */
+  .acciones-corrida { display: flex; flex-wrap: wrap; gap: 6px; justify-content: flex-end; }
+  .acciones-corrida .boton { padding: 4px 10px; font-size: .82rem; }
+  /* Cada etapa se ofrece con su nombre y su largo, uno debajo del otro: el
+     nombre dice que es y el largo dice si vale la pena mirarla. Puestos en la
+     misma linea, la duracion se leia como parte del nombre. */
+  .opcion-fase {
+    display: inline-flex; flex-direction: column; align-items: center; gap: 1px;
+    line-height: 1.15; min-width: 88px;
+  }
+  .opcion-fase b { font-weight: 600; font-size: .82rem; }
+  /* `color: inherit` y no el tenue del catalogo: dentro del boton elegido el
+     fondo es el acento, y el gris tenue quedaba ilegible sobre el. */
+  .opcion-fase small {
+    font-family: var(--cifra); font-size: .66rem; letter-spacing: .02em;
+    color: inherit; opacity: .7;
+  }
+  /* Lo elegido se marca, y **solo** lo elegido. Todas las opciones van con el
+     estilo secundario ---contorno--- de modo que el relleno de acento signifique
+     una sola cosa. Con el boton «Todo» en estilo principal parecia elegido en
+     las tres filas a la vez. */
+  .opcion-fase[data-elegida="si"] {
+    border-color: var(--acento); background: var(--acento);
+    color: var(--sobre-acento); box-shadow: none;
+  }
+  .opcion-fase[data-elegida="si"] small { opacity: .85; }
+  .fila-corrida[data-elegida="si"] { border-color: var(--acento); background: var(--acento-veta); }
+  /* La fila del elector tiene tres columnas, no seis: adquisicion, tamano y
+     opciones. La rejilla del catalogo dejaria cuatro huecos vacios. */
+  .fila-corrida { grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr) auto; }
+  .fila-corrida > span > small { color: var(--texto-tenue); }
+  /* El boton del encabezado dice que etapa se mira; puede ser largo. */
+  #btn-corrida { max-width: 26ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .fila-sesion[data-abierta="si"] { border-color: var(--acento); background: var(--acento-veta); }
   .fila-sesion[data-fuente="f1"] { border-left-color: var(--auto-1); }
   .fila-sesion[data-fuente="openf1"] { border-left-color: var(--auto-3); }
@@ -1406,3 +1441,80 @@
   /* El mando de la ventana es hermano del de velocidad y se lee igual. */
   #tr-ventana button { padding: 7px 10px; font-size: .76rem; }
   .marca-auto.propio { stroke: var(--superficie); stroke-width: 1.5; }
+
+  /* Un codigo sin decodificar no se muestra como si fuera una cantidad: va en
+     gris y con la tipografia de cifra, para que se lea como lo que es. */
+  .codigo-crudo {
+    color: var(--texto-tenue); font-family: var(--cifra);
+    padding: 1px 7px; border: 1px dashed var(--linea-fuerte); border-radius: 6px;
+  }
+  #lista-puesta div { padding-bottom: 7px; }
+  #nota-puesta { margin-top: 10px; }
+
+  /* Una vuelta que no se rodo de corrido se marca en la linea de tiempo: el
+     salto es del dato, no de la reproduccion, y quien mira tiene que poder
+     distinguirlos. */
+  .marca-vuelta.rota { color: var(--critico); font-weight: 700; }
+  .marca-vuelta.rota::after {
+    content: ""; position: absolute; left: 50%; top: -6px;
+    width: 1px; height: 5px; background: var(--critico); transform: translateX(-50%);
+  }
+
+  /* =====================================================================
+     LO QUE ESTA CARGANDO
+     ---------------------------------------------------------------------
+     Un panel esperando una consulta y un panel sin dato se ven igual si
+     ninguno de los dos dice nada, y son dos afirmaciones distintas: uno
+     todavia no sabe y el otro sabe que la fuente no lo publica. Ese es el
+     eje de este tablero, y por eso la espera necesita su propia forma.
+
+     La espera se marca con una barra que recorre el borde superior del panel
+     y con un pulso en el encabezado. No tapa lo que ya haya dibujado: en un
+     tablero que se recorre, lo anterior sigue siendo cierto hasta que llega
+     lo nuevo, y borrarlo para poner un esqueleto seria empeorar la lectura.
+     ===================================================================== */
+  .instrumento[data-cargando="si"] { position: relative; }
+
+  .instrumento[data-cargando="si"]::after {
+    content: ""; position: absolute; left: 0; right: 0; top: 0; height: 2px;
+    border-radius: 13px 13px 0 0; overflow: hidden; pointer-events: none;
+    background: linear-gradient(90deg,
+      transparent 0%, var(--acento) 35%, var(--acento-vivo) 50%,
+      var(--acento) 65%, transparent 100%);
+    background-size: 45% 100%; background-repeat: no-repeat;
+    animation: recorre-carga 1150ms ease-in-out infinite;
+  }
+  @keyframes recorre-carga {
+    0%   { background-position: -50% 0; }
+    100% { background-position: 150% 0; }
+  }
+
+  /* El punto del encabezado dice **cual** panel espera, que es lo que no se
+     ve en una barra de dos pixeles cuando hay ocho paneles a la vez. */
+  .instrumento[data-cargando="si"] > header::after {
+    content: ""; width: 7px; height: 7px; margin-left: 8px; flex: 0 0 auto;
+    border-radius: 50%; background: var(--acento); align-self: center;
+    animation: late-carga 1150ms ease-in-out infinite;
+  }
+  @keyframes late-carga {
+    0%, 100% { opacity: .25; transform: scale(.8); }
+    50%      { opacity: 1;   transform: scale(1); }
+  }
+
+  /* Los graficos todavia sin traza muestran una linea que se desliza, para
+     que se vea que el panel esta vivo y no vacio. */
+  .grafico-chico[data-cargando="si"] .lienzo-envoltura::after {
+    content: ""; position: absolute; inset: 0; pointer-events: none;
+    background: linear-gradient(90deg, transparent, var(--acento-veta), transparent);
+    background-size: 40% 100%; background-repeat: no-repeat;
+    animation: recorre-carga 1400ms ease-in-out infinite;
+  }
+
+  /* Sin movimiento: la espera se declara con el color del acento en el borde,
+     que se distingue igual de un panel quieto. */
+  @media (prefers-reduced-motion: reduce) {
+    .instrumento[data-cargando="si"]::after,
+    .instrumento[data-cargando="si"] > header::after,
+    .grafico-chico[data-cargando="si"] .lienzo-envoltura::after { animation: none; }
+    .instrumento[data-cargando="si"]::after { background: var(--acento); }
+  }

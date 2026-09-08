@@ -1,0 +1,29 @@
+<!doctype html><meta charset="utf-8"><title>diag</title>
+<style>body{font:15px ui-monospace,monospace;padding:16px}</style>
+<pre id="o">probando…</pre>
+<script>
+const API = "http://127.0.0.1:8000";
+const RUTAS = ["/health", "/fuentes/matriz", "/live/recent?limite=100",
+               "/sesiones/tipos", "/sesiones", "/sesiones?limite=10",
+               "/sesiones?limite=400"];
+const o = document.getElementById("o");
+const lineas = [];
+(async () => {
+  for (const r of RUTAS) {
+    const t0 = performance.now();
+    try {
+      const resp = await fetch(API + r, { headers: { "Accept": "application/json" } });
+      const cuerpo = await resp.text();
+      lineas.push(r.padEnd(28) + " " + resp.status + "  " +
+                  String(cuerpo.length).padStart(8) + " B  " +
+                  (performance.now() - t0).toFixed(0) + " ms");
+    } catch (e) {
+      lineas.push(r.padEnd(28) + " FALLO: " + e.name + " — " + e.message);
+    }
+    o.textContent = lineas.join("\n");
+  }
+  lineas.push("");
+  lineas.push("fin");
+  o.textContent = lineas.join("\n");
+})();
+</script>
