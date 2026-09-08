@@ -137,9 +137,10 @@ class VueltasTests(unittest.TestCase):
         from datetime import datetime, timezone
         t0 = datetime(2026, 9, 6, tzinfo=timezone.utc)
         t1 = datetime(2026, 9, 6, 0, 1, 44, tzinfo=timezone.utc)
-        # (vuelta, muestras, desde, hasta, inicio, fin, vmin, vmax, invalida)
-        filas = [(3, 2000, 5.0, 7000.0, t0, t1, 50.0, 330.0, 0.0),
-                 (4, 400, 3500.0, 7000.0, t0, t1, 60.0, 300.0, 0.0)]
+        # (vuelta, muestras, desde, hasta, inicio, fin, vmin, vmax, invalida,
+        #  duracion efectiva, hueco mayor)
+        filas = [(3, 2000, 5.0, 7000.0, t0, t1, 50.0, 330.0, 0.0, 104.0, 0.1),
+                 (4, 400, 3500.0, 7000.0, t0, t1, 60.0, 300.0, 0.0, 104.0, 0.1)]
         falsa, parche = _con(filas)
         with parche:
             r = api_sesion.listar_vueltas("f1_25:session:1")
@@ -290,12 +291,36 @@ class UltimosValoresAcotados(unittest.TestCase):
         cursor.fetchall.return_value = []
         return cursor
 
-    def test_sin_instante_no_agrega_condicion(self):
+    def test_sin_instante_la_ultima_consulta_no_acota(self):
+        """Sin instante, el ultimo intento tiene que mirar la sesion entera.
+
+        Los intentos anteriores **si** acotan ---la ventana reciente y la del
+        comienzo, que son la optimizacion--- pero el ultimo no puede: si acotara,
+        una senal publicada a mitad de sesion y nunca mas se perderia. Antes esta
+        prueba miraba «ninguna consulta acota», que dejo de ser cierto al agregar
+        las ventanas y no era lo que habia que garantizar.
+        """
+
         cursor = self._cursor()
+        api_sesion._AUSENTES_CACHE.clear()
         api_sesion._ultimos_valores(cursor, "f1_25_udp_simulation", "s", ["speed"])
         consulta, parametros = cursor.execute.call_args[0]
         self.assertNotIn("timestamp <=", consulta)
+        self.assertNotIn("timestamp >=", consulta)
         self.assertEqual(len(parametros), 3)
+        api_sesion._AUSENTES_CACHE.clear()
+
+    def test_sin_instante_se_intenta_primero_acotado(self):
+        """Y antes de eso se prueba con ventanas: es de donde sale la mejora."""
+
+        cursor = self._cursor()
+        api_sesion._AUSENTES_CACHE.clear()
+        api_sesion._ultimos_valores(cursor, "f1_25_udp_simulation", "s", ["speed"])
+        acotadas = [c[0][0] for c in cursor.execute.call_args_list
+                    if "timestamp >=" in c[0][0]]
+        self.assertGreaterEqual(len(acotadas), 1,
+                                "no se intento ninguna ventana antes del recorrido completo")
+        api_sesion._AUSENTES_CACHE.clear()
 
     def test_con_instante_acota_por_marca_de_tiempo(self):
         cursor = self._cursor()
@@ -309,3 +334,257 @@ class UltimosValoresAcotados(unittest.TestCase):
         cursor = self._cursor()
         self.assertEqual(api_sesion._ultimos_valores(cursor, "f", "s", []), {})
         cursor.execute.assert_not_called()
+
+
+class PuestaAPuntoDeclarada(unittest.TestCase):
+    """Tres de los cinco campos son codigos de la especificacion del juego que
+    el trabajo no cita. Devolverlos como si fueran valores legibles pondria una
+    anotacion sin fuente donde hoy hay una medicion."""
+
+    def test_declara_cuales_no_estan_decodificados(self):
+        sin = [c for c, m in api_sesion.UNIDADES_PUESTA_A_PUNTO.items()
+               if not m["decodificado"]]
+        self.assertEqual(sorted(sin),
+                         ["compuesto", "mezcla_de_combustible", "modo_de_despliegue_ers"])
+
+    def test_los_decodificados_llevan_unidad_real(self):
+        self.assertEqual(
+            api_sesion.UNIDADES_PUESTA_A_PUNTO["sesgo_de_freno_pct"]["unidad"], "%")
+        self.assertEqual(
+            api_sesion.UNIDADES_PUESTA_A_PUNTO["edad_del_neumatico_vueltas"]["unidad"],
+            "vueltas")
+
+    def test_cada_campo_del_catalogo_tiene_unidad(self):
+        self.assertEqual(sorted(api_sesion.CANALES_PUESTA_A_PUNTO),
+                         sorted(api_sesion.UNIDADES_PUESTA_A_PUNTO))
+
+
+class VueltaConSalto(unittest.TestCase):
+    """Una vuelta con un salto de horas entre dos muestras seguidas no se rodo
+    de corrido: son dos cargas de la misma sesion pegadas. La duracion que sirve
+    es la de conduccion continua, y la bruta se declara porque la diferencia
+    entre las dos **es** el hallazgo."""
+
+    def test_la_duracion_util_es_la_continua_y_la_bruta_queda_declarada(self):
+        from datetime import datetime, timezone
+        t0 = datetime(2026, 9, 2, tzinfo=timezone.utc)
+        t1 = datetime(2026, 9, 5, tzinfo=timezone.utc)   # tres dias despues
+        filas = [(1, 6796, 1.2, 7007.2, t0, t1, 0.0, 317.0, 0.0, 209.0, 258215.5)]
+        falsa, parche = _con(filas)
+        with parche:
+            r = api_sesion.listar_vueltas("f1_25:session:1")
+        v = r["vueltas"][0]
+        self.assertEqual(v["duracion_s"], 209.0)
+        self.assertGreater(v["duracion_bruta_s"], 200000)
+        self.assertEqual(v["hueco_mayor_s"], 258215.5)
+        self.assertFalse(v["continua"])
+
+    def test_una_vuelta_sin_saltos_se_declara_continua(self):
+        from datetime import datetime, timezone
+        t0 = datetime(2026, 9, 2, tzinfo=timezone.utc)
+        t1 = datetime(2026, 9, 2, 0, 2, 10, tzinfo=timezone.utc)
+        filas = [(2, 2604, 0.2, 7006.2, t0, t1, 40.0, 320.0, 0.0, 130.1, 0.1)]
+        falsa, parche = _con(filas)
+        with parche:
+            r = api_sesion.listar_vueltas("f1_25:session:1")
+        self.assertTrue(r["vueltas"][0]["continua"])
+        self.assertEqual(r["vueltas"][0]["duracion_s"], 130.1)
+
+
+class MemoriaAcotadaTests(unittest.TestCase):
+    """Una cache sin tope es una fuga de memoria con otro nombre.
+
+    Este backend esta pensado para correr semanas seguidas en una Raspberry con
+    258 sesiones en el catalogo. Guardar la respuesta de avisos de cada una que
+    alguien abra ---sin soltar ninguna--- es exactamente la forma en que un
+    proceso largo se queda sin memoria.
+    """
+
+    def setUp(self) -> None:
+        api_sesion._AVISOS_CACHE.clear()
+
+    def tearDown(self) -> None:
+        api_sesion._AVISOS_CACHE.clear()
+
+    def test_no_guarda_mas_del_tope(self) -> None:
+        for i in range(api_sesion.AVISOS_EN_CACHE + 10):
+            falsa, parche = _con([])
+            with parche:
+                api_sesion.avisos("f1_25:session:%d" % i)
+        self.assertEqual(len(api_sesion._AVISOS_CACHE), api_sesion.AVISOS_EN_CACHE)
+
+    def test_suelta_la_menos_usada_no_la_ultima(self) -> None:
+        """Se descarta por desuso: la primera se conserva si se la sigue mirando."""
+        for i in range(api_sesion.AVISOS_EN_CACHE):
+            falsa, parche = _con([])
+            with parche:
+                api_sesion.avisos("f1_25:session:%d" % i)
+        # Se vuelve a mirar la primera: deja de ser la mas vieja.
+        falsa, parche = _con([])
+        with parche:
+            primera = api_sesion.avisos("f1_25:session:0")
+        self.assertTrue(primera["de_cache"])
+
+        falsa, parche = _con([])
+        with parche:
+            api_sesion.avisos("f1_25:session:nueva")
+
+        claves = [c[0] for c in api_sesion._AVISOS_CACHE]
+        self.assertIn("f1_25:session:0", claves)
+        self.assertNotIn("f1_25:session:1", claves)
+
+    def test_la_segunda_consulta_no_toca_la_base(self) -> None:
+        falsa, parche = _con([])
+        with parche:
+            api_sesion.avisos("f1_25:session:7")
+        consultas_primera = len(falsa.consultas)
+        self.assertGreater(consultas_primera, 0)
+
+        falsa2, parche2 = _con([])
+        with parche2:
+            segunda = api_sesion.avisos("f1_25:session:7")
+        self.assertTrue(segunda["de_cache"])
+        self.assertEqual(falsa2.consultas, [])
+
+
+class RespuestasComprimidasTests(unittest.TestCase):
+    """Lo que viaja son listas de numeros: la forma que mejor comprime.
+
+    Se comprueba que el middleware este declarado, no que zlib funcione. Lo
+    que puede romperse al editar es que alguien reordene los middlewares o
+    saque este; el ahorro medido ---206.910 a 34.629 bytes sobre las ocho
+    consultas de abrir una sesion--- depende de que siga puesto.
+    """
+
+    def test_la_aplicacion_declara_gzip(self) -> None:
+        from fastapi.middleware.gzip import GZipMiddleware
+
+        from backend.app import app
+
+        clases = [m.cls for m in app.user_middleware]
+        self.assertIn(GZipMiddleware, clases)
+
+    def test_no_comprime_respuestas_diminutas(self) -> None:
+        """Comprimir doscientos bytes cuesta mas de lo que ahorra."""
+        from fastapi.middleware.gzip import GZipMiddleware
+
+        from backend.app import app
+
+        gzip = next(m for m in app.user_middleware if m.cls is GZipMiddleware)
+        self.assertGreaterEqual(gzip.kwargs["minimum_size"], 512)
+
+
+class SubmuestreoAcotadoTests(unittest.TestCase):
+    """El limite de puntos tiene que ser un limite.
+
+    `max(1, len // puntos)` no acota: la division entera da 1 para todo lo que
+    este por debajo del doble, y ahi el paso queda en 1 y se devuelve todo. El
+    peor caso son `2*puntos - 1` filas, donde se devolvia casi el doble de lo
+    pedido y ademas se declaraba que no se habia reducido nada.
+    """
+
+    def test_division_exacta(self) -> None:
+        filas = list(range(600))
+        recorte, reducida = api_sesion._reducir(filas, 300)
+        self.assertEqual(len(recorte), 300)
+        self.assertTrue(reducida)
+
+    def test_uno_mas_que_el_limite(self) -> None:
+        filas = list(range(301))
+        recorte, reducida = api_sesion._reducir(filas, 300)
+        self.assertLessEqual(len(recorte), 300)
+        self.assertTrue(reducida)
+
+    def test_el_peor_caso_de_la_division_entera(self) -> None:
+        """599 filas con puntos=300: la division entera daba paso 1."""
+
+        filas = list(range(599))
+        recorte, reducida = api_sesion._reducir(filas, 300)
+        self.assertLessEqual(len(recorte), 300,
+                             "se devolvieron %d filas para un limite de 300" % len(recorte))
+        self.assertTrue(reducida, "se redujo y se declaraba que no")
+
+    def test_justo_el_limite_no_se_reduce(self) -> None:
+        filas = list(range(300))
+        recorte, reducida = api_sesion._reducir(filas, 300)
+        self.assertEqual(recorte, filas)
+        self.assertFalse(reducida)
+
+    def test_por_debajo_del_limite_no_se_toca(self) -> None:
+        filas = list(range(17))
+        recorte, reducida = api_sesion._reducir(filas, 300)
+        self.assertEqual(recorte, filas)
+        self.assertFalse(reducida)
+
+    def test_los_dos_extremos_sobreviven_siempre(self) -> None:
+        """Sin la ultima, la serie termina antes que el dato.
+
+        El ultimo tramo de una vuelta es la frenada de meta: que no se dibuje
+        no es un detalle de resolucion.
+        """
+
+        for total in (301, 599, 600, 601, 602, 1000, 1201, 5641):
+            filas = list(range(total))
+            recorte, _ = api_sesion._reducir(filas, 300)
+            self.assertEqual(recorte[0], filas[0], "total=%d" % total)
+            self.assertEqual(recorte[-1], filas[-1], "total=%d" % total)
+            self.assertLessEqual(len(recorte), 300, "total=%d" % total)
+
+    def test_conserva_el_orden(self) -> None:
+        filas = list(range(1000))
+        recorte, _ = api_sesion._reducir(filas, 300)
+        self.assertEqual(recorte, sorted(recorte))
+
+
+class SenalesAusentesRecordadasTests(unittest.TestCase):
+    """Concluir que una senal no esta cuesta recorrer la sesion entera.
+
+    Y esa conclusion no cambia: a una carrera guardada no se le agregan filas.
+    Repetir el recorrido en cada consulta era el grueso de los 31,42 s que
+    medimos el 2026-09-08 en `/contexto` de una sesion sin temperatura de pista
+    ---y ese numero estaba justo por encima del corte de 30 s del navegador, de
+    modo que la sesion no terminaba de abrirse nunca.
+    """
+
+    def setUp(self) -> None:
+        api_sesion._AUSENTES_CACHE.clear()
+
+    def tearDown(self) -> None:
+        api_sesion._AUSENTES_CACHE.clear()
+
+    def test_lo_ausente_se_recuerda_y_no_se_vuelve_a_buscar(self) -> None:
+        falsa, parche = _con([])          # la base no devuelve ninguna senal
+        with parche:
+            api_sesion._ultimos_valores(falsa.cursor_obj, "f1_25_udp_simulation",
+                                        "s1", ["air_temperature"])
+        primera = len(falsa.consultas)
+        self.assertGreater(primera, 0)
+
+        falsa2, parche2 = _con([])
+        with parche2:
+            api_sesion._ultimos_valores(falsa2.cursor_obj, "f1_25_udp_simulation",
+                                        "s1", ["air_temperature"])
+        # La segunda hace menos consultas: no repite el recorrido sin acotar.
+        self.assertLess(len(falsa2.consultas), primera,
+                        "se volvio a recorrer la sesion para lo que ya se sabia ausente")
+
+    def test_cada_sesion_recuerda_lo_suyo(self) -> None:
+        falsa, parche = _con([])
+        with parche:
+            api_sesion._ultimos_valores(falsa.cursor_obj, "f1_25_udp_simulation",
+                                        "s1", ["air_temperature"])
+        # Otra sesion no hereda la ausencia: podria tener la senal.
+        falsa2, parche2 = _con([])
+        with parche2:
+            api_sesion._ultimos_valores(falsa2.cursor_obj, "f1_25_udp_simulation",
+                                        "s2", ["air_temperature"])
+        self.assertGreater(len(falsa2.consultas), 0)
+
+    def test_la_cache_de_ausentes_tiene_tope(self) -> None:
+        for i in range(api_sesion.AUSENTES_EN_CACHE + 12):
+            falsa, parche = _con([])
+            with parche:
+                api_sesion._ultimos_valores(falsa.cursor_obj, "f1_25_udp_simulation",
+                                            "s%d" % i, ["air_temperature"])
+        self.assertLessEqual(len(api_sesion._AUSENTES_CACHE),
+                             api_sesion.AUSENTES_EN_CACHE)

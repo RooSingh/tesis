@@ -54,6 +54,44 @@ MAX_SUSCRIPTORES = 16
 # mas que el atrasado, y acumular introduciria una latencia creciente invisible.
 COLA_POR_SUSCRIPTOR = 500
 
+#: CUANTAS ANOTACIONES ESPERAN POR SUSCRIPTOR.
+#:
+#: Las anotaciones tienen su propia cola, y no por orden sino por supervivencia.
+#: Repartirlas primero dentro de una cola compartida no las conserva: la cola
+#: descarta lo mas viejo al llenarse, asi que quinientas muestras detras de una
+#: anotacion la empujan afuera antes de que el navegador llegue a leerla. Entrar
+#: primero y sobrevivir son cosas distintas.
+#:
+#: Doscientas son muchas para lo que son: en la sesion mas cargada que se midio
+#: se emitieron unas pocas decenas. El tope existe igual, porque una cola sin
+#: limite es una fuga de memoria con otro nombre; si se llena, se descarta y
+#: **se declara aparte**, y la lista completa sigue disponible en
+#: `/live/anotaciones`, que no depende de este transporte.
+EVENTOS_POR_SUSCRIPTOR = 200
+
+#: TRABAJO PENDIENTE ENTRE EL HILO DE MQTT Y EL BUCLE.
+#:
+#: La cola de cada suscriptor tiene tope, pero lo que estaba **antes** de ella
+#: no lo tenia. Cada señal programaba un `call_soon_threadsafe` por suscriptor:
+#: con la parrilla completa ---35.186 señales normalizadas por segundo, medido
+#: en `docs/mediciones/caudal_por_fuente.json`--- y tres navegadores mirando,
+#: son mas de cien mil funciones por segundo entrando a la cola de tareas del
+#: bucle. Esa cola es una `deque` sin limite: si el bucle no llega a
+#: vaciarla ---y a esa frecuencia no llega--- crece hasta que se acaba la
+#: memoria, y ningun contador lo dice.
+#:
+#: Ahora el hilo de MQTT deposita en este buffer y programa **una sola**
+#: funcion mientras haya una pendiente. El trabajo pendiente pasa de ser
+#: proporcional al caudal a ser uno.
+PENDIENTES_DE_TELEMETRIA = 4000
+
+#: Las anotaciones van por su propio camino y con mucho mas margen. Son eventos
+#: ---un bloqueo de rueda, un despiste--- de los que hay unos pocos por sesion,
+#: y perder uno no es perder resolucion: es perder el hecho. Mezclarlas con la
+#: telemetria las dejaria detras de miles de muestras y se descartarian
+#: primero, que es exactamente al reves de lo que corresponde.
+PENDIENTES_DE_EVENTOS = 1000
+
 # Cuantas muestras se conservan **por senal** para quien llega tarde.
 #
 # Sin esto, abrir la pagina a mitad de una vuelta mostraba las trazas vacias y
@@ -84,6 +122,87 @@ def _segundo_de(marca) -> float | None:
         return None
 
 
+class Suscriptor:
+    """Lo que recibe un navegador conectado al flujo.
+
+    Dos colas y no una. La de datos descarta lo mas viejo al llenarse ---en vivo
+    el dato reciente vale mas, y acumular anadiria latencia oculta---; la de
+    eventos no puede ser desalojada por datos, porque perder una muestra es
+    perder resolucion y perder un aviso es perder el hecho.
+
+    Las dos se leen y se escriben **solo desde el bucle de asyncio**: el hilo de
+    MQTT deposita en el puente del difusor y el bucle reparte desde ahi. Por eso
+    no hacen falta candados aca.
+    """
+
+    def __init__(self) -> None:
+        self.eventos: deque = deque(maxlen=EVENTOS_POR_SUSCRIPTOR)
+        self.datos: deque = deque(maxlen=COLA_POR_SUSCRIPTOR)
+        self._hay = asyncio.Event()
+        #: Descartes en el ultimo tramo del transporte, separados por tipo.
+        self.descartes_datos = 0
+        self.descartes_eventos = 0
+        #: Lo que entro y lo que salio de esta cola. Con los dos se cierra la
+        #: cuenta: recibidos por el difusor -> encolados aca -> entregados al
+        #: generador. Sin el segundo no se puede saber si lo que falta se
+        #: descarto o se quedo esperando.
+        self.encolados = 0
+        self.entregados = 0
+
+    def poner_evento(self, cuerpo: dict) -> None:
+        if len(self.eventos) == self.eventos.maxlen:
+            # Saturacion de eventos: es otra cosa que la saturacion de datos y
+            # se cuenta aparte. Aca si se pierde un hecho, no resolucion.
+            self.descartes_eventos += 1
+        self.eventos.append(cuerpo)
+        self._hay.set()
+
+    def poner_dato(self, cuerpo: dict) -> None:
+        self.encolados += 1
+        if len(self.datos) == self.datos.maxlen:
+            self.descartes_datos += 1
+        self.datos.append(cuerpo)
+        self._hay.set()
+
+    async def obtener(self) -> dict:
+        """Devuelve lo proximo a enviar. Los eventos salen antes que los datos."""
+
+        while True:
+            if self.eventos:
+                self.entregados += 1
+                return self.eventos.popleft()
+            if self.datos:
+                self.entregados += 1
+                return self.datos.popleft()
+            self._hay.clear()
+            # Se vuelve a mirar despues de limpiar: algo pudo entrar entre la
+            # comprobacion y el `clear`, y esperar entonces seria dormirse con
+            # trabajo pendiente.
+            if self.eventos or self.datos:
+                continue
+            await self._hay.wait()
+
+    def get_nowait(self) -> dict:
+        """Lo proximo, sin esperar. Levanta `QueueEmpty` si no hay nada.
+
+        Mantiene el vocabulario de `asyncio.Queue`, que es el que habla el resto
+        del modulo y con el que estan escritas las pruebas. Respeta la misma
+        prioridad que `obtener`: primero los eventos.
+        """
+
+        if self.eventos:
+            return self.eventos.popleft()
+        if self.datos:
+            return self.datos.popleft()
+        raise asyncio.QueueEmpty
+
+    def empty(self) -> bool:
+        return not self.eventos and not self.datos
+
+    def pendientes(self) -> int:
+        return len(self.eventos) + len(self.datos)
+
+
 class DifusorEnVivo:
     """Recibe del broker y reparte a los suscriptores conectados.
 
@@ -94,7 +213,26 @@ class DifusorEnVivo:
     def __init__(self) -> None:
         self._bucle: asyncio.AbstractEventLoop | None = None
         self._cliente = None
-        self._suscriptores: list[asyncio.Queue] = []
+        self._suscriptores: list["Suscriptor"] = []
+        #: Cuantos hay, para poder preguntarlo **sin tomar el candado**.
+        #:
+        #: La lista es la verdad; este entero la espeja. Se lo lee una vez por
+        #: mensaje y a la carga medida eso son decenas de miles de veces por
+        #: segundo: tomar un candado para contar costaria mas que el trabajo que
+        #: la cuenta permite evitar. Leer y escribir un entero es atomico en este
+        #: interprete, y el peor caso de leerlo desactualizado es procesar un
+        #: mensaje de mas o de menos en el instante en que alguien se conecta.
+        self._cuantos_suscriptores = 0
+        #: El puente: lo que el hilo de MQTT dejo y el bucle todavia no repartio.
+        self._pendientes: deque = deque(maxlen=PENDIENTES_DE_TELEMETRIA)
+        self._pendientes_eventos: deque = deque(maxlen=PENDIENTES_DE_EVENTOS)
+        self._despacho_pedido = False
+        #: Que se perdio y donde. Sin esto la saturacion es invisible: se
+        #: descartaba en silencio y el estado seguia diciendo cuantos mensajes
+        #: entraron, que es otra cosa.
+        self.descartes_puente = 0
+        self.descartes_eventos = 0
+        self.pendientes_maximos_vistos = 0
         self._candado = threading.Lock()
         self.conectado = False
         self.motivo: str | None = None
@@ -186,6 +324,25 @@ class DifusorEnVivo:
     def _procesar_cuerpo(self, cuerpo: dict, recibido_utc: str) -> None:
         """Registra y reparte una senal de un mensaje MQTT simple o agrupado."""
 
+        # LO CARO SOLO SE HACE SI ALGUIEN MIRA.
+        #
+        # Medido en banco sobre sesenta mil senales con la forma real que publica
+        # el capturador: el anotador se lleva el 51,6 % del manejador y el resumen
+        # el 10,1 %. Interpretar el JSON ---34,4 %--- hay que hacerlo igual para
+        # saber que trae el mensaje, y las series por senal cuestan 3,9 % y son
+        # justamente lo que un suscriptor nuevo necesita para no ver un grafico
+        # vacio. De modo que se saltean **esas dos** y no las otras dos.
+        #
+        # Medido antes de esto: el servidor ocupaba 1,021 nucleos **con cero
+        # suscriptores**, y era la pieza propia que mas procesador gastaba.
+        #
+        # LO QUE ESTO CUESTA, Y HAY QUE DECIRLO. El resumen conserva la sesion
+        # entera; si nadie mira durante los primeros minutos, quien se conecte
+        # despues no vera esa parte del eje que crece. Es una perdida de historia
+        # previa, no de dato: la telemetria se persiste por el consumidor, que es
+        # otro proceso y no se entera de esto.
+        mira_alguien = self._cuantos_suscriptores > 0
+
         cuerpo["_recibido_utc"] = recibido_utc
         self.recibidos += 1
         self.recientes.append(cuerpo)
@@ -208,10 +365,11 @@ class DifusorEnVivo:
             # tiene donde dibujarse. El resumen conserva **toda** la sesion con
             # el minimo y el maximo de cada segundo, que es lo que permite un
             # eje que crece en lugar de correrse.
-            segundo = _segundo_de(cuerpo.get("timestamp"))
-            if segundo is not None:
-                self.resumen.observar(vehiculo, senal, segundo,
-                                      cuerpo.get("value"))
+            if mira_alguien:
+                segundo = _segundo_de(cuerpo.get("timestamp"))
+                if segundo is not None:
+                    self.resumen.observar(vehiculo, senal, segundo,
+                                          cuerpo.get("value"))
             if senal == "lap_distance":
                 self.historia_distancia.setdefault(
                     vehiculo, deque(maxlen=MUESTRAS_POR_SENAL)
@@ -221,23 +379,22 @@ class DifusorEnVivo:
         # accesorio y transportar no lo es. El mismo criterio vale para el
         # resumen: si el mensaje no trae una marca temporal legible, se pierde
         # ese punto del resumen y no la difusion.
-        try:
-            anotador = self.anotadores.get(vehiculo)
-            if anotador is None:
-                anotador = self.anotadores[vehiculo] = anotador_vivo.Anotador(
-                    al_anotar=lambda a, v=vehiculo: self._repartir_anotacion(a, v))
-            anotador.observar(cuerpo)
-        except Exception as error:
-            self.fallos_anotador += 1
-            self.motivo_anotador = f"{type(error).__name__}: {error}"
+        if mira_alguien:
+            try:
+                anotador = self.anotadores.get(vehiculo)
+                if anotador is None:
+                    anotador = self.anotadores[vehiculo] = anotador_vivo.Anotador(
+                        al_anotar=lambda a, v=vehiculo: self._repartir_anotacion(a, v))
+                anotador.observar(cuerpo)
+            except Exception as error:
+                self.fallos_anotador += 1
+                self.motivo_anotador = f"{type(error).__name__}: {error}"
 
         if self._bucle is None:
             return
-        with self._candado:
-            colas = list(self._suscriptores)
-        for cola in colas:
-            # Se entrega a traves del bucle porque este hilo no es el suyo.
-            self._bucle.call_soon_threadsafe(self._encolar, cola, cuerpo)
+        # Se entrega a traves del bucle porque este hilo no es el suyo, pero
+        # se programa una funcion por lote y no una por señal y suscriptor.
+        self._depositar(self._pendientes, cuerpo, "telemetria")
 
     def _repartir_anotacion(self, anotacion: dict, vehiculo: str = "") -> None:
         """Envia una anotacion recien emitida por el mismo canal que los datos.
@@ -253,46 +410,87 @@ class DifusorEnVivo:
         cuerpo["vehiculo"] = vehiculo
         if self._bucle is None:
             return
-        with self._candado:
-            colas = list(self._suscriptores)
-        for cola in colas:
-            self._bucle.call_soon_threadsafe(self._encolar, cola, cuerpo)
+        self._depositar(self._pendientes_eventos, cuerpo, "evento")
 
-    @staticmethod
-    def _encolar(cola: asyncio.Queue, cuerpo: dict) -> None:
-        if cola.full():
-            # Se descarta lo mas viejo: en vivo, el dato reciente vale mas.
-            try:
-                cola.get_nowait()
-            except asyncio.QueueEmpty:
-                pass
-        try:
-            cola.put_nowait(cuerpo)
-        except asyncio.QueueFull:
-            pass
+    def _depositar(self, buffer: deque, cuerpo: dict, clase: str) -> None:
+        """Deja algo para repartir y pide **una** pasada del bucle.
+
+        La condicion de carrera que importa es la de `_despacho_pedido`: se lee
+        y se escribe dentro del candado, de modo que dos mensajes simultaneos no
+        pueden programar dos pasadas ni dejar el buffer sin nadie que lo vacie.
+        """
+
+        with self._candado:
+            if not self._suscriptores:
+                return
+            if len(buffer) == buffer.maxlen:
+                # `deque` con `maxlen` tira el mas viejo sola. Se cuenta, porque
+                # un descarte silencioso es una perdida que nadie puede ver.
+                if clase == "evento":
+                    self.descartes_eventos += 1
+                else:
+                    self.descartes_puente += 1
+            buffer.append(cuerpo)
+            hondura = len(self._pendientes) + len(self._pendientes_eventos)
+            if hondura > self.pendientes_maximos_vistos:
+                self.pendientes_maximos_vistos = hondura
+            pedir = not self._despacho_pedido
+            self._despacho_pedido = True
+        if pedir:
+            self._bucle.call_soon_threadsafe(self._despachar)
+
+    def _despachar(self) -> None:
+        """Corre en el bucle. Vacia lo pendiente y lo reparte.
+
+        Los eventos van primero: son pocos y no pueden quedar detras de miles de
+        muestras. `_despacho_pedido` se baja **antes** de repartir, de modo que
+        lo que llegue durante el reparto programa la pasada siguiente en vez de
+        quedarse esperando a que alguien la pida.
+        """
+
+        with self._candado:
+            eventos = list(self._pendientes_eventos)
+            datos = list(self._pendientes)
+            self._pendientes_eventos.clear()
+            self._pendientes.clear()
+            colas = list(self._suscriptores)
+            self._despacho_pedido = False
+        for cuerpo in eventos:
+            for sus in colas:
+                sus.poner_evento(cuerpo)
+        for cuerpo in datos:
+            for sus in colas:
+                sus.poner_dato(cuerpo)
 
     # -- suscripcion ------------------------------------------------------- #
 
-    def suscribir(self) -> asyncio.Queue | None:
+    def suscribir(self) -> "Suscriptor | None":
         """Registra un suscriptor. Devuelve None si se alcanzo el tope."""
 
         with self._candado:
             if len(self._suscriptores) >= MAX_SUSCRIPTORES:
                 return None
-            cola: asyncio.Queue = asyncio.Queue(maxsize=COLA_POR_SUSCRIPTOR)
+            cola = Suscriptor()
             self._suscriptores.append(cola)
+            self._cuantos_suscriptores = len(self._suscriptores)
             return cola
 
-    def desuscribir(self, cola: asyncio.Queue) -> None:
+    def desuscribir(self, cola: "Suscriptor") -> None:
         with self._candado:
             if cola in self._suscriptores:
                 self._suscriptores.remove(cola)
+            self._cuantos_suscriptores = len(self._suscriptores)
 
     # -- estado ------------------------------------------------------------ #
 
     def estado(self) -> dict[str, Any]:
         with self._candado:
             suscriptores = len(self._suscriptores)
+            descartes_datos = sum(s.descartes_datos for s in self._suscriptores)
+            descartes_eventos = sum(s.descartes_eventos for s in self._suscriptores)
+            pendientes = [s.pendientes() for s in self._suscriptores]
+            encolados = [s.encolados for s in self._suscriptores]
+            entregados = [s.entregados for s in self._suscriptores]
         return {
             "conectado": self.conectado,
             "motivo": self.motivo,
@@ -302,6 +500,39 @@ class DifusorEnVivo:
             "maximo_suscriptores": MAX_SUSCRIPTORES,
             "mensajes_recibidos": self.recibidos,
             "mensajes_descartados": self.descartados,
+            # LO QUE SE PIERDE DE VISTA, SEPARADO DE LO QUE SE PERSISTE.
+            # Estas tres cifras son perdidas **de esta vista**: el consumidor
+            # que escribe en la base es otro proceso, lee del mismo topico y no
+            # descarta nada. Sin declararlas, la saturacion se veia como un
+            # grafico con menos puntos y nada mas.
+            # LO QUE SE PERDIO, POR TIPO Y POR PUNTO DEL TRANSPORTE.
+            # Son dos puntos distintos y dos tipos distintos, y mezclarlos
+            # esconde justo lo que hay que ver: un descarte de muestras es
+            # perdida de resolucion y uno de anotaciones es perdida de un hecho.
+            "descartes_de_vista": {
+                "puente_datos": self.descartes_puente,
+                "puente_eventos": self.descartes_eventos,
+                "suscriptor_datos": descartes_datos,
+                "suscriptor_eventos": descartes_eventos,
+                "que_significa": ("no llegaron al navegador por saturacion; la "
+                                  "persistencia corre por otro proceso y no "
+                                  "depende de esto"),
+                "recuperacion_de_anotaciones": (
+                    "GET /live/anotaciones devuelve la lista completa por "
+                    "vehiculo: una anotacion descartada en el transporte no se "
+                    "pierde, se vuelve a pedir"),
+            },
+            "pendientes_por_suscriptor": pendientes,
+            # LA CUENTA COMPLETA, POR SUSCRIPTOR.
+            # `recibidos` es lo que entro al difusor; `encolados` lo que se le
+            # puso a este suscriptor; `entregados` lo que el generador saco para
+            # mandarlo. La diferencia entre encolados y entregados es lo que
+            # todavia espera o se descarto; sin los tres numeros no se puede
+            # decir donde se pierde una señal.
+            "encolados_por_suscriptor": encolados,
+            "entregados_por_suscriptor": entregados,
+            "pendientes_maximos_vistos": self.pendientes_maximos_vistos,
+            "tope_pendientes": PENDIENTES_DE_TELEMETRIA,
             # Se declaran los dos caminos y no solo este. Anunciar unicamente
             # "sin pasar por la base" es cierto y a la vez enganoso: leido solo,
             # dice que el dato no se guarda. Lo que no pasa por la base es
@@ -328,7 +559,7 @@ def evento_sse(dato: dict, evento: str = "telemetria") -> str:
     return f"event: {evento}\ndata: {json.dumps(dato, ensure_ascii=False)}\n\n"
 
 
-async def flujo_de_eventos(cola: asyncio.Queue, intervalo_latido_s: float = 15.0):
+async def flujo_de_eventos(cola: "Suscriptor", intervalo_latido_s: float = 15.0):
     """Genera el flujo de eventos para un suscriptor.
 
     Emite un latido periodico cuando no hay telemetria: sin el, un intermediario
@@ -339,7 +570,7 @@ async def flujo_de_eventos(cola: asyncio.Queue, intervalo_latido_s: float = 15.0
     yield evento_sse(difusor.estado(), "estado")
     while True:
         try:
-            dato = await asyncio.wait_for(cola.get(), timeout=intervalo_latido_s)
+            dato = await asyncio.wait_for(cola.obtener(), timeout=intervalo_latido_s)
         except asyncio.TimeoutError:
             yield evento_sse({"momento": datetime.now(timezone.utc).isoformat(),
                               "recibidos": difusor.recibidos}, "latido")

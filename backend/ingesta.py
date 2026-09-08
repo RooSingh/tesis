@@ -479,6 +479,9 @@ def obtener_trabajo(trabajo_id: str) -> dict:
 # --------------------------------------------------------------------------- #
 
 _CACHE_ESTADO: tuple[float, tuple, dict] | None = None
+#: Sin el, la cache caducada dispara tantos recorridos de la tabla como
+#: peticiones simultaneas haya.
+_CANDADO_ESTADO = threading.Lock()
 
 
 def _contar_sesion(fuente: str, sesion: str) -> tuple[int, int, Any]:
@@ -623,9 +626,23 @@ def sesion_activa(fuente: str | None = None, sesion: str | None = None) -> dict:
         base = dict(_CACHE_ESTADO[2])
         base["edad_del_conteo_s"] = round(ahora - _CACHE_ESTADO[0], 1)
     else:
-        base = _estado_persistido(fuente, sesion)
-        _CACHE_ESTADO = (ahora, clave, dict(base))
-        base["edad_del_conteo_s"] = 0.0
+        # SE CALCULA UNA VEZ, AUNQUE LO PIDAN VARIOS A LA VEZ.
+        #
+        # En frio esto tarda quince segundos. Sin candado, cinco peticiones
+        # simultaneas arrancan cinco recorridos identicos de la tabla: es la
+        # estampida clasica de una cache que caduca, y ocurre justo al abrir el
+        # tablero, que es cuando mas molesta. Con el candado, el primero calcula
+        # y los que llegan detras usan lo que dejo.
+        with _CANDADO_ESTADO:
+            ahora = time.monotonic()
+            if (_CACHE_ESTADO and _CACHE_ESTADO[1] == clave
+                    and ahora - _CACHE_ESTADO[0] < VIGENCIA_ESTADO_S):
+                base = dict(_CACHE_ESTADO[2])
+                base["edad_del_conteo_s"] = round(ahora - _CACHE_ESTADO[0], 1)
+            else:
+                base = _estado_persistido(fuente, sesion)
+                _CACHE_ESTADO = (time.monotonic(), clave, dict(base))
+                base["edad_del_conteo_s"] = 0.0
 
     respuesta = dict(base)
     respuesta["en_vivo"] = en_vivo

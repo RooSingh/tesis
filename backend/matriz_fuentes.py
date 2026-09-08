@@ -383,7 +383,38 @@ def construir() -> dict[str, Any]:
             "recalculando": edad >= VIGENCIA_S,
         }
 
-    return _construir_midiendo()
+    # SIN NADA QUE SERVIR, TAMPOCO SE RETIENE LA PETICION.
+    #
+    # Al arrancar, `backend/app.py` lanza el precalculo en segundo plano. Pero
+    # el tablero pide esta ruta al abrir, y con el proceso recien arrancado la
+    # peticion llega **antes** de que ese precalculo termine: sin cache,
+    # `construir` arrancaba una segunda medicion completa dentro de la peticion,
+    # en paralelo con la primera. Medido el 2026-09-08: **41,45 s**, y las dos
+    # recorriendo la tabla a la vez.
+    #
+    # Ahora se responde que todavia no esta. La matriz es el pie del tablero
+    # ---que sostiene cada fuente---, no algo que haga falta para dibujar: decir
+    # «se esta midiendo» y llegar treinta segundos despues es mejor que retener
+    # la conexion, que ademas es una de las seis que el navegador da por origen.
+    with _CERROJO_REFRESCO:
+        arrancar = not _REFRESCANDO
+        if arrancar:
+            _REFRESCANDO = True
+    if arrancar:
+        threading.Thread(
+            target=_refrescar_en_segundo_plano,
+            name="matriz-fuentes-primera",
+            daemon=True,
+        ).start()
+    return {
+        "fuentes": [],
+        "magnitudes": [],
+        "sin_medir": True,
+        "recalculando": True,
+        "edad_del_calculo_s": None,
+        "motivo_ausencia": ("la matriz se mide recorriendo lo persistido y "
+                            "todavia no termino; se esta calculando ahora"),
+    }
 
 
 def _construir_midiendo() -> dict[str, Any]:

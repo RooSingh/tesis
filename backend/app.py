@@ -11,13 +11,16 @@ from __future__ import annotations
 
 import asyncio
 import json
+import threading
 import time
+from collections import deque
 from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi import HTTPException
 from fastapi import Query
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import StreamingResponse
 
 from adapters import f1_25 as f1_25_adapter
@@ -63,6 +66,135 @@ from backend.db import (
 
 
 app = FastAPI(title=BACKEND_APP_NAME)
+
+# Las respuestas de esta API son JSON de numeros: listas largas de pares
+# distancia-valor, con los mismos digitos y los mismos nombres de campo
+# repetidos miles de veces. Es exactamente la forma que mejor comprime. Medido
+# sobre una vuelta de doce senales la respuesta pasa de 43.019 a 13.545 bytes,
+# y el catalogo de sesiones de 132.948 a 10.823.
+#
+# El umbral evita comprimir lo que no vale la pena: por debajo de un kilobyte
+# el trabajo de comprimir cuesta mas que los bytes que ahorra.
+app.add_middleware(GZipMiddleware, minimum_size=1024)
+
+
+# ---------------------------------------------------------------------------
+# DIAGNOSTICO: QUE TARDA, CUANTAS HAY A LA VEZ, Y SI EL BUCLE SE FRENA
+# ---------------------------------------------------------------------------
+#
+# Que una ruta rapida espere detras de una pesada demuestra contencion, no
+# donde esta. Tres causas dan predicciones distintas y hay que poder
+# distinguirlas con datos y no con una explicacion plausible:
+#
+#   * el bucle de asyncio bloqueado ---se frena todo, incluso lo que no
+#     consulta---;
+#   * el pool de hilos agotado ---se encolan las peticiones sincronas---;
+#   * la base ---solo se frena lo que consulta---.
+#
+# `_RETRASO_DEL_BUCLE` mide la primera: una tarea que se programa para dentro de
+# 100 ms y anota cuanto tardo de mas. Si el bucle esta libre, el retraso es de
+# milisegundos aunque haya consultas de un minuto corriendo en hilos.
+_PETICIONES: "deque" = deque(maxlen=400)
+_ACTIVAS = 0
+_PICO_ACTIVAS = 0
+_CANDADO_DIAG = threading.Lock()
+_RETRASO_DEL_BUCLE: "deque" = deque(maxlen=600)
+
+
+async def _vigilar_el_bucle() -> None:
+    """Anota cuanto se atrasa una tarea que pidio dormir 100 ms."""
+
+    while True:
+        antes = time.perf_counter()
+        await asyncio.sleep(0.1)
+        _RETRASO_DEL_BUCLE.append((time.perf_counter() - antes - 0.1) * 1000.0)
+
+
+@app.get("/diagnostico/peticiones")
+def diagnostico_peticiones(limite: int = 40) -> dict:
+    """Lo que este proceso vio: tiempos por peticion y retraso del bucle.
+
+    No mide la base ni el navegador: mide **este** proceso, que es la pieza
+    sobre la que se estaba conjeturando.
+    """
+
+    ultimas = list(_PETICIONES)[-max(1, min(limite, 400)):]
+    lentas = sorted(_PETICIONES, key=lambda x: -x["ms"])[:10]
+    retrasos = sorted(_RETRASO_DEL_BUCLE)
+    def q(p):
+        return round(retrasos[min(len(retrasos) - 1, int(p * len(retrasos)))], 2) if retrasos else None
+    return {
+        "peticiones_recientes": ultimas,
+        "las_mas_lentas": lentas,
+        "activas_ahora": _ACTIVAS,
+        "pico_de_activas": _PICO_ACTIVAS,
+        "retraso_del_bucle_ms": {
+            "muestras": len(retrasos),
+            "p50": q(0.5), "p95": q(0.95), "p99": q(0.99),
+            "maximo": round(retrasos[-1], 2) if retrasos else None,
+            "que_significa": ("cuanto se atrasa una tarea que pidio dormir 100 ms. "
+                              "Milisegundos = el bucle esta libre; segundos = hay "
+                              "trabajo sincrono corriendo dentro del bucle"),
+        },
+        "hilos_del_pool": _tamano_del_pool(),
+    }
+
+
+def _tamano_del_pool() -> Any:
+    """Cuantos hilos puede usar FastAPI para las rutas declaradas con `def`."""
+
+    try:
+        from anyio import to_thread
+
+        return to_thread.current_default_thread_limiter().total_tokens
+    except Exception:  # pragma: no cover - depende de la version de anyio
+        return None
+
+
+@app.middleware("http")
+async def anotar_tiempos(request, call_next):
+    """Registra cuanto tardo cada peticion y cuantas hubo a la vez."""
+
+    global _ACTIVAS, _PICO_ACTIVAS
+    with _CANDADO_DIAG:
+        _ACTIVAS += 1
+        if _ACTIVAS > _PICO_ACTIVAS:
+            _PICO_ACTIVAS = _ACTIVAS
+    inicio = time.perf_counter()
+    try:
+        return await call_next(request)
+    finally:
+        ms = (time.perf_counter() - inicio) * 1000.0
+        with _CANDADO_DIAG:
+            _ACTIVAS -= 1
+            activas = _ACTIVAS
+        ruta = request.url.path
+        if request.url.query:
+            ruta += "?" + request.url.query[:80]
+        # El propio diagnostico no se anota: se estaria midiendo a si mismo.
+        if not ruta.startswith("/diagnostico"):
+            _PETICIONES.append({"ruta": ruta, "ms": round(ms, 1),
+                                "activas_al_terminar": activas})
+
+
+@app.middleware("http")
+async def permitir_medir_los_tiempos(request, call_next):
+    """Deja que una pagina de otro origen lea los tiempos de sus consultas.
+
+    Sin esta cabecera, `PerformanceResourceTiming` de una respuesta de otro
+    origen viene opaca: `transferSize` da 0 y las marcas intermedias quedan en
+    cero. El tablero se sirve en el puerto 3000 y la API en el 8000, de modo que
+    **toda** medicion hecha desde el navegador informaba cero bytes ---y eso no
+    es un dato faltante, es un dato falso que parece medido.
+
+    Es una cabecera de observabilidad: expone cuanto tardo y cuanto peso una
+    respuesta que ese origen ya tiene permitido leer entera por CORS. No abre
+    nada que no estuviera abierto.
+    """
+
+    respuesta = await call_next(request)
+    respuesta.headers["Timing-Allow-Origin"] = "*"
+    return respuesta
 
 app.add_middleware(
     CORSMiddleware,
@@ -619,6 +751,7 @@ async def _iniciar_difusor() -> None:
             print(f"[matriz] no se pudo precalcular: {type(error).__name__}: {error}")
 
     asyncio.create_task(_calentar_matriz())
+    asyncio.create_task(_vigilar_el_bucle())
 
 
 @app.on_event("shutdown")

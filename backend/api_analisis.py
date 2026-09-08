@@ -25,6 +25,8 @@ DOS REGLAS QUE ESTAS RUTAS RESPETAN
 from __future__ import annotations
 
 import dataclasses
+import threading
+from collections import OrderedDict
 from typing import Any
 
 from fastapi import APIRouter, HTTPException
@@ -159,6 +161,18 @@ def analisis_traccion(session_id: str, vuelta: int,
                    vuelta, derivar_deslizamiento)
 
 
+#: La vigilancia de una sesion guardada no cambia: deriva de las frecuencias de
+#: toda la sesion, que ya estan medidas. Costo 29,77 s en frio el 2026-09-08, y
+#: es una de las dos consultas que hacian que el primer grafico tardara
+#: veintiseis segundos en aparecer.
+#:
+#: Con tope y por desuso, igual que los avisos: sin tope, un proceso largo con
+#: 258 sesiones en el catalogo terminaria guardandolas todas.
+_VIGILANCIA_CACHE: OrderedDict = OrderedDict()
+VIGILANCIAS_EN_CACHE = 24
+_CANDADO_VIGILANCIA = threading.Lock()
+
+
 @router.get("/analisis/{session_id}/vigilancia")
 def analisis_vigilancia(session_id: str, incluir_ausentes: bool = False) -> Any:
     """Que senales, si se pierden, merecen alarma y cuales solo aviso.
@@ -182,6 +196,14 @@ def analisis_vigilancia(session_id: str, incluir_ausentes: bool = False) -> Any:
     Por omision devuelve solo lo que la fuente publica: una magnitud que nunca
     entrega no es una alarma sino una ausencia declarada.
     """
+    clave = (session_id, bool(incluir_ausentes))
+    with _CANDADO_VIGILANCIA:
+        # El candado ademas evita que dos peticiones simultaneas de la misma
+        # sesion arranquen dos recorridos de treinta segundos.
+        if clave in _VIGILANCIA_CACHE:
+            _VIGILANCIA_CACHE.move_to_end(clave)
+            return dict(_VIGILANCIA_CACHE[clave], de_cache=True)
+
     fuente = _fuente_de(session_id)
     try:
         vigilada = criticidad.vigilar(fuente, session_id,
@@ -195,4 +217,10 @@ def analisis_vigilancia(session_id: str, incluir_ausentes: bool = False) -> Any:
                       "frecuencias, de modo que no se puede derivar cuanto "
                       "silencio tolera cada canal",
             "fuente": fuente, "session_id": session_id})
-    return vigilada.como_dict()
+    respuesta = vigilada.como_dict()
+    with _CANDADO_VIGILANCIA:
+        _VIGILANCIA_CACHE[clave] = respuesta
+        _VIGILANCIA_CACHE.move_to_end(clave)
+        while len(_VIGILANCIA_CACHE) > VIGILANCIAS_EN_CACHE:
+            _VIGILANCIA_CACHE.popitem(last=False)
+    return dict(respuesta, de_cache=False)

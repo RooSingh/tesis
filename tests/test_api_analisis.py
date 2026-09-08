@@ -155,6 +155,17 @@ class HerramientasTests(unittest.TestCase):
 class VigilanciaTests(unittest.TestCase):
     """La ruta que no mira el valor del dato sino su ausencia."""
 
+    def setUp(self) -> None:
+        # Desde el 2026-09-08 esta ruta guarda su respuesta: costaba 29,77 s en
+        # frio y era una de las dos consultas que hacian que el primer grafico
+        # del tablero tardara veintiseis segundos en aparecer. Cada prueba
+        # arranca con la cache vacia, porque lo que se comprueba aca es lo que
+        # la ruta **calcula**, no lo que recuerda.
+        api_analisis._VIGILANCIA_CACHE.clear()
+
+    def tearDown(self) -> None:
+        api_analisis._VIGILANCIA_CACHE.clear()
+
     def _vigilada(self, vigilancias):
         from backend.analisis import criticidad as cr
         return cr.Vigilada(fuente="f1_25_udp_simulation", session_id="s1",

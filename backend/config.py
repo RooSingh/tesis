@@ -27,9 +27,17 @@ import os
 #: intermediario no registraba la conexion porque nunca le llego. Probado con las
 #: tres direcciones, `127.0.0.1` respondia y las otras dos no.
 MQTT_HOST = os.getenv("MQTT_HOST", "127.0.0.1")
-MQTT_PORT = 1883
-MQTT_TOPIC = "tesis/telemetry/live"
-MQTT_REPLAY_TOPIC = "tesis/telemetry/replay"
+#: El puerto y los topicos salen del entorno, con los mismos valores de
+#: siempre por omision: sin definir nada, todo se comporta igual que antes.
+#:
+#: Estan asi para poder levantar una pila aislada ---otro intermediario, en otro
+#: puerto, sin consumidor--- y ejercitar el camino en vivo **sin escribir en la
+#: base**. El consumidor esta suscripto a los dos topicos, de modo que cualquier
+#: prueba contra el intermediario de siempre persiste una sesion nueva; con un
+#: intermediario aparte no hay nada que persista y no hay dato real en riesgo.
+MQTT_PORT = int(os.getenv("MQTT_PORT", "1883"))
+MQTT_TOPIC = os.getenv("MQTT_TOPIC", "tesis/telemetry/live")
+MQTT_REPLAY_TOPIC = os.getenv("MQTT_REPLAY_TOPIC", "tesis/telemetry/replay")
 #: Identidad del consumidor ante el intermediario.
 #:
 #: Es **fija a proposito**. Un cliente sin identidad recibe una distinta en cada

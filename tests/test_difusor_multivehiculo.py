@@ -50,6 +50,12 @@ class DosVehiculosEnElMismoFlujo(unittest.TestCase):
 
     def setUp(self):
         self.difusor = live_stream.DifusorEnVivo()
+        # HACE FALTA UN SUSCRIPTOR. Desde el 2026-09-07 el difusor no anota ni
+        # resume si no hay nadie escuchando: con cero suscriptores ese trabajo
+        # ocupaba 1,021 nucleos para nada. El aislamiento entre vehiculos ---que
+        # es lo que prueba esta clase--- solo se puede observar en el camino que
+        # de verdad corre cuando alguien mira, asi que se lo abre.
+        self.cola = self.difusor.suscribir()
         # Los dos publican la misma senal en el mismo instante, que es
         # exactamente lo que ocurre en pantalla dividida.
         for i in range(5):
@@ -96,12 +102,52 @@ class UnSoloVehiculoNoCambia(unittest.TestCase):
 
     def test_un_vehiculo_una_historia(self):
         difusor = live_stream.DifusorEnVivo()
+        difusor.suscribir()
         for i in range(3):
             difusor._al_recibir(None, None, mensaje(
                 "coche:unico", "speed", 50 + i, f"2026-09-01T12:00:0{i}+00:00"))
         self.assertEqual(list(difusor.historia), ["coche:unico"])
         self.assertEqual(list(difusor.historia["coche:unico"]["speed"]), [50, 51, 52])
         self.assertEqual(len(difusor.anotadores), 1)
+
+
+class SinNadieMirandoNoSeAnota(unittest.TestCase):
+    """El contrato nuevo, y lo que cuesta.
+
+    Anotar y resumir es mas de la mitad del manejador de cada mensaje. Con cero
+    suscriptores se saltea, y hay que decir que se pierde: quien se conecte
+    despues no vera anotaciones de lo que paso mientras nadie miraba.
+
+    Lo que **no** se saltea es la historia por senal ni el recuento: un
+    suscriptor nuevo necesita la historia para no ver un grafico vacio, y las
+    cifras de estado tienen que seguir siendo ciertas. Y la persistencia no
+    depende de esto: la escribe otro proceso.
+    """
+
+    def setUp(self):
+        self.difusor = live_stream.DifusorEnVivo()
+        for i in range(3):
+            self.difusor._al_recibir(None, None, mensaje(
+                "coche:solo", "speed", 50 + i, f"2026-09-01T12:00:0{i}+00:00"))
+
+    def test_sin_suscriptores_no_se_arma_el_anotador(self):
+        self.assertEqual(len(self.difusor.anotadores), 0)
+
+    def test_pero_la_historia_se_guarda_igual(self):
+        """Es lo que ve el que llega despues: sin esto abriria un grafico vacio."""
+
+        self.assertEqual(list(self.difusor.historia["coche:solo"]["speed"]), [50, 51, 52])
+
+    def test_y_el_recuento_sigue_siendo_cierto(self):
+        self.assertEqual(self.difusor.recibidos, 3)
+
+    def test_al_suscribirse_vuelve_a_anotar(self):
+        """No es un apagado permanente: se reanuda con el primer suscriptor."""
+
+        self.difusor.suscribir()
+        self.difusor._al_recibir(None, None, mensaje(
+            "coche:solo", "speed", 60, "2026-09-01T12:00:09+00:00"))
+        self.assertEqual(sorted(self.difusor.anotadores), ["coche:solo"])
 
 
 class LaAnotacionDiceDeQuienEs(unittest.TestCase):

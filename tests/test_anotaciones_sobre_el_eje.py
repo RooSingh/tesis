@@ -57,6 +57,9 @@ class ResumenDelDifusor(unittest.TestCase):
 
     def setUp(self):
         self.difusor = live_stream.DifusorEnVivo()
+        # El resumen solo se arma si hay alguien mirando: ver el comentario de
+        # `SinNadieMirandoNoSeAnota` en test_difusor_multivehiculo.py.
+        self.cola = self.difusor.suscribir()
 
     def _alimentar(self, segundos: int, vehiculo="car:19", senal="speed"):
         for s in range(segundos):
