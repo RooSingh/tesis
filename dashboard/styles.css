@@ -357,16 +357,34 @@
   .estela-g { stroke: url(#trazo-g); stroke-width: 2; opacity: .8; }
   .halo-g { fill: var(--acento); opacity: .22; }
   .punto-g { fill: var(--acento-vivo); stroke: var(--superficie); stroke-width: 1.5; }
-  .halo-g, .punto-g { transition: cx 90ms linear, cy 90ms linear; }
+  /* EN EL HISTORICO NO HAY TRANSICION; EN VIVO SI.
+     Los 90 ms existian para tapar los escalones del indice sobre la estela
+     decimada. Reproduciendo, el punto se coloca con las dos aceleraciones
+     interpoladas en el instante compartido y se mueve en cada cuadro: la
+     transicion solo lo pondria 90 ms detras del coche. En vivo no hay
+     interpolacion ---llega el ultimo mensaje y nada mas--- asi que ahi el
+     barrido sigue haciendo lo que hacia. */
+  body[data-modo-del-tiempo="vivo"] .halo-g,
+  body[data-modo-del-tiempo="vivo"] .punto-g { transition: cx 90ms linear, cy 90ms linear; }
 
   /* ---------- medidores ---------- */
   .fila-medidores { grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 14px; }
   .medidor svg { max-width: 132px; }
   .arco-fondo { stroke: var(--superficie-hueca); stroke-width: 11; }
-  /* Tres decimas: suficiente para que la aguja se vea barrer y no tanto como
-     para que quede atras del valor cuando el regimen sube de golpe. */
-  .arco-valor { stroke-width: 11; transition: stroke-dashoffset 300ms cubic-bezier(.22,.8,.3,1); }
-  @media (prefers-reduced-motion: reduce) { .arco-valor { transition: none; } }
+  /* REPRODUCIENDO NO HAY TRANSICION; EN VIVO SIGUE HABIENDOLA.
+     Las tres decimas se pusieron para que la aguja **barriera** entre dos
+     valores que llegaban a escalones de 425 ms. En el historico el valor se
+     interpola en el instante compartido y cambia en cada cuadro: la transicion
+     ya no suaviza nada, solo dibuja la aguja donde estaba hasta 300 ms atras, y
+     eso es un desfase contra el coche y los graficos. Un instrumento que
+     muestra un momento distinto del resto del tablero miente sobre cual es ese
+     momento.
+
+     El vivo es otro caso y no se toca: ahi se muestra el ultimo mensaje
+     recibido, sin interpolacion ninguna, y sin transicion la aguja vuelve a
+     saltar. El amortiguador temporal del vivo es otro trabajo. */
+  .arco-valor { stroke-width: 11; }
+  body[data-modo-del-tiempo="vivo"] .arco-valor { transition: stroke-dashoffset 300ms cubic-bezier(.22,.8,.3,1); }
   .valor-medidor { font-size: 21px; }
   .medidor .rotulo { font-family: var(--titulo); font-size: .7rem; }
 
@@ -1428,6 +1446,9 @@
     .esquema-auto { grid-template-columns: 1fr 1fr; }
     .silueta { grid-column: 1 / -1; order: -1; }
   }
+  /* Quien pidio menos movimiento no recibe ninguno, tampoco el del vivo. La
+     regla general ya lo cubre; se deja dicho porque las transiciones del vivo
+     se declaran despues y conviene que se lea de una sola vez. */
   @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
 
   /* ---------- estado de la conexion con la API ----------
