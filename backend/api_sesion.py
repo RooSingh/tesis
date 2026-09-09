@@ -934,6 +934,47 @@ def _captura_us() -> str:
             "(metadata->'extra'->>'desplazamiento_captura_us')::bigint)")
 
 
+def _orden_dentro_de_la_sesion() -> str:
+    """Con que se ordenan las muestras de una sesion, y por que no es el otro.
+
+    EL RELOJ DE CAPTURA NO SIRVE PARA ORDENAR, Y SE MIDIO POR QUE
+    ------------------------------------------------------------
+    `_captura_us()` se llama a si mismo monotonico, y lo es **dentro de una
+    captura**. Deja de serlo apenas hay dos: cada una numera su desplazamiento
+    desde cero, de modo que ordenarlas juntas las **entrelaza**.
+
+    Eso no es un caso raro. En el simulador se reinicia la vuelta sin terminar
+    la sesion ---para no perder tiempo--- y el resultado son dos capturas del
+    mismo `session_uid`, las dos originales, las dos con `replay_run_id` nulo:
+    indistinguibles.
+
+    Medido el 2026-09-09 sobre una contrarreloj de Spielberg con dos capturas:
+    ordenando por reloj de captura, `session_time_s` retrocedia **401 veces**, y
+    los 401 saltos eran de **exactamente -51,434 s**. Un reloj que se reinicia
+    de verdad da saltos distintos; una constante repetida cuatrocientas veces
+    son dos series con un desfase fijo. El resultado eran 401 fases inventadas
+    ---casi todas rotuladas «Espera de luces» en una sesion que no tiene
+    luces--- y el coche saltando entre dos puntos de la pista separados por
+    cincuenta y un segundos.
+
+    EL CONTADOR DE CUADROS SI ES MONOTONICO EN LA SESION
+    ----------------------------------------------------
+    Lo emite el juego y no el capturador, de modo que no sabe ni le importa
+    cuantas veces se empezo a grabar. Sobre esa misma sesion: 10.898 valores
+    distintos para 10.898 muestras ---uno por muestra, sin repetir--- y
+    ordenando por el, `session_time_s` retrocede **cero veces**.
+
+    Se conserva `COALESCE` con el reloj de captura para lo que no traiga
+    contador: OpenF1 y el bus del vehiculo real no lo tienen, y ahi el orden
+    anterior sigue siendo el correcto. Las capturas de F1 25 si lo traen, tambien
+    las viejas ---comprobado sobre las 60.468 muestras del original de Spa---,
+    de modo que este cambio no deja a ninguna sin ordenar.
+    """
+
+    return ("COALESCE((metadata->'extra'->>'frame_identifier')::bigint, %s)"
+            % _captura_us())
+
+
 def _clausula_de_tramo(f0: int | None, f1: int | None) -> tuple[str, list]:
     """La condicion que acota a una fase, lista para concatenar.
 
@@ -1003,17 +1044,17 @@ def _medir_fases_de_todas(cursor, fuente: str, session_id: str) -> dict:
     cap = _captura_us()
     cursor.execute("""
         WITH p AS (
-          SELECT replay_run_id AS run, %s AS d,
+          SELECT replay_run_id AS run, %s AS d, %s AS orden,
                  (metadata->'extra'->>'session_time_s')::double precision AS reloj
             FROM telemetry_messages
            WHERE source_type = %%s AND session_id = %%s
              AND signal_name = 'lap_number'),
         q AS (SELECT run, d, reloj,
-                     lag(reloj) OVER (PARTITION BY run ORDER BY d) AS ant
+                     lag(reloj) OVER (PARTITION BY run ORDER BY orden) AS ant
                 FROM p WHERE d IS NOT NULL AND reloj IS NOT NULL)
         SELECT run, d FROM q
          WHERE ant IS NOT NULL AND reloj < ant ORDER BY run, d
-    """ % cap, (fuente, session_id))
+    """ % (cap, _orden_dentro_de_la_sesion()), (fuente, session_id))
     cortes: dict = {}
     for run, d in cursor.fetchall():
         cortes.setdefault(run or ORIGEN_SIN_CORRIDA, []).append(d)
