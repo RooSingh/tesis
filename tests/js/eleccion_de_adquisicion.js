@@ -41,7 +41,10 @@ function extraer(nombre) {
    `new Function`. */
 globalThis.corrida = { adquisicion: null, fase: null, disponibles: null };
 const NOMBRES = ["nombreDeFase", "etiquetaDeCorrida", "duracionCorta",
-                 "queEsLaFase", "numeroMedido"];
+                 "queEsLaFase", "numeroMedido",
+                 "alcanceEsAmbiguo", "hayAlcanceQueElegir",
+                 "adquisicionSeSolapa", "alcanceElegidoEsValido", "faseDeLaDireccion",
+                 "filaDeCorrida", "fechaAr", "cifra", "alcancePermitePedir"];
 const sacadas = new Function(NOMBRES.map(extraer).join("\n\n") +
                              "\nreturn { " + NOMBRES.join(", ") + " };")();
 const nombreDeFase = sacadas.nombreDeFase;
@@ -158,12 +161,246 @@ prueba("una sesion mezclada no se marca como error", () => {
     "la eleccion pendiente se esta declarando como error");
 });
 
-prueba("el elector se abre solo si la sesion esta mezclada", () => {
-  const i = fuente.indexOf("if (!a.mezclada) {");
-  assert.ok(i > 0, "no esta la salida temprana para una sesion de una sola adquisicion");
-  const bloque = fuente.slice(i, i + 260);
+prueba("se carga sin preguntar solo cuando el alcance no es ambiguo", () => {
+  /* ESTA PRUEBA PEDIA LO CONTRARIO, Y ESTABA MAL.
+     Decia «el elector se abre solo si la sesion esta mezclada», y `mezclada` la
+     decide la API contando **adquisiciones**. Una captura con una sola
+     adquisicion y tres etapas contestaba `false`, de modo que el tablero
+     cargaba la formacion y la carrera juntas sin avisar. Y como el reloj del
+     juego se reinicia al largar, las dos se solapan en UTC: la vuelta 1 traia
+     las dos y el coche iba y venia. Medido en Spa, 72 retrocesos de la
+     distancia recorriendo de la vuelta 1 a la 4.
+
+     La condicion correcta no es «cuantas adquisiciones hay» sino «se puede dar
+     el alcance por supuesto». */
+  const i = fuente.indexOf("if (!pedida && !alcanceEsAmbiguo()) {");
+  assert.ok(i > 0, "la salida temprana ya no consulta si el alcance es ambiguo");
+  const bloque = fuente.slice(i, i + 200);
   assert.ok(bloque.indexOf("cargarDatosDeSesion") !== -1,
-    "con una sola adquisicion tiene que seguir cargando sin preguntar");
+    "sin ambiguedad tiene que seguir cargando sin preguntar");
+  assert.ok(fuente.indexOf("if (!a.mezclada) {") === -1,
+    "volvio la salida temprana que solo miraba la cantidad de adquisiciones");
+});
+
+prueba("una sola adquisicion con etapas que reinician el reloj es ambigua", () => {
+  const conReinicio = { disponibles: [{ clave: "original", fases: [
+    { orden: 1, reloj_del_juego_reinicia_al_entrar: false },
+    { orden: 2, reloj_del_juego_reinicia_al_entrar: true },
+    { orden: 3, reloj_del_juego_reinicia_al_entrar: true }] }] };
+  const seguidas = { disponibles: [{ clave: "original", fases: [
+    { orden: 1, reloj_del_juego_reinicia_al_entrar: false },
+    { orden: 2, reloj_del_juego_reinicia_al_entrar: false }] }] };
+  const unaSola = { disponibles: [{ clave: "original", fases: [{ orden: 1 }] }] };
+  const dos = { disponibles: [{ clave: "original", fases: [] }, { clave: "r1", fases: [] }] };
+
+  const antes = globalThis.corrida;
+  globalThis.corrida = conReinicio;
+  assert.strictEqual(sacadas.alcanceEsAmbiguo(), true,
+    "la formacion y la carrera se solapan en UTC y se estaban mostrando juntas");
+  assert.strictEqual(sacadas.hayAlcanceQueElegir(), true);
+  globalThis.corrida = seguidas;
+  assert.strictEqual(sacadas.alcanceEsAmbiguo(), false,
+    "etapas que no reinician el reloj son continuas: no hay por que preguntar");
+  assert.strictEqual(sacadas.hayAlcanceQueElegir(), true,
+    "igual se puede querer mirar una sola etapa");
+  globalThis.corrida = unaSola;
+  assert.strictEqual(sacadas.alcanceEsAmbiguo(), false);
+  assert.strictEqual(sacadas.hayAlcanceQueElegir(), false,
+    "sin nada que elegir el boton sobra");
+  globalThis.corrida = dos;
+  assert.strictEqual(sacadas.alcanceEsAmbiguo(), true);
+  globalThis.corrida = antes;
+});
+
+/* --------------------------------------------------------------------------
+   EL ALCANCE SE VALIDA ENTERO, NO SOLO LA ADQUISICION
+   --------------------------------------------------------------------------
+   `?adquisicion=original` sin fase se aceptaba y dejaba `fase = null`, que es
+   «todo junto»: el mismo alcance que la proteccion de la apertura sin
+   parametros impide. Y una fase inexistente, o de otra adquisicion, entraba
+   igual y se convertia en «todas» sin decirlo.
+   -------------------------------------------------------------------------- */
+
+const SPA_SOLAPADA = { clave: "original", es_reproduccion: false, fases: [
+  { orden: 1, duracion_de_captura_s: 189.02, reloj_del_juego_reinicia_al_entrar: false },
+  { orden: 2, duracion_de_captura_s: 7.905, reloj_del_juego_reinicia_al_entrar: true },
+  { orden: 3, duracion_de_captura_s: 2827.103, reloj_del_juego_reinicia_al_entrar: true }] };
+const SEGUIDA = { clave: "libres", es_reproduccion: false, fases: [
+  { orden: 1, duracion_de_captura_s: 100, reloj_del_juego_reinicia_al_entrar: false },
+  { orden: 2, duracion_de_captura_s: 200, reloj_del_juego_reinicia_al_entrar: false }] };
+
+function conDisponibles(lista, fn) {
+  const antes = globalThis.corrida;
+  globalThis.corrida = { adquisicion: null, fase: null, disponibles: lista };
+  try { fn(); } finally { globalThis.corrida = antes; }
+}
+
+prueba("una adquisicion cuyas etapas se solapan exige elegir etapa", () => {
+  conDisponibles([SPA_SOLAPADA], () => {
+    assert.strictEqual(sacadas.adquisicionSeSolapa(SPA_SOLAPADA), true);
+    /* Sin fase, el alcance esta incompleto: es el mismo «todo junto» que la
+       apertura sin parametros no deja pasar. */
+    assert.strictEqual(sacadas.alcanceElegidoEsValido("original", null), false,
+      "la adquisicion sola alcanzaba para cargar la mezcla");
+    assert.strictEqual(sacadas.alcanceElegidoEsValido("original", 3), true);
+    assert.strictEqual(sacadas.alcanceElegidoEsValido("original", 1), true,
+      "Formacion es una eleccion tan valida como Carrera");
+  });
+});
+
+prueba("una fase inexistente o de otra adquisicion no se acepta", () => {
+  conDisponibles([SPA_SOLAPADA, SEGUIDA], () => {
+    assert.strictEqual(sacadas.alcanceElegidoEsValido("original", 9), false,
+      "una fase que no existe se estaba aceptando");
+    assert.strictEqual(sacadas.alcanceElegidoEsValido("original", 0), false);
+    assert.strictEqual(sacadas.alcanceElegidoEsValido("original", -1), false);
+    assert.strictEqual(sacadas.alcanceElegidoEsValido("original", 1.5), false);
+    assert.strictEqual(sacadas.alcanceElegidoEsValido("original", NaN), false);
+    assert.strictEqual(sacadas.alcanceElegidoEsValido("no_existe", 3), false);
+    /* La fase 3 es de `original`; `libres` solo tiene la 1 y la 2. */
+    assert.strictEqual(sacadas.alcanceElegidoEsValido("libres", 3), false,
+      "una fase de otra adquisicion se estaba aceptando");
+    assert.strictEqual(sacadas.alcanceElegidoEsValido("libres", 2), true);
+  });
+});
+
+prueba("con etapas realmente continuas, la adquisicion sola alcanza", () => {
+  conDisponibles([SEGUIDA], () => {
+    assert.strictEqual(sacadas.adquisicionSeSolapa(SEGUIDA), false);
+    assert.strictEqual(sacadas.alcanceElegidoEsValido("libres", null), true,
+      "se le esta pidiendo elegir etapa a quien no lo necesita");
+  });
+});
+
+prueba("«Todo» no se ofrece cuando las etapas se solapan", () => {
+  /* El mecanismo minimo: si «Todo» no esta, no hay por donde volver a la
+     mezcla. Se mira el marcado que arma el elector, no el texto del archivo:
+     una condicion puede seguir escrita y no hacer nada. */
+  const sinMarca = () => "";
+  const conFecha = a => Object.assign({ vehiculos: 1, muestras_de_vuelta: 100,
+                                        desde_utc: "2026-09-05T00:00:00Z" }, a);
+  conDisponibles([SPA_SOLAPADA], () => {
+    const html = sacadas.filaDeCorrida(conFecha(SPA_SOLAPADA), sinMarca);
+    assert.strictEqual(html.indexOf('data-fase=""'), -1,
+      "el elector sigue ofreciendo «Todo» para una captura cuyas etapas se solapan");
+    assert.ok(html.indexOf("<b>Todo</b>") === -1);
+    /* Las etapas si se ofrecen: hay que poder elegir una. */
+    assert.ok(html.indexOf('data-fase="1"') !== -1);
+    assert.ok(html.indexOf('data-fase="3"') !== -1);
+    /* Y se dice por que falta «Todo». */
+    assert.ok(html.indexOf("hay que elegir una") !== -1,
+      "desaparece una opcion sin decir por que");
+  });
+  conDisponibles([SEGUIDA], () => {
+    const html = sacadas.filaDeCorrida(conFecha(SEGUIDA), sinMarca);
+    assert.ok(html.indexOf('data-fase=""') !== -1,
+      "se quito «Todo» donde las etapas son continuas");
+    assert.ok(html.indexOf("<b>Todo</b>") !== -1);
+    assert.strictEqual(html.indexOf("hay que elegir una"), -1);
+  });
+});
+
+prueba("elegir un alcance incompleto no pide datos: vuelve a preguntar", () => {
+  const i = fuente.indexOf("function elegirCorrida(");
+  assert.ok(i > 0, "no esta elegirCorrida");
+  const cuerpo = fuente.slice(i, fuente.indexOf("\n}", i));
+  const guarda = cuerpo.indexOf("alcanceElegidoEsValido");
+  const carga = cuerpo.indexOf("cargarDatosDeSesion(");
+  assert.ok(guarda > 0, "elegirCorrida no valida el alcance completo");
+  assert.ok(guarda < carga,
+    "se piden los datos antes de comprobar que el alcance este completo");
+});
+
+prueba("la direccion con adquisicion y sin fase no carga: pregunta", () => {
+  const i = fuente.indexOf('const pedida = p.get("adquisicion");');
+  assert.ok(i > 0, "no esta la lectura de la direccion");
+  const bloque = fuente.slice(i, i + 1200);
+  assert.ok(bloque.indexOf("alcanceElegidoEsValido(pedida, faseDelEnlace)") !== -1,
+    "la direccion se acepta comprobando solo que la adquisicion exista");
+  assert.ok(bloque.indexOf("fasePedida ? Number(fasePedida) : null") === -1,
+    "la fase de la direccion se sigue convirtiendo sin validar");
+});
+
+prueba("una fase mal escrita en la direccion no se lee como un numero cualquiera", () => {
+  const leer = sacadas.faseDeLaDireccion;
+  assert.strictEqual(leer(null), null);
+  assert.strictEqual(leer(""), null);
+  assert.strictEqual(leer("   "), null);
+  assert.strictEqual(leer("3"), 3);
+  assert.strictEqual(leer(" 3 "), 3);
+  assert.ok(Number.isNaN(leer("abc")), "«abc» se estaba leyendo como NaN silencioso");
+  assert.ok(Number.isNaN(leer("3.5")));
+  assert.ok(Number.isNaN(leer("-1")));
+  assert.ok(Number.isNaN(leer("3x")));
+});
+
+prueba("al preguntar por la etapa se conserva la adquisicion que vino en el enlace", () => {
+  const i = fuente.indexOf('const pedida = p.get("adquisicion");');
+  const elector = fuente.indexOf("abrirElectorDeCorrida(ruta, apertura, s);", i);
+  assert.ok(elector > i, "no se llega al elector desde la lectura de la direccion");
+  const bloque = fuente.slice(i, elector);
+  assert.ok(bloque.indexOf("corrida.adquisicion = pedida") !== -1,
+    "la adquisicion del enlace se pierde al abrir el elector");
+});
+
+prueba("no se pide historico con el alcance sin resolver", () => {
+  /* EL AGUJERO QUE QUEDABA. La apertura ya no cargaba con el alcance sin
+     resolver, pero el transporte pide la vuelta bajo el cabezal por su cuenta,
+     con 200 ms de retardo desde que arranca la pagina. Medido en Spa: la
+     vuelta 1 se pedia a los 582 ms y `/adquisiciones` contestaba a los 953, de
+     modo que se traia la mezcla con el elector abierto esperando. */
+  const listo = sacadas.alcancePermitePedir;
+  const antes = globalThis.corrida;
+  /* Todavia no se sabe que adquisiciones hay. */
+  globalThis.corrida = { adquisicion: null, fase: null, disponibles: null };
+  assert.strictEqual(listo(), false, "se pedia antes de saber que se esta mirando");
+  /* Ya se sabe, y no hay nada que elegir. */
+  globalThis.corrida = { adquisicion: null, fase: null, disponibles: [SEGUIDA] };
+  assert.strictEqual(listo(), true, "se dejo de pedir donde no hay ambiguedad");
+  /* Ya se sabe, y hay que elegir etapa. */
+  globalThis.corrida = { adquisicion: null, fase: null, disponibles: [SPA_SOLAPADA] };
+  assert.strictEqual(listo(), false);
+  globalThis.corrida = { adquisicion: "original", fase: null, disponibles: [SPA_SOLAPADA] };
+  assert.strictEqual(listo(), false, "la adquisicion sola destrabo las consultas");
+  globalThis.corrida = { adquisicion: "original", fase: 9, disponibles: [SPA_SOLAPADA] };
+  assert.strictEqual(listo(), false, "una etapa que no existe destrabo las consultas");
+  globalThis.corrida = { adquisicion: "original", fase: 3, disponibles: [SPA_SOLAPADA] };
+  assert.strictEqual(listo(), true);
+  /* Una API que no tiene la ruta declara la lista vacia y se sigue como antes. */
+  globalThis.corrida = { adquisicion: null, fase: null, disponibles: [] };
+  assert.strictEqual(listo(), true, "una API sin adquisiciones dejaria de cargar");
+  globalThis.corrida = antes;
+});
+
+prueba("la compuerta esta en las dos consultas de historico", () => {
+  ["asegurarVuelta", "asegurarPosiciones"].forEach(nombre => {
+    const i = fuente.indexOf("function " + nombre + "(");
+    assert.ok(i > 0, "no esta " + nombre);
+    const cabeza = fuente.slice(i, i + 420);
+    assert.ok(cabeza.indexOf("alcancePermitePedir()") !== -1,
+      nombre + " pide sin comprobar que el alcance este resuelto");
+  });
+});
+
+prueba("si no hay ruta de adquisiciones se declara la lista vacia", () => {
+  /* Sin esto, la compuerta dejaria a una API mas vieja sin cargar nunca. */
+  const i = fuente.indexOf("if (fueAnulada(e)) return;");
+  assert.ok(i > 0, "no esta el catch de adquisiciones");
+  const bloque = fuente.slice(i, i + 200);
+  assert.ok(bloque.indexOf("corrida.disponibles = []") !== -1,
+    "al fallar la consulta la compuerta queda cerrada para siempre");
+});
+
+prueba("la direccion se lee aunque la sesion no este mezclada", () => {
+  /* El enlace que deja `elegirCorrida` trae `adquisicion` y `fase`. Se leia
+     dentro de la rama de `mezclada`, asi que con una sola adquisicion el
+     enlace decia `fase=3` y el tablero cargaba todo junto: quien recargaba
+     creia estar mirando la carrera y estaba mirando la mezcla. */
+  const url = fuente.indexOf('const pedida = p.get("adquisicion");');
+  const salida = fuente.indexOf("if (!pedida && !alcanceEsAmbiguo()) {");
+  assert.ok(url > 0 && salida > 0, "falta alguna de las dos");
+  assert.ok(url < salida,
+    "la direccion se sigue leyendo despues de decidir cargar sin alcance");
 });
 
 prueba("elegir no obliga a editar la direccion, pero la refleja", () => {
@@ -178,7 +415,7 @@ prueba("elegir no obliga a editar la direccion, pero la refleja", () => {
      hacen en un solo sitio: si fueran dos caminos, uno de los dos se olvidaria
      de actualizar la direccion o de soltar los datos viejos. */
   const j = fuente.indexOf("function elegirCorrida(");
-  const bloque = fuente.slice(j, j + 1500);
+  const bloque = fuente.slice(j, fuente.indexOf("\n}", j));
   assert.ok(bloque.indexOf("history.replaceState") !== -1,
     "elegir no deja la direccion apuntando a lo elegido");
   assert.ok(bloque.indexOf("cargarDatosDeSesion") !== -1,
@@ -280,7 +517,7 @@ prueba("cambiar de etapa suelta lo de la etapa anterior", () => {
      dibujada sobre el trazado de la formación. */
   const i = fuente.indexOf("function elegirCorrida(");
   assert.ok(i > 0, "no está la función que cambia de etapa");
-  const bloque = fuente.slice(i, i + 1500);
+  const bloque = fuente.slice(i, fuente.indexOf("\n}", i));
   assert.ok(bloque.indexOf("olvidarLoDeLaCorrida()") !== -1,
     "cambiar de etapa no olvida los datos de la anterior");
   assert.ok(bloque.indexOf("nuevaSesionEnCurso()") !== -1,

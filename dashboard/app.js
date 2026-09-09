@@ -2654,7 +2654,9 @@ function senalDeSesion() {
 
 /* Pide una vuelta si no esta y no se esta pidiendo ya. */
 function asegurarVuelta(numero, puntos) {
-  if (!estado.abierta || numero < 1) return Promise.resolve(null);
+  if (!estado.abierta || numero < 1 || !alcancePermitePedir()) {
+    return Promise.resolve(null);
+  }
   const quiere = puntos || PUNTOS_POR_VUELTA;
   const bloque = estado.series[numero];
   const conocidos = bloque && bloque.vehiculos || {};
@@ -2818,6 +2820,7 @@ function asegurarVuelta(numero, puntos) {
    ============================================================ */
 function asegurarPosiciones(numero) {
   if (!estado.abierta || estado.posiciones[numero] || estado.pidiendoPos[numero]) return;
+  if (!alcancePermitePedir()) return;
   const apertura = aperturaVigente();
   estado.pidiendoPos[numero] = apertura;
   conCarga("posiciones", () =>
@@ -5353,19 +5356,23 @@ function abrirSesionGuardada(id) {
            abrirse y el boton del encabezado se quedaria sin nada que reabrir. */
         _contextoDeCorrida = { ruta: ruta, s: s };
         pintarBotonDeCorrida();
-        if (!a.mezclada) {
+
+        /* LA DIRECCION SE LEE SIEMPRE, NO SOLO CUANDO LA API DICE «mezclada».
+           `mezclada` cuenta adquisiciones; la eleccion que trae el enlace puede
+           ser de etapa, y con una sola adquisicion esta rama ni se miraba: el
+           enlace decia `fase=3` y el tablero cargaba todo junto. */
+        const p = new URLSearchParams(location.search);
+        const pedida = p.get("adquisicion");
+        const faseDelEnlace = faseDeLaDireccion(p.get("fase"));
+        const existe = (corrida.disponibles || []).some(x => x.clave === pedida);
+        if (!pedida && !alcanceEsAmbiguo()) {
           declararAlcance();
           cargarDatosDeSesion(ruta, apertura, senalDeSesion(), s);
           return;
         }
-
-        const p = new URLSearchParams(location.search);
-        const pedida = p.get("adquisicion");
-        const fasePedida = p.get("fase");
-        const existe = (corrida.disponibles || []).some(x => x.clave === pedida);
-        if (pedida && existe) {
+        if (pedida && alcanceElegidoEsValido(pedida, faseDelEnlace)) {
           corrida.adquisicion = pedida;
-          corrida.fase = fasePedida ? Number(fasePedida) : null;
+          corrida.fase = faseDelEnlace;
           declararAlcance();
           pintarBotonDeCorrida();
           decirEstadoApi("Mirando la adquisición «" + pedida + "»" +
@@ -5374,24 +5381,43 @@ function abrirSesionGuardada(id) {
           cargarDatosDeSesion(ruta, apertura, senalDeSesion(), s);
           return;
         }
+        /* EL ENLACE TRAE MEDIA ELECCION: SE CONSERVA Y SE PREGUNTA EL RESTO.
+           `?adquisicion=original` sin etapa, o con una etapa que esa
+           adquisicion no declara. No se carga nada ---seria la mezcla--- pero
+           tampoco se tira lo que sí vino: el elector se abre con la
+           adquisicion ya marcada y solo falta la etapa. */
+        if (pedida && existe) {
+          corrida.adquisicion = pedida;
+          corrida.fase = null;
+        }
 
         /* Ambigua y sin elegir: se pregunta. No se adivina cual, y **no es un
            error**: es una eleccion pendiente, y marcarla en rojo diria que algo
            salio mal cuando lo que falta es una decision. */
         estadoSesion = "vacio";
         estado.cargando = false;
-        estado.motivo =
-          "Esta sesión guarda " + corrida.disponibles.length + " adquisiciones " +
-          "distintas bajo el mismo identificador del juego. Juntas no son una " +
-          "carrera continua, así que hay que elegir cuál mirar.";
+        estado.motivo = (corrida.disponibles.length > 1)
+          ? ("Esta sesión guarda " + corrida.disponibles.length + " adquisiciones " +
+             "distintas bajo el mismo identificador del juego. Juntas no son una " +
+             "carrera continua, así que hay que elegir cuál mirar.")
+          /* Con una sola adquisición la ambigüedad es de etapa: el reloj del
+             juego se reinicia al largar, así que la formación y la carrera se
+             solapan en el tiempo. Mostradas juntas, la primera vuelta trae las
+             dos y el coche va y viene. */
+          : ("Esta captura tiene varias etapas y el reloj del juego se reinicia " +
+             "entre ellas, así que la formación y la carrera se solapan en el " +
+             "tiempo. Juntas no son una carrera continua: hay que elegir cuál mirar.");
         decirEstadoApi(estado.motivo + " Elegí abajo.", false);
         abrirElectorDeCorrida(ruta, apertura, s);
         render();
       })
       .catch(e => {
         /* Si la ruta no esta ---una API mas vieja--- se sigue como siempre: no
-           se rompe por no poder preguntar. */
+           se rompe por no poder preguntar. Se declara la lista vacia, que es lo
+           que se sabe ---no hay adquisiciones que elegir--- y ademas es lo que
+           destraba la compuerta de `alcancePermitePedir`. */
         if (fueAnulada(e)) return;
+        if (!corrida.disponibles) corrida.disponibles = [];
         cargarDatosDeSesion(ruta, apertura, senalDeSesion(), s);
       }));
 }
@@ -5431,6 +5457,47 @@ function queEsLaFase(a, f) {
   return "tramo " + f.orden + ", entre dos reinicios del reloj del juego";
 }
 
+/* Una fila del elector: la adquisicion, y los botones con los que se la elige.
+   Se separa del elector porque es lo unico que decide **que opciones existen**,
+   y eso hay que poder comprobarlo sin un documento. `elegida` viene de afuera
+   porque marca contra el alcance vigente, que es del elector. */
+function filaDeCorrida(a, elegida) {
+  const cuando = a.desde_utc ? fechaAr(new Date(a.desde_utc)) : "sin fecha";
+  const que = a.es_reproduccion ? "reproducción de prueba" : "captura original";
+  const etapas = a.fases || [];
+  const total = etapas.reduce((t, f) => t + (f.duracion_de_captura_s || 0), 0);
+  /* «TODO» NO SE OFRECE CUANDO LAS ETAPAS SE SOLAPAN.
+     Es el mecanismo minimo para que la mezcla no vuelva por la puerta de al
+     lado: si el reloj del juego se reinicia entre etapas, sus ventanas de
+     tiempo se pisan y juntas no son una carrera continua ---la vuelta 1 traeria
+     la formacion y la carrera, y el coche iria y vendria---. Donde las etapas
+     son de verdad continuas, «Todo» sigue estando. */
+  const seSolapa = adquisicionSeSolapa(a);
+  /* Con una sola etapa, «Todo» y «Fase unica» son la misma cosa: dos botones
+     que hacen lo mismo obligan a pararse a decidir entre ellos para nada. */
+  const fases = (etapas.length <= 1 ? [] : etapas).map(f =>
+    '<button type="button" class="boton secundario opcion-fase" data-corrida="' +
+    a.clave + '" data-fase="' + f.orden + '" title="' + queEsLaFase(a, f) + '"' +
+    elegida(a.clave, f.orden) + "><b>" + nombreDeFase(a, f) + "</b><small>" +
+    duracionCorta(f.duracion_de_captura_s) + "</small></button>").join("");
+  return '<div class="fila-sesion fila-corrida" data-fuente="f1"' +
+    (corrida.adquisicion === a.clave ? ' data-elegida="si"' : "") + ">" +
+    "<span><b>" + (a.es_reproduccion ? a.clave : "Original") + "</b><br>" +
+    "<small>" + que + " · " + cuando + "</small></span>" +
+    "<span>" + a.vehiculos + (a.vehiculos === 1 ? " vehículo" : " vehículos") +
+    "<br><small>" + cifra(a.muestras_de_vuelta, 0) + " muestras · " +
+    (etapas.length === 1 ? "una sola etapa" : etapas.length + " etapas") +
+    (seSolapa ? " · el reloj se reinicia entre ellas: hay que elegir una" : "") +
+    "</small></span>" +
+    '<span class="acciones-corrida">' +
+      (seSolapa ? "" :
+        '<button type="button" class="boton secundario opcion-fase" data-corrida="' + a.clave +
+        '" data-fase="" title="las etapas seguidas, como se capturaron"' +
+        elegida(a.clave, null) + "><b>Todo</b><small>" + duracionCorta(total) +
+        "</small></button>") + fases +
+    "</span></div>";
+}
+
 function abrirElectorDeCorrida(ruta, apertura, s) {
   const velo = document.getElementById("velo-corridas");
   const cont = document.getElementById("tabla-corridas");
@@ -5460,33 +5527,7 @@ function abrirElectorDeCorrida(ruta, apertura, s) {
     (corrida.fase || null) === (f || null))
     ? ' data-elegida="si" aria-pressed="true"' : ' aria-pressed="false"';
 
-  cont.innerHTML = lista.map(a => {
-    const cuando = a.desde_utc ? fechaAr(new Date(a.desde_utc)) : "sin fecha";
-    const que = a.es_reproduccion ? "reproducción de prueba" : "captura original";
-    const etapas = a.fases || [];
-    const total = etapas.reduce((t, f) => t + (f.duracion_de_captura_s || 0), 0);
-    /* Con una sola etapa, «Todo» y «Fase unica» son la misma cosa: dos botones
-       que hacen lo mismo obligan a pararse a decidir entre ellos para nada. */
-    const fases = (etapas.length <= 1 ? [] : etapas).map(f =>
-      '<button type="button" class="boton secundario opcion-fase" data-corrida="' +
-      a.clave + '" data-fase="' + f.orden + '" title="' + queEsLaFase(a, f) + '"' +
-      elegida(a.clave, f.orden) + "><b>" + nombreDeFase(a, f) + "</b><small>" +
-      duracionCorta(f.duracion_de_captura_s) + "</small></button>").join("");
-    return '<div class="fila-sesion fila-corrida" data-fuente="f1"' +
-      (corrida.adquisicion === a.clave ? ' data-elegida="si"' : "") + ">" +
-      "<span><b>" + (a.es_reproduccion ? a.clave : "Original") + "</b><br>" +
-      "<small>" + que + " · " + cuando + "</small></span>" +
-      "<span>" + a.vehiculos + (a.vehiculos === 1 ? " vehículo" : " vehículos") +
-      "<br><small>" + cifra(a.muestras_de_vuelta, 0) + " muestras · " +
-      (etapas.length === 1 ? "una sola etapa" : etapas.length + " etapas") +
-      "</small></span>" +
-      '<span class="acciones-corrida">' +
-        '<button type="button" class="boton secundario opcion-fase" data-corrida="' + a.clave +
-        '" data-fase="" title="las etapas seguidas, como se capturaron"' +
-        elegida(a.clave, null) + "><b>Todo</b><small>" + duracionCorta(total) +
-        "</small></button>" + fases +
-      "</span></div>";
-  }).join("");
+  cont.innerHTML = lista.map(a => filaDeCorrida(a, elegida)).join("");
 
   cont.querySelectorAll("button[data-corrida]").forEach(b => {
     b.addEventListener("click", () => {
@@ -5509,8 +5550,33 @@ function elegirCorrida(clave, fase) {
   const velo = document.getElementById("velo-corridas");
   if (velo) velo.dataset.abierto = "no";
 
+  const pedida = (fase === undefined || fase === "") ? null : fase;
+  /* UN ALCANCE A MEDIAS NO PIDE DATOS.
+     Es el mismo cuidado que la lectura de la direccion, en el otro camino que
+     lleva hasta aca. Sin esto, cualquier llamada con la adquisicion sola
+     ---un enlace viejo, un elector de otra version--- volvia a cargar la
+     mezcla. Se conserva lo que sí se eligio y se pregunta el resto. */
+  if (!alcanceElegidoEsValido(clave, pedida)) {
+    const a = (corrida.disponibles || []).find(x => x.clave === clave);
+    corrida.adquisicion = a ? clave : null;
+    corrida.fase = null;
+    declararAlcance();
+    pintarBotonDeCorrida();
+    estadoSesion = "vacio";
+    estado.cargando = false;
+    estado.motivo = a
+      ? ("En esta captura el reloj del juego se reinicia entre etapas, así que " +
+         "sus ventanas de tiempo se solapan. Juntas no son una carrera continua: " +
+         "hay que elegir una etapa.")
+      : "Esa adquisición no está en esta sesión. Elegí una de las que hay.";
+    decirEstadoApi(estado.motivo, false);
+    abrirElectorDeCorrida(_contextoDeCorrida.ruta, aperturaVigente(), _contextoDeCorrida.s);
+    render();
+    return;
+  }
+
   corrida.adquisicion = clave;
-  corrida.fase = fase || null;
+  corrida.fase = pedida;
 
   /* La direccion refleja lo elegido, sin recargar: el enlace tiene que seguir
      sirviendo para volver a esto mismo. */
@@ -5537,10 +5603,116 @@ function elegirCorrida(clave, fase) {
 /* El boton del encabezado dice que se esta mirando y sirve para cambiarlo.
    Solo aparece cuando hay algo que elegir: en una sesion de una sola
    adquisicion seria un control que no hace nada. */
+/* ============================================================
+   UNA SESION CON VARIAS ETAPAS TAMPOCO SE PUEDE MIRAR JUNTA
+   ------------------------------------------------------------
+   EL DEFECTO. `mezclada` lo decide la API contando **adquisiciones**, y con
+   una sola contestaba `false`: el tablero cargaba sin resolver el alcance, sin
+   ofrecer el elector ---el boton se escondia con `disponibles.length > 1`--- y
+   sin mirar siquiera la eleccion que traia la direccion. Quien elegia
+   «Original · Carrera» y recargaba volvia a «todo junto» con la direccion
+   diciendo lo contrario.
+
+   POR QUE IMPORTA. Una etapa empieza donde el reloj del juego se reinicia, y
+   al reiniciarse el `timestamp` derivado retrocede: la formacion y la carrera
+   **se solapan en UTC a proposito**. Juntas no son una carrera continua.
+
+   MEDIDO EN SPA, 2026-09-08, recorriendo de la vuelta 1 a la 4:
+
+   | | sin resolver el alcance | Original · Carrera |
+   |---|---:|---:|
+   | retrocesos de la distancia | 72 (el peor, 7.003 m -> 1 m) | 0 |
+   | retrocesos de la marca del coche | 61 (el peor, 6.477 m -> 634 m) | 0 |
+   | salto del instante al pasar de la vuelta 1 a la 2 | **-40,8 s** | +0,25 s |
+
+   La vuelta 1 sin acotar trae la formacion y la carrera entrelazadas: el coche
+   avanza, salta atras, vuelve a avanzar. Se estabiliza cuando se acaban las
+   muestras de formacion, que es a mitad de la vuelta 2. Es exactamente el
+   sintoma que se reporto.
+
+   LA REGLA. Se resuelve el alcance ---o se pregunta--- cuando hay mas de una
+   adquisicion **o** cuando alguna tiene etapas que reinician el reloj del
+   juego. Eso ultimo lo declara la propia API en cada fase, asi que no hay que
+   adivinarlo. Con etapas que no reinician nada, seguidas son continuas y
+   mirarlas juntas es correcto: no se molesta a nadie.
+   ============================================================ */
+function adquisicionSeSolapa(a) {
+  if (!a) return false;
+  const fases = a.fases || [];
+  return fases.length > 1 && fases.some(f => f.reloj_del_juego_reinicia_al_entrar);
+}
+
+function alcanceEsAmbiguo() {
+  const lista = corrida.disponibles || [];
+  if (lista.length > 1) return true;
+  return lista.some(adquisicionSeSolapa);
+}
+
+/* ============================================================
+   UN ALCANCE ES LA ADQUISICION **Y** LA ETAPA
+   ------------------------------------------------------------
+   EL DEFECTO. Se comprobaba que la adquisicion existiera y nada mas:
+   `?adquisicion=original` entraba con `fase = null`, que es «todo junto», el
+   mismo alcance que la apertura sin parametros no deja pasar. El enlace se
+   saltaba la proteccion. Y una fase que no existe, o que es de otra
+   adquisicion, se convertia en «todas» sin decirlo: se pedia `fase=9`, la API
+   no la encontraba y devolvia la mezcla.
+
+   LA REGLA. Sin fase, el alcance vale solo si las etapas de esa adquisicion no
+   se solapan. Con fase, tiene que ser un numero entero que **esa** adquisicion
+   declare. Nada se convierte en otra cosa en silencio.
+   ============================================================ */
+function alcanceElegidoEsValido(clave, fase) {
+  const a = (corrida.disponibles || []).find(x => x.clave === clave);
+  if (!a) return false;
+  if (fase === null || fase === undefined) return !adquisicionSeSolapa(a);
+  if (typeof fase !== "number" || !Number.isInteger(fase)) return false;
+  return (a.fases || []).some(f => f.orden === fase);
+}
+
+/* ============================================================
+   NO SE PIDE HISTORICO CON EL ALCANCE SIN RESOLVER
+   ------------------------------------------------------------
+   `abrirSesionGuardada` ya no carga hasta que alguien elige, pero **no es el
+   unico que pide**: el transporte pide la vuelta que hay bajo el cabezal por su
+   cuenta, con doscientos milisegundos de retardo, desde que la pagina arranca.
+   Esa consulta salia antes de que `/adquisiciones` contestara. Medido en Spa:
+   la vuelta 1 se pedia a los 582 ms y las adquisiciones llegaban a los 953, de
+   modo que la primera vuelta se traia mezclada aunque el elector estuviera
+   abierto esperando una respuesta.
+
+   La compuerta va aca, que es por donde pasa todo el historico. Mientras no se
+   sepa que adquisiciones hay, no se pide; sabiendolo, se pide solo si el
+   alcance no es ambiguo o si ya esta elegido entero.
+   ============================================================ */
+function alcancePermitePedir() {
+  if (!corrida.disponibles) return false;
+  if (!alcanceEsAmbiguo()) return true;
+  return alcanceElegidoEsValido(corrida.adquisicion, corrida.fase);
+}
+
+/* La etapa que trae la direccion, leida sin adivinar. `Number("abc")` da `NaN`
+   y `Number("3.5")` da 3,5: los dos entraban y quedaban en `corrida.fase`
+   pareciendo una eleccion. Vacio es «no pidieron etapa»; cualquier otra cosa
+   que no sea un entero escrito en digitos es `NaN`, o sea invalida. */
+function faseDeLaDireccion(texto) {
+  if (texto === null || texto === undefined) return null;
+  const t = String(texto).trim();
+  if (!t) return null;
+  return /^[0-9]+$/.test(t) ? Number(t) : NaN;
+}
+
+/* Hay algo que elegir aunque no sea ambiguo: con varias etapas continuas el
+   boton sigue sirviendo para mirar una sola. Ofrecerlo no obliga a nada. */
+function hayAlcanceQueElegir() {
+  const lista = corrida.disponibles || [];
+  return lista.length > 1 || lista.some(a => (a.fases || []).length > 1);
+}
+
 function pintarBotonDeCorrida() {
   const b = document.getElementById("btn-corrida");
   if (!b) return;
-  const hay = (corrida.disponibles || []).length > 1;
+  const hay = hayAlcanceQueElegir();
   b.hidden = !hay;
   if (!hay) return;
   b.textContent = corrida.adquisicion
