@@ -300,11 +300,13 @@
       <section class="instrumento vertical en-cabina" data-panel="cronometraje">
       <header><h2>Cronometraje</h2></header>
       <dl class="tira-cronometraje">
-        <div><dt>Vehículo</dt><dd class="destacado">—</dd></div>
-        <div><dt>Vuelta</dt><dd>16<span style="color:var(--texto-tenue);font-size:.8rem">/58</span></dd></div>
-        <div><dt>Actual</dt><dd>1:21.52</dd></div>
-        <div><dt>Al líder</dt><dd class="negativo">−1.075</dd></div>
+        <div><dt>Piloto</dt><dd class="destacado" id="crono-piloto">—</dd></div>
+        <div><dt>Posición</dt><dd id="crono-posicion">—</dd></div>
+        <div><dt>Vuelta</dt><dd id="crono-vuelta">—</dd></div>
+        <div><dt>Cronómetro</dt><dd id="crono-tiempo">—</dd></div>
+        <div><dt>Al líder</dt><dd id="crono-diferencia">—</dd></div>
       </dl>
+      <p class="pie-instrumento" id="crono-cobertura"></p>
     </section>
       <section class="instrumento panel-avisos en-cabina" data-panel="avisos" data-necesita="tyre_temperature_surface_front_left">
       <header>

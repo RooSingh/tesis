@@ -1,0 +1,2041 @@
+/* Quien conduce, en que puesto va, cuanto lleva de vuelta y a cuanto del lider.
+ *
+ * CRITERIO. Como los demas arneses, las funciones se **extraen del `app.js`
+ * que se publica** y se ejecutan; no se copian. Probar una reimplementacion
+ * comprueba que la reimplementacion anda, que es justo lo que no interesa.
+ *
+ * LOS CUATRO DEFECTOS QUE ESTO CUIDA.
+ *
+ * 1. El marcador decia «19», que es el indice del vehiculo en el protocolo. El
+ *    nombre ---NORRIS, numero 4, McLaren--- estaba guardado desde el dia de la
+ *    captura y no cruzaba a la consulta.
+ * 2. «sin parrilla» se decidia con `AUTOS.length <= 1`, de modo que una carrera
+ *    de veinte de la que se guardo la telemetria de uno se leia como una sesion
+ *    sin participantes. Son dos cosas distintas.
+ * 3. `delta_to_race_leader` viaja en milisegundos y se imprimia crudo bajo un
+ *    rotulo que decia segundos: 2.937 ms se leian como «2937.000».
+ * 4. «Actual» era `fraccion del cabezal x duracion de la vuelta`, que es el
+ *    tiempo de reproduccion y no el cronometro que midio el juego.
+ */
+"use strict";
+
+const fs = require("fs");
+const path = require("path");
+const assert = require("assert");
+
+const APP = path.join(__dirname, "..", "..", "dashboard", "app.js");
+const fuenteApp = fs.readFileSync(APP, "utf8");
+
+function extraer(nombre) {
+  const marca = "function " + nombre + "(";
+  const desde = fuenteApp.indexOf(marca);
+  if (desde === -1) throw new Error("no esta la funcion " + nombre + " en app.js");
+  let i = fuenteApp.indexOf("{", desde);
+  let nivel = 0;
+  for (; i < fuenteApp.length; i++) {
+    if (fuenteApp[i] === "{") nivel++;
+    else if (fuenteApp[i] === "}") {
+      nivel--;
+      if (nivel === 0) return fuenteApp.slice(desde, i + 1);
+    }
+  }
+  throw new Error("no cierra la funcion " + nombre);
+}
+
+/* Las tablas de unidades tambien se sacan del archivo: escribirlas aca de nuevo
+   dejaria pasar el dia en que alguien agregue un canal en milisegundos al
+   `app.js` y no a la prueba. */
+function constante(nombre) {
+  const i = fuenteApp.indexOf("const " + nombre + " =");
+  if (i === -1) throw new Error("no esta la constante " + nombre);
+  const fin = fuenteApp.indexOf(";", i);
+  return fuenteApp.slice(i, fin + 1);
+}
+
+function variable(nombre) {
+  const i = fuenteApp.indexOf("let " + nombre + " =");
+  if (i === -1) throw new Error("no esta la variable " + nombre);
+  return fuenteApp.slice(i, fuenteApp.indexOf(";", i) + 1);
+}
+
+/* El estado del modulo que estas funciones leen. */
+globalThis.estadoSesion = "cargado";
+globalThis.fuente = "f1";
+globalThis.cabezal = 0;
+globalThis.vueltaElegida = 1;
+globalThis.corrida = { adquisicion: null, fase: null, disponibles: null, mezclada: false };
+globalThis.AUTOS = [];
+globalThis.vivo = { series: new Map(), ultimos: new Map(), recorrido: new Map(),
+                    distancia: new Map(), vuelta: new Map(), recorridoDibujado: 0 };
+globalThis.document = { getElementById: () => null };
+globalThis.seleccion = new Set();
+globalThis.CURVAS = [];
+globalThis.tinta = () => "#000";
+globalThis.PISTA = { largo_m: 7000 };
+globalThis.HUECO_DE_CAPTURA_MS = 2000;
+globalThis.EJE_DISTANCIA = " distancia";
+globalThis.EJE_DISTANCIA_SESION = " distancia de sesion";
+globalThis._selloSeries = 0;
+globalThis._selloDeLoArmado = -1;
+globalThis._seriesArmadas = new Map();
+globalThis._selloDeLoTemporal = -1;
+globalThis._temporales = new Map();
+globalThis._huboInterpolacion = false;
+globalThis.SENAL_CAN = { throttle: "gas_pressed", brake: "brake_pressed" };
+globalThis.SENAL_OPENF1 = { brake: "brake_applied", drs: "drs_state_code" };
+globalThis.estado = { series: {}, posiciones: {}, vueltas: [], abierta: null,
+                      puesta: null, vehiculoClave: "car:19" };
+
+const NOMBRES = [
+  "numeroMedido", "nombreDeSenal", "recortarPorDominio",
+  "textoSeguro", "claveCorta", "identidadDeVehiculo",
+  "renombrarAutos", "armarAutos", "camposDeIdentidad",
+  "anotarParrillas", "parrillaVigente",
+  "secundarioDeVehiculo", "quienConduce",
+  "vehiculosConTelemetriaGuardada", "autoPropio",
+  "divisorDeUnidad", "unidadDeclaradaDe", "divisorDePresentacion",
+  "estaEnLaUnidadQueSeMuestra", "serieCrudaDeCanal", "_armarSerieDeCanal",
+  "_enUnidad", "trazarSerie", "tiempoDeVuelta", "diferenciaEnSegundos",
+  "reservaDeArriba", "encuadrarTrazado",
+  "metroDeCurva", "zonasDeCurva", "bandasDeVuelta", "bandasParaElTramo",
+  "pintarZonas", "partirEnRenglones", "vistaDeComparacion",
+  "segmentosComparacion", "vueltasParaComparar", "nombreDeLaLamina",
+  "pieDeExportacion", "exportarComparacion", "extremosDeDistancia",
+  "reducirAAncho", "escalaDe", "dominioAmpliado",
+  "pintarLeyendaTraza", "exportarCsv", "elegirCorrida",
+  "alcanceElegidoEsValido", "adquisicionSeSolapa", "faseDeLaDireccion",
+  "olvidarLoDeLaCorrida", "nuevaSesionEnCurso", "aperturaVigente", "sigueVigente",
+  "cambiaronLasSeries",
+  "esCanalEscalonado", "_cacheTemporal", "serieTemporal", "_serieTemporalCruda",
+  "continuidadDeVuelta", "_umbralDeVuelta", "tiempoEfectivoEntre", "hayCorteEntre",
+  "_antesDe", "valorContinuoEn", "valorEscalonadoEn",
+  "relojDeVuelta", "_armarRelojDeVuelta", "_tramosContinuos", "_tramosDeMuestras",
+  "tiempoDePresentacion", "recortarConBordes",
+  "serieDeCanal", "serieAcumuladaDeCanal", "tramoAcumuladoDeVuelta",
+  "vueltasEnTramoAcumulado", "claveVehiculoPropio", "duracionDeVuelta", "duracionSesionS",
+  "vueltasDeLaSesion", "iniciosDeVuelta", "calcularInstante",
+];
+
+const CONSTANTES = ["SENAL_DE", "UNIDAD_QUE_MUESTRA_EL_TABLERO",
+                    "DIVISOR_ENTRE_UNIDADES", "SIN_VEHICULO",
+                    "MARGEN_DEL_TRAZADO", "ALTURA_DEL_ROTULO", "CUERPO_DEL_ROTULO",
+                    "METRICAS"];
+
+const sacadas = new Function(
+  CONSTANTES.map(constante).join("\n") + "\n" +
+  variable("_ascendenteDelRotulo") + "\n" +
+  "let PARRILLAS = null;\n" +
+  "let _contextoDeCorrida = null;\n" +
+  "let _aperturaActual = 0;\n" +
+  "let _mandoSesion = null;\n" +
+  "let PISTA = {};\n" +
+  "let CURVAS = [];\n" +
+  "let _vigilanciaPedida = null;\n" +
+  "let _esencialResuelta = false;\n" +
+  "let _vueltasEnPantalla = [];\n" +
+  "let _instanteClave = null;\n" +
+  "let _selloDeIdentidad = 0;\n" +
+  "const _vistasVivas = new Map();\n" +
+  'let ejeComparacion = "distancia";\n' +
+  'let alcanceComparacion = "una";\n' +
+  "let zoom = null;\n" +
+  "let modoDetalle = true;\n" +
+  constante("ZONA_MINIMA_PX") + "\n" + constante("ZONA_CON_ROTULO_PX") + "\n" +
+  "const _fijar = { eje: v => { ejeComparacion = v; }," +
+  "  alcance: v => { alcanceComparacion = v; }," +
+  "  curvas: v => { CURVAS = v; }," +
+  "  pista: v => { PISTA = v; }," +
+  "  zoom: v => { zoom = v; }," +
+  "  detalle: v => { modoDetalle = v; },\n};\n" +
+  NOMBRES.map(extraer).join("\n\n") +
+  "\nreturn Object.assign({ " + NOMBRES.concat(CONSTANTES).join(", ") + " }, {" +
+  /* Dos ganchos sobre el estado de modulo. Las variables del preludio son
+     `let` dentro del ambito de la funcion construida: escribirlas desde afuera
+     con `globalThis` no las toca, y leerlas asi devuelve otra cosa. */
+  "  fijarContextoDeCorrida: v => { _contextoDeCorrida = v; }," +
+  "  selloDeIdentidad: () => _selloDeIdentidad," +
+  "  _fijar," +
+  "});")();
+
+const {
+  textoSeguro, identidadDeVehiculo, anotarParrillas, parrillaVigente,
+  renombrarAutos, armarAutos,
+  secundarioDeVehiculo, vehiculosConTelemetriaGuardada, autoPropio,
+  camposDeIdentidad, quienConduce,
+  divisorDeUnidad, unidadDeclaradaDe, divisorDePresentacion,
+  estaEnLaUnidadQueSeMuestra, serieCrudaDeCanal, trazarSerie,
+  serieDeCanal, serieAcumuladaDeCanal,
+  tiempoDeVuelta, diferenciaEnSegundos, esCanalEscalonado, serieTemporal,
+  valorEscalonadoEn, valorContinuoEn, calcularInstante,
+  reservaDeArriba, encuadrarTrazado, metroDeCurva, zonasDeCurva,
+  partirEnRenglones, vistaDeComparacion, segmentosComparacion,
+  nombreDeLaLamina, pieDeExportacion, exportarComparacion,
+  bandasDeVuelta, bandasParaElTramo, pintarZonas,
+  pintarLeyendaTraza, exportarCsv,
+  elegirCorrida, nuevaSesionEnCurso, fijarContextoDeCorrida, selloDeIdentidad,
+  _fijar,
+  UNIDAD_QUE_MUESTRA_EL_TABLERO, MARGEN_DEL_TRAZADO, ALTURA_DEL_ROTULO,
+  CUERPO_DEL_ROTULO, METRICAS,
+} = sacadas;
+
+globalThis.instante = () => calcularInstante();
+
+let hechas = 0;
+function prueba(titulo, fn) {
+  try { fn(); hechas++; }
+  catch (e) {
+    process.exitCode = 1;
+    console.error("FALLA  " + titulo + "\n       " + (e && e.message));
+  }
+}
+
+// ------------------------------------------------------------------ utilidad
+
+const SESION = "f1_25:session:3731090176871608020";
+const CAR19 = SESION + ":car:19";
+const T0 = Date.parse("2026-09-05T00:38:00.000Z");
+const iso = ms => new Date(ms).toISOString();
+
+/* La parrilla tal como la devuelve `/sesiones/{id}/adquisiciones`. */
+function parrillaDeSpa(extra) {
+  return Object.assign({
+    disponible: true,
+    con_telemetria: 1,
+    vehiculos_en_carrera: 20,
+    origen: "metadato de captura, derivado del paquete de participantes",
+    vehiculos: [
+      { indice: 0, vehicle_id: SESION + ":car:0", nombre: "PIASTRI",
+        numero: 81, equipo: "McLaren", es_ia: true, con_telemetria: false },
+      { indice: 19, vehicle_id: CAR19, nombre: "NORRIS",
+        numero: 4, equipo: "McLaren", es_ia: false, con_telemetria: true },
+    ],
+  }, extra || {});
+}
+
+function reiniciar() {
+  globalThis.estado = { series: {}, posiciones: {}, vueltas: [],
+                        abierta: { session_id: SESION, fuente: "f1_25_udp_simulation" },
+                        puesta: null, vehiculoClave: CAR19 };
+  anotarParrillas(null, []);
+  globalThis.corrida = { adquisicion: "original", fase: 3, disponibles: null, mezclada: false };
+  globalThis.AUTOS = [];
+  globalThis.vivo = { series: new Map(), ultimos: new Map(), recorrido: new Map(),
+                      distancia: new Map(), vuelta: new Map(), recorridoDibujado: 0 };
+  globalThis.estadoSesion = "cargado";
+  globalThis._selloSeries++;
+  globalThis.cabezal = 0;
+  globalThis.fuente = "f1";
+}
+
+/* Deja la parrilla como la deja el tablero: por la respuesta de
+   `/adquisiciones`, con su sesion y su adquisicion. No se asigna a mano la
+   variable de modulo, que es justamente lo que ocultaba el ciclo de vida. */
+function ponerParrilla(parrilla, clave) {
+  anotarParrillas(SESION, [{ clave: clave || "original", parrilla: parrilla }]);
+}
+
+/* Una vuelta como la entrega `/series`, con su mapa de unidades tal cual llega
+   ---en milisegundos--- para que la conversion sea la de produccion. */
+function cargarVuelta(numero, marcas, columnas, unidades) {
+  const veh = { timestamp_utc: marcas.map(m => iso(T0 + m)) };
+  Object.keys(columnas).forEach(c => { veh[c] = columnas[c]; });
+  const bloque = {
+    vuelta: numero, puntos_pedidos: 600,
+    vehiculos: { [CAR19]: veh },
+    unidades: Object.assign({ speed: "km/h", lap_distance: "m" }, unidades || {}),
+  };
+  globalThis.estado.series[numero] = bloque;
+  globalThis._selloSeries++;
+  return bloque;
+}
+
+/* Dos vueltas seguidas de Spa a escala: veinte muestras cada 100 ms, el
+   cronometro del juego corriendo con ellas y reiniciando en la meta. */
+function dosVueltasConCronometro() {
+  reiniciar();
+  ponerParrilla(parrillaDeSpa());
+  for (const v of [1, 2]) {
+    const marcas = [], dist = [], vel = [], crono = [], puesto = [], gap = [];
+    for (let i = 0; i < 20; i++) {
+      marcas.push((v - 1) * 2000 + i * 100);
+      dist.push(i * 5);
+      vel.push(200 + i);
+      crono.push(i * 100 + 16);                  // ms, reinicia en cada vuelta
+      puesto.push(i < 10 ? 5 : 4);               // adelanta a la mitad
+      gap.push(i < 10 ? 2653 : 2336);            // ms, en escalon
+    }
+    cargarVuelta(v, marcas, {
+      distancia_m: dist, speed: vel, current_lap_time: crono,
+      track_position_order: puesto, delta_to_race_leader: gap,
+    }, { current_lap_time: "ms", track_position_order: "position",
+         delta_to_race_leader: "ms" });
+  }
+  globalThis.estado.vueltas = [
+    { numero: 1, duracion_s: 1.9, desde_utc: iso(T0), hasta_utc: iso(T0 + 1900) },
+    { numero: 2, duracion_s: 1.9, desde_utc: iso(T0 + 2000), hasta_utc: iso(T0 + 3900) },
+  ];
+  armarAutos([CAR19]);
+}
+
+/* ==================================================================
+   1. LA IDENTIDAD SALE DEL METADATO, NO DEL SUFIJO DE LA CLAVE
+   ================================================================== */
+
+prueba("el vehiculo 19 de Spa es NORRIS, numero 4, McLaren", () => {
+  reiniciar();
+  ponerParrilla(parrillaDeSpa());
+  const q = identidadDeVehiculo(CAR19);
+  assert.strictEqual(q.nombre, "NORRIS");
+  assert.strictEqual(q.numero, 4);
+  assert.strictEqual(q.equipo, "McLaren");
+  assert.strictEqual(q.esIA, false);
+  assert.strictEqual(q.completa, "NORRIS · #4 · McLaren");
+  assert.strictEqual(q.declarada, true);
+});
+
+prueba("la clave tecnica no cambia al ponerle nombre", () => {
+  /* El defecto contrario del que se corrige: renombrar tocando la clave
+     rompería la seleccion, las caches y las peticiones. */
+  reiniciar();
+  ponerParrilla(parrillaDeSpa());
+  armarAutos([CAR19]);
+  assert.strictEqual(globalThis.AUTOS[0].id, CAR19);
+  assert.strictEqual(globalThis.AUTOS[0].nombre, "NORRIS");
+  assert.strictEqual(globalThis.AUTOS[0].indiceInterno, "19");
+});
+
+prueba("la etiqueta de la pista son tres letras y el titulo la identidad entera", () => {
+  reiniciar();
+  ponerParrilla(parrillaDeSpa());
+  const q = identidadDeVehiculo(CAR19);
+  assert.strictEqual(q.etiqueta, "NOR");
+  assert.strictEqual(q.completa, "NORRIS · #4 · McLaren");
+});
+
+prueba("un nombre mas corto que tres letras va entero", () => {
+  reiniciar();
+  ponerParrilla(parrillaDeSpa({ vehiculos: [
+    { indice: 19, vehicle_id: CAR19, nombre: "HO", numero: 7, equipo: "Alpine",
+      es_ia: false, con_telemetria: true }] }));
+  assert.strictEqual(identidadDeVehiculo(CAR19).etiqueta, "HO");
+});
+
+prueba("sin metadato el respaldo dice que es un indice, no un numero de carrera", () => {
+  reiniciar();
+  const q = identidadDeVehiculo(CAR19);
+  assert.strictEqual(q.nombre, "Vehículo 19");
+  assert.strictEqual(q.numero, null, "un indice no se presenta como dorsal");
+  assert.strictEqual(q.declarada, false);
+  assert.ok(/índice interno/.test(q.completa), q.completa);
+});
+
+prueba("otra captura con el mismo indice no hereda el nombre", () => {
+  /* El indice es la posicion del vehiculo en el paquete de **esa** sesion: que
+     dos capturas tengan un `car:19` no las relaciona. */
+  reiniciar();
+  ponerParrilla(parrillaDeSpa());
+  const otra = "f1_25:session:999:car:19";
+  assert.strictEqual(identidadDeVehiculo(otra).nombre, "Vehículo 19");
+  assert.strictEqual(identidadDeVehiculo(otra).declarada, false);
+  assert.strictEqual(identidadDeVehiculo(CAR19).nombre, "NORRIS");
+});
+
+prueba("una parrilla que la API declara no disponible no nombra a nadie", () => {
+  reiniciar();
+  ponerParrilla({ disponible: false, motivo: "ninguna captura cerrada la declara" });
+  assert.strictEqual(parrillaVigente(), null);
+  assert.strictEqual(identidadDeVehiculo(CAR19).nombre, "Vehículo 19");
+});
+
+prueba("un participante sin nombre cae al respaldo y no a una cadena vacia", () => {
+  reiniciar();
+  ponerParrilla(parrillaDeSpa({ vehiculos: [
+    { indice: 19, vehicle_id: CAR19, nombre: "", numero: 4, equipo: "McLaren",
+      es_ia: false, con_telemetria: true }] }));
+  assert.strictEqual(identidadDeVehiculo(CAR19).nombre, "Vehículo 19");
+});
+
+prueba("un nombre con marcado se escribe, no se interpreta", () => {
+  const suelto = '<img src=x onerror="alerta()"> O\'BRIEN & <b>';
+  const seguro = textoSeguro(suelto);
+  assert.ok(seguro.indexOf("<") === -1, seguro);
+  assert.ok(seguro.indexOf(">") === -1, seguro);
+  assert.ok(seguro.indexOf('"') === -1, seguro);
+  assert.ok(seguro.indexOf("'") === -1, seguro);
+  assert.ok(seguro.indexOf("&lt;img") !== -1, seguro);
+  assert.ok(seguro.indexOf("O&#39;BRIEN") !== -1, seguro);
+  // El ampersand del propio nombre se escapa una vez y no dos.
+  assert.ok(seguro.indexOf("&amp;amp;") === -1, seguro);
+});
+
+prueba("el nombre con marcado llega intacto al modelo y se escapa al mostrarlo", () => {
+  /* Escapar en el modelo romperia la comparacion y el titulo accesible: se
+     conserva el texto medido y se escapa en el borde de la presentacion. */
+  reiniciar();
+  ponerParrilla(parrillaDeSpa({ vehiculos: [
+    { indice: 19, vehicle_id: CAR19, nombre: "<b>X</b>", numero: 1,
+      equipo: "Equipo & Cia", es_ia: false, con_telemetria: true }] }));
+  const q = identidadDeVehiculo(CAR19);
+  assert.strictEqual(q.nombre, "<b>X</b>");
+  assert.strictEqual(textoSeguro(q.equipo), "Equipo &amp; Cia");
+});
+
+prueba("la identidad que llega tarde renombra sin tocar claves ni propio", () => {
+  reiniciar();
+  armarAutos([CAR19]);
+  assert.strictEqual(globalThis.AUTOS[0].nombre, "Vehículo 19");
+  const antesId = globalThis.AUTOS[0].id;
+  const antesPropio = globalThis.AUTOS[0].propio;
+  const selloAntes = selloDeIdentidad();
+
+  ponerParrilla(parrillaDeSpa());
+  assert.strictEqual(renombrarAutos(), true);
+  assert.strictEqual(globalThis.AUTOS[0].nombre, "NORRIS");
+  assert.strictEqual(globalThis.AUTOS[0].numero, 4);
+  assert.strictEqual(globalThis.AUTOS[0].id, antesId, "la clave tecnica cambio");
+  assert.strictEqual(globalThis.AUTOS[0].propio, antesPropio);
+  assert.ok(selloDeIdentidad() > selloAntes,
+            "el sello no subio: las marcas ya dibujadas no se rehacen");
+});
+
+prueba("renombrar dos veces con la misma parrilla no declara un cambio", () => {
+  reiniciar();
+  ponerParrilla(parrillaDeSpa());
+  armarAutos([CAR19]);
+  const sello = selloDeIdentidad();
+  assert.strictEqual(renombrarAutos(), false);
+  assert.strictEqual(selloDeIdentidad(), sello);
+});
+
+prueba("la identidad que llega tarde no mueve el cabezal ni las series", () => {
+  dosVueltasConCronometro();
+  globalThis.PARRILLAS = null;
+globalThis.corrida = { adquisicion: null, fase: null, disponibles: null, mezclada: false };
+  armarAutos([CAR19]);
+  globalThis.cabezal = 0.37;
+  const antes = JSON.stringify(calcularInstante());
+  const seriesAntes = globalThis.estado.series[1].vehiculos[CAR19].speed.slice();
+  ponerParrilla(parrillaDeSpa());
+  renombrarAutos();
+  assert.strictEqual(globalThis.cabezal, 0.37);
+  assert.strictEqual(JSON.stringify(calcularInstante()), antes);
+  assert.deepStrictEqual(globalThis.estado.series[1].vehiculos[CAR19].speed, seriesAntes);
+});
+
+/* ==================================================================
+   2. IDENTIDAD, COBERTURA Y PUESTO SON TRES COSAS
+   ================================================================== */
+
+prueba("un solo vehiculo con telemetria no es una sesion sin parrilla", () => {
+  reiniciar();
+  ponerParrilla(parrillaDeSpa());
+  armarAutos([CAR19]);
+  assert.strictEqual(globalThis.AUTOS.length, 1);
+  assert.strictEqual(parrillaVigente().vehiculos.length, 20 - 18,
+                     "el ejemplar de prueba trae dos participantes");
+  assert.strictEqual(vehiculosConTelemetriaGuardada(), 1);
+});
+
+prueba("la cobertura la declara la API y no el largo de la lista dibujada", () => {
+  reiniciar();
+  ponerParrilla(parrillaDeSpa({ con_telemetria: 2 }));
+  armarAutos([CAR19]);
+  assert.strictEqual(vehiculosConTelemetriaGuardada(), 2,
+                     "se conto lo que hay en pantalla y no lo que hay guardado");
+});
+
+prueba("sin parrilla la cobertura cae en lo unico que se sabe", () => {
+  reiniciar();
+  armarAutos([CAR19, SESION + ":car:0"]);
+  assert.strictEqual(vehiculosConTelemetriaGuardada(), 2);
+});
+
+prueba("el equipo es identidad y lo que aporta el vehiculo es otra cosa", () => {
+  reiniciar();
+  ponerParrilla(parrillaDeSpa());
+  armarAutos([CAR19]);
+  const a = globalThis.AUTOS[0];
+  assert.strictEqual(a.equipo, "McLaren");
+  assert.strictEqual(a.aporta, "telemetría completa");
+  assert.strictEqual(secundarioDeVehiculo(a), "McLaren");
+});
+
+prueba("sin equipo declarado, debajo del nombre se dice lo que aporta", () => {
+  reiniciar();
+  armarAutos([CAR19]);
+  assert.strictEqual(secundarioDeVehiculo(globalThis.AUTOS[0]), "telemetría completa");
+});
+
+prueba("el puesto es discreto: no hay un P4,5", () => {
+  assert.strictEqual(esCanalEscalonado("posicion"), true);
+  dosVueltasConCronometro();
+  const st = serieTemporal("posicion", 1, CAR19);
+  // Entre la muestra 9 (P5) y la 10 (P4) no hay nada en el medio.
+  assert.strictEqual(valorEscalonadoEn(st, T0 + 950), 5);
+  assert.strictEqual(valorEscalonadoEn(st, T0 + 1000), 4);
+  for (let t = 900; t <= 1000; t += 5) {
+    const v = valorEscalonadoEn(st, T0 + t);
+    assert.ok(v === 4 || v === 5, "puesto intermedio " + v + " en " + t);
+  }
+});
+
+prueba("antes de la primera muestra no hay puesto, y no es P0", () => {
+  dosVueltasConCronometro();
+  const st = serieTemporal("posicion", 1, CAR19);
+  assert.strictEqual(valorEscalonadoEn(st, T0 - 1), null);
+});
+
+prueba("el puesto no se anticipa a la observacion que lo declara", () => {
+  /* Con el redondeo por indice el cambio se adelantaba medio intervalo: el
+     adelantamiento se veia antes de que el dato dijera que ocurrio. */
+  dosVueltasConCronometro();
+  const st = serieTemporal("posicion", 1, CAR19);
+  assert.strictEqual(valorEscalonadoEn(st, T0 + 999), 5);
+});
+
+prueba("un puesto nulo no se rellena con el de al lado en la serie", () => {
+  reiniciar();
+  cargarVuelta(1, [0, 100, 200],
+               { distancia_m: [0, 5, 10], track_position_order: [3, null, 3] },
+               { track_position_order: "position" });
+  const st = serieTemporal("posicion", 1, CAR19);
+  assert.deepStrictEqual(st.t.map(t => t - T0), [0, 200],
+                         "el nulo entro a la serie como un valor");
+});
+
+/* ==================================================================
+   3. LAS UNIDADES: UNA POLITICA, Y NO SE TOCA LO QUE LLEGO
+   ================================================================== */
+
+/* Un vehiculo vivo con su ultimo mensaje de cada senal, como lo guarda el
+   flujo: el mensaje entero, con su unidad. */
+function vivoCon(mensajes) {
+  reiniciar();
+  globalThis.estadoSesion = "vivo";
+  const ultimos = new Map();
+  const series = new Map();
+  Object.keys(mensajes).forEach(senal => {
+    const m = mensajes[senal];
+    ultimos.set(senal, m);
+    series.set(senal, [[0, m.value, 0], [10, m.value, 10]]);
+  });
+  globalThis.vivo.ultimos.set(CAR19, ultimos);
+  globalThis.vivo.series.set(CAR19, series);
+  globalThis.vivo.vuelta.set(CAR19, 1);
+  globalThis.vivo.distancia.set(CAR19, 10);
+}
+
+prueba("la diferencia al lider viene en milisegundos y se muestra en segundos", () => {
+  assert.strictEqual(UNIDAD_QUE_MUESTRA_EL_TABLERO.delta_to_race_leader, "s");
+  assert.strictEqual(divisorDeUnidad("delta_to_race_leader", "ms"), 1000);
+});
+
+prueba("dividir por mil y no multiplicar por milesimas: la cola se ve", () => {
+  /* `2937 * 0.001` es 2,9370000000000003 en coma flotante binaria. */
+  reiniciar();
+  cargarVuelta(1, [0, 100], { distancia_m: [0, 5], delta_to_race_leader: [2937, 2937] },
+               { delta_to_race_leader: "ms" });
+  assert.strictEqual(serieDeCanal("gap", 1, CAR19)[0][1], 2.937);
+});
+
+/* ---- el vivo se resuelve con sus mensajes, sin bloque historico ---- */
+
+prueba("en vivo sin historico, 2937 ms se leen como 2,937 s", () => {
+  /* EL DEFECTO. `calcularInstante` convertia bien y el panel preguntaba
+     «¿esta en segundos?» a `estado.series`, que en vivo esta vacio: contestaba
+     que no y escribia una raya sobre un valor correcto. */
+  vivoCon({ delta_to_race_leader: { value: 2937, unit: "ms" },
+            speed: { value: 210, unit: "km/h" } });
+  assert.deepStrictEqual(globalThis.estado.series, {}, "el vivo no tiene bloque");
+  const t = calcularInstante();
+  assert.strictEqual(t.diferencia, 2.937);
+  assert.strictEqual(estaEnLaUnidadQueSeMuestra("gap", null, CAR19), true);
+  assert.strictEqual(diferenciaEnSegundos(t.diferencia), "+2,937");
+});
+
+prueba("en vivo el grafico tambien va en segundos, no en milisegundos", () => {
+  /* El grafico no preguntaba nada y dibujaba los 2.937 crudos bajo un eje que
+     decia segundos. */
+  vivoCon({ delta_to_race_leader: { value: 2937, unit: "ms" } });
+  const serie = serieDeCanal("gap", null, CAR19);
+  assert.ok(serie.length, "sin serie viva no hay nada que comprobar");
+  serie.forEach(p => assert.strictEqual(p[1], 2.937, "el grafico quedo en ms"));
+});
+
+prueba("en vivo, una senal que ya viene en segundos no se divide", () => {
+  vivoCon({ penalty_time: { value: 5, unit: "s" } });
+  assert.strictEqual(divisorDePresentacion("penalty_time", null, CAR19), 1);
+});
+
+prueba("en vivo con unidad desconocida no se dibuja ni se lee un numero", () => {
+  vivoCon({ delta_to_race_leader: { value: 2937000, unit: "us" } });
+  assert.strictEqual(calcularInstante().diferencia, null);
+  assert.deepStrictEqual(serieDeCanal("gap", null, CAR19), [],
+                         "se dibujo bajo una unidad que no es la del rotulo");
+  assert.strictEqual(estaEnLaUnidadQueSeMuestra("gap", null, CAR19), false);
+});
+
+prueba("en vivo sin unidad declarada tampoco se supone milisegundos", () => {
+  vivoCon({ delta_to_race_leader: { value: 2937 } });
+  assert.strictEqual(calcularInstante().diferencia, null);
+  assert.strictEqual(unidadDeclaradaDe("delta_to_race_leader", null, CAR19), null);
+});
+
+prueba("la vista viva convertida no se rehace mientras no llegan muestras", () => {
+  vivoCon({ delta_to_race_leader: { value: 2937, unit: "ms" } });
+  const a = serieDeCanal("gap", null, CAR19);
+  const b = serieDeCanal("gap", null, CAR19);
+  assert.strictEqual(a, b, "se armo una copia por llamada");
+});
+
+prueba("la vista viva no toca la serie que guarda el flujo", () => {
+  vivoCon({ delta_to_race_leader: { value: 2937, unit: "ms" } });
+  serieDeCanal("gap", null, CAR19);
+  const cruda = globalThis.vivo.series.get(CAR19).get("delta_to_race_leader");
+  cruda.forEach(p => assert.strictEqual(p[1], 2937, "se muto lo que guarda el vivo"));
+});
+
+/* ---- el historico, con la misma politica ---- */
+
+prueba("en historico, 2937 ms se leen igual que en vivo", () => {
+  reiniciar();
+  cargarVuelta(1, [0, 100], { distancia_m: [0, 5], delta_to_race_leader: [2937, 2937] },
+               { delta_to_race_leader: "ms" });
+  globalThis.estado.vueltas = [{ numero: 1, duracion_s: 0.1,
+                                 desde_utc: iso(T0), hasta_utc: iso(T0 + 100) }];
+  globalThis.cabezal = 0.5;
+  assert.strictEqual(calcularInstante().diferencia, 2.937);
+  assert.strictEqual(serieDeCanal("gap", 1, CAR19)[0][1], 2.937);
+});
+
+prueba("una senal que ya viene en segundos no se divide", () => {
+  /* `penalty_time` y `safety_car_delta` viajan en la misma respuesta y estan en
+     segundos: una lista de nombres escrita a mano los rompia. */
+  reiniciar();
+  cargarVuelta(1, [0, 100], { distancia_m: [0, 5], penalty_time: [5, 5] },
+               { penalty_time: "s" });
+  assert.strictEqual(divisorDePresentacion("penalty_time", 1, CAR19), 1);
+  assert.deepStrictEqual(serieDeCanal("penalty_time", 1, CAR19).map(x => x[1]), [5, 5]);
+  assert.deepStrictEqual(serieCrudaDeCanal("penalty_time", 1, CAR19).map(x => x[1]), [5, 5]);
+});
+
+prueba("con unidad desconocida no se dibuja el numero bajo la unidad del rotulo", () => {
+  /* EL DEFECTO. El panel rechazaba el valor y los graficos y la comparacion lo
+     dibujaban igual, bajo la unidad fija que declara `METRICAS`. */
+  reiniciar();
+  cargarVuelta(1, [0, 100], { distancia_m: [0, 5], delta_to_race_leader: [2937000, 2937000] },
+               { delta_to_race_leader: "us" });
+  globalThis.estado.vueltas = [{ numero: 1, duracion_s: 0.1,
+                                 desde_utc: iso(T0), hasta_utc: iso(T0 + 100) }];
+  globalThis.cabezal = 0.5;
+  assert.strictEqual(estaEnLaUnidadQueSeMuestra("gap", 1, CAR19), false);
+  assert.deepStrictEqual(serieDeCanal("gap", 1, CAR19), []);
+  assert.strictEqual(serieTemporal("gap", 1, CAR19), null);
+  assert.strictEqual(calcularInstante().diferencia, null);
+  // Y lo crudo sigue estando, que es lo que exporta el CSV.
+  assert.strictEqual(serieCrudaDeCanal("gap", 1, CAR19)[0][1], 2937000);
+});
+
+prueba("sin unidad declarada no se supone que este en milisegundos", () => {
+  reiniciar();
+  cargarVuelta(1, [0, 100], { distancia_m: [0, 5], delta_to_race_leader: [2937, 2937] }, {});
+  assert.strictEqual(unidadDeclaradaDe("delta_to_race_leader", 1, CAR19), null);
+  assert.strictEqual(divisorDePresentacion("gap", 1, CAR19), null);
+  assert.deepStrictEqual(serieDeCanal("gap", 1, CAR19), []);
+});
+
+/* ---- exactamente una vez, y sin tocar lo que llego ---- */
+
+prueba("mostrar, comparar y releer no convierten dos veces", () => {
+  reiniciar();
+  cargarVuelta(1, [0, 100, 200],
+               { distancia_m: [0, 5, 10], delta_to_race_leader: [2937, 2937, 2937] },
+               { delta_to_race_leader: "ms" });
+  globalThis.estado.vueltas = [{ numero: 1, duracion_s: 0.2,
+                                 desde_utc: iso(T0), hasta_utc: iso(T0 + 200) }];
+  for (let i = 0; i < 5; i++) {
+    serieDeCanal("gap", 1, CAR19);
+    serieAcumuladaDeCanal("gap", 1, CAR19);
+    serieTemporal("gap", 1, CAR19);
+    globalThis.cabezal = i / 10; calcularInstante();
+  }
+  serieDeCanal("gap", 1, CAR19).forEach(p => assert.strictEqual(p[1], 2.937));
+  assert.strictEqual(serieTemporal("gap", 1, CAR19).v[0], 2.937);
+});
+
+prueba("lo que llego no se toca: ni valores ni unidades declaradas", () => {
+  /* Es la raiz de los tres sintomas: convertir el bloque guardado cambiaba lo
+     que se exporta y dejaba al vivo sin con que comparar. */
+  reiniciar();
+  cargarVuelta(1, [0, 100], { distancia_m: [0, 5], delta_to_race_leader: [2937, 2986] },
+               { delta_to_race_leader: "ms" });
+  globalThis.estado.vueltas = [{ numero: 1, duracion_s: 0.1,
+                                 desde_utc: iso(T0), hasta_utc: iso(T0 + 100) }];
+  globalThis.cabezal = 0.5;
+  calcularInstante();
+  serieDeCanal("gap", 1, CAR19);
+  serieAcumuladaDeCanal("gap", 1, CAR19);
+  const veh = globalThis.estado.series[1].vehiculos[CAR19];
+  assert.deepStrictEqual(veh.delta_to_race_leader, [2937, 2986]);
+  assert.strictEqual(globalThis.estado.series[1].unidades.delta_to_race_leader, "ms");
+});
+
+prueba("la serie cruda y la de presentacion no comparten casillero", () => {
+  reiniciar();
+  cargarVuelta(1, [0, 100], { distancia_m: [0, 5], delta_to_race_leader: [2937, 2937] },
+               { delta_to_race_leader: "ms" });
+  assert.strictEqual(serieCrudaDeCanal("gap", 1, CAR19)[0][1], 2937);
+  assert.strictEqual(serieDeCanal("gap", 1, CAR19)[0][1], 2.937);
+  assert.strictEqual(serieCrudaDeCanal("gap", 1, CAR19)[0][1], 2937,
+                     "la cruda quedo pisada por la de presentacion");
+});
+
+prueba("los nulos no se convierten en ceros al cambiar de unidad", () => {
+  reiniciar();
+  cargarVuelta(1, [0, 100, 200, 300],
+               { distancia_m: [0, 5, 10, 15],
+                 delta_to_race_leader: [1000, null, 3000, undefined] },
+               { delta_to_race_leader: "ms" });
+  const v = serieDeCanal("gap", 1, CAR19);
+  assert.deepStrictEqual(v.map(x => x[1]), [1, 3], "un nulo entro como cero");
+});
+
+prueba("la conversion alcanza a todos los vehiculos", () => {
+  const otro = SESION + ":car:0";
+  reiniciar();
+  cargarVuelta(1, [0, 100], { distancia_m: [0, 5], delta_to_race_leader: [2937, 2937] },
+               { delta_to_race_leader: "ms" });
+  globalThis.estado.series[1].vehiculos[otro] =
+    { timestamp_utc: [iso(T0), iso(T0 + 100)], distancia_m: [0, 5],
+      delta_to_race_leader: [1000, 1000] };
+  globalThis._selloSeries++;
+  assert.strictEqual(serieDeCanal("gap", 1, otro)[0][1], 1);
+});
+
+prueba("mientras no haya bloque no se afirma la unidad", () => {
+  reiniciar();
+  assert.strictEqual(unidadDeclaradaDe("delta_to_race_leader", 1, CAR19), null);
+  assert.strictEqual(estaEnLaUnidadQueSeMuestra("gap", 1, CAR19), false);
+});
+
+prueba("con el bloque cargado la unidad de la diferencia es la que se muestra", () => {
+  dosVueltasConCronometro();
+  assert.strictEqual(unidadDeclaradaDe("delta_to_race_leader", 1, CAR19), "ms");
+  assert.strictEqual(estaEnLaUnidadQueSeMuestra("gap", 1, CAR19), true);
+  assert.strictEqual(estaEnLaUnidadQueSeMuestra("speed", 1, CAR19), true,
+                     "una senal que se muestra como viene siempre esta en su unidad");
+});
+
+/* ==================================================================
+   4. EL FORMATO DICE LA UNIDAD, Y DISTINGUE EL CERO DE LA AUSENCIA
+   ================================================================== */
+
+prueba("136.153 ms se leen 2:16,153", () => {
+  assert.strictEqual(tiempoDeVuelta(136.153), "2:16,153");
+});
+
+prueba("un tiempo de menos de un minuto lleva su cero", () => {
+  assert.strictEqual(tiempoDeVuelta(55.113), "0:55,113");
+  assert.strictEqual(tiempoDeVuelta(9.5), "0:09,500");
+  assert.strictEqual(tiempoDeVuelta(0), "0:00,000");
+});
+
+prueba("2.937 ms son +2,937 s y 65.000 ms son +65,000 s", () => {
+  assert.strictEqual(diferenciaEnSegundos(2.937), "+2,937");
+  assert.strictEqual(diferenciaEnSegundos(65), "+65,000");
+});
+
+prueba("el cero valido se escribe, y la ausencia es otra cosa", () => {
+  assert.strictEqual(diferenciaEnSegundos(0), "+0,000");
+  assert.strictEqual(diferenciaEnSegundos(null), null);
+  assert.strictEqual(diferenciaEnSegundos(undefined), null);
+  assert.strictEqual(diferenciaEnSegundos(NaN), null);
+  assert.strictEqual(tiempoDeVuelta(null), null);
+});
+
+prueba("una diferencia negativa lleva el signo menos, no un guion", () => {
+  assert.strictEqual(diferenciaEnSegundos(-1.075), "−1,075");
+});
+
+prueba("un milisegundo no se pierde al redondear", () => {
+  assert.strictEqual(diferenciaEnSegundos(0.001), "+0,001");
+  assert.strictEqual(tiempoDeVuelta(59.999), "0:59,999");
+  assert.strictEqual(tiempoDeVuelta(60), "1:00,000");
+});
+
+/* ==================================================================
+   5. EL CRONOMETRO MEDIDO, RESUELTO EN EL INSTANTE COMPARTIDO
+   ================================================================== */
+
+prueba("el cronometro sale de la senal y no de la fraccion del cabezal", () => {
+  dosVueltasConCronometro();
+  globalThis.cabezal = 0.25;                       // mitad de la vuelta 1
+  const t = calcularInstante();
+  assert.strictEqual(t.vuelta, 1);
+  assert.strictEqual(t.cronometroMedido, true);
+  /* La senal dice 16 ms en la primera muestra y sube 100 por muestra: a la
+     mitad de la vuelta vale 0,966 s, no `0,5 x 1,9 = 0,95`. */
+  assert.ok(Math.abs(t.cronometroS - 0.966) < 0.02,
+            "cronometro " + t.cronometroS);
+  assert.notStrictEqual(+t.cronometroS.toFixed(3), +(t.fraccion * 1.9).toFixed(3));
+});
+
+prueba("el cronometro se lee en el mismo instante que todo lo demas", () => {
+  dosVueltasConCronometro();
+  globalThis.cabezal = 0.31;
+  const t = calcularInstante();
+  const st = serieTemporal("cronometro", t.vuelta, CAR19);
+  assert.strictEqual(t.cronometroS, valorContinuoEn(st, t.tUtcMs));
+});
+
+prueba("al cruzar la meta el cronometro reinicia y no interpola el salto", () => {
+  dosVueltasConCronometro();
+  let previo = null, retrocesosDentro = 0, vueltaPrevia = null, hayReinicio = false;
+  for (let k = 0; k <= 400; k++) {
+    globalThis.cabezal = k / 400;
+    const t = calcularInstante();
+    if (t.cronometroS === null) continue;
+    if (vueltaPrevia === t.vuelta && previo !== null && t.cronometroS < previo) {
+      retrocesosDentro++;
+    }
+    if (vueltaPrevia !== null && vueltaPrevia !== t.vuelta) {
+      hayReinicio = true;
+      assert.ok(t.cronometroS < 0.2,
+                "la vuelta nueva arranca en " + t.cronometroS + " s");
+    }
+    previo = t.cronometroS; vueltaPrevia = t.vuelta;
+  }
+  assert.ok(hayReinicio, "no se llego a cruzar la meta");
+  assert.strictEqual(retrocesosDentro, 0);
+});
+
+prueba("el cronometro no se interpola a traves de un hueco de captura", () => {
+  reiniciar();
+  cargarVuelta(1, [0, 100, 3100, 3200],
+               { distancia_m: [0, 5, 10, 15],
+                 current_lap_time: [0, 100, 3100, 3200] },
+               { current_lap_time: "ms" });
+  globalThis.estado.vueltas = [{
+    numero: 1, duracion_s: 0.2, desde_utc: iso(T0), hasta_utc: iso(T0 + 3200),
+    huecos: [{ desde_utc: iso(T0 + 100), hasta_utc: iso(T0 + 3100), duracion_s: 3 }],
+  }];
+  const st = serieTemporal("cronometro", 1, CAR19);
+  // Dentro del corte se sostiene la ultima medida, no se traza una recta.
+  assert.strictEqual(valorContinuoEn(st, T0 + 1600), 0.1);
+  assert.strictEqual(valorContinuoEn(st, T0 + 3100), 3.1);
+});
+
+prueba("pausa y seek dan el mismo cronometro para el mismo cabezal", () => {
+  dosVueltasConCronometro();
+  globalThis.cabezal = 0.62;
+  const a = calcularInstante();
+  globalThis.cabezal = 0.05;
+  calcularInstante();
+  globalThis.cabezal = 0.62;
+  const b = calcularInstante();
+  assert.strictEqual(a.cronometroS, b.cronometroS);
+  assert.strictEqual(a.posicion, b.posicion);
+  assert.strictEqual(a.diferencia, b.diferencia);
+  assert.strictEqual(a.tUtcMs, b.tUtcMs);
+});
+
+prueba("sin la senal del cronometro el instante lo declara ausente", () => {
+  reiniciar();
+  cargarVuelta(1, [0, 100, 200], { distancia_m: [0, 5, 10], speed: [200, 201, 202] });
+  globalThis.estado.vueltas = [{ numero: 1, duracion_s: 0.2,
+                                 desde_utc: iso(T0), hasta_utc: iso(T0 + 200) }];
+  globalThis.cabezal = 0.5;
+  const t = calcularInstante();
+  assert.strictEqual(t.cronometroS, null);
+  assert.strictEqual(t.cronometroMedido, false,
+                     "sin unidad declarada no se puede afirmar que sea el medido");
+});
+
+/* ==================================================================
+   6. LA DIFERENCIA AL LIDER, EN EL INSTANTE Y EN SU UNIDAD
+   ================================================================== */
+
+prueba("la diferencia se lee en segundos en el instante compartido", () => {
+  dosVueltasConCronometro();
+  globalThis.cabezal = 0.1;
+  const t = calcularInstante();
+  assert.strictEqual(t.diferencia, 2.653);
+  assert.strictEqual(diferenciaEnSegundos(t.diferencia), "+2,653");
+});
+
+prueba("la diferencia al lider es un escalon y no se interpola", () => {
+  /* Medido sobre la vuelta 1 de Spa a resolucion completa ---2.735 muestras sin
+     submuestrear---: el canal cambia 80 veces y se sostiene entre cambios.
+     Interpolar daba 2,721 s donde la fuente dice 2,653 durante todo el segundo
+     que lo rodea. */
+  assert.strictEqual(esCanalEscalonado("gap"), true);
+  dosVueltasConCronometro();
+  const st = serieTemporal("gap", 1, CAR19);
+  for (let t = 900; t <= 1000; t += 5) {
+    const v = valorEscalonadoEn(st, T0 + t);
+    assert.ok(v === 2.653 || v === 2.336, "valor intermedio " + v);
+  }
+});
+
+prueba("la diferencia no se confunde con la del coche de adelante", () => {
+  const SENAL_DE = sacadas.SENAL_DE;
+  assert.strictEqual(SENAL_DE.gap, "delta_to_race_leader");
+  assert.notStrictEqual(SENAL_DE.gap, "delta_to_car_in_front");
+  // Y las dos se declaran en la misma unidad, para que ninguna quede sin convertir.
+  assert.strictEqual(UNIDAD_QUE_MUESTRA_EL_TABLERO.delta_to_car_in_front, "s");
+});
+
+prueba("cero de diferencia no se confunde con no tener diferencia", () => {
+  reiniciar();
+  cargarVuelta(1, [0, 100], { distancia_m: [0, 5], delta_to_race_leader: [0, 0] },
+               { delta_to_race_leader: "ms" });
+  globalThis.estado.vueltas = [{ numero: 1, duracion_s: 0.1,
+                                 desde_utc: iso(T0), hasta_utc: iso(T0 + 100) }];
+  globalThis.cabezal = 0.5;
+  assert.strictEqual(calcularInstante().diferencia, 0);
+  reiniciar();
+  cargarVuelta(1, [0, 100], { distancia_m: [0, 5] });
+  globalThis.estado.vueltas = [{ numero: 1, duracion_s: 0.1,
+                                 desde_utc: iso(T0), hasta_utc: iso(T0 + 100) }];
+  globalThis.cabezal = 0.5;
+  assert.strictEqual(calcularInstante().diferencia, null);
+});
+
+/* ==================================================================
+   7. LAS SENALES DE CRONOMETRAJE SE PIDEN, Y SIN AGREGAR GRAFICOS
+   ================================================================== */
+
+prueba("el cronometro y el puesto tienen nombre de contrato", () => {
+  const SENAL_DE = sacadas.SENAL_DE;
+  assert.strictEqual(SENAL_DE.cronometro, "current_lap_time");
+  assert.strictEqual(SENAL_DE.posicion, "track_position_order");
+});
+
+prueba("las dos lecturas nuevas no entran en la lista de graficos", () => {
+  const metricas = fuenteApp.slice(fuenteApp.indexOf("const METRICAS = ["),
+                                   fuenteApp.indexOf("const SENAL_DE = {"));
+  assert.ok(metricas.indexOf('id: "cronometro"') === -1,
+            "el cronometro quedo como un grafico mas");
+  assert.ok(metricas.indexOf('id: "posicion"') === -1,
+            "el puesto quedo como un grafico mas");
+});
+
+/* ==================================================================
+   8. EL NOMBRE NO SE CORTA EN EL TRAZADO
+   ------------------------------------------------------------------
+   EL DEFECTO. El `viewBox` se encuadraba con el mismo margen en los cuatro
+   lados, y arriba tiene que caber ademas el rotulo del vehiculo: la marca lo
+   lleva diez unidades por encima y la tinta sube otro tanto desde la linea
+   base. Cada vez que el coche pasaba por el punto mas alto del circuito ---en
+   Spa, la recta de Kemmel--- el nombre quedaba cortado por la mitad.
+
+   Y el primer arreglo tampoco alcanzo: reservar `cuerpo x 0,8` ---la altura de
+   las mayusculas--- se quedaba corto 2,25 unidades, porque la caja de un texto
+   llega hasta la **ascendente** de la fuente. Por eso se mide.
+   ================================================================== */
+
+/* Un SVG de mentira con lo justo: `encuadrarTrazado` le pide el rotulo, le lee
+   la caja al recorrido y le escribe el `viewBox`. */
+function svgDePrueba(cajaDelRecorrido, rotulo) {
+  const atributos = {};
+  return {
+    dataset: {},
+    atributos: atributos,
+    setAttribute: (k, v) => { atributos[k] = v; },
+    getAttribute: k => atributos[k],
+    querySelector: sel => (sel === ".auto-en-pista text" ? rotulo : null),
+    linea: { getBBox: () => cajaDelRecorrido },
+  };
+}
+
+/* Un rotulo cuya tinta sube `sube` por encima de su linea base. */
+function rotuloEn(y, sube, ancho) {
+  return {
+    getAttribute: k => (k === "y" ? String(y) : null),
+    getBBox: () => ({ x: -(ancho || 17) / 2, y: y - sube,
+                      width: ancho || 17, height: sube + CUERPO_DEL_ROTULO * 0.28 }),
+  };
+}
+
+function encuadrar(caja, rotulo) {
+  const svg = svgDePrueba(caja, rotulo);
+  sacadas._reiniciarAscendente ? sacadas._reiniciarAscendente() : null;
+  encuadrarTrazado(svg, svg.linea);
+  const vb = (svg.getAttribute("viewBox") || "").split(" ").map(Number);
+  return { svg, x: vb[0], y: vb[1], ancho: vb[2], alto: vb[3] };
+}
+
+prueba("arriba se reserva mas que a los costados, y por el rotulo", () => {
+  const caja = { x: 0, y: 0, width: 200, height: 100 };
+  const e = encuadrar(caja, rotuloEn(-ALTURA_DEL_ROTULO, 9.66));
+  const arriba = caja.y - e.y;
+  const abajo = (e.y + e.alto) - (caja.y + caja.height);
+  const lado = caja.x - e.x;
+  assert.strictEqual(lado, MARGEN_DEL_TRAZADO);
+  assert.strictEqual(abajo, MARGEN_DEL_TRAZADO);
+  assert.ok(arriba > lado, "arriba se reservo lo mismo que a los costados: " + arriba);
+});
+
+prueba("el rotulo del coche en lo mas alto del circuito entra entero", () => {
+  /* Es el caso exacto que se veia: el coche en el punto de menor `y` del
+     recorrido, que es donde el rotulo se sale por arriba. */
+  const caja = { x: 0, y: 0, width: 200, height: 100 };
+  const sube = 9.66;                       // ascendente medida de IBM Plex Mono
+  const rotulo = rotuloEn(caja.y - ALTURA_DEL_ROTULO, sube);
+  const e = encuadrar(caja, rotulo);
+  const cimaDeLaTinta = rotulo.getBBox().y;
+  assert.ok(cimaDeLaTinta >= e.y,
+            "el rotulo se sale " + (e.y - cimaDeLaTinta).toFixed(2) + " unidades");
+});
+
+prueba("reservar la altura de las mayusculas no alcanza, y por eso se mide", () => {
+  /* Con `cuerpo x 0,8` la reserva daba 18 y hacian falta 20: el defecto que
+     quedaba despues del primer arreglo. */
+  const caja = { x: 0, y: 0, width: 200, height: 100 };
+  const sube = 9.66;
+  const conMedida = reservaDeArriba(svgDePrueba(caja, rotuloEn(-ALTURA_DEL_ROTULO, sube)));
+  const suponiendoMayusculas = Math.ceil(ALTURA_DEL_ROTULO + CUERPO_DEL_ROTULO * 0.8);
+  assert.ok(conMedida > suponiendoMayusculas,
+            "la reserva medida (" + conMedida + ") no supera a la supuesta (" +
+            suponiendoMayusculas + "): se volvio a deducirla del cuerpo de la letra");
+  assert.ok(conMedida >= ALTURA_DEL_ROTULO + sube, "reserva " + conMedida);
+});
+
+prueba("sin un rotulo que medir todavia, la cota tampoco corta", () => {
+  /* El primer cuadro se dibuja antes de que exista una marca. */
+  const caja = { x: 0, y: 0, width: 200, height: 100 };
+  const e = encuadrar(caja, null);
+  const cimaDeLaTinta = caja.y - ALTURA_DEL_ROTULO - 9.66;
+  assert.ok(cimaDeLaTinta >= e.y,
+            "con la cota provisional el rotulo se sale " +
+            (e.y - cimaDeLaTinta).toFixed(2));
+});
+
+prueba("no se reencuadra en cada cuadro", () => {
+  /* Mover el `viewBox` sesenta veces por segundo hace temblar todo el dibujo. */
+  const caja = { x: 0, y: 0, width: 200, height: 100 };
+  const svg = svgDePrueba(caja, rotuloEn(-ALTURA_DEL_ROTULO, 9.66));
+  let escrituras = 0;
+  const real = svg.setAttribute;
+  svg.setAttribute = (k, v) => { if (k === "viewBox") escrituras++; real(k, v); };
+  for (let i = 0; i < 50; i++) encuadrarTrazado(svg, svg.linea);
+  assert.strictEqual(escrituras, 1);
+});
+
+prueba("un recorrido sin caja no borra el encuadre que habia", () => {
+  const svg = svgDePrueba({ x: 0, y: 0, width: 0, height: 0 }, null);
+  encuadrarTrazado(svg, svg.linea);
+  assert.strictEqual(svg.getAttribute("viewBox"), undefined);
+  assert.strictEqual(svg.dataset.reserva, undefined);
+});
+
+/* ==================================================================
+   9. EL NOMBRE ES UN DATO EN TODOS LOS RENDERIZADORES
+   ------------------------------------------------------------------
+   El panel de cronometraje lo escapaba y la leyenda del trazado no: seguia
+   concatenandolo en `innerHTML`. Mientras `nombre` era «19» eso no podia ser
+   otra cosa que digitos; desde que sale de la captura es texto que escribio
+   otro. Se prueba **el renderizador de la leyenda**, no el ayudante de escape.
+   ================================================================== */
+
+const MALICIOSO = '<img src=x onerror="window.__nombreEjecutado=true">';
+
+/* Un documento de mentira que recuerda lo que cada renderizador escribio. */
+function documentoDePrueba() {
+  const nodos = {};
+  const nuevo = () => ({
+    innerHTML: "", textContent: "", title: "", dataset: {},
+    className: "", style: {},
+    setAttribute(k, v) { this[k] = v; },
+    removeAttribute(k) { delete this[k]; },
+    querySelectorAll: () => [], closest: () => null,
+  });
+  globalThis.document = {
+    getElementById: id => (nodos[id] = nodos[id] || nuevo()),
+    querySelector: () => null,
+    querySelectorAll: () => [],
+    createElement: nuevo,
+  };
+  return nodos;
+}
+
+prueba("la leyenda del trazado escribe el nombre, no lo interpreta", () => {
+  reiniciar();
+  ponerParrilla(parrillaDeSpa({ vehiculos: [
+    { indice: 19, vehicle_id: CAR19, nombre: MALICIOSO, numero: 4,
+      equipo: "McLaren", es_ia: false, con_telemetria: true }] }));
+  armarAutos([CAR19]);
+  globalThis.seleccion = new Set([CAR19]);
+  globalThis.contarCanales = () => {};
+  const nodos = documentoDePrueba();
+  pintarLeyendaTraza();
+  const html = nodos["leyenda-traza"].innerHTML;
+  assert.ok(html.indexOf("<img") === -1, "la leyenda crea un img: " + html);
+  assert.ok(html.indexOf("onerror") === -1 || html.indexOf("&quot;") !== -1, html);
+  assert.ok(html.indexOf("&lt;img") !== -1, "el nombre no llego literal: " + html);
+  assert.strictEqual(globalThis.__nombreEjecutado, undefined);
+});
+
+prueba("la leyenda no altera el nombre que guarda el modelo", () => {
+  /* Escapar en el dato para compensar un renderizador inseguro romperia la
+     comparacion, el titulo accesible y el CSV. */
+  assert.strictEqual(globalThis.AUTOS[0].nombre, MALICIOSO);
+});
+
+prueba("no se escapa dos veces", () => {
+  reiniciar();
+  ponerParrilla(parrillaDeSpa({ vehiculos: [
+    { indice: 19, vehicle_id: CAR19, nombre: "A & B", numero: 1, equipo: "X",
+      es_ia: null, con_telemetria: true }] }));
+  armarAutos([CAR19]);
+  globalThis.seleccion = new Set([CAR19]);
+  globalThis.contarCanales = () => {};
+  const nodos = documentoDePrueba();
+  pintarLeyendaTraza();
+  const html = nodos["leyenda-traza"].innerHTML;
+  assert.ok(html.indexOf("A &amp; B") !== -1, html);
+  assert.ok(html.indexOf("&amp;amp;") === -1, "se escapo dos veces: " + html);
+});
+
+/* ==================================================================
+   10. IA, PERSONA Y NO DECLARADO SON TRES
+   ------------------------------------------------------------------
+   `identidadDeVehiculo` devolvia `esIA` y los dos copiadores no lo llevaban a
+   `AUTOS`: el rotulo leia `undefined`, que no es `null`, y afirmaba «conducido
+   por una persona» de un vehiculo del que el metadato no dice nada.
+   ================================================================== */
+
+function conControl(es_ia) {
+  reiniciar();
+  ponerParrilla(parrillaDeSpa({ vehiculos: [
+    Object.assign({ indice: 19, vehicle_id: CAR19, nombre: "NORRIS", numero: 4,
+                    equipo: "McLaren", con_telemetria: true },
+                  es_ia === undefined ? {} : { es_ia: es_ia })] }));
+  armarAutos([CAR19]);
+  return autoPropio();
+}
+
+prueba("la maquina se declara maquina", () => {
+  assert.strictEqual(conControl(true).esIA, true);
+  assert.ok(/la máquina/.test(quienConduce(true)), quienConduce(true));
+});
+
+prueba("la persona se declara persona", () => {
+  assert.strictEqual(conControl(false).esIA, false);
+  assert.ok(/una persona/.test(quienConduce(false)), quienConduce(false));
+});
+
+prueba("sin declarar no se afirma ninguna de las dos", () => {
+  const a = conControl(undefined);
+  assert.strictEqual(a.esIA, null, "llego " + a.esIA + ", que no es «no informado»");
+  const texto = quienConduce(a.esIA);
+  assert.ok(/no declara/.test(texto), texto);
+  assert.ok(!/^según/.test(texto) || /no declara/.test(texto), texto);
+});
+
+prueba("el control se atribuye a la parrilla capturada, no a la carrera", () => {
+  [true, false, null].forEach(v => {
+    assert.ok(/parrilla capturada/.test(quienConduce(v)), quienConduce(v));
+  });
+});
+
+prueba("el renombrado tardio tambien trae el control", () => {
+  reiniciar();
+  armarAutos([CAR19]);
+  assert.strictEqual(autoPropio().esIA, null);
+  ponerParrilla(parrillaDeSpa());
+  assert.strictEqual(renombrarAutos(), true);
+  assert.strictEqual(autoPropio().esIA, false);
+});
+
+prueba("un cambio solo de control se propaga igual", () => {
+  /* La comparacion miraba el nombre y si estaba declarada: con el mismo nombre
+     y otro control no actualizaba nada. */
+  reiniciar();
+  ponerParrilla(parrillaDeSpa({ vehiculos: [
+    { indice: 19, vehicle_id: CAR19, nombre: "NORRIS", numero: 4,
+      equipo: "McLaren", es_ia: true, con_telemetria: true }] }));
+  armarAutos([CAR19]);
+  assert.strictEqual(autoPropio().esIA, true);
+  ponerParrilla(parrillaDeSpa());
+  assert.strictEqual(renombrarAutos(), true);
+  assert.strictEqual(autoPropio().esIA, false);
+});
+
+/* ==================================================================
+   11. LO ESCALONADO SE DIBUJA COMO ESCALON
+   ------------------------------------------------------------------
+   `esCanalEscalonado` clasificaba bien y los cuatro renderizadores seguian
+   uniendo con diagonales. Se comprueban **los comandos de dibujo**.
+   ================================================================== */
+
+function lienzoDePrueba() {
+  const ordenes = [];
+  return {
+    ordenes: ordenes,
+    beginPath: () => ordenes.push(["begin"]),
+    moveTo: (x, y) => ordenes.push(["moveTo", +x.toFixed(3), +y.toFixed(3)]),
+    lineTo: (x, y) => ordenes.push(["lineTo", +x.toFixed(3), +y.toFixed(3)]),
+    stroke: () => ordenes.push(["stroke"]),
+  };
+}
+
+prueba("una continua se une con una recta", () => {
+  const ctx = lienzoDePrueba();
+  trazarSerie(ctx, [[100, 200], [200, 250]], x => x, y => y, false);
+  assert.deepStrictEqual(ctx.ordenes,
+    [["moveTo", 100, 200], ["lineTo", 200, 250]]);
+});
+
+prueba("una escalonada se sostiene y cambia en la muestra siguiente", () => {
+  /* [100 m, 2,653] -> [200 m, 2,336]: a los 150 m la curva dibujaba 2,49
+     mientras el lector numerico decia 2,653. */
+  const ctx = lienzoDePrueba();
+  trazarSerie(ctx, [[100, 2.653], [200, 2.336]], x => x, y => y, true);
+  assert.deepStrictEqual(ctx.ordenes, [
+    ["moveTo", 100, 2.653],
+    ["lineTo", 200, 2.653],   // plana hasta donde se midio el cambio
+    ["lineTo", 200, 2.336],   // y ahi baja de una vez
+  ]);
+});
+
+prueba("el escalon no adelanta el cambio", () => {
+  /* El vertice va en la x de la muestra nueva. Ponerlo antes mostraria el
+     adelantamiento en un metro donde nadie lo midio. */
+  const ctx = lienzoDePrueba();
+  trazarSerie(ctx, [[0, 5], [100, 4]], x => x, y => y, true);
+  const xs = ctx.ordenes.filter(o => o[0] !== "begin").map(o => o[1]);
+  assert.ok(xs.every(x => x === 0 || x === 100), "vertice fuera de una muestra: " + xs);
+  const bajada = ctx.ordenes.find(o => o[2] === 4);
+  assert.strictEqual(bajada[1], 100);
+});
+
+prueba("a mitad de camino la curva escalonada vale lo que el lector numerico", () => {
+  /* Se recorre el camino dibujado y se lo evalua en 150 m. */
+  const ctx = lienzoDePrueba();
+  trazarSerie(ctx, [[100, 2.653], [200, 2.336]], x => x, y => y, true);
+  const pts = ctx.ordenes.filter(o => o[0] !== "begin").map(o => [o[1], o[2]]);
+  const enX = x => {
+    for (let i = 1; i < pts.length; i++) {
+      if (x <= pts[i][0]) {
+        const dx = pts[i][0] - pts[i - 1][0];
+        if (!dx) return pts[i][1];
+        return pts[i - 1][1] + (pts[i][1] - pts[i - 1][1]) * ((x - pts[i - 1][0]) / dx);
+      }
+    }
+    return pts[pts.length - 1][1];
+  };
+  assert.strictEqual(enX(150), 2.653);
+  assert.strictEqual(enX(199.999), 2.653);
+});
+
+prueba("un solo punto no dibuja ningun segmento", () => {
+  const ctx = lienzoDePrueba();
+  trazarSerie(ctx, [[10, 3]], x => x, y => y, true);
+  assert.deepStrictEqual(ctx.ordenes, [["moveTo", 10, 3]]);
+});
+
+prueba("el escalon no agrega puntos a los datos", () => {
+  const datos = [[100, 2.653], [200, 2.336]];
+  const copia = JSON.stringify(datos);
+  trazarSerie(lienzoDePrueba(), datos, x => x, y => y, true);
+  assert.strictEqual(JSON.stringify(datos), copia);
+});
+
+/* ==================================================================
+   12. ELEGIR UNA ETAPA NO BORRA LA IDENTIDAD
+   ------------------------------------------------------------------
+   EL DEFECTO. `/adquisiciones` cargaba la parrilla y `elegirCorrida()` llamaba
+   despues a `nuevaSesionEnCurso()`, que la ponia en `null`; `cargarDatosDeSesion`
+   no la volvia a pedir. Abrir con el enlace completo mostraba NORRIS y abrir
+   desde el catalogo y elegir Carrera terminaba en «Vehículo 19». Cambiar de
+   etapa hacia lo mismo.
+
+   Se corre `elegirCorrida` **de verdad**, con la respuesta de `/adquisiciones`
+   tal como la manda la API.
+   ================================================================== */
+
+/* Una respuesta de `/adquisiciones` con las tres etapas de la carrera de Spa. */
+function respuestaDeAdquisiciones(parrillaPorClave) {
+  const fases = [
+    { orden: 1, duracion_de_captura_s: 120 },
+    { orden: 2, duracion_de_captura_s: 60 },
+    { orden: 3, duracion_de_captura_s: 2800 },
+  ];
+  return {
+    session_id: SESION,
+    adquisiciones: Object.keys(parrillaPorClave).map(clave => ({
+      clave: clave, replay_run_id: clave === "original" ? null : clave,
+      es_reproduccion: clave !== "original",
+      muestras_de_vuelta: 60468, vehiculos: 1,
+      desde_utc: iso(T0), hasta_utc: iso(T0 + 3000000),
+      parrilla: parrillaPorClave[clave], fases: fases,
+    })),
+    mezclada: Object.keys(parrillaPorClave).length > 1,
+  };
+}
+
+let _cargasPedidas = [];
+function prepararElector(resp) {
+  reiniciar();
+  globalThis.estadoSesion = "cargado";
+  globalThis.corrida = { adquisicion: null, fase: null,
+                         disponibles: resp.adquisiciones, mezclada: resp.mezclada };
+  anotarParrillas(resp.session_id, resp.adquisiciones);
+  fijarContextoDeCorrida({ ruta: "/sesiones/" + SESION, s: estado.abierta });
+  _cargasPedidas = [];
+  globalThis.cargarDatosDeSesion = (ruta, apertura) => _cargasPedidas.push(apertura);
+  globalThis.declararAlcance = () => {};
+  globalThis.pintarBotonDeCorrida = () => {};
+  globalThis.abrirElectorDeCorrida = () => {};
+  globalThis.decirEstadoApi = () => {};
+  globalThis.etiquetaDeCorrida = () => "x";
+  globalThis.senalDeSesion = () => null;
+  globalThis.render = () => {};
+  globalThis.detener = () => {};
+  globalThis.olvidarCaches = () => {};
+  globalThis.document = { getElementById: () => null, querySelector: () => null };
+  globalThis.location = { href: "http://x/", search: "" };
+  globalThis.history = { replaceState: () => {} };
+  globalThis.URL = URL;
+}
+
+prueba("catalogo, elector, Original y Carrera: el nombre sobrevive", () => {
+  const resp = respuestaDeAdquisiciones({ original: parrillaDeSpa() });
+  prepararElector(resp);
+  armarAutos([CAR19]);
+  assert.strictEqual(autoPropio().nombre, "NORRIS", "no llego con la respuesta");
+
+  elegirCorrida("original", 3);
+  assert.strictEqual(globalThis.corrida.fase, 3);
+  assert.strictEqual(_cargasPedidas.length, 1, "no se volvieron a pedir los datos");
+  /* `olvidarLoDeLaCorrida` vacio la lista, como en produccion: lo que importa
+     es que al rearmarla con las series nuevas el nombre siga estando. */
+  armarAutos([CAR19]);
+  assert.strictEqual(autoPropio().nombre, "NORRIS",
+                     "elegir la etapa borro la identidad");
+  assert.strictEqual(autoPropio().numero, 4);
+});
+
+prueba("Formacion y despues Carrera: las etapas comparten participantes", () => {
+  const resp = respuestaDeAdquisiciones({ original: parrillaDeSpa() });
+  prepararElector(resp);
+  elegirCorrida("original", 1);
+  armarAutos([CAR19]);
+  assert.strictEqual(autoPropio().nombre, "NORRIS");
+  elegirCorrida("original", 3);
+  armarAutos([CAR19]);
+  assert.strictEqual(autoPropio().nombre, "NORRIS");
+});
+
+prueba("cambiar de adquisicion trae la identidad de esa adquisicion", () => {
+  const otra = parrillaDeSpa({ vehiculos: [
+    { indice: 19, vehicle_id: CAR19, nombre: "PIASTRI", numero: 81,
+      equipo: "McLaren", es_ia: false, con_telemetria: true }] });
+  const resp = respuestaDeAdquisiciones({ original: parrillaDeSpa(), corrida7: otra });
+  prepararElector(resp);
+  elegirCorrida("original", 3);
+  armarAutos([CAR19]);
+  assert.strictEqual(autoPropio().nombre, "NORRIS");
+  elegirCorrida("corrida7", 3);
+  armarAutos([CAR19]);
+  assert.strictEqual(autoPropio().nombre, "PIASTRI",
+                     "se quedo con la parrilla de la adquisicion anterior");
+});
+
+prueba("sin elegir, con dos parrillas distintas no se nombra a nadie", () => {
+  /* Tomar cualquiera seria ponerle a un vehiculo el nombre del de otra carrera. */
+  const otra = parrillaDeSpa({ vehiculos: [
+    { indice: 19, vehicle_id: CAR19, nombre: "PIASTRI", numero: 81,
+      equipo: "McLaren", es_ia: false, con_telemetria: true }] });
+  const resp = respuestaDeAdquisiciones({ original: parrillaDeSpa(), corrida7: otra });
+  prepararElector(resp);
+  assert.strictEqual(globalThis.corrida.adquisicion, null);
+  assert.strictEqual(parrillaVigente(), null);
+  armarAutos([CAR19]);
+  assert.strictEqual(autoPropio().nombre, "Vehículo 19");
+});
+
+prueba("la parrilla de otra sesion no nombra a los vehiculos de esta", () => {
+  /* A -> B -> A con una respuesta atrasada: la de A llega con la B abierta. */
+  const resp = respuestaDeAdquisiciones({ original: parrillaDeSpa() });
+  prepararElector(resp);
+  armarAutos([CAR19]);
+  assert.strictEqual(autoPropio().nombre, "NORRIS");
+
+  globalThis.estado.abierta = { session_id: "f1_25:session:999" };
+  assert.strictEqual(parrillaVigente(), null, "la parrilla de A nombra en B");
+  armarAutos([CAR19]);
+  assert.strictEqual(autoPropio().nombre, "Vehículo 19");
+
+  globalThis.estado.abierta = { session_id: SESION };
+  armarAutos([CAR19]);
+  assert.strictEqual(autoPropio().nombre, "NORRIS", "al volver a A se perdio");
+});
+
+prueba("anular consultas no es olvidar quien es cada uno", () => {
+  /* Es la separacion que faltaba: `nuevaSesionEnCurso` anula lo que este en
+     vuelo y no toca la identidad. */
+  const resp = respuestaDeAdquisiciones({ original: parrillaDeSpa() });
+  prepararElector(resp);
+  globalThis.corrida.adquisicion = "original";
+  const antes = parrillaVigente();
+  nuevaSesionEnCurso();
+  assert.strictEqual(parrillaVigente(), antes);
+});
+
+prueba("un alcance a medias no carga nada", () => {
+  const resp = respuestaDeAdquisiciones({ original: parrillaDeSpa() });
+  prepararElector(resp);
+  elegirCorrida("no-existe", 3);
+  assert.strictEqual(_cargasPedidas.length, 0);
+  assert.strictEqual(globalThis.corrida.adquisicion, null);
+});
+
+prueba("una adquisicion que no existe no toma la parrilla de la que si", () => {
+  /* Con dos adquisiciones y una eleccion invalida no hay a quien nombrar. */
+  const otra = parrillaDeSpa({ vehiculos: [
+    { indice: 19, vehicle_id: CAR19, nombre: "PIASTRI", numero: 81,
+      equipo: "McLaren", es_ia: false, con_telemetria: true }] });
+  const resp = respuestaDeAdquisiciones({ original: parrillaDeSpa(), corrida7: otra });
+  prepararElector(resp);
+  elegirCorrida("no-existe", 3);
+  armarAutos([CAR19]);
+  assert.strictEqual(autoPropio().nombre, "Vehículo 19");
+});
+
+/* ==================================================================
+   13. EL CSV EXPORTA LO QUE LA FUENTE MANDO
+   ------------------------------------------------------------------
+   Convertir el bloque guardado hizo que este archivo empezara a decir 2,937
+   donde la base guarda 2937, y con un sufijo de unidad que nadie pidio. Se
+   corre **el exportador real** y se compara su salida.
+   ================================================================== */
+
+function exportar() {
+  let salida = null;
+  globalThis.guardar = (nombre, texto) => { salida = { nombre: nombre, texto: texto }; };
+  globalThis.avisar = () => {};
+  globalThis.canalesDeLaFuente = () => ["speed", "gap"];
+  globalThis.elegidos = () => ({ speed: true, gap: true });
+  exportarCsv();
+  return salida;
+}
+
+function conDosVehiculos() {
+  reiniciar();
+  ponerParrilla(parrillaDeSpa());
+  cargarVuelta(1, [0, 100, 200],
+               { distancia_m: [0, 10, 20], speed: [100, null, 120],
+                 delta_to_race_leader: [2937, 2986, null] },
+               { speed: "km/h", delta_to_race_leader: "ms" });
+  const otro = SESION + ":car:0";
+  globalThis.estado.series[1].vehiculos[otro] = {
+    timestamp_utc: [iso(T0), iso(T0 + 100)], distancia_m: [0, 10],
+    speed: [98, 99], delta_to_race_leader: [0, 0],
+  };
+  globalThis._selloSeries++;
+  globalThis.vueltaElegida = 1;
+  armarAutos([CAR19, otro]);
+  globalThis.seleccion = new Set([CAR19]);
+}
+
+prueba("el gap se exporta en milisegundos, como lo guarda la base", () => {
+  conDosVehiculos();
+  const csv = exportar();
+  assert.strictEqual(csv.nombre, "traza-vuelta.csv");
+  const filas = csv.texto.split("\n");
+  assert.ok(filas[1].indexOf("2937.000") !== -1, filas[1]);
+  assert.ok(csv.texto.indexOf("2.937") === -1, "se exporto convertido");
+});
+
+prueba("el encabezado no lleva sufijo de unidad", () => {
+  conDosVehiculos();
+  const cab = exportar().texto.split("\n")[0];
+  assert.strictEqual(cab,
+    "distancia_m,NORRIS_speed,NORRIS_delta_to_race_leader");
+  assert.ok(cab.indexOf("(") === -1, "el encabezado gano un sufijo: " + cab);
+});
+
+prueba("un nulo se exporta vacio y no como cero", () => {
+  conDosVehiculos();
+  const filas = exportar().texto.split("\n");
+  // 10 m: la velocidad es nula y el gap no.
+  const f = filas.find(x => x.indexOf("10,") === 0);
+  assert.strictEqual(f, "10,,2986.000", f);
+});
+
+prueba("varios vehiculos, cada uno con su columna", () => {
+  conDosVehiculos();
+  globalThis.seleccion = new Set([CAR19, SESION + ":car:0"]);
+  const cab = exportar().texto.split("\n")[0];
+  assert.strictEqual(cab.split(",").length, 5, cab);
+  assert.ok(cab.indexOf("Vehículo 0_speed") !== -1 || cab.indexOf("PIASTRI_speed") !== -1, cab);
+});
+
+prueba("exportar no muta lo que llego", () => {
+  conDosVehiculos();
+  const antes = JSON.stringify(globalThis.estado.series[1]);
+  exportar();
+  assert.strictEqual(JSON.stringify(globalThis.estado.series[1]), antes);
+});
+
+prueba("mostrar y exportar conviven: el panel en segundos, el archivo en ms", () => {
+  conDosVehiculos();
+  globalThis.estado.vueltas = [{ numero: 1, duracion_s: 0.2,
+                                 desde_utc: iso(T0), hasta_utc: iso(T0 + 200) }];
+  globalThis.cabezal = 0;
+  assert.strictEqual(calcularInstante().diferencia, 2.937);
+  assert.ok(exportar().texto.indexOf("2937.000") !== -1);
+  assert.strictEqual(calcularInstante().diferencia, 2.937,
+                     "exportar dejo el panel en otra unidad");
+});
+
+/* ==================================================================
+   14. QUE PARTE DEL CIRCUITO ES CADA PARTE DE LA GRAFICA
+   ------------------------------------------------------------------
+   Sobre la carrera entera el eje va de 76 a 154.163 m y la grafica es una
+   sucesion de dientes: se ve que paso y no donde. Las marcas que habia leian
+   `cu.metro`, un campo que el catalogo **no publica**: `undefined < d0` es
+   `false` y `undefined > d1` tambien, de modo que ninguna curva se descartaba y
+   todas terminaban en `x = NaN`. No se dibujaba una sola, en silencio.
+   ================================================================== */
+
+/* El catalogo de Spa como lo devuelve `/circuitos/spa/curvas`. */
+const CURVAS_DE_SPA = [
+  { orden: 1, nombre: "La Source", numeros_cronometraje: [1], metro_medido: 405 },
+  { orden: 2, nombre: "Eau Rouge / Raidillon", numeros_cronometraje: [2, 3, 4], metro_medido: 1333 },
+  { orden: 3, nombre: "Les Combes", numeros_cronometraje: [5], metro_medido: 2526 },
+  { orden: 4, nombre: "Les Combes", numeros_cronometraje: [6], metro_medido: 2666 },
+  { orden: 5, nombre: "Pouhon", numeros_cronometraje: [10, 11], metro_medido: 3900 },
+  { orden: 6, nombre: "Blanchimont", numeros_cronometraje: [17], metro_medido: 6100 },
+];
+
+/* Las franjas ya no leen el modo global: se lo pasa quien las pide, igual que
+   hace `vistaDeComparacion`. */
+let _modo = { eje: "distancia", alcance: "una" };
+const zonas = (a, b, clave) => zonasDeCurva(a, b, clave, _modo.eje, _modo.alcance);
+const bandasVuelta = (a, b, clave) => bandasDeVuelta(a, b, clave, _modo.eje, _modo.alcance);
+const bandas = (a, b, clave, ancho) =>
+  bandasParaElTramo(a, b, clave, ancho, _modo.eje, _modo.alcance);
+
+function conCircuito(alcance, eje) {
+  reiniciar();
+  _fijar.curvas(CURVAS_DE_SPA.slice());
+  _fijar.pista({ largo_m: 7004, curvas: CURVAS_DE_SPA.slice() });
+  _modo = { eje: eje || "distancia", alcance: alcance || "una" };
+  _fijar.alcance(_modo.alcance);
+  _fijar.eje(_modo.eje);
+}
+
+/* Dos vueltas con acumulada medida: la 7 arranca en 42.000 m y la 8 en 49.000. */
+function dosVueltasAcumuladas() { _vueltasAcumuladas([7, 8]); }
+function tresVueltasAcumuladas() { _vueltasAcumuladas([7, 8, 9]); }
+
+function _vueltasAcumuladas(cuales) {
+  cuales.forEach((v, i) => {
+    const base = 42000 + i * 7000;
+    const marcas = [], dl = [], ds = [], vel = [];
+    for (let k = 0; k < 30; k++) {
+      marcas.push((v - 7) * 200000 + k * 100);
+      dl.push(k * 240); ds.push(base + k * 240); vel.push(200);
+    }
+    globalThis.estado.series[v] = {
+      vuelta: v, puntos_pedidos: 600, unidades: { speed: "km/h" },
+      vehiculos: { [CAR19]: { timestamp_utc: marcas.map(m => iso(T0 + m)),
+                              distancia_m: dl, distancia_sesion_m: ds, speed: vel } },
+    };
+  });
+  globalThis._selloSeries++;
+}
+
+prueba("el metro de la curva sale del campo que el catalogo publica", () => {
+  /* `metro_medido`, no `metro`. Con el nombre equivocado daba NaN y el
+     navegador no dibuja con NaN ni se queja. */
+  assert.strictEqual(metroDeCurva(CURVAS_DE_SPA[0]), 405);
+  assert.strictEqual(metroDeCurva({ nombre: "x" }), null);
+  assert.strictEqual(metroDeCurva(null), null);
+});
+
+prueba("sobre una vuelta, las zonas cubren el circuito sin huecos", () => {
+  conCircuito("una");
+  const z = zonas(0, 7004, CAR19);
+  assert.strictEqual(z.length, CURVAS_DE_SPA.length);
+  assert.strictEqual(z[0].ini, 405);
+  assert.strictEqual(z[0].nombre, "La Source");
+  for (let i = 1; i < z.length; i++) {
+    assert.strictEqual(z[i].ini, z[i - 1].fin, "hueco entre franjas en " + i);
+  }
+  assert.strictEqual(z[z.length - 1].fin, 7004);
+});
+
+prueba("cada zona empieza en su curva y termina donde empieza la siguiente", () => {
+  /* No es «la curva»: el catalogo publica un metro, no un ancho. */
+  conCircuito("una");
+  const z = zonas(0, 7004, CAR19);
+  assert.strictEqual(z[1].ini, 1333);
+  assert.strictEqual(z[1].fin, 2526);
+  assert.strictEqual(z[1].nombre, "Eau Rouge / Raidillon");
+});
+
+prueba("dos curvas con el mismo nombre se distinguen por su numero", () => {
+  conCircuito("una");
+  const nombres = zonas(0, 7004, CAR19).map(x => x.nombre);
+  assert.ok(nombres.indexOf("Les Combes 5") !== -1, nombres.join(" | "));
+  assert.ok(nombres.indexOf("Les Combes 6") !== -1, nombres.join(" | "));
+  // Las que no se repiten no ganan un numero que nadie pidio.
+  assert.ok(nombres.indexOf("La Source") !== -1, nombres.join(" | "));
+});
+
+prueba("sobre la carrera las zonas se repiten con el desplazamiento medido", () => {
+  /* Nada de `(vuelta - 1) x largo del circuito`: el desplazamiento sale de
+     comparar las dos distancias que la fuente publica. */
+  conCircuito("carrera");
+  dosVueltasAcumuladas();
+  const z = zonas(42000, 56000, CAR19);
+  const laSource = z.filter(x => x.nombre === "La Source");
+  assert.strictEqual(laSource.length, 2, "una por vuelta cargada");
+  assert.strictEqual(laSource[0].ini, 42405);
+  assert.strictEqual(laSource[1].ini, 49405);
+  assert.deepStrictEqual(laSource.map(x => x.vuelta), [7, 8]);
+});
+
+prueba("el tramo que cruza la meta no deja un hueco sin nombre", () => {
+  /* De la ultima curva de una vuelta a la primera de la siguiente hay
+     cuatrocientos metros: cortando en el fin de la vuelta quedaban sin franja. */
+  conCircuito("carrera");
+  dosVueltasAcumuladas();
+  const z = zonas(42000, 56000, CAR19).sort((a, b) => a.ini - b.ini);
+  for (let i = 1; i < z.length; i++) {
+    assert.strictEqual(z[i].ini, z[i - 1].fin,
+      "hueco entre " + z[i - 1].nombre + " y " + z[i].nombre);
+  }
+  const cruza = z.find(x => x.vuelta === 7 && x.fin > 49000);
+  assert.ok(cruza, "ninguna franja cruza la meta");
+  assert.strictEqual(cruza.nombre, "Blanchimont");
+});
+
+prueba("con una vuelta sin cargar, ninguna franja tapa el hueco", () => {
+  /* Tres vueltas y la del medio sin traer: una sola franja de la 7 a la 9
+     afirmaria un recorrido de catorce kilometros que nadie miro. */
+  conCircuito("carrera");
+  tresVueltasAcumuladas();
+  delete globalThis.estado.series[8];
+  globalThis._selloSeries++;
+  const z = zonas(42000, 70000, CAR19);
+  const masLarga = z.reduce((m, x) => Math.max(m, x.fin - x.ini), 0);
+  assert.ok(masLarga < 7004,
+            "una franja de " + Math.round(masLarga) + " m cruza la vuelta que falta");
+  // Y la ultima de la vuelta 7 termina donde termina lo medido de la 7.
+  const ultimaDe7 = z.filter(x => x.vuelta === 7).sort((a, b) => a.ini - b.ini).pop();
+  assert.ok(Math.abs(ultimaDe7.fin - (42000 + 29 * 240)) < 1, ultimaDe7.fin);
+});
+
+prueba("en el eje de tiempo no se ubican, y se dice", () => {
+  /* Una curva esta en un metro; el segundo en que cada piloto la cruza es otro
+     y cambia vuelta a vuelta. */
+  conCircuito("una", "tiempo");
+  /* Los mismos numeros que sobre el eje de distancia dan seis franjas: si aca
+     tambien las diera, estaria leyendo segundos como metros. */
+  assert.ok(zonas(0, 7004, CAR19) === null,
+            "se ubicaron curvas sobre un eje de segundos");
+  _modo.eje = "distancia"; _fijar.eje("distancia");
+  assert.strictEqual(zonas(0, 7004, CAR19).length, 6);
+  _modo.eje = "tiempo"; _fijar.eje("tiempo");
+  const [b, nota] = bandas(0, 130, CAR19, 1400);
+  assert.strictEqual(b, null);
+  assert.ok(/eje de distancia/.test(nota), nota);
+});
+
+prueba("sin catalogo de curvas no se inventan franjas", () => {
+  conCircuito("una");
+  _fijar.curvas([]);
+  assert.strictEqual(zonas(0, 7004, CAR19), null);
+});
+
+/* ---- que se pinta a cada escala ---- */
+
+prueba("a escala de carrera se pintan las vueltas, no las curvas", () => {
+  /* Lo que decide es la relacion entre el tramo visible y el ancho del lienzo:
+     en Spa, veintidos vueltas por quince curvas sobre 1.400 px son diez
+     pixeles y medio por franja, un rayado que tapa la traza. El ejemplar tiene
+     dos vueltas, asi que se reproduce la misma relacion con un lienzo angosto:
+     1.170 m de franja sobre 14.000 visibles en 120 px son diez pixeles. */
+  conCircuito("carrera");
+  dosVueltasAcumuladas();
+  const [b, nota] = bandas(42000, 56000, CAR19, 120);
+  assert.ok(b, "no se pinto nada");
+  assert.deepStrictEqual(b.map(x => x.nombre), ["V7", "V8"]);
+  assert.ok(/una por vuelta cargada/.test(nota), nota);
+});
+
+prueba("acercandose aparecen las curvas", () => {
+  conCircuito("carrera");
+  dosVueltasAcumuladas();
+  const [b, nota] = bandas(42000, 49000, CAR19, 1400);
+  assert.ok(b.some(x => x.nombre === "La Source"), b.map(x => x.nombre).join("|"));
+  assert.ok(/intervalos entre puntos de referencia/.test(nota), nota);
+});
+
+prueba("la decision se toma con la franja tipica y no con la mas angosta", () => {
+  /* El minimo lo decide siempre una franja **cortada por el borde de la
+     ventana**: basta con que un tramo empiece dos metros antes del final del
+     zoom. Eso no dice si las franjas se leen, dice donde cayo el recorte. */
+  conCircuito("carrera");
+  dosVueltasAcumuladas();
+  /* El borde cae dos metros despues de donde empieza «La Source» de la vuelta
+     8: esa franja queda de dos metros. Con la regla del minimo, esos dos
+     metros apagaban el detalle de todo el tramo. */
+  const [b] = bandas(42000, 49407, CAR19, 1400);
+  assert.ok(b.some(x => x.nombre === "La Source"),
+            "una franja recortada por el borde apago el detalle de curva");
+});
+
+/* ---- el rotulo se mide ---- */
+
+function lienzoConTexto(anchoPorLetra) {
+  const puestos = [];
+  return {
+    puestos: puestos, font: "",
+    save(){}, restore(){}, beginPath(){}, rect(){}, clip(){},
+    fillRect(){}, measureText: t => ({ width: t.length * anchoPorLetra }),
+    fillText: (t, x) => puestos.push([t, Math.round(x)]),
+  };
+}
+
+prueba("el nombre se escribe solo si entra en su franja", () => {
+  /* Con un ancho minimo fijo, «Les Combes 5» se montaba sobre la franja de al
+     lado. Se mide el texto con la fuente que se va a usar. */
+  /* «Les Combes 5» son doce letras: 72 px con esta fuente, mas ocho de margen.
+     En una franja de sesenta no entra; en la de al lado, de novecientos, si. */
+  const bandas = [{ ini: 0, fin: 60, nombre: "Les Combes 5", orden: 1 },
+                  { ini: 60, fin: 1000, nombre: "Blanchimont", orden: 2 }];
+  const ctx = lienzoConTexto(6);
+  pintarZonas(ctx, bandas, 0, 1000, 0, 1000, 0, 50);
+  assert.deepStrictEqual(ctx.puestos.map(x => x[0]), ["Blanchimont"],
+                         "se escribio un nombre que no entra");
+});
+
+prueba("con sitio de sobra se escriben todos", () => {
+  const bandas = [{ ini: 0, fin: 500, nombre: "Les Combes 5", orden: 1 },
+                  { ini: 500, fin: 1000, nombre: "Blanchimont", orden: 2 }];
+  const ctx = lienzoConTexto(6);
+  pintarZonas(ctx, bandas, 0, 1000, 0, 1000, 0, 50);
+  assert.strictEqual(ctx.puestos.length, 2);
+});
+
+prueba("las franjas no se salen de su panel", () => {
+  /* Van recortadas: una franja que empieza antes del borde visible no puede
+     pintar sobre el rotulo del eje. */
+  const recortes = [];
+  const ctx = lienzoConTexto(6);
+  ctx.rect = (x, y, w, h) => recortes.push([x, y, w, h]);
+  pintarZonas(ctx, [{ ini: -500, fin: 500, nombre: "X", orden: 1 }],
+              0, 1000, 62, 1000, 10, 90);
+  assert.deepStrictEqual(recortes, [[62, 10, 1000, 80]]);
+});
+
+/* ==================================================================
+   15. LA LAMINA EXPORTA LO QUE HAY EN PANTALLA
+   ------------------------------------------------------------------
+   EL DEFECTO. La pantalla lee `segmentosComparacion`, que respeta el eje y el
+   alcance elegidos; la lamina llamaba a `derivar(..., vueltaElegida, ...)`, que
+   es siempre la distancia local de **una** vuelta. Con la carrera abierta y las
+   vueltas 7 y 8 entre los 42.000 y los 56.000 m acumulados, el PNG salia con un
+   eje de 0 a 7.000 m mientras las franjas ---que si preguntaban por el alcance
+   global--- esperaban coordenadas acumuladas. Y sobre el eje de tiempo la
+   lamina seguia rotulando metros.
+
+   Se corre **el exportador de verdad** sobre un lienzo que anota lo que se le
+   dibuja, y se compara con la vista que usa la pantalla.
+   ================================================================== */
+
+/* Un lienzo que recuerda cada texto y cada rectangulo, y que entrega un blob de
+   mentira cuando le piden la imagen. */
+function lienzoQueAnota() {
+  const textos = [], rects = [];
+  const ctx = {
+    canvas: null, font: "", fillStyle: "", strokeStyle: "", lineWidth: 1,
+    lineJoin: "", globalAlpha: 1, textAlign: "left",
+    save(){}, restore(){}, translate(){}, rotate(){}, beginPath(){}, closePath(){},
+    moveTo(){}, lineTo(){}, stroke(){}, clip(){}, setLineDash(){}, clearRect(){},
+    strokeRect(){}, rect(){}, setTransform(){},
+    fillRect: (x, y, w, h) => rects.push([x, y, w, h]),
+    measureText: t => ({ width: String(t).length * 8 }),
+    fillText: (t, x, y) => textos.push({ t: String(t), x: Math.round(x), y: Math.round(y) }),
+  };
+  return { ctx: ctx, textos: textos, rects: rects };
+}
+
+let _lamina = null, _guardado = null, _avisos = [];
+function prepararExportacion() {
+  _lamina = lienzoQueAnota();
+  _guardado = null; _avisos = [];
+  globalThis.document = {
+    getElementById: () => null,
+    querySelector: () => null,
+    createElement: etiqueta => {
+      if (etiqueta !== "canvas") return { style: {} };
+      const cv = { width: 0, height: 0, style: {},
+        getContext: () => _lamina.ctx,
+        toBlob: fn => fn({ tipo: "png", alto: cv.height, ancho: cv.width }) };
+      _lamina.ctx.canvas = cv;
+      return cv;
+    },
+  };
+  globalThis.tinta = () => "#000";
+  globalThis.fechaAr = () => "09/09/2026";
+  globalThis.nombreDeSesion = () => "Spa-Francorchamps";
+  globalThis.cifra = (n) => String(Math.round(n));
+  globalThis.avisar = (t, e) => _avisos.push({ t: t, error: !!e });
+  globalThis.guardar = (nombre, datos) => { _guardado = { nombre: nombre, datos: datos }; };
+  globalThis.FUENTES = { f1: { nombre: "F1 25" } };
+  globalThis.ajustarLienzo = () => _lamina.ctx;
+  globalThis.hayVueltas = () => (globalThis.estado.vueltas || []).length > 0;
+}
+
+const textoDeLaLamina = () => _lamina.textos.map(x => x.t).join(" | ");
+
+/* Una sesion de comparacion: dos vueltas con acumulada **muy distinta** de la
+   local, para que una exportacion que use la local no pueda pasar por
+   casualidad. */
+function sesionParaExportar() {
+  conCircuito("carrera");
+  dosVueltasAcumuladas();
+  globalThis.estado.vueltas = [{ numero: 7, duracion_s: 120 }, { numero: 8, duracion_s: 120 }];
+  globalThis.estado.disponibles = new Set(["speed"]);
+  globalThis.estado.abierta = { session_id: SESION, fuente: "f1_25_udp_simulation" };
+  globalThis.seleccion = new Set([CAR19]);
+  globalThis.vueltaElegida = 7;
+  ponerParrilla(parrillaDeSpa());
+  armarAutos([CAR19]);
+  METRICAS.forEach(m => { m.activa = m.id === "speed"; });
+  prepararExportacion();
+}
+
+prueba("carrera: la lamina usa la distancia acumulada, no la de una vuelta", () => {
+  /* La local va de 0 a 6.960 y la acumulada de 42.000 a 56.960: si la lamina
+     usara la local, el eje empezaria en cero. */
+  sesionParaExportar();
+  const vista = vistaDeComparacion();
+  assert.ok(vista.xMin > 41000, "la vista ya no es la acumulada: " + vista.xMin);
+  exportarComparacion();
+  const t = textoDeLaLamina();
+  assert.ok(/42\.000|42000/.test(t.replace(/\s/g, "")), "el eje no arranca en la acumulada: " + t);
+  assert.ok(!/\| 0 \|/.test(t), "el eje arranca en cero, que es la distancia local");
+});
+
+prueba("carrera: el eje se rotula como distancia de sesion", () => {
+  sesionParaExportar();
+  exportarComparacion();
+  assert.ok(/DISTANCIA DE SESIÓN/.test(textoDeLaLamina()), textoDeLaLamina());
+});
+
+prueba("carrera: no se llama «vuelta N» a la carrera entera", () => {
+  sesionParaExportar();
+  exportarComparacion();
+  const t = textoDeLaLamina();
+  assert.ok(/2 vueltas/.test(t), t);
+  assert.ok(!/· vuelta 7 ·/.test(t), "el subtitulo dice una vuelta: " + t);
+  assert.strictEqual(_guardado.nombre, "senales-carrera-distancia.png");
+});
+
+prueba("una vuelta: la lamina usa la distancia de vuelta", () => {
+  sesionParaExportar();
+  _modo.alcance = "una"; _fijar.alcance("una");
+  const vista = vistaDeComparacion();
+  assert.ok(vista.xMax < 8000, "no es la distancia local: " + vista.xMax);
+  exportarComparacion();
+  const t = textoDeLaLamina();
+  assert.ok(/DISTANCIA DE VUELTA/.test(t), t);
+  assert.ok(/vuelta 7/.test(t), t);
+  assert.strictEqual(_guardado.nombre, "senales-vuelta-7-distancia.png");
+});
+
+prueba("el zoom se aplica al mismo dominio que en pantalla", () => {
+  sesionParaExportar();
+  const completo = vistaDeComparacion();
+  _fijar.zoom([0.25, 0.5]);
+  const conZoom = vistaDeComparacion();
+  const amplitud = completo.xMax - completo.xMin;
+  assert.ok(Math.abs(conZoom.xMin - (completo.xMin + amplitud * 0.25)) < 0.01);
+  assert.ok(Math.abs(conZoom.xMax - (completo.xMin + amplitud * 0.50)) < 0.01);
+  exportarComparacion();
+  assert.strictEqual(_guardado.nombre, "senales-carrera-distancia-tramo.png");
+  const t = textoDeLaLamina();
+  assert.ok(/tramo ampliado/.test(t), t);
+  _fijar.zoom(null);
+});
+
+prueba("tiempo: el eje se rotula en segundos y no en metros", () => {
+  sesionParaExportar();
+  _modo.eje = "tiempo"; _fijar.eje("tiempo");
+  const vista = vistaDeComparacion();
+  assert.strictEqual(vista.unidad, "s");
+  exportarComparacion();
+  const t = textoDeLaLamina();
+  assert.ok(/TIEMPO DE SESIÓN · SEGUNDOS/.test(t), t);
+  assert.ok(!/METROS/.test(t), "sigue rotulando metros sobre el eje de tiempo: " + t);
+  assert.strictEqual(_guardado.nombre, "senales-carrera-tiempo.png");
+});
+
+prueba("tiempo: el dominio de la lamina es el de la pantalla", () => {
+  sesionParaExportar();
+  _modo.eje = "tiempo"; _fijar.eje("tiempo");
+  const vista = vistaDeComparacion();
+  exportarComparacion();
+  /* Los extremos del eje se escriben con una decima. */
+  const t = textoDeLaLamina();
+  assert.ok(t.indexOf(vista.xMin.toFixed(1)) !== -1, "falta " + vista.xMin.toFixed(1) + ": " + t);
+  assert.ok(t.indexOf(vista.xMax.toFixed(1)) !== -1, "falta " + vista.xMax.toFixed(1) + ": " + t);
+});
+
+/* ---- la explicacion viaja con el archivo ---- */
+
+prueba("la explicacion de las franjas se dibuja en la lamina", () => {
+  /* No alcanza con que el exportador llame al ayudante: el archivo se abre sin
+     el tablero al lado. */
+  sesionParaExportar();
+  exportarComparacion();
+  assert.ok(/Franjas:/.test(textoDeLaLamina()), textoDeLaLamina());
+});
+
+prueba("la lamina distingue franjas por vuelta de intervalos entre referencias", () => {
+  sesionParaExportar();
+  exportarComparacion();
+  const anchas = textoDeLaLamina();
+  assert.ok(/una por vuelta cargada|intervalos entre puntos de referencia/.test(anchas), anchas);
+});
+
+prueba("con el eje temporal la lamina dice que no hay franjas y por que", () => {
+  sesionParaExportar();
+  _modo.eje = "tiempo"; _fijar.eje("tiempo");
+  exportarComparacion();
+  const t = textoDeLaLamina();
+  assert.ok(/Sin franjas de circuito/.test(t), t);
+  assert.ok(/eje de distancia/.test(t), t);
+});
+
+prueba("la explicacion se parte en renglones que entran en el ancho", () => {
+  const ctx = { font: "", measureText: t => ({ width: t.length * 10 }) };
+  const r = partirEnRenglones(ctx, "uno dos tres cuatro cinco seis", 100);
+  assert.ok(r.length > 1, "no se partio");
+  r.forEach(l => assert.ok(l.length * 10 <= 100 || l.split(" ").length === 1, l));
+  assert.strictEqual(r.join(" "), "uno dos tres cuatro cinco seis");
+});
+
+prueba("el alto de la lamina reserva sitio para la explicacion", () => {
+  /* Sin reservarlo, el ultimo renglon caia fuera de la imagen: medido, con dos
+     renglones «aparecen.» quedaba cortado por abajo. */
+  sesionParaExportar();
+  exportarComparacion();
+  const alto = _guardado.datos.alto;
+  const ultimo = _lamina.textos.reduce((m, x) => Math.max(m, x.y), 0);
+  assert.ok(ultimo <= alto - 8,
+            "el ultimo texto cae en " + ultimo + " y la imagen mide " + alto);
+});
+
+/* ---- lo que la lamina conserva ---- */
+
+prueba("la lamina conserva los vehiculos y las señales elegidas", () => {
+  sesionParaExportar();
+  exportarComparacion();
+  const t = textoDeLaLamina();
+  assert.ok(/NORRIS/.test(t), t);
+  assert.ok(/VELOCIDAD/.test(t), t);
+  assert.ok(/1 métricas|1 metricas/.test(t), t);
+});
+
+prueba("exportar no toca lo que llego ni lo que muestra la pantalla", () => {
+  sesionParaExportar();
+  const antes = JSON.stringify(globalThis.estado.series);
+  const vistaAntes = vistaDeComparacion();
+  exportarComparacion();
+  assert.strictEqual(JSON.stringify(globalThis.estado.series), antes);
+  const vistaDespues = vistaDeComparacion();
+  assert.strictEqual(vistaDespues.xMin, vistaAntes.xMin);
+  assert.strictEqual(vistaDespues.xMax, vistaAntes.xMax);
+});
+
+prueba("con cobertura parcial no se la presenta como completa", () => {
+  /* La sesion declara cuatro vueltas y solo dos estan traidas: decir «4
+     vueltas» seria afirmar que se ve algo que no esta. */
+  sesionParaExportar();
+  globalThis.estado.vueltas = [{ numero: 7 }, { numero: 8 }, { numero: 9 }, { numero: 10 }];
+  const vista = vistaDeComparacion();
+  assert.deepStrictEqual(vista.vueltas, [7, 8]);
+  const pie = pieDeExportacion(vista);
+  assert.ok(/2 de 4 vueltas cargadas/.test(pie), pie);
+});
+
+prueba("sin nada que dibujar se avisa en vez de exportar una lamina vacia", () => {
+  sesionParaExportar();
+  globalThis.estado.series = {};
+  globalThis._selloSeries++;
+  exportarComparacion();
+  assert.strictEqual(_guardado, null);
+  assert.ok(_avisos.some(a => a.error), JSON.stringify(_avisos));
+});
+
+prueba("las franjas obedecen el eje que se les pasa, no el modo global", () => {
+  /* Es lo que impedia que las dos mitades del dibujo hablaran de cosas
+     distintas: la lamina tomaba sus datos de un modo y las franjas de otro. */
+  conCircuito("carrera");
+  dosVueltasAcumuladas();
+  _fijar.eje("tiempo");                       // el global dice tiempo
+  const [conDistancia] = bandasParaElTramo(42000, 49000, CAR19, 1400, "distancia", "carrera");
+  /* Y que sean las **de curva**: si `zonasDeCurva` leyera el global diria que
+     el eje es temporal, se caeria a las franjas por vuelta y esta prueba
+     pasaria igual sin haber comprobado nada. */
+  assert.ok(conDistancia && conDistancia.some(b => b.nombre === "La Source"),
+            "no son las franjas de referencia: " +
+            (conDistancia || []).map(b => b.nombre).join("|"));
+  _fijar.eje("distancia");                    // el global dice distancia
+  const [conTiempo, nota] = bandasParaElTramo(0, 130, CAR19, 1400, "tiempo", "carrera");
+  assert.strictEqual(conTiempo, null, "ignoro el eje que se le paso");
+  assert.ok(/eje de distancia/.test(nota), nota);
+});
+
+prueba("el alcance tambien llega como argumento", () => {
+  conCircuito("una");
+  dosVueltasAcumuladas();
+  _fijar.alcance("una");                      // el global dice una vuelta
+  const b = bandasDeVuelta(42000, 56000, CAR19, "distancia", "carrera");
+  assert.ok(b && b.length === 2, "ignoro el alcance que se le paso");
+});
+
+prueba("la explicacion y la leyenda no se pisan con el eje", () => {
+  /* Sin reservar el alto, la leyenda subia sobre el rotulo del eje: el texto
+     entraba en la imagen pero encima de otra cosa. */
+  sesionParaExportar();
+  exportarComparacion();
+  const rotuloEje = _lamina.textos.find(x => /DISTANCIA DE SESIÓN/.test(x.t));
+  const leyenda = _lamina.textos.find(x => x.t === "NORRIS");
+  const explicacion = _lamina.textos.filter(x => /^Franjas:|^Sin franjas/.test(x.t))[0];
+  assert.ok(rotuloEje && leyenda && explicacion, "falta alguno de los tres");
+  assert.ok(leyenda.y - rotuloEje.y >= 50,
+    "la leyenda quedo a " + (leyenda.y - rotuloEje.y) + " px del rótulo del eje");
+  assert.ok(explicacion.y > leyenda.y,
+    "la explicación quedó encima de la leyenda");
+  const ultimo = _lamina.textos.reduce((m, x) => Math.max(m, x.y), 0);
+  assert.ok(ultimo <= _guardado.datos.alto - 8, "el último texto se sale");
+});
+
+prueba("la explicacion describe los extremos como son", () => {
+  /* Decia que **toda** franja termina en la curva siguiente, y la ultima
+     termina donde termina la vuelta o la cobertura. */
+  conCircuito("una");
+  const [, nota] = bandas(0, 7004, CAR19, 1400);
+  assert.ok(/la última llega hasta donde termina la vuelta o la cobertura/.test(nota), nota);
+  assert.ok(/queda sin franja/.test(nota), "no dice que el tramo inicial no tiene franja");
+});
+
+prueba("no se llama «curva» a lo que el catalogo publica como referencia", () => {
+  conCircuito("una");
+  const [, nota] = bandas(0, 7004, CAR19, 1400);
+  assert.ok(/puntos de referencia del catálogo/.test(nota), nota);
+  assert.ok(!/entrada de curva/.test(nota), nota);
+  assert.ok(/el ancho de la curva no se declara/.test(nota), nota);
+});
+
+console.log("identidad_y_cronometraje: " + hechas + " comprobaciones");

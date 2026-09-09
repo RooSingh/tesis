@@ -168,12 +168,72 @@
   .capa-ausente strong { font-family: var(--titulo); font-size: 1rem; letter-spacing: .05em; text-transform: uppercase; color: var(--texto-medio); }
   .capa-ausente span { color: var(--texto-tenue); font-size: .8rem; max-width: 42ch; }
 
-  .tira-cronometraje { display: grid; grid-template-columns: repeat(4, minmax(0,1fr)); gap: 1px; background: var(--linea); }
-  .tira-cronometraje div { padding: 12px 14px; background: var(--superficie); }
-  .tira-cronometraje dt { margin: 0 0 3px; font-size: .64rem; letter-spacing: .12em; text-transform: uppercase; color: var(--texto-tenue); }
-  .tira-cronometraje dd { margin: 0; font-family: var(--cifra); font-variant-numeric: tabular-nums; font-size: 1.15rem; font-weight: 600; }
+  /* CINCO CELDAS, Y NO SE MUEVEN CUANDO CAMBIAN LAS CIFRAS.
+     Identidad, puesto, vuelta, cronometro y diferencia son cinco hechos de
+     distinta naturaleza y cada uno tiene su celda: antes «Vehículo» cargaba con
+     la identidad y con la ausencia de parrilla a la vez.
+
+     `auto-fit` con un minimo en `ch` reparte solas las columnas ---cinco en
+     escritorio, dos o tres en un telefono--- sin una consulta de medios que
+     habria que mantener al agregar una celda. Las cifras van en `tabular-nums`
+     y cada celda reserva su alto: un 9 no ocupa mas que un 1, y pasar de «P4» a
+     «—» no corre nada de sitio. */
+  .tira-cronometraje {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(13ch, 1fr));
+    gap: 1px;
+    /* EL FONDO ES LA SUPERFICIE, NO LA LINEA.
+       El separador se dibujaba pintando el contenedor del color de la linea y
+       dejando un hueco de un pixel entre celdas. Con cuatro celdas y un ancho
+       que repartia de a dos o de a cuatro eso nunca se notaba; con cinco, la
+       ultima fila queda incompleta y el sobrante se veia como una celda vacia y
+       de otro color. La linea pasa a ser un contorno de cada celda ---que no
+       ocupa sitio y no depende de cuantas entren por fila--- y lo que sobre
+       queda del color del panel, que es lo que es: nada. */
+    background: var(--superficie);
+  }
+  .tira-cronometraje div {
+    padding: 12px 14px; background: var(--superficie); min-width: 0;
+    outline: 1px solid var(--linea);
+  }
+  /* LA IDENTIDAD OCUPA SU RENGLON, Y ASI NO SOBRA NINGUNA CELDA.
+     Son cinco hechos y las celdas se reparten de a dos: uno arriba a lo ancho y
+     dos por dos abajo dan tres renglones justos, sin el hueco que dejaba una
+     fila incompleta. Y el nombre con su equipo necesitan el ancho: son lo unico
+     de la tira que es texto y no una cifra. */
+  .tira-cronometraje > div:first-child { grid-column: 1 / -1; }
+  /* LOS ROTULOS SE PARTEN, NO SE CORTAN.
+     Con cuatro celdas anchas `nowrap` nunca molestaba; con cinco, «Cronómetro»
+     pasaba el ancho de su celda y el panel lo recortaba con puntos suspensivos.
+     Un rotulo a medio escribir es peor que uno en dos renglones: es la palabra
+     que dice de donde sale el numero. Los rotulos son fijos, asi que partirlos
+     no introduce ningun salto cuando cambian las cifras, que es lo que si hay
+     que evitar. El interletrado baja un punto para que casi nunca haga falta. */
+  .tira-cronometraje dt { margin: 0 0 3px; font-size: .64rem; letter-spacing: .08em; text-transform: uppercase; color: var(--texto-tenue); }
+  .tira-cronometraje dd {
+    margin: 0; font-family: var(--cifra); font-variant-numeric: tabular-nums;
+    font-size: 1.15rem; font-weight: 600; line-height: 1.25;
+  }
   .tira-cronometraje .destacado { color: var(--acento); }
   .tira-cronometraje .negativo { color: var(--ok); }
+  /* El equipo es identidad, pero secundaria: se lee debajo del nombre y no
+     compite con el. */
+  .tira-cronometraje .secundario {
+    display: block; font-family: var(--cuerpo); font-size: .7rem;
+    font-weight: 400; color: var(--texto-tenue); letter-spacing: .01em;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  /* Un tiempo que no es el cronometro medido no puede verse igual que uno que
+     si lo es. */
+  .tira-cronometraje dd[data-medido="no"] { color: var(--texto-medio); font-weight: 500; }
+  .tira-cronometraje .unidad { font-size: .72rem; font-weight: 400; color: var(--texto-tenue); }
+  .pie-instrumento {
+    margin: 0; padding: 8px 14px 10px; font-size: .68rem; color: var(--texto-tenue);
+    border-top: 1px solid var(--linea); background: var(--superficie);
+  }
+  .pie-instrumento:empty { display: none; }
+  .instrumento > .pie-instrumento:last-child { border-radius: 0 0 13px 13px; }
+  /* El dorsal acompana al nombre en la lista de vehiculos. */
+  .auto-fila .nombre .dorsal { margin-left: 5px; font-family: var(--cifra); font-size: .74rem; color: var(--texto-tenue); }
 
   .esquema-auto { display: grid; grid-template-columns: 1fr auto 1fr; gap: 10px; align-items: center; }
   .esquina { padding: 9px 10px; border: 1px solid var(--linea); border-radius: 9px; background: var(--superficie-2); }
@@ -792,10 +852,18 @@
     flex-direction: row; align-items: baseline; justify-content: space-between;
     gap: 6px; padding: 6px 10px; overflow: hidden;
   }
-  /* La cifra manda: si no entran las dos cosas, se recorta el rotulo. */
+  /* La cifra manda: si no entran las dos cosas, se recorta el rotulo. Con la
+     identidad en su propio renglon las otras cuatro celdas quedan del ancho de
+     media tira y el rotulo mas largo ---«Cronómetro»--- entra; el recorte sigue
+     como red, para un panel mas angosto todavia. */
   .cabina .vertical .tira-cronometraje dt {
-    font-size: .56rem; letter-spacing: .06em; white-space: nowrap; min-width: 0;
+    font-size: .54rem; letter-spacing: .04em; white-space: nowrap; min-width: 0;
     overflow: hidden; text-overflow: ellipsis;
+  }
+  /* En la celda de identidad el equipo va al lado del nombre y no debajo: en
+     cabina el alto es lo escaso. */
+  .cabina .vertical .tira-cronometraje .secundario {
+    display: inline; margin-left: 7px;
   }
   .cabina .vertical .tira-cronometraje dd { flex: 0 0 auto; white-space: nowrap; }
   .cabina .vertical .tira-cronometraje dd { font-size: clamp(.85rem, 1.9vh, 1.15rem); }

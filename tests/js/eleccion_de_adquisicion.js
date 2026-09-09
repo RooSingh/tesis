@@ -565,9 +565,16 @@ prueba("se recuerda con que volver a preguntar aunque el elector no llegue a abr
      encabezado se quedaría sin nada que reabrir. */
   const i = fuente.indexOf("corrida.mezclada = !!a.mezclada;");
   assert.ok(i > 0, "no está el punto donde llegan las adquisiciones");
-  const bloque = fuente.slice(i, i + 500);
-  assert.ok(bloque.indexOf("_contextoDeCorrida = { ruta: ruta, s: s }") !== -1,
-    "no se recuerda el contexto salvo al abrir el elector");
+  /* SIN UN TOPE FIJO DE CARACTERES. Miraba los primeros quinientos y se rompía
+     en cuanto la continuación crecía ---al agregarle la parrilla, sin ir más
+     lejos---, sin que lo que quiere comprobar hubiera cambiado. Lo que importa
+     es que el contexto se recuerde **al llegar la respuesta** y no recién
+     cuando alguien abre el elector: se comprueba contra dónde se abre. */
+  const abre = fuente.indexOf("abrirElectorDeCorrida(ruta, apertura, s)", i);
+  const recuerda = fuente.indexOf("_contextoDeCorrida = { ruta: ruta, s: s }", i);
+  assert.ok(recuerda !== -1, "no se recuerda el contexto salvo al abrir el elector");
+  assert.ok(abre === -1 || recuerda < abre,
+    "el contexto se recuerda recién al abrir el elector");
 });
 
 if (process.exitCode) {
