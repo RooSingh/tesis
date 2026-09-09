@@ -71,8 +71,12 @@ const preludio = `
                    vueltas: [] };
   function senalesCandidatas() { return ["speed", "throttle_position"]; }
   // El alcance de adquisicion/fase viaja en cada consulta; aca no se elige
-  // ninguno, que es el comportamiento por omision.
-  const corrida = { adquisicion: null, fase: null, disponibles: null, mezclada: false };
+  // ninguno, que es el comportamiento por omision. \`disponibles\` es una lista
+  // vacia y no \`null\` a proposito: significa «ya se pregunto y no hay nada que
+  // elegir», que es el estado en el que estas pruebas ocurren. Con \`null\`
+  // ---todavia no se pregunto--- la compuerta no deja pedir nada, y eso se
+  // comprueba aparte.
+  const corrida = { adquisicion: null, fase: null, disponibles: [], mezclada: false };
   function sufijoDeCorrida() { return ""; }
   function armarAutos(ids) { AUTOS = ids.map(id => ({ id, propio: false, nombre: id })); }
   function avisar(texto, esError) { AVISOS.push({ texto, esError }); }
@@ -121,6 +125,13 @@ const PIEZAS = [
   fn("puntosParaVueltas"),
   fn("enTandas"),
   fn("asegurarVuelta"),
+  /* La compuerta que decide si se puede pedir historico. Se extrae de verdad y
+     no se sustituye por un `true`: lo que estas pruebas miran es justamente
+     cuando sale una consulta y cuando no. */
+  fn("adquisicionSeSolapa"),
+  fn("alcanceEsAmbiguo"),
+  fn("alcanceElegidoEsValido"),
+  fn("alcancePermitePedir"),
 ];
 
 const pedidos = [];
@@ -135,6 +146,7 @@ function nuevoBanco() {
                              aperturaVigente, sigueVigente, puntosParaVueltas,
                              enTandas, podarVueltas,
                              fijarVuelta: (v) => { vueltaElegida = v; },
+                             corrida, alcancePermitePedir,
                              leerVales: () => _vales.size };`;
   return new Function(preludio + "\n" + PIEZAS.join("\n\n") + "\n" + devolver)();
 }
@@ -436,6 +448,40 @@ prueba("las posiciones se podan aparte y no las protege la comparacion", async (
   const quedan = Object.keys(b.estado.posiciones).length;
   assert.ok(quedan <= 8, "quedaron " + quedan + " vueltas de posiciones");
   assert.ok(b.estado.posiciones[1], "se podo la vuelta que se esta mirando");
+});
+
+prueba("no sale una consulta con el alcance sin resolver", async (b) => {
+  /* EL CASO REAL, QUE ES DE ORDEN DE LLEGADA. El transporte pide la vuelta que
+     hay bajo el cabezal con 200 ms de retardo desde que arranca la pagina, y
+     `/adquisiciones` tarda mas: medido en Spa, la vuelta 1 se pedia a los
+     582 ms y las adquisiciones llegaban a los 953. La consulta salia con la
+     mezcla de etapas aunque el elector estuviera abierto esperando.
+
+     `disponibles = null` es «todavia no se pregunto». */
+  b.estado.abierta = { session_id: "A" };
+  b.corrida.disponibles = null;
+  /* Sin `await`: si la compuerta dejara pasar, la consulta de mentira devuelve
+     una promesa que nadie resuelve y esperarla colgaria la prueba en vez de
+     hacerla fallar. Se deja asentar la cola y se mira si salio algo. */
+  b.asegurarVuelta(1);
+  await asentar();
+  assert.strictEqual(PEDIDOS.length, 0,
+    "se pidio la vuelta antes de saber que se esta mirando");
+
+  /* Llegan las adquisiciones y hay que elegir etapa: sigue sin pedirse. */
+  b.corrida.disponibles = [{ clave: "original", fases: [
+    { orden: 1, reloj_del_juego_reinicia_al_entrar: false },
+    { orden: 3, reloj_del_juego_reinicia_al_entrar: true }] }];
+  b.asegurarVuelta(1);
+  await asentar();
+  assert.strictEqual(PEDIDOS.length, 0, "se pidio con la etapa sin elegir");
+
+  /* Elegida la etapa, la consulta sale. */
+  b.corrida.adquisicion = "original";
+  b.corrida.fase = 3;
+  b.asegurarVuelta(1);
+  await asentar();
+  assert.ok(PEDIDOS.length > 0, "no se pide ni con el alcance completo");
 });
 
 /* ------------------------------------------------------------------ */
