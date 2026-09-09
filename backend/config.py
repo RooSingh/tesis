@@ -3,16 +3,22 @@
 Este modulo centraliza los parametros que usan el consumidor MQTT, la API y la
 capa de persistencia para conectarse a los servicios locales de la tesis.
 
-La configuracion es deliberadamente simple y local. No distingue todavia
-entornos de desarrollo, prueba o despliegue.
-Mas adelante podra ampliarse con:
+Todo sale del entorno y **todo tiene un valor por omision igual al que tenia
+cuando estaba escrito en el codigo**: sin definir una sola variable, el proyecto
+se comporta exactamente como antes. Definirlas es lo que permite correrlo en
+otra parte ---otra base, otro intermediario, detras de un tunel--- sin tocar una
+linea.
 
-- autenticacion,
-- configuracion por entorno,
-- y despliegue fuera de localhost.
+`docs/ENTORNO.env.example` enumera todas con su valor por omision.
+
+Lo que sigue sin estar aca, a proposito: la autenticacion. El proyecto no la
+tiene y no la finge. Mientras todo escucha en `127.0.0.1` la maquina es el
+limite; publicado hacia afuera, ese limite lo tiene que poner algo delante ---en
+el despliegue documentado, Cloudflare Access---. Ver `docs/DESPLIEGUE.md`.
 """
 
 import os
+from pathlib import Path
 
 #: Direccion del intermediario. **Numerica y no `localhost`**, a proposito.
 #:
@@ -124,3 +130,55 @@ DB_PORT = int(os.getenv("DB_PORT", "5432"))
 DB_NAME = os.getenv("DB_NAME", "tesis_db")
 DB_USER = os.getenv("DB_USER", "tesis_user")
 DB_PASSWORD = os.getenv("DB_PASSWORD", "tesis_pass")
+
+
+#: LOS ORIGENES QUE EL NAVEGADOR TIENE PERMITIDO LEER, desde el entorno.
+#:
+#: Estaban escritos a mano en `backend/app.py` y por eso el tablero solo podia
+#: servirse desde `localhost:3000`. Servido en cualquier otro origen ---otro
+#: puerto, otra maquina, un dominio detras de un tunel--- las peticiones llegan
+#: a la API, la API responde, y **el navegador descarta la respuesta al
+#: recibirla**. El tablero se ve, no muestra datos y no dice por que; ya paso
+#: dos veces en este proyecto y las dos costo diagnosticarlo.
+#:
+#: Se escriben separados por coma. Los dos por omision son los mismos que
+#: estaban en el codigo, de modo que sin definir nada no cambia nada.
+#:
+#: En el despliegue con un solo nombre esta lista **no se usa**: el tablero sale
+#: del mismo origen que la API y no hay peticion de origen cruzado que permitir.
+#: Sigue haciendo falta en desarrollo, donde el tablero vive en el 3000 y la API
+#: en otro puerto.
+CORS_ORIGENES = [
+    origen.strip()
+    for origen in os.getenv(
+        "CORS_ORIGENES",
+        "http://127.0.0.1:3000,http://localhost:3000",
+    ).split(",")
+    if origen.strip()
+]
+
+#: Si la API sirve tambien los archivos del tablero.
+#:
+#: POR QUE EXISTE
+#: --------------
+#: En desarrollo son dos servidores ---`python -m http.server` en el 3000 y la
+#: API en el 8000--- y esta bien que lo sean: se reinicia uno sin tocar el otro.
+#:
+#: Hacia afuera esa division cuesta cara. Dos servidores son dos nombres, y dos
+#: nombres detras de Cloudflare Access son dos cookies de autorizacion, de las
+#: cuales el navegador manda **una sola** en una peticion de origen cruzado: la
+#: consulta a la API vuelve como un redirect a la pantalla de login que el
+#: `fetch` ve como un error opaco de CORS. Servidos del mismo origen, ni Access
+#: ni CORS tienen nada que resolver.
+#:
+#: Ademas, `python -m http.server` es un servidor de desarrollo ---monohilo, sin
+#: endurecer--- y su propia documentacion desaconseja exponerlo.
+#:
+#: Por omision esta **apagado**: en desarrollo nada cambia.
+SERVIR_TABLERO = os.getenv("SERVIR_TABLERO", "0") == "1"
+
+#: De donde salen esos archivos. Por omision, el `dashboard/` del repositorio.
+DIRECTORIO_TABLERO = os.getenv(
+    "DIRECTORIO_TABLERO",
+    str(Path(__file__).resolve().parent.parent / "dashboard"),
+)

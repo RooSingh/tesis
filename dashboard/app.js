@@ -13,15 +13,31 @@
    dibuja lo que no se midio, y se explica por que no esta.
    ============================================================ */
 
-/* Donde vive la API. Por omision, el mismo host en el puerto 8000; se puede
-   apuntar a otro con `?api=...`, que es lo que hace falta cuando el tablero
-   se sirve aparte del backend ---en desarrollo, o detras del tunel. */
+/* Donde vive la API.
+
+   LA REGLA ES «EL MISMO ORIGEN, SALVO QUE ESTEMOS EN EL SERVIDOR DE DESARROLLO».
+
+   La version anterior hacia lo contrario: le pegaba `:8000` al host salvo que ya
+   estuviera en el 8000. Eso funciona mientras el tablero y la API vivan en la
+   misma maquina y en dos puertos, y **se rompe apenas dejan de hacerlo**:
+   servido en `https://un.dominio/`, pedia `https://un.dominio:8000`, un puerto
+   que detras de un tunel no existe y que nadie publica.
+
+   Al derredor: el 3000 es el servidor de desarrollo del tablero, el unico caso
+   donde la API esta en otro lado. En cualquier otro origen ---la API sirviendo
+   los archivos ella misma, que es como corre el despliegue--- se pide contra el
+   mismo origen y no hay ni puerto que adivinar ni CORS que permitir.
+
+   `?api=...` sigue ganando sobre todo, que es lo que hace falta para medir un
+   backend contra otro. */
 const API = (function () {
   const pedido = new URLSearchParams(location.search).get("api");
   if (pedido) return pedido.replace(/\/+$/, "");
   if (location.protocol === "file:") return "http://127.0.0.1:8000";
-  if (location.port === "8000") return "";
-  return location.protocol + "//" + location.hostname + ":8000";
+  if (location.port === "3000") {
+    return location.protocol + "//" + location.hostname + ":8000";
+  }
+  return "";
 })();
 
 /* ============================================================
