@@ -150,7 +150,14 @@ async function mandar(ruta, metodo, cuerpo) {
   try { d = await r.json(); } catch (e) { d = null; }
   if (!r.ok) {
     const motivo = (d && (d.detail || d.motivo)) || (r.status + " " + r.statusText);
-    throw new Error(typeof motivo === "string" ? motivo : JSON.stringify(motivo));
+    const error = new Error(typeof motivo === "string" ? motivo : JSON.stringify(motivo));
+    /* El texto es para la persona; **el detalle es para el codigo**. Aplanarlo a
+       una cadena obligaba a quien llama a leer el JSON del mensaje o a tratar
+       todos los fallos igual, y hay fallos que no lo son: un 409 diciendo que la
+       captura ya esta en curso es exactamente lo que se pidio. */
+    error.estado = r.status;
+    error.detalle = (d && d.detail) || null;
+    throw error;
   }
   return d;
 }
@@ -1079,7 +1086,29 @@ document.getElementById("btn-accion").addEventListener("click", () => {
         .catch(() => {});
       vigilarEnVivo();
     })
-    .catch(e => avisar(e.message, true))
+    .catch(e => {
+      /* «Ya hay un trabajo de la misma familia en curso» **no es un error para
+         quien pulso escuchar**: la captura esta corriendo, que es lo que queria.
+         Tratarlo como fallo dejaba el tablero en la sesion que estuviera
+         reproduciendo, mostraba el JSON crudo del trabajo, y el boton seguia
+         diciendo «Empezar a escuchar» ---de modo que volver a pulsarlo repetia
+         el mismo error---. Se cayo en eso tres veces el 2026-09-09.
+
+         Se adopta el flujo igual que en el camino feliz, y se dice desde cuando
+         viene escuchando, que es el dato que faltaba para entender que no hacia
+         falta hacer nada. */
+      const enCurso = e.estado === 409 && e.detalle && e.detalle.trabajo_en_curso;
+      if (a.sigueVivo && enCurso && enCurso.familia === "captura") {
+        vivo.objetivo = null; vivo.aceptaNueva = true; vivo.otra = null;
+        avisar("Ya estaba escuchando" +
+               (enCurso.duracion_s ? " desde hace " + Math.round(enCurso.duracion_s) + " s" : "") +
+               ". Se sigue esa captura.", false);
+        vigilarEnVivo();
+        render();
+        return;
+      }
+      avisar(e.message, true);
+    })
     .then(() => { boton.disabled = false; });
   /* En vivo el cabezal esta siempre en el ultimo dato: es lo que significa
      estar en vivo. Dejarlo donde estaba hacia que el indicador dijera una
