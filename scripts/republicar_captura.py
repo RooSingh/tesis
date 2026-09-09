@@ -597,7 +597,7 @@ def escribir_parrilla(ruta: Path, inicio_utc: str, sha256: str | None,
 
 
 def completar_parrilla(captura: Path, meta: dict, inicio_utc: str,
-                       simular: bool) -> None:
+                       simular: bool, elegidos: set[int] | None = None) -> None:
     """Escribe los rivales de una sesion ya capturada.
 
     Por que diferido y no en vivo
@@ -645,6 +645,22 @@ def completar_parrilla(captura: Path, meta: dict, inicio_utc: str,
               "los duplicaria. Se informan para resolverlos aparte.")
         for vehiculo, (hay, esperadas) in sorted(parciales.items())[:6]:
             print(f"  {vehiculo[-24:]:<24} {hay:>9,} de {esperadas:,}")
+
+    if elegidos is not None:
+        # El filtro se aplica **despues** de clasificar y no antes. Clasificar
+        # sobre la parrilla entera es lo que permite decir cuantos quedan
+        # afuera; filtrando antes, un vehiculo omitido y uno inexistente se
+        # verian igual.
+        sufijos = tuple(f":car:{i}" for i in sorted(elegidos))
+        descartados = {v for v in vacios if not v.endswith(sufijos)}
+        vacios = vacios - descartados
+        print(f"\nElegidos  : {len(vacios)} de {len(vacios) + len(descartados)} "
+              f"vacios ({', '.join('car:' + str(i) for i in sorted(elegidos))})")
+        faltantes = {i for i in elegidos
+                     if not any(v.endswith(f":car:{i}") for v in vacios)}
+        if faltantes:
+            print(f"  ATENCION: pedidos y no disponibles como vacios: "
+                  f"{', '.join('car:' + str(i) for i in sorted(faltantes))}")
 
     total = sum(esperado[v] for v in vacios)
     print(f"\nFilas a escribir : {total:,}\n")
@@ -703,6 +719,12 @@ def main() -> None:
                         help="Escribe los rivales de la sesion, diferidos. "
                              "Es el complemento de capturar en vivo solo el "
                              "vehiculo propio.")
+    parser.add_argument("--vehiculos", default=None,
+                        help="Indices separados por coma ---por ejemplo "
+                             "`13,0,3,11,7`--- para escribir solo esos rivales "
+                             "en lugar de todos. Los indices son los del "
+                             "arreglo por auto del protocolo, que es como los "
+                             "nombra el identificador de vehiculo.")
     args = parser.parse_args()
 
     if not args.captura.exists():
@@ -714,7 +736,14 @@ def main() -> None:
         raise SystemExit("Los metadatos no declaran el inicio de captura.")
 
     if args.parrilla_completa:
-        completar_parrilla(args.captura, meta, inicio_utc, args.simular)
+        elegidos = None
+        if args.vehiculos:
+            try:
+                elegidos = {int(x) for x in args.vehiculos.split(",") if x.strip()}
+            except ValueError:
+                raise SystemExit("--vehiculos espera indices enteros separados "
+                                 "por coma")
+        completar_parrilla(args.captura, meta, inicio_utc, args.simular, elegidos)
         return
 
     print(f"Captura : {args.captura.name}")
