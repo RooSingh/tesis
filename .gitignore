@@ -26,3 +26,7 @@ _to_delete/
 
 # El puerto del anfitrion para la base, que es de cada maquina y no del trabajo.
 infra/.env
+
+# Cache del registro de skills del asistente. Es estado de la herramienta de
+# quien edita, no del trabajo, y cambia con cada maquina.
+.atl/
