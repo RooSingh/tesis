@@ -187,16 +187,20 @@ def listar_vueltas(
         v0, v1 = (_ventana_de_alcance(cursor, fuente, session_id, adquisicion)
                   or (None, None))
         f0, f1 = _limites_de_fase(cursor, fuente, session_id, adquisicion, fase)
+        tramo, tramo_par = _clausula_de_tramo(f0, f1)
         if not vehiculo:
+            # El mas muestreado **de la fase pedida**: en la formacion de Spa
+            # rueda un vehiculo y en las pruebas de parrilla, veinte.
             elegido = _filas(cursor, """
                 SELECT vehicle_id, count(*)
                   FROM telemetry_messages
                  WHERE source_type = %s AND session_id = %s AND signal_name = %s
-                   AND (%s::timestamptz IS NULL OR timestamp BETWEEN %s AND %s)
+                   AND (%s::timestamptz IS NULL OR timestamp BETWEEN %s AND %s)""" +
+                tramo + """
                  GROUP BY vehicle_id
                  ORDER BY 2 DESC
                  LIMIT 1
-            """, (fuente, session_id, senal_distancia, v0, v0, v1))
+            """, tuple([fuente, session_id, senal_distancia, v0, v0, v1] + tramo_par))
             vehiculo = elegido[0][0] if elegido else None
         if not vehiculo:
             return {"session_id": session_id, "fuente": fuente, "vueltas": [],
@@ -212,10 +216,8 @@ def listar_vueltas(
                   FROM telemetry_messages
                  WHERE source_type = %s AND session_id = %s AND vehicle_id = %s
                    AND signal_name IN ('lap_number', %s, 'speed', 'lap_invalid')
-                   AND (%s::timestamptz IS NULL OR timestamp BETWEEN %s AND %s)
-                   AND (%s::bigint IS NULL OR COALESCE(desplazamiento_captura_us,
-                        (metadata->'extra'->>'desplazamiento_captura_us')::bigint)
-                        BETWEEN %s AND %s)
+                   AND (%s::timestamptz IS NULL OR timestamp BETWEEN %s AND %s)""" +
+                tramo + """
                  GROUP BY timestamp)
             , q AS (
                 SELECT vuelta, timestamp, distancia, velocidad, invalida,
@@ -239,8 +241,8 @@ def listar_vueltas(
               FROM q
              GROUP BY vuelta
              ORDER BY vuelta
-        """, (senal_distancia, fuente, session_id, vehiculo, senal_distancia,
-              v0, v0, v1, f0, f0, f1))
+        """, tuple([senal_distancia, fuente, session_id, vehiculo, senal_distancia,
+                    v0, v0, v1] + tramo_par))
 
     #: A veinte muestras por segundo, dos consecutivas estan a cincuenta
     #: milisegundos. Un salto de mas de dos segundos no es conduccion: es el
@@ -288,6 +290,77 @@ def listar_vueltas(
         })
     return {"session_id": session_id, "fuente": fuente,
             "vehiculo": vehiculo, "vueltas": vueltas}
+
+
+def _explicar_descensos(fuente: str, session_id: str, vehiculos: dict,
+                        sellos: dict) -> list[dict]:
+    """Que pasa donde la distancia de vuelta baja, dicho con evidencia.
+
+    EL CASO QUE ESTO EXPLICA, MEDIDO EN SPA.
+
+    La vuelta 22 de la carrera original termina en `... 6.948,5 · 6.978,0 · 2,1`
+    metros. No es una muestra de otra fase ---sigue estando despues de acotar
+    por fase--- y no es un fallo del tablero. Son tres cuadros seguidos:
+
+    | cuadro | vuelta | distancia de vuelta | distancia de sesion |
+    |---|---:|---:|---:|
+    | 64.492 | 22 | 7.005,995 m | 154.162,531 m |
+    | 64.493 | 22 |     1,229 m | 154.165,219 m |
+    | 64.494 | 22 |     2,135 m | 154.166,125 m |
+
+    La distancia de vuelta se reinicia y **la de sesion sigue creciendo**: el
+    vehiculo cruzo la meta. El numero de vuelta todavia dice 22 porque el juego
+    lo publica asi; de eso no se deduce ninguna clasificacion deportiva.
+
+    POR QUE NO SE CORRIGE. Se podria recortar el descenso, o forzar que la serie
+    crezca, y el grafico quedaria prolijo. Pero entonces un descenso que **si**
+    fuera un error ---una muestra de otra fase, una fila mal atribuida--- se
+    veria igual de prolijo. Se declara cada uno con su evidencia y se deja que
+    quien mire sepa cual es cual.
+    """
+
+    sospechas = []
+    for vehiculo, serie in vehiculos.items():
+        crudos = sellos.get(vehiculo) or []
+        medidos = [(i, v) for i, v in enumerate(serie) if v is not None]
+        for (i, a), (j, b) in zip(medidos, medidos[1:]):
+            if b < a and i < len(crudos) and j < len(crudos):
+                sospechas.append((vehiculo, i, j, a, b, crudos[i], crudos[j]))
+    if not sospechas:
+        return []
+
+    # Una sola consulta para los pocos instantes involucrados: en una vuelta
+    # normal no hay ninguno, y en la ultima hay uno.
+    instantes = sorted({t for s in sospechas for t in (s[5], s[6])})
+    with db.obtener_conexion() as conexion, conexion.cursor() as cursor:
+        cursor.execute("""
+            SELECT vehicle_id, timestamp, value_numeric
+              FROM telemetry_messages
+             WHERE source_type = %s AND session_id = %s
+               AND signal_name = 'session_distance'
+               AND timestamp = ANY(%s)
+        """, (fuente, session_id, instantes))
+        acumulada = {(v, t): d for v, t, d in cursor.fetchall()}
+
+    salida = []
+    for vehiculo, i, j, a, b, ta, tb in sospechas:
+        da = acumulada.get((vehiculo, ta))
+        db_ = acumulada.get((vehiculo, tb))
+        crece = (da is not None and db_ is not None and db_ > da)
+        salida.append({
+            "vehiculo": vehiculo,
+            "indice_desde": i,
+            "indice_hasta": j,
+            "distancia_de_vuelta_m": [round(a, 1), round(b, 1)],
+            "distancia_de_sesion_m": ([round(da, 1), round(db_, 1)]
+                                      if da is not None and db_ is not None else None),
+            "session_distance_crece": crece,
+            "motivo": ("la vuelta se cierra: la distancia de vuelta se reinicia "
+                       "y la de sesion sigue creciendo" if crece else
+                       "sin explicar: la distancia de vuelta baja y la de sesion "
+                       "no lo respalda"),
+        })
+    return salida
 
 
 @router.get("/sesiones/{session_id}/posiciones")
@@ -344,21 +417,32 @@ def posiciones_en_pista(
         # cabezal recorre 283 s y cae siempre en el mismo cubo, de modo que el
         # coche no se mueve.
         f0, f1 = _limites_de_fase(cursor, fuente, session_id, adquisicion, fase)
+        tramo, tramo_par = _clausula_de_tramo(f0, f1)
         ventana = _filas(cursor, """
             SELECT min(timestamp), max(timestamp)
               FROM telemetry_messages
              WHERE source_type = %s AND session_id = %s
                AND signal_name = 'lap_number' AND value_numeric = %s
-               AND (%s::timestamptz IS NULL OR timestamp BETWEEN %s AND %s)
-               AND (%s::bigint IS NULL OR COALESCE(desplazamiento_captura_us,
-                    (metadata->'extra'->>'desplazamiento_captura_us')::bigint)
-                    BETWEEN %s AND %s)
-        """, (fuente, session_id, float(vuelta), v0, v0, v1, f0, f0, f1))
+               AND (%s::timestamptz IS NULL OR timestamp BETWEEN %s AND %s)""" +
+            tramo + """
+        """, tuple([fuente, session_id, float(vuelta), v0, v0, v1] + tramo_par))
         if not ventana or ventana[0][0] is None:
             return {"session_id": session_id, "vuelta": vuelta, "vehiculos": {},
                     "motivo": "No hay muestras de esa vuelta."}
         t0, t1 = ventana[0]
 
+        # LA FASE TAMBIEN ACOTA ESTA CONSULTA, QUE ES LA QUE DEVUELVE EL DATO.
+        #
+        # Acotarla solo al calcular la ventana no alcanza: la formacion y la
+        # carrera se solapan en UTC a proposito, porque el reloj del juego se
+        # reinicia en la largada y el `timestamp` derivado retrocede con el. Sin
+        # esta linea, en la vuelta 2 de Spa entraban 34 muestras de formacion y
+        # la distancia iba de 0,2 a 5.676,2 m entre dos cubos seguidos.
+        #
+        # Se comprueba, ademas, que la fila elegida por cubo sea la primera en
+        # el tiempo: `DISTINCT ON` con `ORDER BY ... timestamp` ya lo hacia, y
+        # ahora ademas se devuelve **cual instante es**, para no tener que
+        # suponerlo repartido en partes iguales.
         filas = _filas(cursor, """
             WITH m AS (
                 SELECT vehicle_id, timestamp, value_numeric AS d,
@@ -367,18 +451,47 @@ def posiciones_en_pista(
                                     extract(epoch FROM %s::timestamptz), %s) AS cubo
                   FROM telemetry_messages
                  WHERE source_type = %s AND session_id = %s AND signal_name = %s
-                   AND timestamp BETWEEN %s AND %s)
-            SELECT DISTINCT ON (vehicle_id, cubo) vehicle_id, cubo, d
+                   AND timestamp BETWEEN %s AND %s""" + tramo + """)
+            SELECT DISTINCT ON (vehicle_id, cubo) vehicle_id, cubo, d, timestamp
               FROM m
              WHERE d IS NOT NULL
              ORDER BY vehicle_id, cubo, timestamp
-        """, (t0, t1, puntos, fuente, session_id, senal_distancia, t0, t1))
+        """, tuple([t0, t1, puntos, fuente, session_id, senal_distancia, t0, t1]
+                   + tramo_par))
 
+    # EL CONTRATO TEMPORAL, DICHO EN VEZ DE SUPUESTO.
+    #
+    # `width_bucket` devuelve 1..`puntos` dentro del rango y `puntos`+1 para el
+    # valor que cae justo en el extremo superior. El arreglo se indexaba con esa
+    # cifra tal cual, de modo que **el indice 0 nunca se usaba**: quedaba un
+    # hueco al principio que no era una muestra que faltara sino un artefacto
+    # del formato, y quien lo leia como una rejilla pareja arrancaba corrido.
+    #
+    # Ahora el indice `k` es el intervalo `k`, contado desde cero, y hay
+    # `puntos`+1 de ellos: los `puntos` intervalos mas el instante final exacto.
+    #
+    # Y sobre todo: se devuelve **cuando** se midio cada uno. La API conservaba
+    # la primera muestra de cada intervalo y no decia su instante, asi que el
+    # unico camino que quedaba era suponerlas equiespaciadas. No lo estan: entre
+    # una y la siguiente hay lo que haya, y con `instantes_ms` se puede colocar
+    # cada una donde ocurrio en vez de repartirlas en partes iguales.
+    largo = puntos + 1
+    base = t0.timestamp()
     vehiculos: dict[str, list] = {}
-    for vehiculo, cubo, d in filas:
-        serie = vehiculos.setdefault(vehiculo, [None] * (puntos + 2))
-        if 0 <= cubo < len(serie):
-            serie[cubo] = round(d, 1)
+    instantes: dict[str, list] = {}
+    sellos: dict[str, list] = {}
+    for vehiculo, cubo, d, cuando in filas:
+        i = cubo - 1
+        if not (0 <= i < largo):
+            continue
+        serie = vehiculos.setdefault(vehiculo, [None] * largo)
+        marcas = instantes.setdefault(vehiculo, [None] * largo)
+        crudos = sellos.setdefault(vehiculo, [None] * largo)
+        serie[i] = round(d, 1)
+        marcas[i] = round((cuando.timestamp() - base) * 1000.0, 1)
+        crudos[i] = cuando
+
+    descensos = _explicar_descensos(fuente, session_id, vehiculos, sellos)
 
     return {
         "session_id": session_id,
@@ -389,7 +502,21 @@ def posiciones_en_pista(
         "puntos": puntos,
         "senal": senal_distancia,
         "vehiculos": vehiculos,
-        "eje": "tiempo repartido en intervalos iguales dentro de la vuelta",
+        "instantes_ms": instantes,
+        "descensos": descensos,
+        "sobre_los_descensos": (
+            "una distancia de vuelta que baja no es siempre un error. Cada uno "
+            "se contrasta con `session_distance`, que no se reinicia: si esa "
+            "sigue creciendo entre las dos muestras, la vuelta se cerro ahi. Se "
+            "declaran y no se corrigen: forzar que la distancia crezca "
+            "esconderia los que si son un error"),
+        "intervalo_ms": round((t1 - t0).total_seconds() * 1000.0 / puntos, 3),
+        "eje": ("tiempo repartido en intervalos iguales dentro de la vuelta; el "
+                "indice k es el intervalo k contado desde cero, y son puntos+1 "
+                "---los intervalos mas el instante final"),
+        "instantes": ("milisegundos desde `desde_utc` de la muestra elegida en "
+                      "cada intervalo, que es la primera del intervalo. Sin esto "
+                      "habria que suponerlas equiespaciadas, y no lo estan"),
     }
 
 
@@ -583,7 +710,7 @@ def _limites_de_fase(cursor, fuente: str, session_id: str,
             "motivo": "esa fase no existe en la adquisicion elegida",
             "adquisicion": adquisicion or "todas",
             "fases_disponibles": [f["orden"] for f in fases]})
-    return (elegida["desde_us"], elegida["hasta_us"])
+    return (elegida["limite_desde_us"], elegida["limite_hasta_us"])
 
 
 def _ventana_de_alcance(cursor, fuente: str, session_id: str,
@@ -726,18 +853,39 @@ def _captura_us() -> str:
             "(metadata->'extra'->>'desplazamiento_captura_us')::bigint)")
 
 
-def _clausula_de_fase(fases: list[dict], fase: int | None) -> tuple[str, list]:
-    """Condicion SQL para acotar a una fase, por el reloj de captura."""
+def _clausula_de_tramo(f0: int | None, f1: int | None) -> tuple[str, list]:
+    """La condicion que acota a una fase, lista para concatenar.
 
-    if fase is None:
-        return "", []
-    elegida = next((f for f in fases if f["orden"] == fase), None)
-    if elegida is None:
-        raise HTTPException(status_code=422, detail={
-            "motivo": "esa fase no existe en la adquisicion elegida",
-            "fases_disponibles": [f["orden"] for f in fases]})
-    return (" AND %s BETWEEN %%s AND %%s" % _captura_us(),
-            [elegida["desde_us"], elegida["hasta_us"]])
+    UNA SOLA, PARA TODAS LAS CONSULTAS.
+
+    El defecto que esto corrige era exactamente el de tenerla escrita en unos
+    sitios y no en otros: `/posiciones` resolvia los limites de la fase, los
+    usaba para calcular la ventana de la vuelta y despues **seleccionaba las
+    distancias sin volver a filtrar**. Como la formacion y la carrera se
+    solapan en UTC a proposito, acotar por ventana no implica que las filas de
+    esa ventana sean de esa fase: en la vuelta 2 de Spa entraban 34 muestras de
+    formacion y la distancia saltaba de 0,2 a 5.676,2 m.
+
+    Se emite vacia cuando no hay fase pedida, en vez de un `IS NULL OR`: asi la
+    consulta por omision queda igual que antes y el planificador no carga con
+    una condicion que nunca filtra.
+    """
+
+    preds, par = _predicados_de_tramo(f0, f1)
+    return "".join(" AND " + p for p in preds), par
+
+
+def _predicados_de_tramo(f0: int | None, f1: int | None) -> tuple[list[str], list]:
+    """Lo mismo, suelto, para las consultas que arman su `WHERE` por partes."""
+
+    preds, par = [], []
+    if f0 is not None:
+        preds.append("%s >= %%s" % _captura_us())
+        par.append(f0)
+    if f1 is not None:
+        preds.append("%s < %%s" % _captura_us())
+        par.append(f1)
+    return preds, par
 
 
 def _fases_de(cursor, fuente: str, session_id: str,
@@ -808,15 +956,38 @@ def _medir_fases_de_todas(cursor, fuente: str, session_id: str) -> dict:
 
 
 def _armar_fases(bordes: list) -> list[dict]:
-    """Los tramos que delimitan unos bordes en reloj de captura."""
+    """Los tramos que delimitan unos bordes en reloj de captura.
+
+    DOS COSAS DISTINTAS, Y POR ESO DOS PARES DE NUMEROS.
+
+    `desde_us`/`hasta_us` son lo **medido**: el primero y el ultimo
+    `lap_number` del tramo. Sirven para decir cuanto dura y no para filtrar.
+
+    `limite_desde_us`/`limite_hasta_us` son con lo que **se acota**, y no son lo
+    mismo:
+
+    * medio abiertos ---`[desde, hasta)`--- de modo que cada fila caiga en
+      exactamente una fase y el corte entre dos no repita ni pierda nada;
+    * **abiertos en los extremos**. Un borde tomado del ultimo `lap_number`
+      dejaria afuera muestras validas de la misma adquisicion: en el cuadro
+      64494 de Spa, `lap_number` llega con desplazamiento 3.030.179.999 y la
+      posicion del mismo cuadro, 757 microsegundos despues. Acotar por el
+      primero borra esa coordenada. El ultimo tramo llega hasta donde llegue la
+      adquisicion ---que ya viene acotada por su ventana de tiempo--- y no hasta
+      la ultima muestra de una senal en particular. Lo mismo, al reves, con el
+      primero.
+    """
 
     fases = []
+    ultimo = len(bordes) - 2
     for i in range(len(bordes) - 1):
         desde, hasta = bordes[i], bordes[i + 1]
         fases.append({
             "orden": i + 1,
             "desde_us": int(desde),
             "hasta_us": int(hasta),
+            "limite_desde_us": None if i == 0 else int(desde),
+            "limite_hasta_us": None if i == ultimo else int(hasta),
             "duracion_de_captura_s": round((hasta - desde) / 1e6, 3),
             "reloj_del_juego_reinicia_al_entrar": i > 0,
         })
@@ -959,9 +1130,16 @@ def series_por_distancia(
     # tambien la consulta que resuelve la ventana de la vuelta.
     with db.obtener_conexion() as _cx, _cx.cursor() as _cur:
         _v = _ventana_de_alcance(_cur, fuente, session_id, adquisicion)
+        _f0, _f1 = _limites_de_fase(_cur, fuente, session_id, adquisicion, fase)
     if _v:
         condiciones.append("timestamp BETWEEN %s AND %s")
         parametros.extend([_v[0], _v[1]])
+    # La fase acota estas filas, no solo la ventana: formacion y carrera se
+    # solapan en UTC y sin esto una serie de la carrera arrastraria muestras de
+    # la formacion con la misma distancia recorrida.
+    _tpreds, _tpar = _predicados_de_tramo(_f0, _f1)
+    condiciones.extend(_tpreds)
+    parametros.extend(_tpar)
     if autos:
         condiciones.append("vehicle_id = ANY(%s)")
         parametros.append(autos)
@@ -997,10 +1175,11 @@ def series_por_distancia(
                   FROM telemetry_messages
                  WHERE source_type = %s AND session_id = %s
                    AND signal_name = 'lap_number' AND value_numeric = %s
-                   AND (%s::timestamptz IS NULL OR timestamp BETWEEN %s AND %s)
-            """, (fuente, session_id, float(vuelta),
-                  _v[0] if _v else None, _v[0] if _v else None,
-                  _v[1] if _v else None))
+                   AND (%s::timestamptz IS NULL OR timestamp BETWEEN %s AND %s)""" +
+                "".join(" AND " + p for p in _tpreds) + """
+            """, tuple([fuente, session_id, float(vuelta),
+                        _v[0] if _v else None, _v[0] if _v else None,
+                        _v[1] if _v else None] + _tpar))
         if filas_v and filas_v[0][0] is not None:
             ventana = (filas_v[0][0], filas_v[0][1])
             condiciones.append("timestamp BETWEEN %s AND %s")
@@ -1122,6 +1301,53 @@ def series_por_distancia(
 # 2. Trazado del circuito
 # --------------------------------------------------------------------------
 
+def _vuelta_que_mejor_dibuja(por_vuelta: dict) -> list:
+    """La vuelta que sirve de contorno del circuito: la que **cierra**.
+
+    ANTES SE ELEGIA LA QUE MAS MUESTRAS TENIA, Y ESA ES LA MAS LENTA.
+
+    Un contorno de circuito es un lazo: el ultimo punto tiene que volver al
+    primero. Una vuelta que no cierra o le falta un tramo, o recorrio otro
+    camino. Las dos cosas pasan en Spa, y elegir por cantidad de muestras caia
+    justo en la segunda:
+
+    | vuelta | muestras | poligonal | cierre |
+    |---|---:|---:|---:|
+    | 1  | 2.735 | 6.875,5 m | **78,19 m** ---le falta la recta de meta, que es de la fase anterior |
+    | 13 | **2.809** | 6.853,4 m | **14,19 m** ---la de la parada: pasa por la calle de boxes |
+    | 20 | 2.534 | 6.939,8 m | **1,49 m** |
+
+    La vuelta 13 gana por muestras **porque es la mas lenta**: mas tiempo en
+    pista son mas muestras. Y es justamente la que no describe el circuito.
+
+    Se elige, entonces, entre las que cubren casi toda la distancia ---para que
+    una media vuelta que casualmente cierre no gane--- la de menor cuerda de
+    cierre. No se completa ni se suaviza nada: se elige cual de las vueltas
+    medidas se dibuja, y la respuesta declara cual y cuanto cierra.
+    """
+
+    import math
+
+    def cobertura(f):
+        ds = [r[3] for r in f if r[3] is not None]
+        return (max(ds) - min(ds)) if ds else 0.0
+
+    def cierre(f):
+        return math.hypot(f[0][0] - f[-1][0], f[0][1] - f[-1][1]) if f else float("inf")
+
+    candidatas = list(por_vuelta.values())
+    mejor = max((cobertura(f) for f in candidatas), default=0.0)
+    if mejor > 0:
+        # Nueve decimos de la mejor cobertura: la vuelta 1 de Spa, a la que le
+        # falta la recta de meta, todavia entra ---cubre el 98,9 %--- y pierde
+        # por la cuerda, que es lo que corresponde. Lo que este umbral descarta
+        # es una vuelta cortada por la mitad.
+        completas = [f for f in candidatas if cobertura(f) >= 0.9 * mejor]
+        if completas:
+            candidatas = completas
+    return min(candidatas, key=cierre)
+
+
 @router.get("/sesiones/{session_id}/trazado")
 def trazado(session_id: str, vuelta: int | None = None,
             puntos: Annotated[int, Query(ge=50, le=3000)] = 400,
@@ -1153,6 +1379,14 @@ def trazado(session_id: str, vuelta: int | None = None,
         # Sin acotar, el recorrido de Spa mezcla el de la captura original con
         # el de las pruebas de parrilla, y sale un circuito deformado.
         _tv = _ventana_de_alcance(cursor, fuente, session_id, adquisicion)
+        # LA FASE, APLICADA Y NO SOLO ACEPTADA.
+        #
+        # Esta ruta declaraba `fase` en su firma y no la usaba: con `fase=3`
+        # devolvia la geometria de la vuelta 1 armada con 6.435 muestras, de las
+        # cuales solo 2.735 son de la carrera. La procedencia era incorrecta
+        # aunque el dibujo cerrara.
+        _tf0, _tf1 = _limites_de_fase(cursor, fuente, session_id, adquisicion, fase)
+        _tramo, _tramo_par = _clausula_de_tramo(_tf0, _tf1)
         cursor.execute("""
             WITH p AS (
                 SELECT timestamp,
@@ -1163,14 +1397,15 @@ def trazado(session_id: str, vuelta: int | None = None,
                        max(value_numeric) FILTER (WHERE signal_name = 'lap_number') AS vuelta
                   FROM telemetry_messages
                  WHERE source_type = %s AND session_id = %s AND signal_name = ANY(%s)
-                   AND (%s::timestamptz IS NULL OR timestamp BETWEEN %s AND %s)
+                   AND (%s::timestamptz IS NULL OR timestamp BETWEEN %s AND %s)""" +
+            _tramo + """
                  GROUP BY timestamp)
             SELECT x, z, y, distancia, vuelta FROM p
              WHERE x IS NOT NULL AND z IS NOT NULL
              ORDER BY vuelta NULLS LAST, distancia NULLS LAST, timestamp
-        """, (eje_x, eje_z, fuente, session_id, interes,
-              _tv[0] if _tv else None, _tv[0] if _tv else None,
-              _tv[1] if _tv else None))
+        """, tuple([eje_x, eje_z, fuente, session_id, interes,
+                    _tv[0] if _tv else None, _tv[0] if _tv else None,
+                    _tv[1] if _tv else None] + _tramo_par))
         filas = cursor.fetchall()
 
     if not filas:
@@ -1180,12 +1415,10 @@ def trazado(session_id: str, vuelta: int | None = None,
     if vuelta is not None:
         filas = [f for f in filas if f[4] is not None and int(f[4]) == vuelta]
     else:
-        # Sin vuelta pedida se elige la que mas puntos tenga: es la que mejor
-        # dibuja el trazado completo.
         por_vuelta: dict[Any, list] = {}
         for f in filas:
             por_vuelta.setdefault(f[4], []).append(f)
-        filas = max(por_vuelta.values(), key=len)
+        filas = _vuelta_que_mejor_dibuja(por_vuelta)
 
     if not filas:
         return {"session_id": session_id, "fuente": fuente, "puntos": [],
@@ -1221,6 +1454,15 @@ def trazado(session_id: str, vuelta: int | None = None,
         "desnivel_m": round(max(alturas) - min(alturas), 1) if alturas else None,
         "largo_m": round(max(distancias), 1) if distancias else None,
         "muestras_originales": len(filas),
+        # CUANTO LE FALTA AL LAZO PARA CERRAR, DICHO EN LA RESPUESTA.
+        #
+        # Es la medida de si esta vuelta describe el circuito. Una cuerda
+        # grande significa que falta un tramo o que se recorrio otro camino
+        # ---la calle de boxes---, y quien lea el trazado tiene que poder
+        # saberlo sin volver a calcularlo.
+        "cierre_m": round(
+            ((pts[0][0] - pts[-1][0]) ** 2 + (pts[0][1] - pts[-1][1]) ** 2) ** 0.5, 2)
+        if len(pts) > 1 else None,
     }
 
 

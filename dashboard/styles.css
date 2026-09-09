@@ -1306,6 +1306,11 @@
   .fila-corrida { grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr) auto; }
   .fila-corrida > span > small { color: var(--texto-tenue); }
   /* El boton del encabezado dice que etapa se mira; puede ser largo. */
+  /* Una posicion estimada por tiempo no puede verse igual que una medida.
+     Se dibuja hueca: quien mira tiene que poder distinguir «aca esta» de
+     «por aca deberia ir». */
+  .auto-en-pista[data-estimada="si"] .marca-auto { opacity: .38; }
+  .auto-en-pista[data-estimada="si"] text { opacity: .5; font-style: italic; }
   #btn-corrida { max-width: 26ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .fila-sesion[data-abierta="si"] { border-color: var(--acento); background: var(--acento-veta); }
   .fila-sesion[data-fuente="f1"] { border-left-color: var(--auto-1); }

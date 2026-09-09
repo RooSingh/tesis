@@ -1560,8 +1560,24 @@ function pintarPista() {
   marcas.forEach((grupo, i) => {
     let frac = f;
     const clave = grupo.dataset.clave;
-    if (enPistaAhora && enPistaAhora[clave] !== undefined) {
+    /* LA FRACCION DE TIEMPO NO ES UNA POSICION.
+       Sin posicion medida, la marca se colocaba en la fraccion **temporal** de
+       la vuelta: a la mitad del tiempo, a la mitad del circuito. Un coche no
+       recorre el circuito a ritmo parejo ---en Spa, la recta de Kemmel y la
+       chicana del bus no se hacen a la misma velocidad--- de modo que ese punto
+       no es donde esta, y al llegar la primera posicion medida la marca salta.
+
+       No se quita la capacidad: una fuente que no publique posicion sigue
+       mostrando por donde va la vuelta. Pero se declara ---`data-estimada`--- y
+       se dibuja distinto, porque una posicion supuesta y una medida no pueden
+       verse igual. */
+    const medida = enPistaAhora && enPistaAhora[clave] !== undefined;
+    if (medida) {
       frac = Math.max(0, Math.min(1, enPistaAhora[clave] / largoVuelta));
+    }
+    if (grupo.dataset.estimada !== (medida ? "no" : "si")) {
+      grupo.dataset.estimada = medida ? "no" : "si";
+      grupo.setAttribute("aria-label", medida ? "" : "posición estimada por tiempo, no medida");
     }
     /* MIENTRAS SE MIDE EL RECORRIDO, EL COCHE VA POR SU POSICION.
        El camino dibujado se rehace cada veinticinco puntos ---rehacerlo en cada
@@ -1580,7 +1596,14 @@ function pintarPista() {
     }
     if (!p) p = linea.getPointAtLength(largo * frac);
     const c = grupo.firstChild, t = grupo.lastChild;
-    const px = p.x.toFixed(1), py = p.y.toFixed(1);
+    /* DOS DECIMALES, NO UNO.
+       Medido sobre el trazado de Spa: el dibujo se escala a 0,0976 unidades por
+       metro, asi que **una decima de unidad son 1,02 m de pista**. A 55,3 m/s
+       de media el coche recorre 0,92 m en un cuadro de 16,7 ms: menos que un
+       escalon. La marca avanzaba entonces cero o un escalon por cuadro, en un
+       patron irregular que se ve como un temblor. Con dos decimales el escalon
+       es de 0,10 m, la novena parte de lo que se mueve en un cuadro. */
+    const px = p.x.toFixed(2), py = p.y.toFixed(2);
     /* Se compara contra lo que el elemento ya tenia. Escribir el mismo valor
        no mueve nada, y contar ese pintado como movimiento es justo el error
        que este testigo existe para no cometer. */
@@ -1591,7 +1614,7 @@ function pintarPista() {
     if (c.getAttribute("cx") !== px || c.getAttribute("cy") !== py) seMovio = true;
     else TESTIGO.pintadosSinCambio++;
     c.setAttribute("cx", px); c.setAttribute("cy", py);
-    t.setAttribute("x", px); t.setAttribute("y", (p.y - 10).toFixed(1));
+    t.setAttribute("x", px); t.setAttribute("y", (p.y - 10).toFixed(2));
   });
   if (seMovio) TESTIGO.movimientosDeCoche++;
 }
@@ -2296,6 +2319,44 @@ function asegurarPosiciones(numero) {
    ============================================================ */
 let _huboInterpolacion = false;
 
+/* CADA MUESTRA, EN EL INSTANTE EN QUE SE MIDIO.
+   ------------------------------------------------------------
+   La respuesta trae `puntos+1` distancias, una por intervalo, y **cuando** se
+   midio cada una. Antes solo traia las distancias, de modo que el unico camino
+   era suponerlas repartidas en partes iguales dentro de la vuelta. No lo estan:
+   cada una es la primera muestra de su intervalo, y esa cae donde cae.
+
+   Suponerlas parejas corre cada punto hasta medio intervalo ---en una vuelta de
+   Spa con 200 intervalos, hasta 340 ms--- y ese corrimiento no es constante:
+   cambia de un punto al siguiente, que es lo que se ve como un tiron.
+
+   Se arma una vez por respuesta ---`_pares` queda en el objeto que devolvio la
+   API--- y se guarda solo lo que tiene dato: los huecos dejan de ser un caso
+   especial y pasan a ser, simplemente, dos muestras mas separadas. */
+function paresDePosicion(d, clave) {
+  if (!d._pares) d._pares = {};
+  if (d._pares[clave]) return d._pares[clave];
+  const serie = d.vehiculos[clave] || [];
+  const marcas = (d.instantes_ms && d.instantes_ms[clave]) || null;
+  const total = numeroMedido(d.intervalo_ms) !== null && numeroMedido(d.puntos) !== null
+    ? d.intervalo_ms * d.puntos : null;
+  const pares = [];
+  for (let i = 0; i < serie.length; i++) {
+    const v = numeroMedido(serie[i]);
+    if (v === null) continue;
+    /* Sin instantes ---una API mas vieja--- se cae en la rejilla pareja, que es
+       lo que habia. Se declara en `aproximado` para no presentar una suposicion
+       como una medicion. */
+    const t = marcas && numeroMedido(marcas[i]) !== null
+      ? marcas[i]
+      : (total !== null && serie.length > 1 ? total * (i / (serie.length - 1)) : i);
+    pares.push([t, v]);
+  }
+  const armado = { pares: pares, aproximado: !marcas, duracion: total };
+  d._pares[clave] = armado;
+  return armado;
+}
+
 function posicionesAhora() {
   const t = instante();
   const d = estado.posiciones[t.vuelta];
@@ -2304,33 +2365,40 @@ function posicionesAhora() {
   const largo = PISTA.largo_m || 0;
   _huboInterpolacion = false;
   Object.keys(d.vehiculos).forEach(clave => {
-    const serie = d.vehiculos[clave];
-    const n = serie.length;
-    if (!n) return;
-    const x = t.fraccion * (n - 1);
-    const i = Math.min(n - 2, Math.max(0, Math.floor(x)));
-    const u = Math.min(1, Math.max(0, x - i));
-    const a = serie[i], b = n > 1 ? serie[i + 1] : null;
-    const hayA = a !== null && a !== undefined;
-    const hayB = b !== null && b !== undefined;
+    const { pares, duracion } = paresDePosicion(d, clave);
+    if (!pares.length) return;
+    const objetivo = duracion !== null ? t.fraccion * duracion
+                                       : t.fraccion * (pares.length - 1);
 
-    if (hayA && hayB) {
-      const salto = b - a;
-      // Tres veces el intervalo esperado: por encima de eso es un hueco o la
-      // vuelta que se cierra, no una muestra que sigue a la anterior.
-      const tope = largo ? (largo / n) * 3 : Infinity;
-      if (salto >= 0 && salto <= tope) {
-        salida[clave] = a + salto * u;
-        if (u > 0) _huboInterpolacion = true;
-        return;
-      }
-      salida[clave] = a;
+    /* La muestra anterior al instante buscado. Busqueda binaria: con 201 puntos
+       por vuelta y veinte vehiculos, recorrerlas linealmente en cada cuadro es
+       trabajo que se hace sesenta veces por segundo para nada. */
+    let lo = 0, hi = pares.length - 1;
+    while (lo < hi) {
+      const medio = (lo + hi + 1) >> 1;
+      if (pares[medio][0] <= objetivo) lo = medio; else hi = medio - 1;
+    }
+    const a = pares[lo];
+    const b = pares[lo + 1];
+    if (!b) { salida[clave] = a[1]; return; }
+
+    const dt = b[0] - a[0];
+    const salto = b[1] - a[1];
+    /* EL TOPE SE MIDE CONTRA EL TIEMPO QUE PASO, NO CONTRA UN INTERVALO SUPUESTO.
+       Antes era `largo / n * 3`, que da lo mismo para dos muestras separadas
+       50 ms que para dos separadas medio segundo. Ahora es tres veces lo que se
+       recorreria a ritmo medio en ese hueco: un salto mayor no es la muestra
+       siguiente, es la vuelta que se cierra o un tramo que falta. */
+    const tope = (largo && duracion && dt > 0) ? (largo * (dt / duracion)) * 3 : Infinity;
+    if (dt > 0 && salto >= 0 && salto <= tope) {
+      const u = Math.min(1, Math.max(0, (objetivo - a[0]) / dt));
+      salida[clave] = a[1] + salto * u;
+      if (u > 0) _huboInterpolacion = true;
       return;
     }
-    // El intervalo puede venir vacio: se busca hacia atras el ultimo con dato.
-    for (let k = i; k >= 0; k--) {
-      if (serie[k] !== null && serie[k] !== undefined) { salida[clave] = serie[k]; break; }
-    }
+    /* Ni se interpola sobre el cierre de vuelta ni se fuerza que crezca: se
+       queda en la ultima medida hasta que la siguiente sea contigua. */
+    salida[clave] = a[1];
   });
   return salida;
 }
