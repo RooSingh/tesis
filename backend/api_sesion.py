@@ -1082,6 +1082,126 @@ def _medir_fases(cursor, fuente: str, session_id: str,
     return _armar_fases([inicio] + [c[0] for c in cortes] + [fin])
 
 
+# --------------------------------------------------------------------------
+# Quien es cada vehiculo, y de cuantos hay telemetria
+# --------------------------------------------------------------------------
+#
+# SON DOS COSAS DISTINTAS Y SE DECLARAN POR SEPARADO.
+#
+# La **identidad** sale del metadato de captura: el paquete de participantes
+# dice que el vehiculo de indice 19 es NORRIS, numero 4, McLaren. No esta en la
+# base a proposito ---guardar un nombre como senal de telemetria almacenaria el
+# mismo texto millones de veces para decir veinte cosas que no cambian--- y por
+# eso se lee de donde vive.
+#
+# La **cobertura** sale de la base: cuantos de esos vehiculos llegaron a tener
+# una sola muestra guardada. En la carrera de Spa la parrilla declara veinte y
+# la base tiene uno. Conocer el nombre de los otros diecinueve no es tener sus
+# señales, y presentarlo junto seria afirmar que las hay.
+
+#: Como se llama el vehiculo de indice `n` de una sesion. Es el mismo formato
+#: que acuña el adaptador al normalizar (`adapters/f1_25.py`); escrito aca una
+#: sola vez para que la union no se arme con un `split` del identificador.
+FORMA_DEL_VEHICULO = "%s:car:%d"
+
+
+def _parrilla_de_la_adquisicion(session_id: str, fuente: str, desde, hasta,
+                                shas: list, con_telemetria: set[str]) -> dict:
+    """La parrilla de **esta adquisicion**, unida a las claves tecnicas.
+
+    LA UNION SE DECLARA, NO SE ADIVINA. `vehicle_id` se compone en el adaptador
+    como `<session_id>:car:<indice>`, y ese es el unico camino del indice del
+    protocolo a la clave de la base. Se arma la clave que le corresponderia a
+    cada participante y se dice, para cada una, si la base tiene muestras suyas.
+
+    NO SE REUTILIZA UNA PARRILLA DE OTRA CAPTURA. La busqueda es por
+    `session_id`: que dos sesiones tengan un `car:19` no las relaciona, porque
+    el indice es la posicion del vehiculo en el paquete de esa sesion.
+
+    Y TAMPOCO SE REUTILIZA LA DE OTRA ADQUISICION DE LA MISMA SESION. Volver a
+    capturar produce filas con el mismo `session_uid`, y esas dos capturas
+    pueden declarar gente distinta en el mismo indice. Antes ganaba la mas
+    larga, que no es una prueba de pertenencia: ahora se ata cada adquisicion a
+    su captura por la huella del archivo o por la ventana en que se escribio, y
+    si no se puede atar se dice que es ambigua y nadie queda nombrado.
+    """
+    if fuente != "f1_25_udp_simulation":
+        return {"disponible": False,
+                "motivo": "solo la simulacion declara participantes",
+                "con_telemetria": len(con_telemetria)}
+
+    candidatas = procedencia_sesiones.candidatas_de_parrilla(session_id)
+    if not candidatas:
+        return {"disponible": False,
+                "motivo": ("ninguna captura cerrada declara la parrilla de esta "
+                           "sesion: se escribe al cerrar el archivo"),
+                "con_telemetria": len(con_telemetria)}
+
+    declarada = _elegir_parrilla(candidatas, desde, hasta, shas)
+    if declarada is None:
+        return {"disponible": False, "ambigua": True,
+                "motivo": ("%d capturas comparten esta sesion y declaran "
+                           "participantes distintos; sus metadatos no permiten "
+                           "decir cual corresponde a esta adquisicion"
+                           % len(candidatas)),
+                "con_telemetria": len(con_telemetria)}
+
+    vehiculos = []
+    for v in declarada["vehiculos"]:
+        clave = FORMA_DEL_VEHICULO % (session_id, v["indice"])
+        vehiculos.append({
+            "indice": v["indice"],
+            "vehicle_id": clave,
+            "nombre": v["nombre"],
+            "numero": v["numero"],
+            "equipo": v["equipo"],
+            "es_ia": v["es_ia"],
+            "con_telemetria": clave in con_telemetria,
+        })
+
+    return {
+        "disponible": True,
+        "vehiculos": vehiculos,
+        "vehiculos_en_carrera": declarada.get("vehiculos_en_carrera"),
+        # Cuantos vehiculos de la base tienen muestras, se los haya reconocido
+        # en la parrilla o no: es la cobertura de la telemetria, no un recuento
+        # de los que se pudieron nombrar.
+        "con_telemetria": len(con_telemetria),
+        "origen": declarada["origen"],
+        # De la captura solo viaja lo que sirve para reconocerla. Ni la ruta ni
+        # el resto del sidecar: eso se queda del lado del servidor.
+        "captura": (declarada.get("captura") or {}).get("archivo"),
+        "es_una_foto": declarada.get("es_una_foto"),
+        "que_no_significa": (
+            "que un vehiculo figure en la parrilla no dice que haya una sola "
+            "muestra suya: `con_telemetria` lo declara por vehiculo"),
+    }
+
+
+def _elegir_parrilla(candidatas: list[dict], desde, hasta, shas: list) -> dict | None:
+    """Cual de las capturas de esta sesion es la de esta adquisicion.
+
+    Con una sola no hay nada que elegir. Con varias que declaran exactamente los
+    mismos participantes tampoco: cual sea da igual. Recien cuando difieren hay
+    que atarlas, y si no se puede se devuelve `None`, que el tablero lee como
+    «Vehículo 19». Inventar la asociacion para evitar ese respaldo seria
+    ponerle a un vehiculo el nombre del de otra carrera.
+    """
+    if len(candidatas) == 1:
+        return candidatas[0]
+    if all(procedencia_sesiones.mismos_participantes(candidatas[0], c)
+           for c in candidatas[1:]):
+        return candidatas[0]
+    atadas = [c for c in candidatas
+              if procedencia_sesiones.pertenece_a(c, desde, hasta, shas)]
+    if len(atadas) == 1:
+        return atadas[0]
+    if atadas and all(procedencia_sesiones.mismos_participantes(atadas[0], c)
+                      for c in atadas[1:]):
+        return atadas[0]
+    return None
+
+
 @router.get("/sesiones/{session_id}/adquisiciones")
 def adquisiciones(session_id: str) -> dict:
     """Cuantas veces se capturo o se reprodujo esta sesion, y en que fases.
@@ -1094,7 +1214,12 @@ def adquisiciones(session_id: str) -> dict:
     with db.obtener_conexion() as conexion, conexion.cursor() as cursor:
         cursor.execute("""
             SELECT replay_run_id, count(*), count(DISTINCT vehicle_id),
-                   min(timestamp), max(timestamp)
+                   min(timestamp), max(timestamp),
+                   array_agg(DISTINCT vehicle_id),
+                   -- La huella del archivo del que salieron estas filas, cuando
+                   -- el capturador la escribio. Es lo que ata una adquisicion a
+                   -- su captura sin depender de cual sea la mas larga.
+                   array_agg(DISTINCT metadata->'extra'->>'captura_sha256')
               FROM telemetry_messages
              WHERE source_type = %s AND session_id = %s
                AND signal_name = 'lap_number'
@@ -1104,7 +1229,12 @@ def adquisiciones(session_id: str) -> dict:
         crudas = cursor.fetchall()
 
         salida = []
-        for run, filas, vehiculos, desde, hasta in crudas:
+        con_telemetria: set[str] = set()
+        for fila in crudas:
+            run, filas, vehiculos, desde, hasta = fila[:5]
+            suyos = [x for x in (fila[5] if len(fila) > 5 else None) or [] if x]
+            shas = [x for x in (fila[6] if len(fila) > 6 else None) or [] if x]
+            con_telemetria.update(suyos)
             clave = run or ORIGEN_SIN_CORRIDA
             salida.append({
                 "clave": clave,
@@ -1114,6 +1244,11 @@ def adquisiciones(session_id: str) -> dict:
                 "vehiculos": vehiculos,
                 "desde_utc": desde.isoformat() if desde else None,
                 "hasta_utc": hasta.isoformat() if hasta else None,
+                # QUIEN ES CADA VEHICULO **EN ESTA ADQUISICION**. Va aca y no en
+                # la raiz porque dos capturas de la misma sesion pueden declarar
+                # gente distinta en el mismo indice.
+                "parrilla": _parrilla_de_la_adquisicion(
+                    session_id, fuente, desde, hasta, shas, set(suyos)),
                 "fases": _fases_de(cursor, fuente, session_id, clave),
             })
 
@@ -1260,6 +1395,22 @@ def series_por_distancia(
     for s in pedidas:
         columnas.append('max(value_numeric) FILTER (WHERE signal_name = %s) AS "%s"' % ("%s", s))
         columnas_par.append(s)
+    # LA UNIDAD SALE DE LAS MISMAS FILAS QUE EL VALOR.
+    #
+    # POR QUE HACIA FALTA. `delta_to_race_leader` se compone en milisegundos y
+    # el tablero lo imprimia crudo bajo un rotulo que decia segundos: 2.937 ms
+    # se leian como «2937.000». El navegador no tenia como saberlo, porque la
+    # respuesta no declaraba la unidad de nada.
+    #
+    # POR QUE DE ACA Y NO DE UNA TABLA. Dividir por mil en el navegador segun
+    # una lista de nombres escrita a mano rompe la primera vez que otra fuente
+    # publique un canal parecido ya en segundos ---`penalty_time` y
+    # `safety_car_delta` ya lo estan---. La unidad viaja en cada fila desde que
+    # el adaptador la normaliza; se la agrega sobre las filas que la consulta ya
+    # esta leyendo, sin una pasada mas.
+    for s in pedidas:
+        columnas.append('max(unit) FILTER (WHERE signal_name = %s) AS "unidad:%s"' % ("%s", s))
+        columnas_par.append(s)
     consulta = consulta % ",\n                   ".join(columnas)
     consulta = consulta.replace("{donde}", " AND ".join(condiciones))
     consulta = consulta.replace("{filtro_vuelta}", "AND vuelta = %s" if vuelta is not None else "")
@@ -1288,13 +1439,28 @@ def series_por_distancia(
 
     if not filas:
         return {"session_id": session_id, "fuente": fuente, "senales": pedidas,
-                "vehiculos": {}, "muestras": 0,
+                "vehiculos": {}, "muestras": 0, "unidades": {},
                 "motivo": "La sesion no tiene esas senales en el rango pedido."}
 
     desplazamiento = 2 if vuelta is not None else 1  # timestamp, vehicle_id
     idx_dist = 2
     idx_dist_sesion = 3 + (1 if vuelta is not None else 0)
     idx_primera = idx_dist_sesion + 1
+    idx_unidades = idx_primera + len(pedidas)
+
+    # QUE UNIDAD TRAJO CADA SENAL. Se toma la primera fila que la declare: la
+    # columna es `NOT NULL` en el esquema, de modo que un nulo aca solo puede
+    # significar que esa senal no aparece en esa fila.
+    unidades: dict[str, str] = {}
+    for f in filas:
+        if len(unidades) == len(pedidas):
+            break
+        for i, s in enumerate(pedidas):
+            if s in unidades:
+                continue
+            u = f[idx_unidades + i] if len(f) > idx_unidades + i else None
+            if u is not None:
+                unidades[s] = u
 
     por_vehiculo: dict[str, list[tuple]] = {}
     for f in filas:
@@ -1336,6 +1502,11 @@ def series_por_distancia(
         "vuelta": vuelta,
         "senales": pedidas,
         "vehiculos": salida,
+        # La unidad en que viene cada senal, tal como la persistio el
+        # adaptador. Quien la muestre convierte una sola vez y sabe cuando no
+        # tiene que convertir: no todas las que se parecen estan en la misma
+        # unidad.
+        "unidades": unidades,
         "muestras": sum(len(v["distancia_m"]) for v in salida.values()),
         "submuestreado": submuestreado,
         # Cuantas muestras habia antes de reducir, para que el grafico pueda

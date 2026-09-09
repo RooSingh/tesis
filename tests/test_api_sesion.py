@@ -126,6 +126,202 @@ class SeriesPorDistanciaTests(unittest.TestCase):
         self.assertLessEqual(len(r["vehiculos"]["car1"]["distancia_m"]), 60)
 
 
+class UnidadesDeLaSerieTests(unittest.TestCase):
+    """La respuesta declara en que unidad viene cada senal.
+
+    EL DEFECTO QUE ESTO CIERRA. `delta_to_race_leader` se compone en
+    milisegundos y el tablero lo imprimia crudo bajo un rotulo que decia
+    segundos. El navegador no tenia como saberlo: la respuesta no declaraba la
+    unidad de nada, y una lista de nombres escrita a mano en el tablero habria
+    roto `penalty_time` y `safety_car_delta`, que viajan en la misma consulta y
+    **ya estan en segundos**.
+    """
+
+    def test_declara_la_unidad_de_cada_senal_pedida(self) -> None:
+        # (timestamp, vehicle_id, distancia, distancia_sesion, gap, castigo,
+        #  unidad del gap, unidad del castigo)
+        filas = [("t1", "car1", 10.0, 10.0, 2937.0, 5.0, "ms", "s"),
+                 ("t2", "car1", 20.0, 20.0, 2986.0, 5.0, "ms", "s")]
+        falsa, parche = _con(filas)
+        with parche:
+            r = api_sesion.series_por_distancia(
+                "f1_25:session:1", senales="delta_to_race_leader,penalty_time")
+        self.assertEqual(r["unidades"],
+                         {"delta_to_race_leader": "ms", "penalty_time": "s"})
+
+    def test_los_valores_viajan_en_su_unidad_de_origen(self) -> None:
+        """Convertir aca cambiaria lo que la base guarda de lo que dice la API."""
+        filas = [("t1", "car1", 10.0, 10.0, 2937.0, "ms")]
+        falsa, parche = _con(filas)
+        with parche:
+            r = api_sesion.series_por_distancia(
+                "f1_25:session:1", senales="delta_to_race_leader")
+        self.assertEqual(r["vehiculos"]["car1"]["delta_to_race_leader"], [2937.0])
+        self.assertEqual(r["unidades"]["delta_to_race_leader"], "ms")
+
+    def test_la_unidad_sale_de_la_primera_fila_que_la_declare(self) -> None:
+        """Una fila sin esa senal la deja nula; no es que la senal no tenga unidad."""
+        filas = [("t1", "car1", 10.0, 10.0, None, None),
+                 ("t2", "car1", 20.0, 20.0, 2937.0, "ms")]
+        falsa, parche = _con(filas)
+        with parche:
+            r = api_sesion.series_por_distancia(
+                "f1_25:session:1", senales="delta_to_race_leader")
+        self.assertEqual(r["unidades"]["delta_to_race_leader"], "ms")
+
+    def test_una_senal_sin_una_sola_fila_no_declara_unidad_inventada(self) -> None:
+        filas = [("t1", "car1", 10.0, 10.0, 100.0, None, "km/h", None)]
+        falsa, parche = _con(filas)
+        with parche:
+            r = api_sesion.series_por_distancia(
+                "f1_25:session:1", senales="speed,current_lap_time")
+        self.assertEqual(r["unidades"], {"speed": "km/h"})
+        self.assertNotIn("current_lap_time", r["unidades"])
+
+    def test_sin_filas_la_respuesta_igual_trae_el_mapa_de_unidades(self) -> None:
+        """Quien lo lee no tiene que distinguir «vacio» de «no vino el campo»."""
+        falsa, parche = _con([])
+        with parche:
+            r = api_sesion.series_por_distancia("f1_25:session:1", senales="speed")
+        self.assertEqual(r["unidades"], {})
+
+    def test_la_unidad_se_pide_sobre_las_mismas_filas_y_no_en_otra_consulta(self) -> None:
+        """Una pasada mas sobre cinco millones de filas para leer un texto fijo."""
+        filas = [("t1", "car1", 10.0, 10.0, 2937.0, "ms")]
+        falsa, parche = _con(filas)
+        with parche:
+            api_sesion.series_por_distancia("f1_25:session:1",
+                                            senales="delta_to_race_leader")
+        principales = [c for c, _ in falsa.consultas if "FILTER" in c]
+        self.assertEqual(len(principales), 1)
+        self.assertIn("max(unit) FILTER", principales[0])
+
+
+class ParrillaDeLaSesionTests(unittest.TestCase):
+    """Quien es cada vehiculo, y de cuantos hay telemetria: dos cosas.
+
+    `AUTOS.length <= 1` en el tablero confundia «un solo vehiculo con telemetria
+    guardada» con «esta sesion no tiene participantes». En la carrera de Spa la
+    parrilla declara veinte y la base tiene uno.
+    """
+
+    PARRILLA = {
+        "vehiculos": [
+            {"indice": 0, "nombre": "PIASTRI", "numero": 81,
+             "equipo": "McLaren", "es_ia": True},
+            {"indice": 19, "nombre": "NORRIS", "numero": 4,
+             "equipo": "McLaren", "es_ia": False},
+        ],
+        "vehiculos_en_carrera": 20,
+        "origen": "metadato de captura, derivado del paquete de participantes",
+    }
+
+    def _armar(self, session_id="f1_25:session:1", con_telemetria=(), parrilla=None,
+               candidatas=None, desde=None, hasta=None, shas=()):
+        cands = candidatas if candidatas is not None else ([parrilla] if parrilla else [])
+        with patch.object(api_sesion.procedencia_sesiones, "candidatas_de_parrilla",
+                          return_value=cands):
+            return api_sesion._parrilla_de_la_adquisicion(
+                session_id, api_sesion._fuente_de(session_id), desde, hasta,
+                list(shas), set(con_telemetria))
+
+    def test_une_cada_participante_con_su_clave_tecnica(self) -> None:
+        r = self._armar(con_telemetria={"f1_25:session:1:car:19"},
+                        parrilla=self.PARRILLA)
+        self.assertTrue(r["disponible"])
+        norris = [v for v in r["vehiculos"] if v["indice"] == 19][0]
+        self.assertEqual(norris["vehicle_id"], "f1_25:session:1:car:19")
+        self.assertEqual(norris["nombre"], "NORRIS")
+        self.assertEqual(norris["numero"], 4)
+        self.assertEqual(norris["equipo"], "McLaren")
+        self.assertTrue(norris["con_telemetria"])
+
+    def test_conocer_el_nombre_no_es_tener_las_senales(self) -> None:
+        r = self._armar(con_telemetria={"f1_25:session:1:car:19"},
+                        parrilla=self.PARRILLA)
+        piastri = [v for v in r["vehiculos"] if v["indice"] == 0][0]
+        self.assertEqual(piastri["nombre"], "PIASTRI")
+        self.assertFalse(piastri["con_telemetria"])
+        self.assertEqual(r["con_telemetria"], 1)
+        self.assertEqual(len(r["vehiculos"]), 2)
+
+    def test_la_cobertura_es_de_la_base_y_no_de_la_parrilla(self) -> None:
+        r = self._armar(con_telemetria={"f1_25:session:1:car:19",
+                                        "f1_25:session:1:car:5"},
+                        parrilla=self.PARRILLA)
+        self.assertEqual(r["con_telemetria"], 2,
+                         "se conto lo que la parrilla nombra y no lo que hay guardado")
+
+    def test_sin_metadato_lo_declara_y_no_inventa_nombres(self) -> None:
+        r = self._armar(con_telemetria={"f1_25:session:1:car:19"}, parrilla=None)
+        self.assertFalse(r["disponible"])
+        self.assertNotIn("vehiculos", r)
+        self.assertIn("motivo", r)
+        self.assertEqual(r["con_telemetria"], 1)
+
+    def test_una_fuente_que_no_declara_participantes_lo_dice(self) -> None:
+        r = self._armar(session_id="can:segmento:sample_30",
+                        con_telemetria={"can:vehicle:rav4"}, parrilla=self.PARRILLA)
+        self.assertFalse(r["disponible"])
+        self.assertIn("simulacion", r["motivo"])
+
+    def test_la_forma_de_la_clave_es_la_que_acuna_el_adaptador(self) -> None:
+        """`adapters/f1_25.py` compone `<session_id>:car:<indice>`.
+
+        Escrita dos veces, un cambio en el adaptador dejaria la union rota sin
+        que nada lo dijera; esta prueba la ata al formato que este modulo declara.
+        """
+        self.assertEqual(api_sesion.FORMA_DEL_VEHICULO % ("f1_25:session:7", 19),
+                         "f1_25:session:7:car:19")
+
+    def test_dos_capturas_con_gente_distinta_no_nombran_a_nadie(self) -> None:
+        """Antes ganaba la mas larga, que no es una prueba de pertenencia."""
+        otra = {"vehiculos": [{"indice": 19, "nombre": "PIASTRI", "numero": 81,
+                               "equipo": "McLaren", "es_ia": False}],
+                "origen": "x", "captura": {"sha256": "bbb"}}
+        propia = dict(self.PARRILLA, captura={"sha256": "aaa"})
+        r = self._armar(con_telemetria={"f1_25:session:1:car:19"},
+                        candidatas=[propia, otra])
+        self.assertFalse(r["disponible"])
+        self.assertTrue(r["ambigua"])
+        self.assertNotIn("vehiculos", r)
+        self.assertIn("no permiten decir", r["motivo"])
+
+    def test_la_huella_del_archivo_desambigua(self) -> None:
+        otra = {"vehiculos": [{"indice": 19, "nombre": "PIASTRI", "numero": 81,
+                               "equipo": "McLaren", "es_ia": False}],
+                "origen": "x", "captura": {"sha256": "bbb"}}
+        propia = dict(self.PARRILLA, captura={"sha256": "aaa"})
+        r = self._armar(con_telemetria={"f1_25:session:1:car:19"},
+                        candidatas=[propia, otra], shas=["aaa"])
+        self.assertTrue(r["disponible"])
+        self.assertEqual([v["nombre"] for v in r["vehiculos"] if v["indice"] == 19],
+                         ["NORRIS"])
+
+    def test_dos_capturas_que_declaran_lo_mismo_no_son_ambiguas(self) -> None:
+        r = self._armar(con_telemetria={"f1_25:session:1:car:19"},
+                        candidatas=[self.PARRILLA, dict(self.PARRILLA)])
+        self.assertTrue(r["disponible"])
+
+    def test_no_se_publica_la_ruta_ni_el_sidecar_entero(self) -> None:
+        propia = dict(self.PARRILLA,
+                      captura={"sha256": "aaa", "archivo": "spa.f1raw",
+                               "inicio_utc": "2026-09-01T12:00:00+00:00",
+                               "duracion_s": 10.0})
+        r = self._armar(con_telemetria=set(), parrilla=propia)
+        self.assertEqual(r["captura"], "spa.f1raw")
+        self.assertNotIn("sha256", str(r))
+        self.assertNotIn("/", str(r["captura"]))
+
+    def test_se_busca_por_sesion_y_no_por_indice_suelto(self) -> None:
+        r = self._armar(session_id="f1_25:session:2",
+                        con_telemetria={"f1_25:session:2:car:19"},
+                        parrilla=self.PARRILLA)
+        norris = [v for v in r["vehiculos"] if v["indice"] == 19][0]
+        self.assertEqual(norris["vehicle_id"], "f1_25:session:2:car:19")
+        self.assertTrue(norris["con_telemetria"])
+
+
 class VueltasTests(unittest.TestCase):
     def test_una_fuente_sin_distancia_lo_dice_y_no_falla(self) -> None:
         r = api_sesion.listar_vueltas("9939")
