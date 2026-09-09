@@ -24,8 +24,11 @@ verificar, y abrir un socket volveria las pruebas dependientes del entorno.
 
 from __future__ import annotations
 
+import statistics
 import sys
+import time
 import unittest
+from functools import lru_cache
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
@@ -39,6 +42,43 @@ import reproducir_captura_f1_25 as cli  # noqa: E402
 from backend import f1_capture  # noqa: E402
 
 DESTINO = ("127.0.0.1", 20777)
+
+
+@lru_cache(maxsize=None)
+def _piso_del_planificador(objetivo_us: int, muestras: int = 15) -> float:
+    """Cuanto se pasa de largo un `sleep` en esta maquina, en microsegundos.
+
+    POR QUE HAY QUE MEDIRLO Y NO ALCANZA CON UN NUMERO
+    --------------------------------------------------
+    Las pruebas del calendario tienen que distinguir **un atraso sistematico
+    del reproductor** del temblor del planificador del sistema operativo. Los
+    umbrales de este archivo se calibraron midiendo ese temblor sobre Windows,
+    donde la mediana de desvio ronda los 350 microsegundos, y quedaron escritos
+    como numeros absolutos.
+
+    Ese piso no es una constante del universo sino de la maquina. Medido sobre
+    macOS con Apple Silicon el 2026-09-08, con el equipo ocioso: un `sleep` de
+    50 ms se pasa **4,0 ms de mediana** y uno de 10 ms se pasa 2,3 ms. Contra
+    un piso de cuatro milisegundos, un techo de uno no lo puede cruzar ningun
+    reproductor, por bien que respete el calendario: la prueba deja de hablar
+    del codigo y pasa a hablar del sistema operativo.
+
+    Asi que se mide, y los umbrales se expresan contra lo medido. La prueba
+    conserva exactamente lo que sabia detectar ---un defecto acumula el error
+    en **todos** los datagramas y mueve la mediana un orden de magnitud, no un
+    factor de dos--- y deja de fallar por algo que el codigo no gobierna.
+
+    Se mide una sola vez por intervalo, y por eso esta cacheada: la suite
+    completa paga menos de un segundo por las dos mediciones que usa.
+    """
+
+    objetivo_s = objetivo_us / 1e6
+    desvios_us = []
+    for _ in range(muestras):
+        antes = time.perf_counter()
+        time.sleep(objetivo_s)
+        desvios_us.append((time.perf_counter() - antes - objetivo_s) * 1e6)
+    return max(0.0, statistics.median(desvios_us))
 
 
 def _captura(directorio: Path, intervalos_us: list[int],
@@ -171,7 +211,15 @@ class RespetaElCalendario(unittest.TestCase):
                                        velocidad=1.0, sin_red=True)
         # Sesenta datagramas de 10 ms: si el error se acumulara, la mediana
         # llegaria al orden de cientos de milisegundos, no a medio milisegundo.
-        self.assertLess(r["desvio_mediano_us"], 5_000)
+        #
+        # El techo es el mayor entre el valor calibrado y el doble del piso
+        # medido, de modo que **en la maquina donde se calibro no cambia nada**
+        # ---alli el piso es chico y gana el 5.000--- y en una con el
+        # planificador mas grueso deja de reclamarle al codigo lo que hace el
+        # sistema operativo. Un factor de dos sobre el piso sigue estando dos
+        # ordenes de magnitud por debajo de lo que produciria la acumulacion.
+        techo_us = max(5_000, 2 * _piso_del_planificador(10_000))
+        self.assertLess(r["desvio_mediano_us"], techo_us)
         # Y un techo generoso, por si el reproductor se volviera lento de forma
         # pareja: eso la mediana **si** lo detectaria, pero el techo lo declara
         # sin ambiguedad. El valor sale del ruido medido ---decenas de
@@ -197,18 +245,33 @@ class DefinicionDeAtraso(unittest.TestCase):
         defecto.
         """
 
+        # LA TOLERANCIA TIENE QUE ESTAR POR ENCIMA DEL PISO DEL SISTEMA, o la
+        # palabra «atraso» deja de significar algo. Con la tolerancia fija en
+        # un milisegundo y un planificador que se pasa cuatro, los veinte
+        # datagramas son «atrasados» sin que el reproductor haya hecho nada
+        # mal: el conteo mediria el sistema operativo y no el calendario.
+        piso_us = _piso_del_planificador(50_000)
+        tolerancia_ms = max(1.0, 2 * piso_us / 1000)
+
         with TemporaryDirectory() as d:
             ruta = _captura(Path(d), [50_000] * 20)
             r = cli.reproducir_por_udp(ruta, DESTINO,
                                        f1_capture.PerfilDegradacion(),
-                                       velocidad=1.0, sin_red=True)
+                                       velocidad=1.0, sin_red=True,
+                                       tolerancia_ms=tolerancia_ms)
         # **La mediana es la que detecta; el conteo es solo el respaldo.**
         #
         # Un atraso sistematico mueve la mediana entera, porque afecta a todos
         # los datagramas. En corridas normales ronda los 350 microsegundos,
         # menos de la mitad de la tolerancia declarada: si el reproductor
         # dejara de respetar el calendario, esto salta sin ambiguedad.
-        self.assertLess(r["desvio_mediano_us"], 1_000)
+        #
+        # El techo se expresa contra el piso medido por el mismo motivo que la
+        # tolerancia. En la maquina donde se calibro gana el 1.000 y la prueba
+        # queda **identica**; en una mas gruesa sigue detectando lo que tiene
+        # que detectar, porque un reproductor que no respeta el calendario se
+        # atrasa los 50 ms enteros de cada datagrama y no cuatro.
+        self.assertLess(r["desvio_mediano_us"], max(1_000, 2 * piso_us))
         # El conteo va holgado a proposito. Un primer umbral de dos sobre veinte
         # todavia fallaba una de cada diez corridas: estaba ajustado a lo
         # observado en unas pocas y no al ruido real. Cinco sobre veinte sigue
