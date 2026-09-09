@@ -49,12 +49,35 @@ router = APIRouter()
 #: queda en otro numero.
 HUECO_MAXIMO_S = 2.0
 
-#: Nombre de la senal de distancia por fuente. La fuente deportiva no declara
-#: distancia recorrida y por eso no figura: en OpenF1 no hay eje espacial
-#: defendible, medido el 2026-09-06 (huecos de hasta 83 m entre muestras).
+#: Nombre de la senal de distancia por fuente. Las que no figuran no tienen eje
+#: espacial, y cada una por su motivo: ver `SIN_DISTANCIA_PORQUE`.
 DISTANCIA_POR_FUENTE = {
     "f1_25_udp_simulation": "lap_distance",
 }
+
+#: POR QUE ESA FUENTE NO TIENE EJE DE DISTANCIA, UNA RAZON POR FUENTE.
+#:
+#: El mensaje era uno solo y explicaba el caso de OpenF1 ---los huecos de 83 m
+#: entre muestras---, y se devolvia igual para cualquier fuente sin distancia.
+#: Quien abria una captura del bus leia una explicacion sobre una fuente que no
+#: estaba usando, y ademas equivocada: en el bus el problema no es que el
+#: muestreo sea pobre, es que **la senal no existe**. Un motivo que no
+#: corresponde es peor que no dar ninguno, porque manda a buscar donde no hay.
+SIN_DISTANCIA_PORQUE = {
+    "openf1_historical_replay": (
+        "el muestreo de 3,7 Hz deja huecos de hasta 83 m entre muestras "
+        "---medido el 2026-09-06--- y el eje espacial no es defendible"),
+    "can_real_replay": (
+        "el bus del vehiculo publica velocidad de rueda pero no odometro ni "
+        "distancia de vuelta, de modo que no hay metro medido con el que "
+        "ubicar una muestra en el circuito"),
+}
+
+
+def _sin_distancia(fuente: str) -> str:
+    """El motivo por el que esta fuente no tiene eje de distancia."""
+    return SIN_DISTANCIA_PORQUE.get(
+        fuente, "esta fuente no declara distancia recorrida")
 
 #: Posicion en el plano, por fuente.
 POSICION_POR_FUENTE = {
@@ -188,7 +211,8 @@ def listar_vueltas(
             "session_id": session_id,
             "fuente": fuente,
             "vueltas": [],
-            "motivo": "Esta fuente no declara distancia recorrida: no hay vueltas que delimitar por metro.",
+            "motivo": ("Esta fuente no tiene eje de distancia: %s. Sin metro medido "
+                       "no hay vueltas que delimitar." % _sin_distancia(fuente)),
         }
 
     with db.obtener_conexion() as conexion, conexion.cursor() as cursor:
@@ -459,8 +483,9 @@ def posiciones_en_pista(
     if not senal_distancia:
         raise HTTPException(
             status_code=422,
-            detail=("La fuente %s no declara distancia recorrida: no se puede "
-                    "ubicar a los vehiculos sobre la vuelta." % fuente))
+            detail=("La fuente %s no tiene eje de distancia: %s. No se puede "
+                    "ubicar a los vehiculos sobre la vuelta, y no es un fallo "
+                    "que se pueda reintentar." % (fuente, _sin_distancia(fuente))))
 
     with db.obtener_conexion() as conexion, conexion.cursor() as cursor:
         v0, v1 = (_ventana_de_alcance(cursor, fuente, session_id, adquisicion)
@@ -1302,9 +1327,9 @@ def series_por_distancia(
     if not senal_distancia:
         raise HTTPException(
             status_code=422,
-            detail=("La fuente %s no declara distancia recorrida. En OpenF1 el muestreo "
-                    "deja huecos de hasta 83 m y el eje espacial no es defendible; "
-                    "usar las rutas por tiempo." % fuente),
+            detail=("La fuente %s no tiene eje de distancia: %s. No es un fallo "
+                    "que se pueda reintentar; para esta fuente hay que usar las "
+                    "rutas por tiempo." % (fuente, _sin_distancia(fuente))),
         )
 
     pedidas = [s.strip() for s in senales.split(",") if s.strip()]

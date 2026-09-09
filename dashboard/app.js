@@ -375,6 +375,54 @@ function enTandas(lista, cuantas, hacer) {
 }
 
 
+/* ============================================================
+   NO TODAS LAS FUENTES TIENEN EJE DE DISTANCIA
+   ------------------------------------------------------------
+   EL DEFECTO. La reproduccion historica va contra **distancia recorrida**: las
+   vueltas se delimitan por metro, los graficos van contra metro y la ventana
+   movil se corre sobre metros. El bus del vehiculo publica velocidad de rueda y
+   no publica odometro ni distancia de vuelta, de modo que ese eje no existe
+   para el.
+
+   El transporte no lo miraba. Con una captura del bus abierta pedia la vuelta
+   que hay bajo el cabezal como con cualquier otra fuente, la API contestaba 422
+   ---correctamente--- y el tablero mostraba «La vuelta 1 no se pudo traer», con
+   un motivo escrito para OpenF1 y un consejo de reintentar que no podia
+   funcionar: la fuente no va a declarar distancia por intentarlo otra vez.
+
+   Otros paneles ya se cuidaban ---la comparacion se apaga con `fuente !== "f1"`,
+   el trazado dice «recorrido reconstruido»--- y este no. Ahora hay una sola
+   declaracion de que fuentes tienen el eje, la compuerta la mira antes de
+   pedir, y el reproductor dice por que no hay reproduccion en vez de fallar.
+
+   QUE NO ES ESTO. No se inventa una distancia integrando la velocidad para que
+   el eje aparezca. Se podria ---el recorrido del bus ya se reconstruye asi y se
+   declara como reconstruccion--- y es otro trabajo, con su error acumulado
+   dicho. Mientras tanto se dice que no hay, que es lo que hay.
+   ============================================================ */
+
+/* Que fuentes declaran distancia recorrida, y por que las otras no. El motivo
+   viaja aca para poder escribirlo en el panel sin esperar a que la API falle. */
+const EJE_DE_DISTANCIA_POR_FUENTE = {
+  f1: { hay: true, porque: "" },
+  openf1: { hay: false, porque:
+    "el muestreo de 3,7 Hz deja huecos de hasta 83 m entre muestras, y sobre ese " +
+    "eje dos puntos vecinos no son dos lugares vecinos del circuito" },
+  can: { hay: false, porque:
+    "el bus publica velocidad de rueda pero no odómetro ni distancia de vuelta: " +
+    "no hay metro medido con el que ubicar una muestra en el circuito" },
+};
+
+function hayEjeDeDistancia(cual) {
+  const d = EJE_DE_DISTANCIA_POR_FUENTE[cual === undefined ? fuente : cual];
+  return !d || d.hay;
+}
+
+function porQueNoHayDistancia(cual) {
+  const d = EJE_DE_DISTANCIA_POR_FUENTE[cual === undefined ? fuente : cual];
+  return (d && d.porque) || "esta fuente no declara distancia recorrida";
+}
+
 const FUENTES = {
   f1: {
     nombre: "F1 25",
@@ -3606,9 +3654,17 @@ function asegurarVuelta(numero, puntos, deFondo) {
          esperandola para siempre: «todavia no llego» y «no va a llegar» se
          ven igual desde afuera si nadie lo dice. */
       if (!estado.fallo) estado.fallo = {};
-      estado.fallo[numero] = e.message;
+      /* REINTENTAR SOLO LO QUE PUEDE SALIR DISTINTO.
+         Este consejo se escribio para fallos pasajeros ---una red lenta, un
+         tiempo agotado--- y se daba tambien cuando la API contesta 422, que es
+         «esta consulta no se puede responder para esta fuente». Mover el
+         cabezal mil veces no va a hacer que el bus declare distancia: mandar a
+         reintentar lo permanente es mandar a perder el tiempo. */
+      const permanente = e.estado === 422;
+      estado.fallo[numero] = { motivo: e.message, permanente: permanente };
       avisar("Vuelta " + numero + ": " + e.message +
-             ". Se puede reintentar moviendo el cabezal a esa vuelta.", true);
+             (permanente ? "" : ". Se puede reintentar moviendo el cabezal a esa vuelta."),
+             true);
       return null;
     });
 
@@ -3734,6 +3790,10 @@ function vueltaEnFraccion(f) {
    pantalla mientras se espera. */
 function faltaLoImprescindible(fraccion) {
   if (estadoSesion !== "cargado") return false;
+  /* Esperar es esperar **algo que esta en camino**. Sin eje de distancia no se
+     pidio nada y no se va a pedir: quedarse en «Preparando la vuelta 1…» para
+     siempre seria una espera sin nada que esperar. */
+  if (!hayEjeDeDistancia()) return false;
   const v = fraccion === undefined ? instante().vuelta : vueltaEnFraccion(fraccion);
   if (estado.series[v]) return false;          // ya esta
   if (estado.fallo && estado.fallo[v]) return false;  // fallo: no se espera mas
@@ -5026,7 +5086,9 @@ function pintarEsperando() {
     ctx.clearRect(0, 0, w, h);
     ctx.fillStyle = tinta("--texto-tenue");
     ctx.font = "11px 'IBM Plex Sans', sans-serif";
-    ctx.fillText(estado.cargando ? "cargando…" : "sin dato en esta vuelta", 10, h / 2);
+    ctx.fillText(!hayEjeDeDistancia() ? "sin eje de distancia en esta fuente"
+                 : estado.cargando ? "cargando…" : "sin dato en esta vuelta",
+                 10, h / 2);
     const pie = document.getElementById("pie-" + id);
     if (pie) pie.innerHTML = "<span>—</span><span></span><span>—</span>";
   });
@@ -7087,6 +7149,10 @@ function alcanceElegidoEsValido(clave, fase) {
    alcance no es ambiguo o si ya esta elegido entero.
    ============================================================ */
 function alcancePermitePedir() {
+  /* Sin eje de distancia no hay vuelta que pedir: la ruta que trae las series
+     va contra metro. Se corta aca, que es por donde pasa todo el historico, y
+     no en cada sitio que pide. */
+  if (!hayEjeDeDistancia()) return false;
   if (!corrida.disponibles) return false;
   if (!alcanceEsAmbiguo()) return true;
   return alcanceElegidoEsValido(corrida.adquisicion, corrida.fase);
@@ -7928,6 +7994,27 @@ function pintarTransporte() {
   }
   if (modo === "vacio") { detener(); return; }
 
+  /* SIN EJE DE DISTANCIA NO HAY REPRODUCCION QUE OFRECER, Y SE DICE ACA.
+     El reproductor va contra distancia recorrida: la barra reparte la sesion
+     por metro, las vueltas se delimitan por metro y los graficos van contra
+     metro. Con una fuente que no la declara, el reproductor quedaba entero
+     ---botones, barra, velocidades--- ofreciendo algo que al primer paso daba
+     un fallo. Se apaga y se dice por que, que es lo que ya hacen la comparacion
+     y el trazado con lo que su fuente no tiene. */
+  if (!hayEjeDeDistancia()) {
+    detener();
+    barra.dataset.sinDistancia = "si";
+    const nota = document.getElementById("nota-transporte");
+    if (nota) {
+      /* Sin dos puntos seguidos: el motivo ya trae los suyos. */
+      nota.textContent = "En " + FUENTES[fuente].nombre +
+        " no hay reproducción por distancia, porque " + porQueNoHayDistancia() +
+        ". Las señales de esta captura se leen contra el tiempo.";
+    }
+    return;
+  }
+  barra.dataset.sinDistancia = "no";
+
   const t = instante();
   const s = serieDelPropio(t.vuelta);
   const total = s.length ? s[s.length - 1][0] : 0;
@@ -8179,9 +8266,14 @@ function reproducir() {
       const v = vueltaEnFraccion(propuesto);
       soltarEspera();
       detener();
-      decirEstadoApi("La vuelta " + v + " no se pudo traer: " + estado.fallo[v] +
-                     ". La reproducción se detuvo acá; mové el cabezal a esa " +
-                     "vuelta para volver a pedirla.", true);
+      const f = estado.fallo[v];
+      const motivo = (f && f.motivo) || f;
+      decirEstadoApi("La vuelta " + v + " no se pudo traer: " + motivo +
+                     (f && f.permanente
+                       ? " La reproducción se detuvo acá y no se reintenta: " +
+                         "volver a pedirla daría lo mismo."
+                       : " La reproducción se detuvo acá; mové el cabezal a esa " +
+                         "vuelta para volver a pedirla."), true);
       return;
     }
     if (propuesto < 1 && faltaLoImprescindible(propuesto)) {

@@ -126,6 +126,57 @@ class SeriesPorDistanciaTests(unittest.TestCase):
         self.assertLessEqual(len(r["vehiculos"]["car1"]["distancia_m"]), 60)
 
 
+class SinEjeDeDistanciaTests(unittest.TestCase):
+    """Cada fuente sin eje espacial explica **su** motivo, no el de otra.
+
+    El mensaje era uno solo, escrito para OpenF1 ---los huecos de 83 m entre
+    muestras--- y se devolvia igual para cualquier fuente sin distancia. Quien
+    abria una captura del bus leia una explicacion sobre una fuente que no
+    estaba usando, y ademas equivocada: en el bus el problema no es que el
+    muestreo sea pobre, es que la senal no existe.
+    """
+
+    def test_el_bus_explica_que_no_publica_odometro(self) -> None:
+        with self.assertRaises(HTTPException) as caso:
+            api_sesion.series_por_distancia("can:segmento:sample_01", senales="speed")
+        detalle = caso.exception.detail
+        self.assertEqual(caso.exception.status_code, 422)
+        self.assertIn("odometro", detalle)
+        self.assertIn("can_real_replay", detalle)
+        self.assertNotIn("OpenF1", detalle)
+        self.assertNotIn("83 m", detalle)
+
+    def test_la_fuente_deportiva_sigue_explicando_sus_huecos(self) -> None:
+        with self.assertRaises(HTTPException) as caso:
+            api_sesion.series_por_distancia("9939", senales="speed")
+        detalle = caso.exception.detail
+        self.assertIn("83 m", detalle)
+        self.assertNotIn("odometro", detalle)
+
+    def test_se_declara_que_no_es_un_fallo_reintentable(self) -> None:
+        """Mover el cabezal mil veces no hace que el bus declare distancia."""
+        for sesion in ("can:segmento:sample_01", "9939"):
+            with self.assertRaises(HTTPException) as caso:
+                api_sesion.series_por_distancia(sesion, senales="speed")
+            self.assertIn("no es un fallo que se pueda reintentar",
+                          caso.exception.detail.lower())
+
+    def test_las_vueltas_dan_el_mismo_motivo_que_las_series(self) -> None:
+        """Tres rutas contestaban lo mismo con tres textos distintos."""
+        r = api_sesion.listar_vueltas("can:segmento:sample_01")
+        self.assertEqual(r["vueltas"], [])
+        self.assertIn("odometro", r["motivo"])
+
+    def test_las_posiciones_tambien(self) -> None:
+        with self.assertRaises(HTTPException) as caso:
+            api_sesion.posiciones_en_pista("can:segmento:sample_01", vuelta=1)
+        self.assertIn("odometro", caso.exception.detail)
+
+    def test_una_fuente_sin_motivo_escrito_no_inventa_uno(self) -> None:
+        self.assertIn("no declara distancia recorrida",
+                      api_sesion._sin_distancia("una_fuente_nueva"))
+
+
 class UnidadesDeLaSerieTests(unittest.TestCase):
     """La respuesta declara en que unidad viene cada senal.
 
@@ -326,7 +377,8 @@ class VueltasTests(unittest.TestCase):
     def test_una_fuente_sin_distancia_lo_dice_y_no_falla(self) -> None:
         r = api_sesion.listar_vueltas("9939")
         self.assertEqual(r["vueltas"], [])
-        self.assertIn("no declara distancia", r["motivo"])
+        self.assertIn("no tiene eje de distancia", r["motivo"])
+        self.assertIn("83 m", r["motivo"])
 
     def test_marca_como_incompleta_una_vuelta_que_no_arranca_en_cero(self) -> None:
         """Un tramo no es una vuelta, y ofrecerlo para comparar seria enganoso."""

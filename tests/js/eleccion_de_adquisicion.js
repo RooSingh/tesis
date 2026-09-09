@@ -39,13 +39,26 @@ function extraer(nombre) {
 /* `etiquetaDeCorrida` lee `corrida`, que es el estado del modulo. Se lo pone
    en el ambito global, que es lo que ve un cuerpo construido con
    `new Function`. */
+/* La fuente de datos vigente. Ojo con el nombre: el `fuente` de este archivo es
+   el texto del `app.js`, y este es el de las funciones extraidas, que preguntan
+   si esa fuente tiene eje de distancia. */
+globalThis.fuente = "f1";
 globalThis.corrida = { adquisicion: null, fase: null, disponibles: null };
 const NOMBRES = ["nombreDeFase", "etiquetaDeCorrida", "duracionCorta",
                  "queEsLaFase", "numeroMedido",
                  "alcanceEsAmbiguo", "hayAlcanceQueElegir",
                  "adquisicionSeSolapa", "alcanceElegidoEsValido", "faseDeLaDireccion",
-                 "filaDeCorrida", "fechaAr", "cifra", "alcancePermitePedir"];
-const sacadas = new Function(NOMBRES.map(extraer).join("\n\n") +
+                 "filaDeCorrida", "fechaAr", "cifra", "hayEjeDeDistancia", "porQueNoHayDistancia", "alcancePermitePedir"];
+/* La tabla de que fuentes tienen eje de distancia: la compuerta la mira antes
+   de dejar pedir, y sin ella no se puede ejercer la compuerta de verdad. */
+function constante(nombre) {
+  const i = fuente.indexOf("const " + nombre + " =");
+  if (i === -1) throw new Error("no esta la constante " + nombre);
+  return fuente.slice(i, fuente.indexOf("};", i) + 2);
+}
+
+const sacadas = new Function(constante("EJE_DE_DISTANCIA_POR_FUENTE") + "\n" +
+                             NOMBRES.map(extraer).join("\n\n") +
                              "\nreturn { " + NOMBRES.join(", ") + " };")();
 const nombreDeFase = sacadas.nombreDeFase;
 const etiquetaDeCorrida = sacadas.etiquetaDeCorrida;

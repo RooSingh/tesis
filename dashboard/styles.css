@@ -519,6 +519,17 @@
     background: var(--acento); color: var(--sobre-acento); border-color: var(--acento);
   }
   .transporte[data-modo="reproduccion"] #mandos-reproduccion { display: flex; }
+  /* SIN EJE DE DISTANCIA NO HAY MANDOS, Y EN SU LUGAR VA EL MOTIVO.
+     Va junto a la regla de arriba y con la misma forma a proposito: aquella
+     usa un selector de identificador y gana a cualquier regla escrita en otro
+     sitio con clases, por mucho que este mas abajo. Dos reglas que se pelean
+     por lo mismo tienen que estar a la vista una de la otra. */
+  .transporte[data-sin-distancia="si"] #mandos-reproduccion { display: none; }
+  .sin-reproduccion { display: none; }
+  .transporte[data-sin-distancia="si"] .sin-reproduccion {
+    display: block; margin: 0; padding: 10px 4px;
+    font-size: .78rem; color: var(--texto-medio); max-width: 96ch;
+  }
   .transporte[data-modo="vivo"] #mandos-vivo { display: flex; }
   .transporte[data-modo="vacio"] #mandos-vacio { display: flex; }
 

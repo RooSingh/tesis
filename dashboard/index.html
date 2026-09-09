@@ -68,6 +68,11 @@
   <div class="transporte" id="transporte" data-modo="reproduccion">
 
     <!-- Modo reproduccion: la sesion se recorre. -->
+    <!-- Por qué no hay reproducción, cuando la fuente no tiene eje de distancia.
+         Ocupa el lugar de los mandos en vez de dejarlos ofreciendo algo que
+         falla al primer paso. -->
+    <p class="sin-reproduccion" id="nota-transporte"></p>
+
     <div class="mandos" id="mandos-reproduccion">
       <button class="boton-transporte" id="tr-atras" type="button"
               title="Retroceder 10 segundos" aria-label="Retroceder 10 segundos">

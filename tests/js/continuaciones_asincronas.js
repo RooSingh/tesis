@@ -232,6 +232,11 @@ const PIEZAS = [
   /* La compuerta que decide si se puede pedir historico. Se extrae de verdad y
      no se sustituye por un `true`: lo que estas pruebas miran es justamente
      cuando sale una consulta y cuando no. */
+  /* La compuerta mira ademas si la fuente tiene eje de distancia: se extrae de
+     verdad, con su tabla, porque una fuente sin ese eje no tiene que pedir. */
+  constanteCalculada("EJE_DE_DISTANCIA_POR_FUENTE"),
+  fn("hayEjeDeDistancia"),
+  fn("porQueNoHayDistancia"),
   fn("adquisicionSeSolapa"),
   fn("alcanceEsAmbiguo"),
   fn("alcanceElegidoEsValido"),
@@ -310,7 +315,9 @@ function nuevoBanco(opciones) {
                              fijarCabezal: (f) => { cabezal = f; },
                              leerCabezal: () => cabezal,
                              cargarDatosDeSesion, relojDeVuelta, tiempoDePresentacion,
-                             leerVales: () => _vales.size };`;
+                             leerVales: () => _vales.size,
+                             hayEjeDeDistancia, porQueNoHayDistancia,
+                             fijarFuente: (f) => { fuente = f; } };`;
   return new Function(preludio + "\n" + consulta.join("\n") + "\n" +
                       piezas.join("\n\n") + "\n" + devolver)();
 }
@@ -1344,6 +1351,84 @@ prueba("con la vuelta ya cargada, moverse a mano no pide de nuevo", async (b) =>
 
 /* ------------------------------------------------------------------ */
 (async () => {
+/* ------------------------------------------------------------------
+   UNA FUENTE SIN EJE DE DISTANCIA NO PIDE HISTORICO
+   ------------------------------------------------------------------
+   La reproduccion historica va contra distancia recorrida. El bus del vehiculo
+   publica velocidad de rueda y no publica odometro ni distancia de vuelta, de
+   modo que ese eje no existe para el; el transporte no lo miraba y pedia la
+   vuelta bajo el cabezal igual que con cualquier otra fuente. La API contestaba
+   422 ---correctamente--- y el tablero mostraba «La vuelta 1 no se pudo traer»
+   con un consejo de reintentar que no podia funcionar.
+   ------------------------------------------------------------------ */
+
+prueba("el bus no tiene eje de distancia, y se sabe por que", async (b) => {
+  b.fijarFuente("can");
+  assert.strictEqual(b.hayEjeDeDistancia(), false);
+  assert.ok(/odómetro/.test(b.porQueNoHayDistancia()), b.porQueNoHayDistancia());
+  b.fijarFuente("openf1");
+  assert.strictEqual(b.hayEjeDeDistancia(), false);
+  assert.ok(/83 m/.test(b.porQueNoHayDistancia()), b.porQueNoHayDistancia());
+  b.fijarFuente("f1");
+  assert.strictEqual(b.hayEjeDeDistancia(), true);
+});
+
+prueba("con el bus abierto no sale una sola consulta de historico", async (b) => {
+  conAlcance(b); dosVueltasDeclaradas(b);
+  b.fijarFuente("can");
+  await b.asegurarVuelta(1);
+  b.asegurarPosiciones(1);
+  await asentar();
+  assert.deepStrictEqual(PEDIDOS, [],
+    "se pidió histórico a una fuente sin eje de distancia");
+  assert.strictEqual(b.alcancePermitePedir(), false);
+});
+
+prueba("la misma sesion en una fuente con eje si pide", async (b) => {
+  conAlcance(b); dosVueltasDeclaradas(b);
+  b.fijarFuente("f1");
+  b.asegurarVuelta(1);
+  await asentar();
+  assert.ok(PEDIDOS.length, "no pidió nada con una fuente que sí tiene el eje");
+});
+
+prueba("sin eje de distancia no se espera una vuelta que nadie va a pedir", async (b) => {
+  /* Sin esto el reproductor se quedaba en «Preparando la vuelta 1…» para
+     siempre: esperando algo que no esta en camino. */
+  conAlcance(b); dosVueltasDeclaradas(b);
+  b.fijarFuente("f1");
+  assert.strictEqual(b.faltaLoImprescindible(0), true);
+  b.fijarFuente("can");
+  assert.strictEqual(b.faltaLoImprescindible(0), false);
+});
+
+prueba("un 422 no invita a reintentar", async (b) => {
+  /* El consejo se escribio para fallos pasajeros. Con un 422 ---«esta consulta
+     no se puede responder para esta fuente»--- mover el cabezal mil veces
+     devuelve lo mismo. */
+  conAlcance(b); dosVueltasDeclaradas(b);
+  b.asegurarVuelta(2);
+  await asentar();
+  const permanente = new Error("La fuente can_real_replay no tiene eje de distancia");
+  permanente.estado = 422;
+  PEDIDOS.forEach(p => p.rechazar(permanente));
+  await asentar();
+  assert.strictEqual(b.estado.fallo[2].permanente, true);
+  assert.ok(!/reintentar/.test(JSON.stringify(AVISOS)),
+    "invitó a reintentar algo permanente: " + JSON.stringify(AVISOS));
+});
+
+prueba("un fallo pasajero sigue invitando a reintentar", async (b) => {
+  conAlcance(b); dosVueltasDeclaradas(b);
+  b.asegurarVuelta(2);
+  await asentar();
+  PEDIDOS.forEach(p => p.rechazar(new Error("500")));
+  await asentar();
+  assert.strictEqual(b.estado.fallo[2].permanente, false);
+  assert.ok(/reintentar/.test(JSON.stringify(AVISOS)),
+    "no ofreció reintentar un fallo pasajero: " + JSON.stringify(AVISOS));
+});
+
   for (const t of pendientes) await t();
   if (process.exitCode) {
     console.error("\n" + hechas + " pruebas pasaron; hubo fallos.");
