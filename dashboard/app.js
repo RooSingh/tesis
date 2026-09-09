@@ -5909,7 +5909,7 @@ function dibujarComparacion() {
       ctx.lineWidth = 1.6;
       ctx.beginPath(); ctx.moveTo(xc, 0); ctx.lineTo(xc, yEje); ctx.stroke();
       if (hayVueltas()) {
-        const et = "Vuelta " + t.vuelta + "/" + t.vueltas;
+        const et = "Vuelta " + rotuloDeVuelta(t);
         ctx.font = "600 10px 'Saira Condensed', sans-serif";
         const anchoEt = ctx.measureText(et).width + 12;
         const xEt = Math.min(xc + 2, w - anchoEt);
@@ -7193,6 +7193,32 @@ function pintarBotonDeCorrida() {
 /* El nombre de una fase se deduce de su sitio y su largo, y se dice como tal:
    son los tramos que el reloj del juego separa, no etiquetas que la fuente
    declare. Con una sola fase no hay nada que nombrar. */
+/* «Vuelta 10/8» afirma algo imposible, y aparecio en cuanto una captura empezo
+   con el juego ya en la vuelta 4.
+
+   Son dos numeraciones distintas puestas una al lado de la otra: `t.vuelta` es
+   **el numero que le da el juego** ---el que se ve en su propia pantalla, y el
+   que sirve para comparar con el--- y el total es **cuantas se grabaron**. Con
+   la grabacion empezada tarde, la primera es mayor que la segunda.
+
+   No se resuelve renumerando desde uno: eso tiraria el unico dato que permite
+   cruzar esta sesion con la del juego. Se resuelve **diciendo el tramo que se
+   grabo**, que es lo que explica por que el numero no llega hasta el total.
+
+   Cuando la grabacion si empieza en la vuelta uno ---el caso comun--- «X/N» es
+   cierto y se deja como estaba. */
+function rotuloDeVuelta(t) {
+  const numeros = (estado.vueltas || []).map(v => v.numero).filter(n => n > 0);
+  if (!numeros.length) return t.vuelta + "/" + t.vueltas;
+  const primera = Math.min.apply(null, numeros);
+  const ultima = Math.max.apply(null, numeros);
+  if (primera <= 1) return t.vuelta + "/" + t.vueltas;
+  // Con una sola vuelta no hay tramo que declarar: «7 de 7-7» no dice nada que
+  // «7» no diga, y dice peor.
+  if (primera === ultima) return String(t.vuelta);
+  return t.vuelta + " de " + primera + "\u2013" + ultima;
+}
+
 function nombreDeFase(a, f) {
   const fases = a.fases || [];
   if (fases.length <= 1) return "Fase única";
@@ -8023,7 +8049,7 @@ function pintarTransporte() {
   // Lo primero que se lee es en que vuelta va, porque es lo que ubica todo
   // lo demas. El metro y el reloj acompañan.
   document.getElementById("tr-posicion").textContent = hayVueltas()
-    ? "Vuelta " + t.vuelta + "/" + t.vueltas
+    ? "Vuelta " + rotuloDeVuelta(t)
     : relojDeSesion(t.segundos);
   document.getElementById("tr-total").textContent = hayVueltas()
     ? textoDeVuelta(t.metro) + " · " + relojDeSesion(t.segundos) + " de " + relojDeSesion(dur)
@@ -8514,7 +8540,7 @@ function pintarCronometraje() {
   /* EN QUE VUELTA. */
   pon("crono-vuelta",
       hayVueltas()
-        ? t.vuelta + '<span class="unidad">/' + t.vueltas + "</span>"
+        ? rotuloDeVuelta(t).replace(/(\/|\sde\s)(.*)$/, '<span class="unidad">$1$2</span>')
         : '<span class="unidad">tramo</span>');
 
   /* CUANTO LLEVA DE VUELTA. Primero el cronometro medido; si la fuente no lo
