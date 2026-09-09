@@ -27,5 +27,8 @@ _to_delete/
 # Los valores de entorno de esta maquina. El ejemplo si se versiona.
 .env
 
+# El puerto del anfitrion para la base, que es de cada maquina y no del trabajo.
+infra/.env
+
 # Iteraciones descartables de figuras. Las que valen viven en informe/tesis/figuras.
 Claude outputs/

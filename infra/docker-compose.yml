@@ -57,18 +57,42 @@ services:
     # es justamente lo que puede cambiar de version ---y de valores por
     # omision--- sin que nadie lo pida. La etiqueta apunta a la imagen que ya
     # estaba en la maquina, de modo que recrear no descarga nada.
-    image: eclipse-mosquitto:2.1.2
+    #
+    # EL SUFIJO `-alpine` NO ES UNA VARIANTE ELEGIDA: es la unica forma en que
+    # esa version esta publicada. `eclipse-mosquitto:2.1.2` **no existe en el
+    # registro** ---la serie 2.1 se publica solo como `2.1.x-alpine`--- y con esa
+    # etiqueta `up -d` falla en una maquina nueva con `manifest unknown`. En la
+    # maquina de origen no se noto porque la imagen ya estaba descargada. Que es
+    # exactamente la misma quedo comprobado el 2026-09-08: el manifiesto de
+    # `latest` ---la etiqueta con la que se habia descargado--- y el de
+    # `2.1.2-alpine` son identicos byte a byte.
+    image: eclipse-mosquitto:2.1.2-alpine
     container_name: tesis-mosquitto
-    # `no` reproduce la conducta que el contenedor tenia. Conviene evaluar
-    # `unless-stopped`, que lo levantaria solo tras un reinicio de Docker ---esta
-    # jornada hubo uno y los contenedores quedaron abajo--- pero es un cambio de
-    # conducta y se deja a decision de la autora.
-    restart: "no"
+    # DESDE EL ENTORNO, CON `no` POR OMISION.
+    #
+    # `no` reproduce la conducta que el contenedor tenia en la maquina de
+    # trabajo, y ahi sigue siendo lo correcto: una jornada hubo un reinicio de
+    # Docker y que los contenedores quedaran abajo fue informacion, no un
+    # estorbo.
+    #
+    # En una maquina desatendida es al reves. Una Raspberry que se cuelga de la
+    # corriente vuelve sola, y si los contenedores no vuelven con ella el
+    # sistema queda caido sin que nadie se entere. Ahi se pone
+    # `unless-stopped`, en el `.env` de esta carpeta.
+    restart: ${DOCKER_REINICIO:-no}
     ports:
       # Solo el 1883. El listener del panel en 9883 existe en la configuracion y
       # **no estaba publicado al anfitrion**; se reproduce tal cual para no
       # exponer nada que antes no lo estuviera.
-      - "1883:1883"
+      #
+      # LA INTERFAZ TAMBIEN SALE DEL ENTORNO, y por omision es la de siempre.
+      # Docker publica en todas las interfaces si no se le dice otra cosa, de
+      # modo que en una maquina conectada a una red domestica el intermediario
+      # queda escuchando en ella: cualquiera puede publicar telemetria falsa o
+      # suscribirse a la real, porque no pide credenciales. En un despliegue se
+      # pone `127.0.0.1`, que es de donde se conectan el consumidor y el
+      # capturador, los dos en la misma maquina.
+      - "${BIND_ANFITRION:-0.0.0.0}:1883:1883"
     volumes:
       # La configuracion, de solo lectura: el contenedor no debe poder cambiar lo
       # que el repositorio declara.
@@ -85,17 +109,35 @@ services:
     # modo que en esta no se descarga nada y en otra se descarga exactamente esa.
     image: timescale/timescaledb@sha256:61f891691050da6032023c01ea885730eeeba06b7c17b403e7d0b9c49c37dfe9
     container_name: tesis-timescaledb
-    restart: "no"
+    # Lo mismo que arriba, y con mas motivo: aca vive lo que no se puede perder.
+    restart: ${DOCKER_REINICIO:-no}
     environment:
       # Las mismas credenciales que `backend/config.py` tiene por omision. Son
       # locales y estan en el codigo desde el principio: no son un secreto que
       # este archivo revele, son la configuracion de un servicio que solo
       # escucha en esta maquina.
-      POSTGRES_USER: tesis_user
-      POSTGRES_PASSWORD: tesis_pass
-      POSTGRES_DB: tesis_db
+      #
+      # Salen del entorno con esos mismos valores por omision. Existe para poder
+      # poner otra contrasena donde la maquina aloja algo mas, sin editar un
+      # archivo versionado. **Solo tienen efecto cuando el volumen se crea**:
+      # PostgreSQL las usa al inicializar la base y despues las ignora, de modo
+      # que cambiarlas sobre un volumen que ya existe no cambia nada y da la
+      # falsa impresion de haber cambiado algo.
+      POSTGRES_USER: ${DB_USER:-tesis_user}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-tesis_pass}
+      POSTGRES_DB: ${DB_NAME:-tesis_db}
     ports:
-      - "5432:5432"
+      # EL PUERTO DEL ANFITRION SALE DEL ENTORNO, con 5432 por omision: en la
+      # maquina de origen no cambia nada. Existe porque 5432 es el puerto por
+      # omision de PostgreSQL y por eso mismo suele estar tomado por otra cosa
+      # en una computadora que ya corre otros trabajos; ahi `up -d` falla con
+      # `port is already allocated` y la unica salida honesta es publicar en
+      # otro puerto, no bajar la base ajena.
+      #
+      # Quien lo cambie tiene que exportar **tambien** `DB_PORT` con el mismo
+      # valor, porque es de donde `backend/config.py` lo lee. Adentro del
+      # contenedor sigue siendo 5432 siempre.
+      - "${BIND_ANFITRION:-0.0.0.0}:${DB_PUERTO_ANFITRION:-5432}:5432"
     volumes:
       # NOMBRADO, no anonimo. Es la diferencia entre que `docker rm` se lleve la
       # base o no.

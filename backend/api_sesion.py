@@ -28,7 +28,7 @@ from __future__ import annotations
 import threading
 import time
 from collections import OrderedDict
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Annotated, Any
 
 from fastapi import APIRouter, HTTPException, Query
@@ -37,6 +37,17 @@ from backend import (catalogo_curvas, catalogo_sesiones, db,
                      procedencia_sesiones)
 
 router = APIRouter()
+
+#: A veinte muestras por segundo, dos consecutivas estan a cincuenta
+#: milisegundos. Un salto de mas de dos segundos no es conduccion: es el
+#: vehiculo detenido, la captura cortada, o dos cargas distintas de la misma
+#: sesion pegadas una a la otra.
+#:
+#: Vive en el modulo, y no dentro de `vueltas`, porque de el salen tres cosas
+#: que tienen que decir lo mismo: la duracion efectiva, el hueco mayor y los
+#: limites de cada hueco. Escrito tres veces, tarde o temprano una de las tres
+#: queda en otro numero.
+HUECO_MAXIMO_S = 2.0
 
 #: Nombre de la senal de distancia por fuente. La fuente deportiva no declara
 #: distancia recorrida y por eso no figura: en OpenF1 no hay eje espacial
@@ -236,19 +247,27 @@ def listar_vueltas(
                    max(invalida)                  AS invalida,
                    -- Suma de los intervalos que son de conduccion continua.
                    extract(epoch FROM sum(salto)
-                           FILTER (WHERE salto < interval '2 seconds')) AS efectiva,
-                   extract(epoch FROM max(salto))                       AS hueco
+                           FILTER (WHERE salto < interval '{hueco}')) AS efectiva,
+                   extract(epoch FROM max(salto))                       AS hueco,
+                   -- DONDE estan los huecos, no solo cuanto dura el mayor.
+                   --
+                   -- `hueco_mayor_s` dice si la vuelta se corto; no dice en que
+                   -- momento. Quien reproduce la vuelta necesita lo segundo: sin
+                   -- los limites no puede saltarse el hueco, y deducirlos de la
+                   -- serie que recibe ---que llega submuestreada--- da un umbral
+                   -- distinto segun cuantos puntos haya pedido. Aca se calculan
+                   -- sobre la resolucion completa, que es la unica que los tiene.
+                   jsonb_agg(jsonb_build_array(
+                                 extract(epoch FROM (timestamp - salto)),
+                                 extract(epoch FROM timestamp))
+                             ORDER BY timestamp)
+                       FILTER (WHERE salto >= interval '{hueco}')       AS huecos
               FROM q
              GROUP BY vuelta
              ORDER BY vuelta
-        """, tuple([senal_distancia, fuente, session_id, vehiculo, senal_distancia,
+        """.replace("{hueco}", "%g seconds" % HUECO_MAXIMO_S),
+            tuple([senal_distancia, fuente, session_id, vehiculo, senal_distancia,
                     v0, v0, v1] + tramo_par))
-
-    #: A veinte muestras por segundo, dos consecutivas estan a cincuenta
-    #: milisegundos. Un salto de mas de dos segundos no es conduccion: es el
-    #: vehiculo detenido, la captura cortada, o dos cargas distintas de la
-    #: misma sesion pegadas una a la otra.
-    HUECO_MAXIMO_S = 2.0
 
     vueltas = []
     for f in filas:
@@ -275,6 +294,16 @@ def listar_vueltas(
             "duracion_bruta_s": round(bruta, 3) if bruta is not None else None,
             "hueco_mayor_s": round(hueco, 3) if hueco is not None else None,
             "continua": bool(hueco is not None and hueco <= HUECO_MAXIMO_S),
+            # DONDE SE CORTO, NO SOLO CUANTO.
+            #
+            # Los mismos intervalos que `duracion_s` descarta, dichos con sus
+            # dos extremos. Quien reproduce la vuelta los necesita para saltar
+            # el hueco en vez de recorrerlo, y para no unir con una recta dos
+            # muestras que no se tocan. Deducirlos de la serie submuestreada da
+            # un umbral distinto en cada resolucion; estos salen de la
+            # resolucion completa. Una vuelta continua devuelve la lista vacia,
+            # que es una afirmacion: no hubo cortes.
+            "huecos": _huecos_legibles(f[11] if len(f) > 11 else None),
             # Los dos instantes ya se calculaban para la duracion y no se
             # devolvian. Sin ellos, un tablero que recorre la sesion no puede
             # preguntar «como estaba el clima aca» ni ubicar a los rivales en
@@ -290,6 +319,33 @@ def listar_vueltas(
         })
     return {"session_id": session_id, "fuente": fuente,
             "vehiculo": vehiculo, "vueltas": vueltas}
+
+
+def _huecos_legibles(crudos: Any) -> list[dict]:
+    """Los limites de cada hueco de captura, en ISO y en segundos.
+
+    Entran como pares de epoch ---es lo que `jsonb_build_array` sabe agregar sin
+    depender de la zona horaria de la sesion--- y salen como los declara el
+    resto de la respuesta: `desde_utc`, `hasta_utc`. Se devuelve lista vacia y
+    no `None` cuando la vuelta no tuvo cortes, porque «no hubo» es una
+    afirmacion y `None` seria «no se sabe».
+    """
+    if not crudos:
+        return []
+    salida = []
+    for par in crudos:
+        try:
+            a, b = float(par[0]), float(par[1])
+        except (TypeError, ValueError, IndexError):
+            continue
+        if not (b > a):
+            continue
+        salida.append({
+            "desde_utc": datetime.fromtimestamp(a, tz=timezone.utc).isoformat(),
+            "hasta_utc": datetime.fromtimestamp(b, tz=timezone.utc).isoformat(),
+            "duracion_s": round(b - a, 3),
+        })
+    return salida
 
 
 def _explicar_descensos(fuente: str, session_id: str, vehiculos: dict,

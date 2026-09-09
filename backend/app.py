@@ -21,6 +21,7 @@ from fastapi import HTTPException
 from fastapi import Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
+from fastapi.responses import FileResponse
 from fastapi.responses import StreamingResponse
 
 from adapters import f1_25 as f1_25_adapter
@@ -38,6 +39,9 @@ from backend import recorrido
 from backend import resumen_sesion
 
 from backend.config import BACKEND_APP_NAME
+from backend.config import CORS_ORIGENES
+from backend.config import DIRECTORIO_TABLERO
+from backend.config import SERVIR_TABLERO
 from backend.db import (
     LIMITE_FILAS_REPLAY,
     calcular_ventanas_vueltas,
@@ -197,12 +201,12 @@ async def permitir_medir_los_tiempos(request, call_next):
     respuesta.headers["Timing-Allow-Origin"] = "*"
     return respuesta
 
+# Los origenes salen del entorno. Estaban escritos aca y por eso el tablero solo
+# podia servirse desde `localhost:3000`; el motivo completo esta en
+# `backend/config.py`, junto a los valores por omision, que son estos mismos.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://127.0.0.1:3000",
-        "http://localhost:3000",
-    ],
+    allow_origins=CORS_ORIGENES,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -232,8 +236,17 @@ def _validar_limite(limite: int) -> None:
 
 
 @app.get("/")
-def root() -> dict:
-    """Endpoint basico para verificar que el backend esta activo."""
+def root():
+    """El estado del backend, o el tablero cuando esta aplicacion lo sirve.
+
+    Sin `SERVIR_TABLERO` devuelve exactamente lo que devolvia siempre: dos
+    servidores, cada uno con su raiz. Con el encendido, la raiz del dominio
+    tiene que ser el tablero y no un JSON, que es lo que espera quien escribe
+    el nombre en la barra de direcciones.
+    """
+
+    if SERVIR_TABLERO:
+        return FileResponse(Path(DIRECTORIO_TABLERO) / "index.html")
     return {"message": "Backend de telemetria activo"}
 
 
@@ -1113,3 +1126,22 @@ async def live_stream_endpoint() -> StreamingResponse:
             "X-Accel-Buffering": "no",
         },
     )
+
+
+# EL TABLERO, SERVIDO POR ESTA MISMA APLICACION CUANDO SE LO PIDE.
+#
+# Va **al final del archivo a proposito**: un montaje en `/` atrapa todo lo que
+# no haya coincidido antes, de modo que tiene que registrarse despues de la
+# ultima ruta de la API. Puesto mas arriba se comeria los endpoints declarados
+# debajo de el, y en silencio.
+#
+# `html=True` hace que un directorio resuelva a su `index.html`, que es lo que
+# espera un tablero servido desde la raiz de un dominio.
+#
+# Apagado por omision: en desarrollo siguen siendo dos servidores. El por que de
+# encenderlo hacia afuera esta en `backend/config.py`.
+if SERVIR_TABLERO:
+    from fastapi.staticfiles import StaticFiles
+
+    app.mount("/", StaticFiles(directory=DIRECTORIO_TABLERO, html=True),
+              name="tablero")

@@ -390,6 +390,84 @@ class VueltaConSalto(unittest.TestCase):
         self.assertTrue(r["vueltas"][0]["continua"])
         self.assertEqual(r["vueltas"][0]["duracion_s"], 130.1)
 
+    def test_una_vuelta_continua_declara_que_no_tuvo_cortes(self):
+        """Lista vacia, no `None`: «no hubo» es una afirmacion."""
+        from datetime import datetime, timezone
+        t0 = datetime(2026, 9, 2, tzinfo=timezone.utc)
+        t1 = datetime(2026, 9, 2, 0, 2, 10, tzinfo=timezone.utc)
+        filas = [(2, 2604, 0.2, 7006.2, t0, t1, 40.0, 320.0, 0.0, 130.1, 0.1, None)]
+        falsa, parche = _con(filas)
+        with parche:
+            r = api_sesion.listar_vueltas("f1_25:session:1")
+        self.assertEqual(r["vueltas"][0]["huecos"], [])
+
+    def test_los_limites_de_cada_hueco_se_devuelven_con_sus_dos_extremos(self):
+        """POR QUE HIZO FALTA ESTE DATO.
+
+        `hueco_mayor_s` dice si la vuelta se corto; no dice cuando. El tablero
+        lo deducia de la serie que recibe, que llega submuestreada: cuatro mil
+        muestras a 50 ms con un corte de 2,05 s, reducidas a 300 puntos, quedan
+        con intervalos de 700 ms y el umbral heuristico sube a 2,8 s, de modo
+        que el corte deja de contar y el reloj reproduce una pausa que este
+        mismo endpoint excluyo de `duracion_s`. La misma captura daba dos
+        relojes segun cuantos puntos se pidieran.
+
+        Los limites salen de la resolucion completa, que es la unica que los
+        tiene, y no cambian al reducir.
+        """
+        from datetime import datetime, timezone
+        t0 = datetime(2026, 9, 2, tzinfo=timezone.utc)
+        t1 = datetime(2026, 9, 2, 0, 2, 10, tzinfo=timezone.utc)
+        corte_a = datetime(2026, 9, 2, 0, 0, 30, tzinfo=timezone.utc).timestamp()
+        corte_b = datetime(2026, 9, 2, 0, 0, 35, tzinfo=timezone.utc).timestamp()
+        # La bruta son 130 s; con un corte de 5 s, lo rodado son 125.
+        filas = [(2, 2604, 0.2, 7006.2, t0, t1, 40.0, 320.0, 0.0, 125.0, 5.0,
+                  [[corte_a, corte_b]])]
+        falsa, parche = _con(filas)
+        with parche:
+            r = api_sesion.listar_vueltas("f1_25:session:1")
+        v = r["vueltas"][0]
+        self.assertEqual(len(v["huecos"]), 1)
+        self.assertEqual(v["huecos"][0]["duracion_s"], 5.0)
+        self.assertTrue(v["huecos"][0]["desde_utc"].startswith("2026-09-02T00:00:30"))
+        self.assertTrue(v["huecos"][0]["hasta_utc"].startswith("2026-09-02T00:00:35"))
+        # Y lo que declaran suma exactamente la diferencia entre las dos
+        # duraciones: si no cerrara, una de las dos cuentas estaria mal.
+        self.assertAlmostEqual(v["duracion_bruta_s"] - v["duracion_s"],
+                               sum(h["duracion_s"] for h in v["huecos"]), places=3)
+
+    def test_un_limite_ilegible_se_descarta_en_vez_de_tumbar_la_respuesta(self):
+        from datetime import datetime, timezone
+        t0 = datetime(2026, 9, 2, tzinfo=timezone.utc)
+        t1 = datetime(2026, 9, 2, 0, 2, 10, tzinfo=timezone.utc)
+        filas = [(2, 2604, 0.2, 7006.2, t0, t1, 40.0, 320.0, 0.0, 130.1, 5.0,
+                  [["no es un numero", 1], [10, 5], [1, 2]])]
+        falsa, parche = _con(filas)
+        with parche:
+            r = api_sesion.listar_vueltas("f1_25:session:1")
+        # Se queda solo con el par que se puede leer y que avanza.
+        self.assertEqual(len(r["vueltas"][0]["huecos"]), 1)
+
+    def test_una_respuesta_sin_la_columna_de_huecos_no_se_rompe(self):
+        """Una fila mas corta ---otra version de la consulta--- no debe tumbar
+        la respuesta, que es el mismo cuidado que ya tenian `efectiva` y
+        `hueco`."""
+        from datetime import datetime, timezone
+        t0 = datetime(2026, 9, 2, tzinfo=timezone.utc)
+        t1 = datetime(2026, 9, 2, 0, 2, 10, tzinfo=timezone.utc)
+        filas = [(2, 2604, 0.2, 7006.2, t0, t1, 40.0, 320.0, 0.0, 130.1, 0.1)]
+        falsa, parche = _con(filas)
+        with parche:
+            r = api_sesion.listar_vueltas("f1_25:session:1")
+        self.assertEqual(r["vueltas"][0]["huecos"], [])
+
+    def test_el_umbral_de_la_consulta_y_el_de_la_lectura_son_el_mismo(self):
+        """Escrito en dos sitios, tarde o temprano uno queda en otro numero."""
+        import inspect
+        fuente = inspect.getsource(api_sesion.listar_vueltas)
+        self.assertIn('"%g seconds" % HUECO_MAXIMO_S', fuente)
+        self.assertNotIn("interval '2 seconds'", fuente)
+
 
 class MemoriaAcotadaTests(unittest.TestCase):
     """Una cache sin tope es una fuga de memoria con otro nombre.

@@ -13,15 +13,31 @@
    dibuja lo que no se midio, y se explica por que no esta.
    ============================================================ */
 
-/* Donde vive la API. Por omision, el mismo host en el puerto 8000; se puede
-   apuntar a otro con `?api=...`, que es lo que hace falta cuando el tablero
-   se sirve aparte del backend ---en desarrollo, o detras del tunel. */
+/* Donde vive la API.
+
+   LA REGLA ES «EL MISMO ORIGEN, SALVO QUE ESTEMOS EN EL SERVIDOR DE DESARROLLO».
+
+   La version anterior hacia lo contrario: le pegaba `:8000` al host salvo que ya
+   estuviera en el 8000. Eso funciona mientras el tablero y la API vivan en la
+   misma maquina y en dos puertos, y **se rompe apenas dejan de hacerlo**:
+   servido en `https://un.dominio/`, pedia `https://un.dominio:8000`, un puerto
+   que detras de un tunel no existe y que nadie publica.
+
+   Al derredor: el 3000 es el servidor de desarrollo del tablero, el unico caso
+   donde la API esta en otro lado. En cualquier otro origen ---la API sirviendo
+   los archivos ella misma, que es como corre el despliegue--- se pide contra el
+   mismo origen y no hay ni puerto que adivinar ni CORS que permitir.
+
+   `?api=...` sigue ganando sobre todo, que es lo que hace falta para medir un
+   backend contra otro. */
 const API = (function () {
   const pedido = new URLSearchParams(location.search).get("api");
   if (pedido) return pedido.replace(/\/+$/, "");
   if (location.protocol === "file:") return "http://127.0.0.1:8000";
-  if (location.port === "8000") return "";
-  return location.protocol + "//" + location.hostname + ":8000";
+  if (location.port === "3000") {
+    return location.protocol + "//" + location.hostname + ":8000";
+  }
+  return "";
 })();
 
 /* ============================================================
@@ -1059,7 +1075,7 @@ function medidor(rotulo, valor, maximo, unidad, colorFrio, colorCaliente) {
     : (Math.abs(valor) < 10 ? Number(valor).toFixed(1).replace(".", ",") : Math.round(valor));
   return '<div class="medidor" data-medidor="' + rotulo +
     '"><svg viewBox="0 0 124 112" role="img" aria-label="' +
-    rotulo + ': ' + valor + ' ' + unidad + '">' +
+    rotulo + ': ' + escrito + ' ' + unidad + '">' +
       '<defs><linearGradient id="' + id + '" x1="0" y1="1" x2="1" y2="0">' +
         '<stop offset="0%" stop-color="' + colorFrio + '"></stop>' +
         '<stop offset="55%" stop-color="' + colorFrio + '"></stop>' +
@@ -1121,7 +1137,10 @@ function actualizarMedidor(rotulo, valor, maximo, unidad) {
     : (Math.abs(valor) < 10 ? Number(valor).toFixed(1).replace(".", ",") : String(Math.round(valor)));
   if (txt && txt.textContent !== escrito) txt.textContent = escrito;
   const svg = el.querySelector("svg");
-  if (svg) svg.setAttribute("aria-label", rotulo + ": " + valor + " " + unidad);
+  /* Se anuncia lo mismo que se escribe. Con el valor sin medir, `valor` es
+     `null` y esto decia «Marcha: null de 8»: quien lo lee con un lector de
+     pantalla recibia una palabra del lenguaje en vez de una ausencia. */
+  if (svg) svg.setAttribute("aria-label", rotulo + ": " + escrito + " " + unidad);
   return true;
 }
 
@@ -1368,23 +1387,46 @@ function pintarG() {
   document.getElementById("canal-g").textContent = tres ? "3 ejes" : "2 ejes + guiñada";
 
   // La estela es la huella de la vuelta entera: no cambia al avanzar.
-  const pts = _estelaG(t.vuelta);
+  const huella = _estelaG(t.vuelta);
+  const pts = huella.puntos;
   const estela = document.getElementById("estela-g");
   const firmaEstela = pts.length + "|" + pts[pts.length - 1].join(",");
   if (estela.dataset.firma !== firmaEstela) {
     estela.dataset.firma = firmaEstela;
     estela.setAttribute("d", "M" + pts.map(p => p[0].toFixed(1) + " " + p[1].toFixed(1)).join(" L"));
   }
-  // El punto va donde esta el cabezal, no dando vueltas por su cuenta: lo que
-  // muestra es el instante que se esta mirando.
-  const idx = Math.min(pts.length - 1, Math.max(0, Math.round(instante().fraccion * (pts.length - 1))));
+  /* EL PUNTO VA EN LA ACELERACION DEL INSTANTE, NO EN UN INDICE DE LA ESTELA.
+     La estela se dibuja con ochenta puntos ---uno de cada tantos, para que el
+     trazo no sea una mancha---, y el punto se colocaba redondeando la fraccion
+     de vuelta sobre esos ochenta: ochenta posiciones para una vuelta de dos
+     minutos son 1,6 s de escalon, y el punto daba saltos mientras el coche se
+     movia. Ahora se coloca con las dos aceleraciones que ya trae el instante
+     compartido, interpoladas como el resto de los instrumentos. La escala es la
+     misma de la estela, para que el punto y el trazo hablen del mismo dibujo.
+
+     La estela esta decimada y puede haber perdido el pico: si el valor del
+     instante se sale del recuadro, se lo sujeta al borde en vez de dibujarlo
+     fuera del panel. */
   const punto = document.getElementById("punto-g");
   const halo = document.getElementById("halo-g");
   if (punto && halo) {
-    punto.setAttribute("cx", pts[idx][0].toFixed(1));
-    punto.setAttribute("cy", pts[idx][1].toFixed(1));
-    halo.setAttribute("cx", pts[idx][0].toFixed(1));
-    halo.setAttribute("cy", pts[idx][1].toFixed(1));
+    let cx, cy;
+    const gx = t.gLat, gy = t.gLong;
+    if (typeof gx === "number" && Number.isFinite(gx) &&
+        typeof gy === "number" && Number.isFinite(gy)) {
+      const norm = v => Math.max(-1, Math.min(1, v / huella.maximo));
+      cx = 90 + norm(gx) * 68;
+      cy = 90 - norm(gy) * 68;
+    } else {
+      const idx = Math.min(pts.length - 1,
+                           Math.max(0, Math.round(t.fraccion * (pts.length - 1))));
+      cx = pts[idx][0];
+      cy = pts[idx][1];
+    }
+    punto.setAttribute("cx", cx.toFixed(2));
+    punto.setAttribute("cy", cy.toFixed(2));
+    halo.setAttribute("cx", cx.toFixed(2));
+    halo.setAttribute("cy", cy.toFixed(2));
   }
 }
 
@@ -1394,12 +1436,18 @@ function _estelaG(vuelta) {
   const longitudinal = serieDeCanal("glong", vuelta, claveVehiculoPropio()) || [];
   const lateral = serieDeCanal("glat", vuelta, claveVehiculoPropio()) || [];
   const n = Math.min(longitudinal.length, lateral.length);
-  if (!n) return [[90, 90]];
+  if (!n) return { puntos: [[90, 90]], maximo: 1 };
   const valores = [];
   const paso = Math.max(1, Math.floor(n / 80));
   for (let i = 0; i < n; i += paso) valores.push([Number(lateral[i][1]), Number(longitudinal[i][1])]);
   const maximo = Math.max(1, ...valores.flat().map(Math.abs));
-  return valores.map(p => [90 + (p[0] / maximo) * 68, 90 - (p[1] / maximo) * 68]);
+  /* Se devuelve tambien la escala: el punto del instante se coloca con las
+     aceleraciones interpoladas y tiene que caer en el mismo dibujo que la
+     estela, no en uno normalizado aparte. */
+  return {
+    puntos: valores.map(p => [90 + (p[0] / maximo) * 68, 90 - (p[1] / maximo) * 68]),
+    maximo: maximo,
+  };
 }
 
 /* ---------------- trazado real ---------------- */
@@ -1951,7 +1999,13 @@ let _selloSeries = 0;
 let _selloDeLoArmado = -1;
 const _seriesArmadas = new Map();
 
-function cambiaronLasSeries() { _selloSeries++; }
+function cambiaronLasSeries() {
+  _selloSeries++;
+  /* El instante compartido se resuelve contra los instantes medidos de la
+     vuelta: si cambian los datos o su alcance, lo memorizado deja de valer
+     aunque el cabezal no se haya movido. */
+  _instanteClave = null;
+}
 
 function serieDeCanal(canal, vuelta, clave) {
   if (estadoSesion === "vivo") {
@@ -1987,6 +2041,502 @@ function serieDeCanal(canal, vuelta, clave) {
 
 function serieVelocidad(clave, vuelta) {
   return serieDeCanal("speed", vuelta || vueltaElegida || 1, clave) || [];
+}
+
+/* ============================================================
+   UN SOLO INSTANTE DE PRESENTACION, Y ES UNA MARCA DE TIEMPO
+   ------------------------------------------------------------
+   EL DEFECTO. La marca del coche se interpolaba sobre instantes medidos
+   ---`posicionesAhora`--- y todo lo demas se leia con
+   `Math.round(fraccion * (muestras - 1))`. Dos cosas distintas: una avanza de
+   forma continua y la otra a escalones, y ademas cada canal tiene su propia
+   cantidad de muestras, de modo que el escalon del regimen y el de la
+   velocidad no caian ni siquiera en el mismo sitio. En Spa, con 300 puntos
+   sobre una vuelta de 127 s, cada escalon dura 425 ms: a 60 cuadros por
+   segundo son veinticinco cuadros mostrando la misma cifra mientras el coche
+   se mueve.
+
+   LA CORRECCION. Se resuelve **una** referencia temporal por cuadro ---un
+   instante UTC absoluto--- y de ahi leen los instrumentos, la distancia, la
+   marca del coche y los cabezales de los graficos. Un instante absoluto es lo
+   unico que las respuestas de la API tienen en comun: `/series` entrega
+   `timestamp_utc` por muestra y `/posiciones` entrega `desde_utc` mas
+   `instantes_ms`. Dos fracciones normalizadas sobre intervalos distintos no
+   son el mismo momento; dos marcas UTC si.
+
+   LA POLITICA DE LAS PAUSAS, DICHA UNA VEZ. `duracion_s` de `/vueltas` es la
+   duracion **efectiva**: la API suma solo los intervalos de conduccion
+   continua y descarta los huecos de captura de mas de dos segundos. El
+   transporte ya reparte la linea de tiempo con esa cifra. Antes,
+   `posicionesAhora` tomaba esa fraccion y la estiraba sobre la ventana UTC
+   **bruta** de la vuelta, que incluye los huecos: se comprimia el tiempo de un
+   lado y se lo repartia entero del otro. Ahora hay una sola politica y esta
+   escrita aca: **un hueco de captura no consume tiempo de reproduccion**. El
+   reloj de la vuelta acumula tiempo efectivo y salta el hueco, igual que la
+   cifra con la que el transporte dimensiono esta vuelta.
+
+   ESTO ES REPRESENTACION, NO DATO. `estado.series` y `estado.posiciones`
+   quedan intactos. Lo que se arma aca son vistas temporales derivadas, en su
+   propia cache, invalidadas por el mismo sello que las series por distancia.
+   Los maximos y minimos de los graficos, la exportacion y la comparacion
+   siguen leyendo las muestras.
+   ============================================================ */
+
+/* Que es un hueco de captura. Es el mismo umbral que usa la API para separar
+   `duracion_s` de `duracion_bruta_s`: a veinte muestras por segundo, dos
+   seguidas estan a cincuenta milisegundos, y mas de dos segundos no es
+   conduccion sino captura cortada. */
+const HUECO_DE_CAPTURA_MS = 2000;
+
+/* La distancia recorrida no es un canal de la lista de metricas, pero se lee
+   contra el tiempo igual que ellos: se la nombra con una clave que ninguna
+   senal puede tener. */
+const EJE_DISTANCIA = " distancia";
+
+/* QUE SE INTERPOLA Y QUE NO, POR LO QUE LA SENAL ES.
+   Una velocidad entre 249 y 258 km/h paso por 253: interpolarla dice algo que
+   ocurrio. Una marcha entre la 4 y la 5 **no** pasa por la 4,5, y un DRS entre
+   cerrado y abierto no esta medio abierto. Esas se mantienen en escalon sobre
+   su instante medido: valen lo que valian hasta que la muestra siguiente diga
+   otra cosa, y nunca antes.
+
+   En el bus del vehiculo el acelerador y el freno son `gas_pressed` y
+   `brake_pressed`: pisado o no pisado, no cuanto. Ahi tambien son escalones. */
+function esCanalEscalonado(canal) {
+  if (canal === "gear" || canal === "drs") return true;
+  if (fuente === "can" && (canal === "throttle" || canal === "brake")) return true;
+  return false;
+}
+
+/* ============================================================
+   LOS LIMITES DE CONTINUIDAD SON DE LA VUELTA, NO DE CADA CANAL
+   ------------------------------------------------------------
+   LA PRIMERA VERSION LOS DEDUCIA DE CADA SERIE, Y ESO NO SE PUEDE.
+
+   Tomaba `max(2 s, mediana de intervalos x 4)` sobre la serie **ya reducida**,
+   y de ahi salen dos errores.
+
+   Uno: el umbral depende de cuantos puntos se hayan pedido. Cuatro mil
+   muestras a 50 ms con un corte real de 2,05 s, reducidas a 300 puntos, quedan
+   con intervalos de 700 ms: el umbral sube a 2,8 s y el corte deja de contar.
+   La misma captura, pedida a otra resolucion, da otro reloj.
+
+   Dos: cada canal calculaba el suyo **despues** de descartar sus nulos. Un
+   regimen con pocas muestras interpola por encima de un hueco que el reloj de
+   la distancia ya habia detectado y salteado. Dos senales de la misma vuelta
+   con dos ideas distintas de cuando hubo captura.
+
+   MEDIDO EN SPA. La vuelta 1 sin acotar el alcance mezcla la formacion y la
+   carrera; reducida a 294 puntos, la heuristica declaraba 22 s de huecos. La
+   API, sobre la resolucion completa, dice `hueco_mayor_s = 0,067`: no hubo un
+   solo corte. El umbral no estaba midiendo la captura, estaba midiendo el
+   submuestreo.
+
+   AHORA LOS DECLARA LA API. `/vueltas` devuelve `huecos`, los mismos
+   intervalos que descarta para calcular `duracion_s`, con sus dos extremos y
+   calculados sobre todas las muestras. Son unos para toda la vuelta y valen
+   igual para la distancia, la velocidad y el regimen.
+
+   CUANDO NO SE SABE. Una vuelta que declara `hueco_mayor_s` por debajo del
+   umbral es continua, y eso es exacto: no hay nada que saltar. Solo cuando la
+   vuelta declara que se corto y no dice donde ---una API mas vieja--- se cae en
+   un umbral, y entonces se calcula **uno para la vuelta**, del canal mas denso,
+   y se usa el mismo para todos. El reloj queda marcado `aproximado`, porque lo
+   es.
+   ============================================================ */
+function continuidadDeVuelta(vuelta, clave) {
+  const cache = _cacheTemporal();
+  const llave = "continuidad|" + vuelta + "|" + clave;
+  if (cache.has(llave)) return cache.get(llave);
+
+  const v = (estado.vueltas || []).find(x => x.numero === vuelta);
+  let armado;
+  if (v && Array.isArray(v.huecos)) {
+    const lista = [];
+    for (let i = 0; i < v.huecos.length; i++) {
+      const a = Date.parse(v.huecos[i].desde_utc);
+      const b = Date.parse(v.huecos[i].hasta_utc);
+      if (Number.isFinite(a) && Number.isFinite(b) && b > a) lista.push([a, b]);
+    }
+    armado = { huecos: lista, umbral: Infinity, exacto: true };
+  } else if (v && numeroMedido(v.hueco_mayor_s) !== null &&
+             v.hueco_mayor_s * 1000 <= HUECO_DE_CAPTURA_MS) {
+    /* La vuelta declara que su mayor separacion esta por debajo del umbral:
+       no hubo corte. Es una afirmacion, no una suposicion. */
+    armado = { huecos: [], umbral: Infinity, exacto: true };
+  } else {
+    armado = { huecos: null, umbral: _umbralDeVuelta(vuelta, clave), exacto: false };
+  }
+  cache.set(llave, armado);
+  return armado;
+}
+
+/* El umbral de emergencia, uno para toda la vuelta. Sale del canal mas denso
+   que hay ---la distancia, que viene en cada muestra--- y no de cada senal por
+   separado, que es lo que hacia que dos canales de la misma vuelta no
+   coincidieran. Sigue dependiendo de la resolucion, y por eso solo se usa
+   cuando la vuelta no declara sus cortes. */
+function _umbralDeVuelta(vuelta, clave) {
+  const st = _serieTemporalCruda(EJE_DISTANCIA, vuelta, clave);
+  const marcas = st ? st.t : null;
+  if (!marcas || marcas.length < 2) return HUECO_DE_CAPTURA_MS;
+  const ds = [];
+  for (let i = 1; i < marcas.length; i++) ds.push(marcas[i] - marcas[i - 1]);
+  ds.sort((a, b) => a - b);
+  return Math.max(HUECO_DE_CAPTURA_MS, ds[ds.length >> 1] * 4);
+}
+
+/* Cuanto del intervalo `[a, b]` fue captura de verdad. Con los cortes
+   declarados se resta el solapamiento, que es lo que hace que un reloj armado
+   sobre 300 puntos de una vuelta de 2.644 muestras coincida con la
+   `duracion_s` que la API calculo sobre las 2.644. Sin ellos, un intervalo que
+   pasa el umbral cuenta cero, que es lo unico defendible cuando no se sabe
+   donde empieza el corte. */
+function tiempoEfectivoEntre(cont, a, b) {
+  if (!(b > a)) return 0;
+  if (!cont) return (b - a) > HUECO_DE_CAPTURA_MS ? 0 : b - a;
+  if (cont.huecos) {
+    let quitar = 0;
+    for (let i = 0; i < cont.huecos.length; i++) {
+      const h = cont.huecos[i];
+      const solapa = Math.min(b, h[1]) - Math.max(a, h[0]);
+      if (solapa > 0) quitar += solapa;
+    }
+    return Math.max(0, (b - a) - quitar);
+  }
+  return (b - a) > cont.umbral ? 0 : b - a;
+}
+
+/* Si entre dos muestras hubo un corte, no se las une con una recta. */
+function hayCorteEntre(cont, a, b) {
+  return tiempoEfectivoEntre(cont, a, b) < (b - a) - 1e-9;
+}
+
+/* Las vistas temporales viven en su propia cache y se invalidan con el mismo
+   sello que las series por distancia: llega una tanda, se poda una vuelta, se
+   cierra la sesion, y todo lo derivado deja de valer sin tener que buscar que
+   entrada tocar. */
+let _selloDeLoTemporal = -1;
+const _temporales = new Map();
+
+function _cacheTemporal() {
+  if (_selloDeLoTemporal !== _selloSeries) {
+    _temporales.clear();
+    _selloDeLoTemporal = _selloSeries;
+  }
+  return _temporales;
+}
+
+/* Una senal de una vuelta contra el **tiempo**, como dos columnas paralelas
+   ordenadas por instante. Devuelve `null` cuando no se puede armar: no llego
+   la vuelta, la fuente no trae esa senal, o la respuesta no trae
+   `timestamp_utc` ---una API mas vieja--- y entonces quien llama vuelve a la
+   rejilla por indice, que es lo que habia.
+
+   NO SE SUPONE ORDEN TEMPORAL. `/series` devuelve `ORDER BY vehicle_id,
+   distancia`: sobre una vuelta normal eso coincide con el tiempo, y sobre el
+   cruce de meta no. Se comprueba y solo se ordena si hace falta, que es el
+   caso raro; recorrer para comprobar cuesta menos que ordenar siempre.
+
+   Se arma una vez por vuelta, vehiculo y senal. Reconstruirla por cuadro seria
+   el mismo defecto que `serieDeCanal` ya corrigio, en otro sitio. */
+function serieTemporal(canal, vuelta, clave) {
+  const st = _serieTemporalCruda(canal, vuelta, clave);
+  /* Los limites de continuidad se le cuelgan a la serie, pero son de la
+     vuelta: la misma lista para todos sus canales. Se resuelven aparte y no
+     dentro del armado para que `continuidadDeVuelta` pueda mirar la serie de
+     distancia sin llamarse a si misma. */
+  if (st && !st.cont) st.cont = continuidadDeVuelta(vuelta, clave);
+  return st;
+}
+
+function _serieTemporalCruda(canal, vuelta, clave) {
+  if (estadoSesion === "vivo") return null;
+  const bloque = estado.series[vuelta];
+  if (!bloque) return null;
+  const veh = bloque.vehiculos[clave];
+  if (!veh || !veh.timestamp_utc) return null;
+
+  const cache = _cacheTemporal();
+  const llave = vuelta + "|" + clave + "|" + canal;
+  if (cache.has(llave)) return cache.get(llave);
+
+  const ys = canal === EJE_DISTANCIA ? veh.distancia_m : veh[nombreDeSenal(canal)];
+  const marcas = veh.timestamp_utc;
+  let armada = null;
+  if (ys) {
+    const n = Math.min(marcas.length, ys.length);
+    const puntos = [];
+    for (let i = 0; i < n; i++) {
+      /* Un nulo no es un cero y no se rellena: la muestra no existe, y entre
+         las dos que la rodean hay lo que haya. */
+      const y = numeroMedido(ys[i]);
+      if (y === null) continue;
+      const t = typeof marcas[i] === "number" ? marcas[i] : Date.parse(marcas[i]);
+      if (!Number.isFinite(t)) continue;
+      puntos.push([t, y]);
+    }
+    let ordenada = true;
+    for (let i = 1; i < puntos.length; i++) {
+      if (puntos[i][0] < puntos[i - 1][0]) { ordenada = false; break; }
+    }
+    if (!ordenada) puntos.sort((a, b) => a[0] - b[0]);
+    /* DOS MUESTRAS CON LA MISMA MARCA NO SON DOS INSTANTES. Se queda la
+       primera: interpolar sobre un intervalo de duracion cero divide por cero,
+       y elegir la ultima seria preferir una por su posicion en el arreglo, que
+       no es un criterio. */
+    const t = [], v = [];
+    for (let i = 0; i < puntos.length; i++) {
+      if (i && puntos[i][0] === puntos[i - 1][0]) continue;
+      t.push(puntos[i][0]);
+      v.push(puntos[i][1]);
+    }
+    if (t.length) armada = { t: t, v: v };
+  }
+  cache.set(llave, armada);
+  return armada;
+}
+
+/* La ultima muestra en el instante pedido o antes de el; -1 si el instante es
+   anterior a la primera. Busqueda binaria: esto se llama una vez por canal y
+   por cuadro. */
+function _antesDe(st, t) {
+  if (!(t >= st.t[0])) return -1;
+  let lo = 0, hi = st.t.length - 1;
+  while (lo < hi) {
+    const medio = (lo + hi + 1) >> 1;
+    if (st.t[medio] <= t) lo = medio; else hi = medio - 1;
+  }
+  return lo;
+}
+
+/* UNA SENAL CONTINUA, ENTRE SUS DOS MUESTRAS.
+   Antes de la primera vale la primera y despues de la ultima vale la ultima:
+   no se extrapola, porque fuera del tramo medido no hay pendiente que
+   defender. Sobre un hueco de captura tampoco se une ---no se sabe que paso
+   ahi--- y se sostiene la ultima medida hasta que llegue la siguiente.
+
+   `sinRetroceso` es para la distancia de vuelta: cuando baja, la vuelta se
+   cerro. Unir esos dos puntos haria retroceder siete kilometros en pantalla, y
+   forzar que crezca esconderia los descensos que **si** son un error. Se
+   sostiene la ultima medida, igual que hace `posicionesAhora`. */
+function valorContinuoEn(st, t, sinRetroceso) {
+  if (!st || !st.t.length) return null;
+  const i = _antesDe(st, t);
+  if (i < 0) return st.v[0];
+  if (i >= st.t.length - 1) return st.v[i];
+  const dt = st.t[i + 1] - st.t[i];
+  if (!(dt > 0) || hayCorteEntre(st.cont, st.t[i], st.t[i + 1])) return st.v[i];
+  if (sinRetroceso && st.v[i + 1] < st.v[i]) return st.v[i];
+  const u = Math.min(1, Math.max(0, (t - st.t[i]) / dt));
+  return st.v[i] + (st.v[i + 1] - st.v[i]) * u;
+}
+
+/* UNA SENAL DISCRETA, EN ESCALON SOBRE SU INSTANTE MEDIDO.
+   Vale lo que valia hasta que la muestra siguiente diga otra cosa. Elegir la
+   muestra **mas cercana** ---que es lo que hacia el redondeo--- adelanta el
+   cambio hasta medio intervalo: la marcha subia antes de que el dato dijera
+   que subio, y eso es mostrar un estado futuro.
+
+   ANTES DE LA PRIMERA MUESTRA NO HAY ESTADO, Y SE DICE.
+   Una continua se sostiene en su primer valor porque el coche venia de algun
+   sitio y esa es la mejor cota que hay. Una discreta no: que la primera marcha
+   medida sea la cuarta no dice que estuviera en cuarta antes de que empezara a
+   medirse, y afirmarlo es inventar un estado. Se devuelve `null`, que los
+   instrumentos ya saben escribir como una raya. La regla no se extiende hacia
+   atras salvo que la fuente declare que ese estado venia de antes, y ninguna
+   de las que hay lo declara. */
+function valorEscalonadoEn(st, t) {
+  if (!st || !st.t.length) return null;
+  const i = _antesDe(st, t);
+  return i < 0 ? null : st.v[i];
+}
+
+/* ============================================================
+   EL RELOJ ES UNA LISTA DE TRAMOS CONTINUOS, NO UNA LISTA DE MUESTRAS
+   ------------------------------------------------------------
+   LO QUE FALTABA. El reloj ya descontaba los cortes declarados, de modo que el
+   **total** coincidia a cualquier resolucion. Pero guardaba las marcas de las
+   muestras ---submuestreadas--- y la vuelta de tiempo efectivo a UTC
+   interpolaba entre dos de ellas. Cuando el submuestreo se llevaba por delante
+   las dos muestras que rodean el corte, esa recta lo atravesaba.
+
+   Medido con 4.000 muestras cada 50 ms y un corte de 2,05 s entre los 99.950 y
+   los 102.000 ms, preguntando por 100.000 ms de tiempo rodado:
+
+   | resolucion | instante |
+   |---|---:|
+   | completa | 102.050 ms |
+   | 300 puntos | **101.892,3 ms**, dentro del corte |
+
+   El total era el mismo y el instante no. Comparar totales no comprueba que
+   dos resoluciones representen el mismo momento.
+
+   AHORA. El reloj se arma con los limites de la **vuelta** ---los que declara
+   `/vueltas`--- partidos por los cortes que la misma respuesta declara. Cada
+   tramo es un intervalo de captura continua, y pasar de tiempo rodado a UTC es
+   una suma dentro del tramo que le toca: no hay recta que cruce nada, y no
+   depende de cuantas muestras se hayan pedido.
+
+   ESTOS LIMITES NO SON MUESTRAS. Son los bordes de la captura, no telemetria:
+   no entran en ninguna serie, no aportan una velocidad ni una distancia que
+   nadie midio, y las senales siguen sin unirse por encima de un corte.
+
+   AL AGOTARSE UN TRAMO SE SIGUE EN EL ARRANQUE DEL SIGUIENTE. Es la unica
+   respuesta defendible: el instante siguiente al ultimo que se midio antes del
+   corte es el primero que se midio despues.
+
+   CUANDO LA VUELTA NO DECLARA SUS CORTES ---una API mas vieja--- los tramos se
+   deducen de las muestras, que es lo que habia, y el reloj se marca
+   `aproximado` porque depende de la resolucion.
+   ============================================================ */
+function relojDeVuelta(vuelta) {
+  const cache = _cacheTemporal();
+  const llave = "reloj|" + vuelta + "|" + claveVehiculoPropio();
+  if (cache.has(llave)) return cache.get(llave);
+  const armado = _armarRelojDeVuelta(vuelta);
+  cache.set(llave, armado);
+  return armado;
+}
+
+/* Parte `[ini, fin]` por los cortes, y devuelve los tramos que quedan. Los
+   cortes se ordenan y se recortan a la vuelta: uno que caiga afuera no la
+   toca, y dos que se solapen cuentan una sola vez. */
+function _tramosContinuos(ini, fin, huecos) {
+  const orden = huecos.slice().sort((a, b) => a[0] - b[0]);
+  const tramos = [];
+  let desde = ini;
+  for (let i = 0; i < orden.length; i++) {
+    const a = Math.max(ini, orden[i][0]);
+    const b = Math.min(fin, orden[i][1]);
+    if (!(b > a)) continue;
+    if (a > desde) tramos.push([desde, a]);
+    if (b > desde) desde = b;
+  }
+  if (fin > desde) tramos.push([desde, fin]);
+  return tramos;
+}
+
+/* Sin cortes declarados no hay mas remedio que deducirlos de las muestras. Se
+   corta donde `hayCorteEntre` dice que se corto, y el tramo sigue en la
+   muestra siguiente. Da lo mismo que daba antes, y sigue dependiendo de la
+   resolucion: por eso quien lo usa se declara aproximado. */
+function _tramosDeMuestras(st, cont, ini, fin) {
+  if (!st || st.t.length < 2) return fin > ini ? [[ini, fin]] : [];
+  const tramos = [];
+  let desde = st.t[0];
+  for (let i = 1; i < st.t.length; i++) {
+    if (hayCorteEntre(cont, st.t[i - 1], st.t[i])) {
+      if (st.t[i - 1] > desde) tramos.push([desde, st.t[i - 1]]);
+      desde = st.t[i];
+    }
+  }
+  const ultimo = st.t[st.t.length - 1];
+  if (ultimo > desde) tramos.push([desde, ultimo]);
+  return tramos;
+}
+
+function _armarRelojDeVuelta(vuelta) {
+  const clave = claveVehiculoPropio();
+  const st = serieTemporal(EJE_DISTANCIA, vuelta, clave);
+  const cont = st ? st.cont : continuidadDeVuelta(vuelta, clave);
+  const v = (estado.vueltas || []).find(x => x.numero === vuelta);
+
+  /* LOS EXTREMOS SON DE LA VUELTA, NO DE LAS SENALES.
+     `/vueltas` los saca del primer y el ultimo instante en que se publico ese
+     numero de vuelta; la serie empieza en su primera muestra con distancia, que
+     en Spa cae 250 ms mas tarde. Tomar los de la vuelta es ademas lo que hace
+     que el reloj y el `desde_utc` de `/posiciones` ---que salen de la misma
+     consulta--- arranquen en el mismo sitio. */
+  let ini = v && v.desde_utc ? Date.parse(v.desde_utc) : NaN;
+  let fin = v && v.hasta_utc ? Date.parse(v.hasta_utc) : NaN;
+  const declarados = Number.isFinite(ini) && Number.isFinite(fin) && fin > ini;
+  if (!declarados) {
+    if (!st || st.t.length < 2) return null;
+    ini = st.t[0];
+    fin = st.t[st.t.length - 1];
+  }
+  if (!(fin > ini)) return null;
+
+  let tramos, exacto;
+  if (cont && cont.huecos) {
+    tramos = _tramosContinuos(ini, fin, cont.huecos);
+    /* Exacto solo si los dos lados lo son: los cortes declarados y la ventana
+       declarada. Con la ventana sacada de la serie, los bordes se corren con
+       la resolucion aunque los cortes no. */
+    exacto = !!cont.exacto && declarados;
+  } else {
+    tramos = _tramosDeMuestras(st, cont, ini, fin);
+    exacto = false;
+  }
+  /* Una vuelta que quedo entera dentro de un corte no tiene tiempo rodado, y
+     eso no es un error: se la coloca en su arranque y no se mueve. */
+  if (!tramos.length) tramos = [[ini, ini]];
+
+  const acumulado = new Array(tramos.length);
+  let suma = 0;
+  for (let i = 0; i < tramos.length; i++) {
+    acumulado[i] = suma;
+    suma += tramos[i][1] - tramos[i][0];
+  }
+  return { tramos: tramos, acumulado: acumulado, total: suma, aproximado: !exacto };
+}
+
+/* El instante que se esta mostrando, en milisegundos UTC. `null` cuando no hay
+   con que resolverlo, y entonces cada consumidor vuelve a lo que hacia. */
+function tiempoDePresentacion(vuelta, fraccion) {
+  const r = relojDeVuelta(vuelta);
+  if (!r) return null;
+  if (!(r.total > 0)) return r.tramos[0][0];
+  const meta = Math.max(0, Math.min(1, fraccion)) * r.total;
+  /* El ultimo tramo que empieza en este tiempo rodado o antes. Justo en el
+     borde gana el siguiente, que es la regla: agotado un tramo, se sigue en el
+     arranque del que viene. */
+  let lo = 0, hi = r.acumulado.length - 1;
+  while (lo < hi) {
+    const medio = (lo + hi + 1) >> 1;
+    if (r.acumulado[medio] <= meta) lo = medio; else hi = medio - 1;
+  }
+  /* Dentro del tramo, el tiempo rodado y el de reloj son el mismo: no hay
+     cortes adentro, por definicion. */
+  return Math.min(r.tramos[lo][1], r.tramos[lo][0] + (meta - r.acumulado[lo]));
+}
+
+/* ============================================================
+   LOS BORDES DE LA VENTANA SE CALCULAN, NO SE RECORTAN
+   ------------------------------------------------------------
+   La ventana movil de los graficos se corre con la distancia de presentacion,
+   que ahora es continua. Pero recortar por dominio deja fuera las muestras que
+   caen del otro lado del borde, de modo que el extremo del trazo solo se mueve
+   cuando **entra o sale una muestra**: la ventana se desliza y la punta del
+   trazo avanza a saltos de una muestra. Es el mismo escalon, en el sitio donde
+   mas se ve.
+
+   Se calcula el punto donde la senal cruza cada borde y se lo agrega. Un punto
+   calculado no es una medicion: no entra en la escala, ni en los maximos del
+   pie, ni en la exportacion; se usa solo para cerrar el trazo contra el borde.
+
+   Una senal escalonada no se cruza en diagonal: su valor en el borde es el que
+   tenia la ultima muestra, no una mezcla de las dos. */
+function recortarConBordes(serie, ini, fin, escalonada) {
+  const limpia = recortarPorDominio(serie, null, null);
+  if (!limpia.length) return limpia;
+  const a = (ini === null || ini === undefined) ? -Infinity : ini;
+  const b = (fin === null || fin === undefined) ? Infinity : fin;
+  const enX = (p, q, x) => {
+    const dx = q[0] - p[0];
+    if (!(dx > 0)) return null;
+    if (escalonada) return [x, p[1]];
+    return [x, p[1] + (q[1] - p[1]) * ((x - p[0]) / dx)];
+  };
+  const salida = [];
+  for (let i = 0; i < limpia.length; i++) {
+    const p = limpia[i], q = limpia[i + 1];
+    if (q && p[0] < a && q[0] > a) { const e = enX(p, q, a); if (e) salida.push(e); }
+    if (p[0] >= a && p[0] <= b) salida.push(p);
+    if (q && p[0] < b && q[0] > b) { const e = enX(p, q, b); if (e) salida.push(e); }
+  }
+  return salida;
 }
 
 /* ============================================================
@@ -2104,7 +2654,9 @@ function senalDeSesion() {
 
 /* Pide una vuelta si no esta y no se esta pidiendo ya. */
 function asegurarVuelta(numero, puntos) {
-  if (!estado.abierta || numero < 1) return Promise.resolve(null);
+  if (!estado.abierta || numero < 1 || !alcancePermitePedir()) {
+    return Promise.resolve(null);
+  }
   const quiere = puntos || PUNTOS_POR_VUELTA;
   const bloque = estado.series[numero];
   const conocidos = bloque && bloque.vehiculos || {};
@@ -2268,6 +2820,7 @@ function asegurarVuelta(numero, puntos) {
    ============================================================ */
 function asegurarPosiciones(numero) {
   if (!estado.abierta || estado.posiciones[numero] || estado.pidiendoPos[numero]) return;
+  if (!alcancePermitePedir()) return;
   const apertura = aperturaVigente();
   estado.pidiendoPos[numero] = apertura;
   conCarga("posiciones", () =>
@@ -2364,11 +2917,28 @@ function posicionesAhora() {
   const salida = {};
   const largo = PISTA.largo_m || 0;
   _huboInterpolacion = false;
+
+  /* EL MISMO INSTANTE QUE LOS INSTRUMENTOS, Y POR ESO EN UTC.
+     `instantes_ms` cuenta desde `desde_utc`, que es el primer instante de la
+     vuelta; el instante compartido es una marca UTC absoluta. Restando una de
+     la otra, la marca del coche y la velocidad se leen en el mismo momento.
+
+     Sin `desde_utc` ---una API mas vieja--- se cae en lo que habia: la fraccion
+     de vuelta repartida sobre la ventana de la respuesta. Eso supone que la
+     fraccion efectiva del transporte y el intervalo UTC bruto de la vuelta son
+     la misma escala, y con un hueco de captura en el medio no lo son. */
+  if (d._baseUtc === undefined) {
+    d._baseUtc = d.desde_utc ? Date.parse(d.desde_utc) : NaN;
+  }
+  const relativo = (t.tUtcMs !== null && t.tUtcMs !== undefined &&
+                    Number.isFinite(d._baseUtc)) ? t.tUtcMs - d._baseUtc : null;
+
   Object.keys(d.vehiculos).forEach(clave => {
     const { pares, duracion } = paresDePosicion(d, clave);
     if (!pares.length) return;
-    const objetivo = duracion !== null ? t.fraccion * duracion
-                                       : t.fraccion * (pares.length - 1);
+    const objetivo = relativo !== null ? relativo
+                   : (duracion !== null ? t.fraccion * duracion
+                                        : t.fraccion * (pares.length - 1));
 
     /* La muestra anterior al instante buscado. Busqueda binaria: con 201 puntos
        por vuelta y veinte vehiculos, recorrerlas linealmente en cada cuadro es
@@ -3220,6 +3790,7 @@ function dibujarTraza() {
        Cada vehiculo trae este canal con la cantidad de muestras que trae, que
        no es la de otro vehiculo ni la de otra señal. */
     const crudas = ids.map(id => derivar(null, canal, vueltaElegida, id));
+    const escalonada = esCanalEscalonado(canal);
     const extremos = extremosDeDistancia(crudas);
     const [ampIni, ampFin] = dominioAmpliado(extremos);
     let datos = crudas.map(d => recortarPorDominio(d, ampIni, ampFin));
@@ -3280,6 +3851,11 @@ function dibujarTraza() {
     const vIni = ventanaTraza ? Math.max(0, metroAhora - ventanaTraza) : 0;
     const anchoV = Math.max(1, vFin - vIni);
     const enX = m => ((m - vIni) / anchoV) * w;
+    /* El cabezal de este canal se coloca sobre **este** eje. Antes se lo ponia
+       en la fraccion temporal de la vuelta sobre un eje de metros, que son dos
+       magnitudes distintas: la marca quedaba en otro sitio del circuito que el
+       trazo que cruza. */
+    _ejeTraza[canal] = { ini: vIni, fin: vFin };
 
     /* CUANDO EL PRIMER GRAFICO SIRVE PARA ALGO.
        Es una medida distinta de «cuanto tardaron las consultas»: entre que la
@@ -3295,7 +3871,8 @@ function dibujarTraza() {
       let primero = true;
       // Reducida al ancho del lienzo, conservando minimo y maximo por columna:
       // un pico de una muestra sobrevive, que es lo que una anotacion señala.
-      const dd = reducirAAncho(recortarPorDominio(d, vIni, vFin), vIni, vFin, w);
+      const dd = reducirAAncho(recortarConBordes(d, vIni, vFin, escalonada),
+                               vIni, vFin, w);
       /* EL TESTIGO MIRA LO QUE SE DIBUJA, NO LO QUE SE TENIA.
          La primera version firmaba el arreglo **antes** de recortarlo por la
          ventana: con la vuelta entera cargada ese arreglo no cambia nunca, de
@@ -3390,15 +3967,38 @@ function pintarEsperando() {
 }
 
 /* Lo unico que cambia de un cuadro al siguiente en los graficos. */
+/* Sobre que tramo de metros quedo dibujado cada canal. Lo escribe
+   `dibujarTraza` y lo lee el cabezal: los dos tienen que hablar del mismo eje o
+   la linea no cae donde cae el trazo. */
+const _ejeTraza = {};
+
 function moverCabezalesGraficos() {
   // Con ventana, el instante esta siempre al borde derecho ---es lo ultimo que
-  // paso---. Sin ventana, en el punto de la vuelta que le toca.
-  const pct = ventanaTraza ? 100
-    : (estadoSesion === "vacio" ? 0 : instante().fraccion) * 100;
+  // paso---. Sin ventana, en el metro de la vuelta que le toca.
   const visible = estadoSesion !== "vacio";
+  const t = visible ? instante() : null;
   Object.keys(LIENZOS).forEach(id => {
     const c = document.getElementById("cabezal-" + id);
     if (!c) return;
+    let pct;
+    if (ventanaTraza) {
+      pct = 100;
+    } else if (!t) {
+      pct = 0;
+    } else {
+      /* EN VUELTA COMPLETA EL EJE ES DE METROS, Y EL CABEZAL TAMBIEN.
+         Estaba en `fraccion * 100`, que es la fraccion **temporal** de la
+         vuelta puesta sobre un eje espacial. Un coche no recorre el circuito a
+         ritmo parejo ---en Spa, la recta de Kemmel y la chicana del bus no se
+         hacen a la misma velocidad---, de modo que a mitad del tiempo no esta a
+         mitad del circuito: la linea marcaba un metro y el trazo debajo estaba
+         en otro. Ahora va por la distancia de presentacion, que es continua y
+         es la misma que corre la ventana. */
+      const eje = _ejeTraza[id];
+      pct = (eje && eje.fin > eje.ini)
+        ? Math.max(0, Math.min(100, ((t.metro - eje.ini) / (eje.fin - eje.ini)) * 100))
+        : t.fraccion * 100;
+    }
     c.style.left = pct.toFixed(3) + "%";
     c.style.display = visible ? "" : "none";
   });
@@ -4043,6 +4643,10 @@ function vaciarVivo(sesion) {
      anterior debajo del coche de la nueva. */
   vivo.recorrido.clear();
   vivo.recorridoDibujado = 0;
+  /* Y lo derivado de las series tambien: las vistas temporales y los relojes de
+     vuelta viven en otra cache, con la vuelta y el vehiculo por clave, y esos
+     dos se repiten entre una sesion y la siguiente. */
+  cambiaronLasSeries();
 }
 
 /* ============================================================
@@ -4656,6 +5260,14 @@ function olvidarLaCorrida() {
 function olvidarLoDeLaCorrida() {
   estado.vueltas = []; estado.series = {}; estado.pidiendo = {};
   estado.posiciones = {}; estado.pidiendoPos = {};
+  /* LO DERIVADO SE SUELTA CON LO ORIGINAL.
+     Vaciar `estado.series` no vacia las vistas temporales ni los relojes de
+     vuelta: esos viven en su propia cache y se invalidan por sello. Sin esta
+     linea, la vuelta 3 de la formacion y la vuelta 3 de la carrera comparten
+     numero y vehiculo, y el reloj de la primera seguia contestando por la
+     segunda mientras las series nuevas viajaban ---incluido un reloj
+     aproximado guardado antes de que llegaran las vueltas. */
+  cambiaronLasSeries();
   estado.trazado = null; estado.curvas = []; estado.clima = null; estado.vehiculo = null;
   estado.puesta = null; estado.avisos = []; estado.disponibles = new Set();
   estado.vehiculoClave = null;
@@ -4744,19 +5356,23 @@ function abrirSesionGuardada(id) {
            abrirse y el boton del encabezado se quedaria sin nada que reabrir. */
         _contextoDeCorrida = { ruta: ruta, s: s };
         pintarBotonDeCorrida();
-        if (!a.mezclada) {
+
+        /* LA DIRECCION SE LEE SIEMPRE, NO SOLO CUANDO LA API DICE «mezclada».
+           `mezclada` cuenta adquisiciones; la eleccion que trae el enlace puede
+           ser de etapa, y con una sola adquisicion esta rama ni se miraba: el
+           enlace decia `fase=3` y el tablero cargaba todo junto. */
+        const p = new URLSearchParams(location.search);
+        const pedida = p.get("adquisicion");
+        const faseDelEnlace = faseDeLaDireccion(p.get("fase"));
+        const existe = (corrida.disponibles || []).some(x => x.clave === pedida);
+        if (!pedida && !alcanceEsAmbiguo()) {
           declararAlcance();
           cargarDatosDeSesion(ruta, apertura, senalDeSesion(), s);
           return;
         }
-
-        const p = new URLSearchParams(location.search);
-        const pedida = p.get("adquisicion");
-        const fasePedida = p.get("fase");
-        const existe = (corrida.disponibles || []).some(x => x.clave === pedida);
-        if (pedida && existe) {
+        if (pedida && alcanceElegidoEsValido(pedida, faseDelEnlace)) {
           corrida.adquisicion = pedida;
-          corrida.fase = fasePedida ? Number(fasePedida) : null;
+          corrida.fase = faseDelEnlace;
           declararAlcance();
           pintarBotonDeCorrida();
           decirEstadoApi("Mirando la adquisición «" + pedida + "»" +
@@ -4765,24 +5381,43 @@ function abrirSesionGuardada(id) {
           cargarDatosDeSesion(ruta, apertura, senalDeSesion(), s);
           return;
         }
+        /* EL ENLACE TRAE MEDIA ELECCION: SE CONSERVA Y SE PREGUNTA EL RESTO.
+           `?adquisicion=original` sin etapa, o con una etapa que esa
+           adquisicion no declara. No se carga nada ---seria la mezcla--- pero
+           tampoco se tira lo que sí vino: el elector se abre con la
+           adquisicion ya marcada y solo falta la etapa. */
+        if (pedida && existe) {
+          corrida.adquisicion = pedida;
+          corrida.fase = null;
+        }
 
         /* Ambigua y sin elegir: se pregunta. No se adivina cual, y **no es un
            error**: es una eleccion pendiente, y marcarla en rojo diria que algo
            salio mal cuando lo que falta es una decision. */
         estadoSesion = "vacio";
         estado.cargando = false;
-        estado.motivo =
-          "Esta sesión guarda " + corrida.disponibles.length + " adquisiciones " +
-          "distintas bajo el mismo identificador del juego. Juntas no son una " +
-          "carrera continua, así que hay que elegir cuál mirar.";
+        estado.motivo = (corrida.disponibles.length > 1)
+          ? ("Esta sesión guarda " + corrida.disponibles.length + " adquisiciones " +
+             "distintas bajo el mismo identificador del juego. Juntas no son una " +
+             "carrera continua, así que hay que elegir cuál mirar.")
+          /* Con una sola adquisición la ambigüedad es de etapa: el reloj del
+             juego se reinicia al largar, así que la formación y la carrera se
+             solapan en el tiempo. Mostradas juntas, la primera vuelta trae las
+             dos y el coche va y viene. */
+          : ("Esta captura tiene varias etapas y el reloj del juego se reinicia " +
+             "entre ellas, así que la formación y la carrera se solapan en el " +
+             "tiempo. Juntas no son una carrera continua: hay que elegir cuál mirar.");
         decirEstadoApi(estado.motivo + " Elegí abajo.", false);
         abrirElectorDeCorrida(ruta, apertura, s);
         render();
       })
       .catch(e => {
         /* Si la ruta no esta ---una API mas vieja--- se sigue como siempre: no
-           se rompe por no poder preguntar. */
+           se rompe por no poder preguntar. Se declara la lista vacia, que es lo
+           que se sabe ---no hay adquisiciones que elegir--- y ademas es lo que
+           destraba la compuerta de `alcancePermitePedir`. */
         if (fueAnulada(e)) return;
+        if (!corrida.disponibles) corrida.disponibles = [];
         cargarDatosDeSesion(ruta, apertura, senalDeSesion(), s);
       }));
 }
@@ -4822,6 +5457,47 @@ function queEsLaFase(a, f) {
   return "tramo " + f.orden + ", entre dos reinicios del reloj del juego";
 }
 
+/* Una fila del elector: la adquisicion, y los botones con los que se la elige.
+   Se separa del elector porque es lo unico que decide **que opciones existen**,
+   y eso hay que poder comprobarlo sin un documento. `elegida` viene de afuera
+   porque marca contra el alcance vigente, que es del elector. */
+function filaDeCorrida(a, elegida) {
+  const cuando = a.desde_utc ? fechaAr(new Date(a.desde_utc)) : "sin fecha";
+  const que = a.es_reproduccion ? "reproducción de prueba" : "captura original";
+  const etapas = a.fases || [];
+  const total = etapas.reduce((t, f) => t + (f.duracion_de_captura_s || 0), 0);
+  /* «TODO» NO SE OFRECE CUANDO LAS ETAPAS SE SOLAPAN.
+     Es el mecanismo minimo para que la mezcla no vuelva por la puerta de al
+     lado: si el reloj del juego se reinicia entre etapas, sus ventanas de
+     tiempo se pisan y juntas no son una carrera continua ---la vuelta 1 traeria
+     la formacion y la carrera, y el coche iria y vendria---. Donde las etapas
+     son de verdad continuas, «Todo» sigue estando. */
+  const seSolapa = adquisicionSeSolapa(a);
+  /* Con una sola etapa, «Todo» y «Fase unica» son la misma cosa: dos botones
+     que hacen lo mismo obligan a pararse a decidir entre ellos para nada. */
+  const fases = (etapas.length <= 1 ? [] : etapas).map(f =>
+    '<button type="button" class="boton secundario opcion-fase" data-corrida="' +
+    a.clave + '" data-fase="' + f.orden + '" title="' + queEsLaFase(a, f) + '"' +
+    elegida(a.clave, f.orden) + "><b>" + nombreDeFase(a, f) + "</b><small>" +
+    duracionCorta(f.duracion_de_captura_s) + "</small></button>").join("");
+  return '<div class="fila-sesion fila-corrida" data-fuente="f1"' +
+    (corrida.adquisicion === a.clave ? ' data-elegida="si"' : "") + ">" +
+    "<span><b>" + (a.es_reproduccion ? a.clave : "Original") + "</b><br>" +
+    "<small>" + que + " · " + cuando + "</small></span>" +
+    "<span>" + a.vehiculos + (a.vehiculos === 1 ? " vehículo" : " vehículos") +
+    "<br><small>" + cifra(a.muestras_de_vuelta, 0) + " muestras · " +
+    (etapas.length === 1 ? "una sola etapa" : etapas.length + " etapas") +
+    (seSolapa ? " · el reloj se reinicia entre ellas: hay que elegir una" : "") +
+    "</small></span>" +
+    '<span class="acciones-corrida">' +
+      (seSolapa ? "" :
+        '<button type="button" class="boton secundario opcion-fase" data-corrida="' + a.clave +
+        '" data-fase="" title="las etapas seguidas, como se capturaron"' +
+        elegida(a.clave, null) + "><b>Todo</b><small>" + duracionCorta(total) +
+        "</small></button>") + fases +
+    "</span></div>";
+}
+
 function abrirElectorDeCorrida(ruta, apertura, s) {
   const velo = document.getElementById("velo-corridas");
   const cont = document.getElementById("tabla-corridas");
@@ -4851,33 +5527,7 @@ function abrirElectorDeCorrida(ruta, apertura, s) {
     (corrida.fase || null) === (f || null))
     ? ' data-elegida="si" aria-pressed="true"' : ' aria-pressed="false"';
 
-  cont.innerHTML = lista.map(a => {
-    const cuando = a.desde_utc ? fechaAr(new Date(a.desde_utc)) : "sin fecha";
-    const que = a.es_reproduccion ? "reproducción de prueba" : "captura original";
-    const etapas = a.fases || [];
-    const total = etapas.reduce((t, f) => t + (f.duracion_de_captura_s || 0), 0);
-    /* Con una sola etapa, «Todo» y «Fase unica» son la misma cosa: dos botones
-       que hacen lo mismo obligan a pararse a decidir entre ellos para nada. */
-    const fases = (etapas.length <= 1 ? [] : etapas).map(f =>
-      '<button type="button" class="boton secundario opcion-fase" data-corrida="' +
-      a.clave + '" data-fase="' + f.orden + '" title="' + queEsLaFase(a, f) + '"' +
-      elegida(a.clave, f.orden) + "><b>" + nombreDeFase(a, f) + "</b><small>" +
-      duracionCorta(f.duracion_de_captura_s) + "</small></button>").join("");
-    return '<div class="fila-sesion fila-corrida" data-fuente="f1"' +
-      (corrida.adquisicion === a.clave ? ' data-elegida="si"' : "") + ">" +
-      "<span><b>" + (a.es_reproduccion ? a.clave : "Original") + "</b><br>" +
-      "<small>" + que + " · " + cuando + "</small></span>" +
-      "<span>" + a.vehiculos + (a.vehiculos === 1 ? " vehículo" : " vehículos") +
-      "<br><small>" + cifra(a.muestras_de_vuelta, 0) + " muestras · " +
-      (etapas.length === 1 ? "una sola etapa" : etapas.length + " etapas") +
-      "</small></span>" +
-      '<span class="acciones-corrida">' +
-        '<button type="button" class="boton secundario opcion-fase" data-corrida="' + a.clave +
-        '" data-fase="" title="las etapas seguidas, como se capturaron"' +
-        elegida(a.clave, null) + "><b>Todo</b><small>" + duracionCorta(total) +
-        "</small></button>" + fases +
-      "</span></div>";
-  }).join("");
+  cont.innerHTML = lista.map(a => filaDeCorrida(a, elegida)).join("");
 
   cont.querySelectorAll("button[data-corrida]").forEach(b => {
     b.addEventListener("click", () => {
@@ -4900,8 +5550,33 @@ function elegirCorrida(clave, fase) {
   const velo = document.getElementById("velo-corridas");
   if (velo) velo.dataset.abierto = "no";
 
+  const pedida = (fase === undefined || fase === "") ? null : fase;
+  /* UN ALCANCE A MEDIAS NO PIDE DATOS.
+     Es el mismo cuidado que la lectura de la direccion, en el otro camino que
+     lleva hasta aca. Sin esto, cualquier llamada con la adquisicion sola
+     ---un enlace viejo, un elector de otra version--- volvia a cargar la
+     mezcla. Se conserva lo que sí se eligio y se pregunta el resto. */
+  if (!alcanceElegidoEsValido(clave, pedida)) {
+    const a = (corrida.disponibles || []).find(x => x.clave === clave);
+    corrida.adquisicion = a ? clave : null;
+    corrida.fase = null;
+    declararAlcance();
+    pintarBotonDeCorrida();
+    estadoSesion = "vacio";
+    estado.cargando = false;
+    estado.motivo = a
+      ? ("En esta captura el reloj del juego se reinicia entre etapas, así que " +
+         "sus ventanas de tiempo se solapan. Juntas no son una carrera continua: " +
+         "hay que elegir una etapa.")
+      : "Esa adquisición no está en esta sesión. Elegí una de las que hay.";
+    decirEstadoApi(estado.motivo, false);
+    abrirElectorDeCorrida(_contextoDeCorrida.ruta, aperturaVigente(), _contextoDeCorrida.s);
+    render();
+    return;
+  }
+
   corrida.adquisicion = clave;
-  corrida.fase = fase || null;
+  corrida.fase = pedida;
 
   /* La direccion refleja lo elegido, sin recargar: el enlace tiene que seguir
      sirviendo para volver a esto mismo. */
@@ -4928,10 +5603,116 @@ function elegirCorrida(clave, fase) {
 /* El boton del encabezado dice que se esta mirando y sirve para cambiarlo.
    Solo aparece cuando hay algo que elegir: en una sesion de una sola
    adquisicion seria un control que no hace nada. */
+/* ============================================================
+   UNA SESION CON VARIAS ETAPAS TAMPOCO SE PUEDE MIRAR JUNTA
+   ------------------------------------------------------------
+   EL DEFECTO. `mezclada` lo decide la API contando **adquisiciones**, y con
+   una sola contestaba `false`: el tablero cargaba sin resolver el alcance, sin
+   ofrecer el elector ---el boton se escondia con `disponibles.length > 1`--- y
+   sin mirar siquiera la eleccion que traia la direccion. Quien elegia
+   «Original · Carrera» y recargaba volvia a «todo junto» con la direccion
+   diciendo lo contrario.
+
+   POR QUE IMPORTA. Una etapa empieza donde el reloj del juego se reinicia, y
+   al reiniciarse el `timestamp` derivado retrocede: la formacion y la carrera
+   **se solapan en UTC a proposito**. Juntas no son una carrera continua.
+
+   MEDIDO EN SPA, 2026-09-08, recorriendo de la vuelta 1 a la 4:
+
+   | | sin resolver el alcance | Original · Carrera |
+   |---|---:|---:|
+   | retrocesos de la distancia | 72 (el peor, 7.003 m -> 1 m) | 0 |
+   | retrocesos de la marca del coche | 61 (el peor, 6.477 m -> 634 m) | 0 |
+   | salto del instante al pasar de la vuelta 1 a la 2 | **-40,8 s** | +0,25 s |
+
+   La vuelta 1 sin acotar trae la formacion y la carrera entrelazadas: el coche
+   avanza, salta atras, vuelve a avanzar. Se estabiliza cuando se acaban las
+   muestras de formacion, que es a mitad de la vuelta 2. Es exactamente el
+   sintoma que se reporto.
+
+   LA REGLA. Se resuelve el alcance ---o se pregunta--- cuando hay mas de una
+   adquisicion **o** cuando alguna tiene etapas que reinician el reloj del
+   juego. Eso ultimo lo declara la propia API en cada fase, asi que no hay que
+   adivinarlo. Con etapas que no reinician nada, seguidas son continuas y
+   mirarlas juntas es correcto: no se molesta a nadie.
+   ============================================================ */
+function adquisicionSeSolapa(a) {
+  if (!a) return false;
+  const fases = a.fases || [];
+  return fases.length > 1 && fases.some(f => f.reloj_del_juego_reinicia_al_entrar);
+}
+
+function alcanceEsAmbiguo() {
+  const lista = corrida.disponibles || [];
+  if (lista.length > 1) return true;
+  return lista.some(adquisicionSeSolapa);
+}
+
+/* ============================================================
+   UN ALCANCE ES LA ADQUISICION **Y** LA ETAPA
+   ------------------------------------------------------------
+   EL DEFECTO. Se comprobaba que la adquisicion existiera y nada mas:
+   `?adquisicion=original` entraba con `fase = null`, que es «todo junto», el
+   mismo alcance que la apertura sin parametros no deja pasar. El enlace se
+   saltaba la proteccion. Y una fase que no existe, o que es de otra
+   adquisicion, se convertia en «todas» sin decirlo: se pedia `fase=9`, la API
+   no la encontraba y devolvia la mezcla.
+
+   LA REGLA. Sin fase, el alcance vale solo si las etapas de esa adquisicion no
+   se solapan. Con fase, tiene que ser un numero entero que **esa** adquisicion
+   declare. Nada se convierte en otra cosa en silencio.
+   ============================================================ */
+function alcanceElegidoEsValido(clave, fase) {
+  const a = (corrida.disponibles || []).find(x => x.clave === clave);
+  if (!a) return false;
+  if (fase === null || fase === undefined) return !adquisicionSeSolapa(a);
+  if (typeof fase !== "number" || !Number.isInteger(fase)) return false;
+  return (a.fases || []).some(f => f.orden === fase);
+}
+
+/* ============================================================
+   NO SE PIDE HISTORICO CON EL ALCANCE SIN RESOLVER
+   ------------------------------------------------------------
+   `abrirSesionGuardada` ya no carga hasta que alguien elige, pero **no es el
+   unico que pide**: el transporte pide la vuelta que hay bajo el cabezal por su
+   cuenta, con doscientos milisegundos de retardo, desde que la pagina arranca.
+   Esa consulta salia antes de que `/adquisiciones` contestara. Medido en Spa:
+   la vuelta 1 se pedia a los 582 ms y las adquisiciones llegaban a los 953, de
+   modo que la primera vuelta se traia mezclada aunque el elector estuviera
+   abierto esperando una respuesta.
+
+   La compuerta va aca, que es por donde pasa todo el historico. Mientras no se
+   sepa que adquisiciones hay, no se pide; sabiendolo, se pide solo si el
+   alcance no es ambiguo o si ya esta elegido entero.
+   ============================================================ */
+function alcancePermitePedir() {
+  if (!corrida.disponibles) return false;
+  if (!alcanceEsAmbiguo()) return true;
+  return alcanceElegidoEsValido(corrida.adquisicion, corrida.fase);
+}
+
+/* La etapa que trae la direccion, leida sin adivinar. `Number("abc")` da `NaN`
+   y `Number("3.5")` da 3,5: los dos entraban y quedaban en `corrida.fase`
+   pareciendo una eleccion. Vacio es «no pidieron etapa»; cualquier otra cosa
+   que no sea un entero escrito en digitos es `NaN`, o sea invalida. */
+function faseDeLaDireccion(texto) {
+  if (texto === null || texto === undefined) return null;
+  const t = String(texto).trim();
+  if (!t) return null;
+  return /^[0-9]+$/.test(t) ? Number(t) : NaN;
+}
+
+/* Hay algo que elegir aunque no sea ambiguo: con varias etapas continuas el
+   boton sigue sirviendo para mirar una sola. Ofrecerlo no obliga a nada. */
+function hayAlcanceQueElegir() {
+  const lista = corrida.disponibles || [];
+  return lista.length > 1 || lista.some(a => (a.fases || []).length > 1);
+}
+
 function pintarBotonDeCorrida() {
   const b = document.getElementById("btn-corrida");
   if (!b) return;
-  const hay = (corrida.disponibles || []).length > 1;
+  const hay = hayAlcanceQueElegir();
   b.hidden = !hay;
   if (!hay) return;
   b.textContent = corrida.adquisicion
@@ -5127,6 +5908,20 @@ function cargarDatosDeSesion(ruta, apertura, senal, s) {
    curso, que ahora declara sus dos instantes, y de la fraccion recorrida. */
 function instanteUtc() {
   const t = instante();
+  /* EL MISMO INSTANTE QUE TODO LO DEMAS.
+     Esto repartia la fraccion de vuelta sobre la ventana UTC **bruta**, que es
+     justo la mezcla de relojes que el resto del tablero dejo de hacer: el
+     transporte dimensiona la vuelta con la duracion efectiva y esta cuenta la
+     estiraba sobre el intervalo entero. El clima que se mostraba podia ser el
+     de otro momento de la vuelta.
+
+     Que la consulta salga cada tres segundos no cambia nada: preguntar poco no
+     es lo mismo que preguntar por el momento equivocado. */
+  if (t.tUtcMs !== null && t.tUtcMs !== undefined && Number.isFinite(t.tUtcMs)) {
+    return new Date(t.tUtcMs).toISOString();
+  }
+  /* Sin instante compartido ---en vivo, o antes de que llegue la vuelta--- se
+     cae en lo unico que hay, y es una aproximacion declarada aca. */
   const v = estado.vueltas.find(x => x.numero === t.vuelta);
   if (!v || !v.desde_utc || !v.hasta_utc) return null;
   const t0 = new Date(v.desde_utc).getTime();
@@ -5516,7 +6311,7 @@ function calcularInstante() {
         ? 1
         : ((hayMetro && PISTA.largo_m && Number.isFinite(metro))
             ? Math.max(0, Math.min(1, metro / PISTA.largo_m)) : 0),
-      fraccionSesion: 1, segundos: 0, metro: metro, velocidad: velocidad,
+      fraccionSesion: 1, segundos: 0, tUtcMs: null, metro: metro, velocidad: velocidad,
       acelerador: leer("throttle"), freno: leer("brake"), rpm: leer("rpm"),
       marcha: leer("gear"), gLong: leer("glong"), gLat: leer("glat"),
       gVert: leer("gvert"), tempMotor: leer("engineTemp"), ers: leer("ers"),
@@ -5551,16 +6346,52 @@ function calcularInstante() {
   const listo = !!(dist && dist.length);
   const idx = listo ? Math.min(dist.length - 1, Math.round(dentro * (dist.length - 1))) : 0;
 
-  // Lee una señal en el mismo punto de la vuelta. Cada señal puede tener su
-  // propia cantidad de muestras: se ubica por fraccion, no por indice.
+  /* EL INSTANTE, RESUELTO UNA SOLA VEZ Y COMPARTIDO.
+     De aca salen los instrumentos, la distancia de presentacion, la marca del
+     coche y los cabezales de los graficos. Antes cada uno se ubicaba por su
+     cuenta: la marca del coche interpolaba sobre instantes medidos y los demas
+     redondeaban un indice, de modo que ni siquiera mostraban el mismo momento.
+     `null` cuando no hay con que resolverlo ---una API sin `timestamp_utc`, o
+     la vuelta todavia en viaje--- y entonces cada lectura vuelve a la rejilla
+     por indice, que es lo que habia. */
+  const tUtc = tiempoDePresentacion(vuelta, dentro);
+
+  /* Lee una señal en el instante compartido. Las continuas se interpolan entre
+     las dos muestras que lo rodean; las discretas se sostienen en escalon
+     sobre su instante medido, porque una marcha no pasa por la 4,5. */
   const leer = (canal) => {
+    if (tUtc !== null) {
+      const st = serieTemporal(canal, vuelta, propioAqui);
+      if (st) {
+        return esCanalEscalonado(canal) ? valorEscalonadoEn(st, tUtc)
+                                        : valorContinuoEn(st, tUtc);
+      }
+    }
     const s = serieDeCanal(canal, vuelta, propioAqui);
     if (!s || !s.length) return null;
     return s[Math.min(s.length - 1, Math.round(dentro * (s.length - 1)))][1];
   };
 
-  const v = listo ? dist[idx][1] : null;
-  const sig = listo ? dist[Math.min(idx + 1, dist.length - 1)][1] : null;
+  const v = leer("speed");
+  /* Cuanto se esta frenando: la velocidad de ahora contra la de la muestra
+     siguiente. Se toma del mismo eje temporal que `v`, no de un indice: mezclar
+     un valor interpolado con la muestra cruda de al lado daba una diferencia
+     que no era ni una cosa ni la otra. */
+  const stV = tUtc !== null ? serieTemporal("speed", vuelta, propioAqui) : null;
+  const sig = stV
+    ? (function () {
+        const i = _antesDe(stV, tUtc);
+        return stV.v[Math.min(stV.v.length - 1, Math.max(0, i + 1))];
+      })()
+    : (listo ? dist[Math.min(idx + 1, dist.length - 1)][1] : null);
+
+  /* LA DISTANCIA DE PRESENTACION TAMBIEN SALE DEL INSTANTE.
+     Es la que corre la ventana de los graficos y la que coloca el cabezal en
+     modo vuelta completa. Sacarla de la muestra discreta de velocidad dejaba la
+     ventana anclada a un metro que solo cambiaba cada 425 ms. No se interpola
+     sobre el cruce de meta: cuando la distancia baja, la vuelta se cerro. */
+  const stD = tUtc !== null ? serieTemporal(EJE_DISTANCIA, vuelta, propioAqui) : null;
+  const metroSuave = stD ? valorContinuoEn(stD, tUtc, true) : null;
 
   return {
     listo: listo,
@@ -5570,7 +6401,10 @@ function calcularInstante() {
     fraccion: dentro,
     fraccionSesion: cabezal,
     segundos: cabezal * total,
-    metro: listo ? dist[idx][0] : 0,
+    /* El instante compartido, en milisegundos UTC. `null` significa que no se
+       pudo resolver y que cada consumidor vuelve a la rejilla por indice. */
+    tUtcMs: tUtc,
+    metro: metroSuave !== null ? metroSuave : (listo ? dist[idx][0] : 0),
     velocidad: v,
     acelerador: leer("throttle"),
     freno: leer("brake"),
@@ -5607,6 +6441,14 @@ function pintarTransporte() {
   const modo = estadoSesion === "vivo" ? "vivo"
              : estadoSesion === "vacio" ? "vacio" : "reproduccion";
   barra.dataset.modo = modo;
+  /* EL BARRIDO DE LOS INSTRUMENTOS ES DE UN MODO Y NO DEL OTRO.
+     En el historico los valores se interpolan y cambian en cada cuadro: una
+     transicion solo dibujaria la aguja donde estuvo hasta 300 ms atras, y eso
+     es un desfase contra el coche y los graficos. En vivo no hay interpolacion
+     ---se muestra el ultimo mensaje que llego, a la cadencia del flujo--- y sin
+     transicion la aguja salta, que es lo que la transicion vino a arreglar. La
+     hoja de estilos decide por este atributo. */
+  try { document.body.dataset.modoDelTiempo = modo; } catch (e) {}
 
   if (modo === "vivo") {
     // Un flujo en vivo no se recorre: no hay cabezal ni mandos que ofrecer.
@@ -5768,9 +6610,6 @@ function moverCabezal(fraccion) {
       }, 1200);
     }, 200);
   }
-  /* Los graficos no se vuelven a trazar: su traza es la de la vuelta y no
-     cambia al avanzar el cabezal. Lo unico que se mueve es la linea. */
-  moverCabezalesGraficos();
   /* La traza crece con el cabezal, asi que hay que volver a trazarla; treinta
      veces por segundo alcanza para que se vea continua y deja la mitad del
      presupuesto de cada cuadro libre para todo lo demas. */
@@ -5779,6 +6618,10 @@ function moverCabezal(fraccion) {
     _ultimaTraza = ahoraT;
     dibujarTraza();
   }
+  /* Despues de trazar, no antes: el cabezal se coloca sobre el eje de metros
+     que `dibujarTraza` acaba de fijar. Al reves, en el primer cuadro no hay eje
+     todavia y la linea arranca en el sitio equivocado. */
+  moverCabezalesGraficos();
   /* La comparacion si vuelve a trazarse ---su cabezal lleva ademas el punto de
      cada serie, que hay que recalcular---, pero no hace falta a sesenta por
      segundo: veinticinco ya se ven continuos y el lienzo es grande. */
