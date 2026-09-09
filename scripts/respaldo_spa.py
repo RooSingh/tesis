@@ -229,14 +229,32 @@ def restore_package(package, dsn_env):
             if cur.fetchone()[0] != manifest["timescaledb"]:
                 raise ValueError("Usar la version TimescaleDB del manifiesto")
             cur.execute(CATALOG_SCHEMA)
+            # Solo en el destino nuevo: construir indices al final evita
+            # mantenerlos fila por fila durante la importacion masiva.
+            cur.execute("SELECT indexname, indexdef FROM pg_indexes "
+                        "WHERE schemaname='public' AND tablename='telemetry_messages'")
+            indexes = cur.fetchall()
+            for name, _definition in indexes:
+                cur.execute(sql.SQL("DROP INDEX {}").format(sql.Identifier("public", name)))
             columns = sql.SQL(", ").join(map(sql.Identifier, COLUMNS))
             query = sql.SQL("COPY telemetry_messages ({}) FROM STDIN "
                             "WITH (FORMAT CSV, HEADER TRUE, ENCODING 'UTF8')").format(columns)
             print("Destino vacio verificado. Restaurando filas...", flush=True)
+            sent = 0
+            next_report = 256 * 1024 * 1024
             with gzip.open(package / "telemetry.csv.gz", "rb") as source:
                 with cur.copy(query) as copy:
                     for block in iter(lambda: source.read(1024 * 1024), b""):
                         copy.write(block)
+                        sent += len(block)
+                        if sent >= next_report:
+                            print(f"COPY enviado: {sent / 1e9:.2f} GB", flush=True)
+                            next_report += 256 * 1024 * 1024
+            print("COPY terminado. Construyendo indices...", flush=True)
+            for name, definition in indexes:
+                print(name, flush=True)
+                cur.execute(definition)
+            print("Indices terminados. Comparando inventario y fases...", flush=True)
             cur.execute("SELECT count(*) FROM telemetry_messages")
             total = cur.fetchone()[0]
             if total != manifest["rows"] or inventory(cur) != manifest["signals"]:

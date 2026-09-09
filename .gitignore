@@ -23,3 +23,9 @@ logs/
 
 # Restos de una recuperacion de git: son sus propios archivos de bloqueo.
 _to_delete/
+
+# Los valores de entorno de esta maquina. El ejemplo si se versiona.
+.env
+
+# Iteraciones descartables de figuras. Las que valen viven en informe/tesis/figuras.
+Claude outputs/

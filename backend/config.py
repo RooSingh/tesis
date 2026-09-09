@@ -14,6 +14,41 @@ Mas adelante podra ampliarse con:
 
 import os
 
+
+def _cargar_env(ruta: "os.PathLike | str") -> None:
+    """Lee un archivo `.env` y lo vuelca al entorno, sin pisar lo ya definido.
+
+    POR QUE A MANO Y NO CON UNA BIBLIOTECA
+    --------------------------------------
+    Son diez lineas. Agregar una dependencia para esto obligaria a instalarla en
+    el equipo de destino, a fijarla en el manifiesto y a explicarla en el
+    informe, y lo unico que hace es partir por el primer signo igual.
+
+    NO PISA LO YA DEFINIDO, y ese orden importa: una variable puesta en el
+    entorno ---por el motor de contenedores, por el servicio del sistema, o a
+    mano para una prueba--- tiene que ganarle al archivo. Al reves, un `.env`
+    olvidado en el directorio se impondria en silencio sobre la configuracion
+    del despliegue.
+    """
+
+    try:
+        with open(ruta, "r", encoding="utf-8") as archivo:
+            for linea in archivo:
+                linea = linea.strip()
+                if not linea or linea.startswith("#") or "=" not in linea:
+                    continue
+                clave, valor = linea.split("=", 1)
+                os.environ.setdefault(clave.strip(), valor.strip())
+    except FileNotFoundError:
+        pass
+
+
+#: El archivo vive en la raiz del repositorio y **no se versiona**. El que si se
+#: versiona es `.env.example`, que dice que variables existen sin decir sus
+#: valores.
+_cargar_env(os.path.join(os.path.dirname(os.path.dirname(
+    os.path.abspath(__file__))), ".env"))
+
 #: Direccion del intermediario. **Numerica y no `localhost`**, a proposito.
 #:
 #: `localhost` no es una direccion sino una busqueda, y en Windows resuelve
@@ -116,11 +151,53 @@ BACKEND_APP_NAME = "tesis-telemetry-backend"
 #: esquema en una base virgen, que era la unica forma de saberlo sin arriesgar
 #: los ochenta y nueve millones de filas.
 #:
-#: La contrasena esta en el codigo desde el principio y se la deja: es la de un
-#: servicio local que solo escucha en esta maquina, y sacarla a una variable sin
-#: sacarla del historial de git no la volveria secreta.
+#: La contrasena por omision **se deja**, y el razonamiento sigue valiendo: es la
+#: de un servicio local que solo escucha en esta maquina, y sacarla a una variable
+#: sin sacarla del historial de git no la volveria secreta.
+#:
+#: Lo que se agrega es la otra mitad, que el despliegue vuelve necesaria:
+#: `verificar_secretos()` impide arrancar con ese valor **contra una base que no
+#: sea local**. Ahi si hay algo que proteger, y ahi el valor publico no sirve.
 DB_HOST = os.getenv("DB_HOST", "localhost")
 DB_PORT = int(os.getenv("DB_PORT", "5432"))
 DB_NAME = os.getenv("DB_NAME", "tesis_db")
 DB_USER = os.getenv("DB_USER", "tesis_user")
 DB_PASSWORD = os.getenv("DB_PASSWORD", "tesis_pass")
+
+#: La contrasena que este repositorio publica. Se la nombra para poder
+#: reconocerla, no para ocultarla: **esta en el historial de git desde el primer
+#: dia** y sacarla ahora no la volveria secreta.
+CONTRASENA_PUBLICA = "tesis_pass"
+
+#: Direcciones que significan «la base corre en esta misma maquina».
+_ANFITRIONES_LOCALES = ("localhost", "127.0.0.1", "::1", "timescaledb")
+
+
+def verificar_secretos() -> None:
+    """Impide arrancar con la contrasena publica contra una base que no es local.
+
+    QUE PROTEGE Y QUE NO
+    --------------------
+    No protege la contrasena actual: es publica y seguira siendolo. Protege el
+    caso que el despliegue introduce, que hasta ahora no existia: **una base
+    alcanzable desde fuera de esta maquina**, con la clave que cualquiera puede
+    leer en el repositorio.
+
+    Renombrar el valor a una variable de entorno y dejarlo igual habria dado la
+    sensacion de haber resuelto algo. Lo que resuelve algo es que el sistema se
+    niegue a usarlo donde importa.
+
+    Se llama desde el arranque del servicio y no al importar el modulo: importar
+    la configuracion tiene que poder hacerse siempre ---las pruebas lo hacen--- y
+    fallar en la importacion volveria imposible hasta leer el valor para
+    corregirlo.
+    """
+
+    if DB_HOST in _ANFITRIONES_LOCALES:
+        return
+    if DB_PASSWORD == CONTRASENA_PUBLICA:
+        raise RuntimeError(
+            f"La base apunta a {DB_HOST!r}, que no es esta maquina, con la "
+            f"contrasena que el repositorio publica. Defini DB_PASSWORD en el "
+            f"archivo .env o en el entorno antes de arrancar."
+        )

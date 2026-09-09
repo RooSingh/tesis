@@ -27,6 +27,7 @@ from adapters import f1_25 as f1_25_adapter
 from backend import api_analisis
 from backend import api_sesion
 from backend import catalogo_corridas
+from backend import config
 from backend import db
 from backend import ingesta
 from backend import live_stream
@@ -738,6 +739,18 @@ def racing_analysis_stints(
 @app.on_event("startup")
 async def _iniciar_difusor() -> None:
     """Conecta al broker al arrancar. Un fallo no impide servir el historico."""
+
+    # ESTO SI IMPIDE ARRANCAR, Y A PROPOSITO.
+    #
+    # Todo lo demas de esta funcion esta escrito para que un fallo no tumbe el
+    # servicio: si el intermediario no responde, el historico se sigue sirviendo.
+    # La verificacion de secretos es la excepcion, porque lo que detecta no es
+    # una indisponibilidad sino una configuracion que no deberia existir: la
+    # contrasena que el repositorio publica, apuntando a una base que no es esta
+    # maquina. Seguir sirviendo en ese caso seria seguir exponiendola.
+    #
+    # Mientras la base sea local no cambia absolutamente nada.
+    config.verificar_secretos()
 
     live_stream.difusor.iniciar(asyncio.get_running_loop())
 
