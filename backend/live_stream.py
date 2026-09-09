@@ -43,6 +43,10 @@ from typing import Any
 
 from backend.config import MQTT_HOST, MQTT_PORT, MQTT_TOPIC
 
+#: Cuantas sesiones recuerda el difusor. Ocho cubre una tarde de trabajo y no
+#: crece sin techo si alguien lo deja corriendo una semana.
+MAXIMO_SESIONES_ANOTADAS = 8
+
 from backend import anotador_vivo, resumen_sesion
 
 # Tope de suscriptores simultaneos. El dashboard abre uno; el resto serian
@@ -266,6 +270,18 @@ class DifusorEnVivo:
         #: maximo. Convive con la ventana de arriba y no la reemplaza: una da
         #: el detalle reciente y la otra el recorrido completo.
         self.resumen = resumen_sesion.ResumenDeSesion()
+        #: Las sesiones de las que **llego telemetria** por este difusor, de la
+        #: mas vieja a la mas nueva.
+        #:
+        #: Existe por un caso concreto: al detener una captura hay que poner al
+        #: dia el catalogo, y refrescar **una** sesion cuesta segundos mientras
+        #: que rehacerlo entero cuesta minutos. El identificador no esta en
+        #: ningun otro lado ---el sidecar de la captura declara circuito y tipo
+        #: de sesion, no el `session_uid`--- y aca pasa cada mensaje de todos
+        #: modos, de modo que anotarlo no cuesta nada.
+        #:
+        #: Acotado a proposito: es una ayuda para refrescar, no un registro.
+        self.sesiones_vistas: list[str] = []
         # El anotador mira el mismo flujo y declara lo que ocurre mientras
         # ocurre. Vive en el difusor y no en el navegador por dos razones: ve
         # **todas** las senales y no solo las que alguien eligio mirar, y su
@@ -321,8 +337,21 @@ class DifusorEnVivo:
                 continue
             self._procesar_cuerpo(dict(cuerpo), recibido_utc)
 
+    def _anotar_sesion(self, session_id) -> None:
+        """Deja constancia de que esta sesion emitio, sin repetir ni crecer."""
+        if not isinstance(session_id, str) or not session_id:
+            return
+        if self.sesiones_vistas and self.sesiones_vistas[-1] == session_id:
+            return
+        if session_id in self.sesiones_vistas:
+            self.sesiones_vistas.remove(session_id)
+        self.sesiones_vistas.append(session_id)
+        del self.sesiones_vistas[:-MAXIMO_SESIONES_ANOTADAS]
+
     def _procesar_cuerpo(self, cuerpo: dict, recibido_utc: str) -> None:
         """Registra y reparte una senal de un mensaje MQTT simple o agrupado."""
+
+        self._anotar_sesion(cuerpo.get("session_id"))
 
         # LO CARO SOLO SE HACE SI ALGUIEN MIRA.
         #

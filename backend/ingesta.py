@@ -802,6 +802,24 @@ def captura_detener(trabajo_id: str | None = None) -> dict:
     resumen["mensajes_publicados"] = sum(c.get("mensajes_publicados") or 0
                                          for c in capturas)
     resumen["provisionales_sin_cerrar"] = provisionales
+
+    # EL CATALOGO SE PONE AL DIA ACA, Y ANTES NO LO HACIA NADIE.
+    #
+    # `sesiones_catalogo` solo se rehace solo cuando esta **vacio**: una sesion
+    # nueva no lo disparaba. De modo que al terminar de capturar, la sesion
+    # recien grabada existia en la base con cientos de miles de filas y no
+    # figuraba en el catalogo, que es de donde el tablero saca la lista de
+    # sesiones guardadas. No habia forma de abrirla.
+    #
+    # Se refresca **una por una** y no se rehace entero: recontar una sesion
+    # costo 7,2 s sobre la mas grande que hay y rehacer todo cuesta 149 s. Los
+    # identificadores salen del difusor, que vio pasar cada mensaje; el sidecar
+    # de la captura no los trae.
+    sesiones = list(getattr(live_stream.difusor, "sesiones_vistas", []))
+    for sesion in sesiones:
+        catalogo_sesiones.refrescar_en_segundo_plano(sesion)
+    resumen["catalogo_refrescado"] = sesiones
+
     if provisionales:
         resumen["advertencia"] = (
             "Quedaron capturas sin cerrar. Se detuvo mientras el juego seguia "

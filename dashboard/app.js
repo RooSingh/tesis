@@ -1079,11 +1079,16 @@ document.getElementById("btn-accion").addEventListener("click", () => {
          se sabe cual es ---el capturador la nombra al recibir el primer
          paquete--- asi que se habilita adoptar la proxima y fijarla. */
       if (a.sigueVivo) { vivo.objetivo = null; vivo.aceptaNueva = true; vivo.pedida = true; vivo.otra = null; }
-      avisar(a.hecho(d), false);
-      // Lo que cambio en la base se ve pidiendo el catalogo de nuevo.
-      pedir("/sesiones?limite=400")
-        .then(c => { SESIONES = (c.sesiones || []).filter(s => s.filas > 0); render(); })
-        .catch(() => {});
+      avisar(a.hecho(d) + (a.sigueVivo ? " · " + esperaDeTelemetria() : ""), false);
+      /* EL CATALOGO NO ESTA LISTO CUANDO LA RESPUESTA VUELVE.
+         Detener una captura refresca la sesion recien grabada **por detras**:
+         recontarla lleva segundos. Pedir el catalogo una sola vez, aca mismo,
+         devolvia la lista de antes ---sin la sesion nueva--- y el tablero se
+         quedaba con esa. Ocurrio el 2026-09-09: Suzuka tenia 481.355 filas en
+         la base y no aparecia en «sesiones guardadas», de modo que no habia
+         forma de abrirla. Se vuelve a pedir hasta que la lista deje de
+         cambiar, con techo: si no cambia, no se insiste. */
+      refrescarCatalogo(6);
       vigilarEnVivo();
     })
     .catch(e => {
@@ -1102,7 +1107,7 @@ document.getElementById("btn-accion").addEventListener("click", () => {
         vivo.objetivo = null; vivo.aceptaNueva = true; vivo.pedida = true; vivo.otra = null;
         avisar("Ya estaba escuchando" +
                (enCurso.duracion_s ? " desde hace " + Math.round(enCurso.duracion_s) + " s" : "") +
-               ". Se sigue esa captura.", false);
+               ". Se sigue esa captura. " + esperaDeTelemetria(), false);
         vigilarEnVivo();
         render();
         return;
@@ -7263,6 +7268,38 @@ function rotuloDeVuelta(t) {
   // «7» no diga, y dice peor.
   if (primera === ultima) return String(t.vuelta);
   return t.vuelta + " de " + primera + "\u2013" + ultima;
+}
+
+/* Escuchar y recibir no son lo mismo, y el tablero los confundia: decia que
+   seguia la captura y se quedaba mostrando la sesion anterior, congelada, sin
+   explicar que estaba esperando datos que no llegaban. Cualquiera concluye que
+   se rompio ---se concluyo el 2026-09-09, y costo media hora---. La regla de
+   este tablero es que no se dibuja lo que no se midio **y se explica por que**;
+   esto es la parte que faltaba. */
+function esperaDeTelemetria() {
+  return estadoSesion === "vivo"
+    ? "Entrando telemetria."
+    : "Sin telemetria todavia: en cuanto el juego emita, el tablero cambia solo.";
+}
+
+/* Pide el catalogo hasta que se estabilice. `intentos` es el techo: cada uno
+   espera un poco mas que el anterior, de modo que un refresco de siete segundos
+   entra sin castigar al caso comun, que responde en el primero. */
+function refrescarCatalogo(intentos) {
+  const antes = SESIONES.length;
+  pedir("/sesiones?limite=400")
+    .then(c => {
+      const lista = (c.sesiones || []).filter(s => s.filas > 0);
+      const cambio = lista.length !== antes;
+      SESIONES = lista;
+      render();
+      // Se insiste solo mientras no haya cambiado nada y queden intentos: en
+      // cuanto la sesion nueva aparece, no hay motivo para volver a preguntar.
+      if (!cambio && intentos > 1) {
+        setTimeout(() => refrescarCatalogo(intentos - 1), (7 - intentos) * 1000 + 1000);
+      }
+    })
+    .catch(() => {});
 }
 
 function nombreDeFase(a, f) {
