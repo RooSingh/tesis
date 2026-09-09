@@ -84,7 +84,15 @@ services:
       # Solo el 1883. El listener del panel en 9883 existe en la configuracion y
       # **no estaba publicado al anfitrion**; se reproduce tal cual para no
       # exponer nada que antes no lo estuviera.
-      - "1883:1883"
+      #
+      # LA INTERFAZ TAMBIEN SALE DEL ENTORNO, y por omision es la de siempre.
+      # Docker publica en todas las interfaces si no se le dice otra cosa, de
+      # modo que en una maquina conectada a una red domestica el intermediario
+      # queda escuchando en ella: cualquiera puede publicar telemetria falsa o
+      # suscribirse a la real, porque no pide credenciales. En un despliegue se
+      # pone `127.0.0.1`, que es de donde se conectan el consumidor y el
+      # capturador, los dos en la misma maquina.
+      - "${BIND_ANFITRION:-0.0.0.0}:1883:1883"
     volumes:
       # La configuracion, de solo lectura: el contenedor no debe poder cambiar lo
       # que el repositorio declara.
@@ -129,7 +137,7 @@ services:
       # Quien lo cambie tiene que exportar **tambien** `DB_PORT` con el mismo
       # valor, porque es de donde `backend/config.py` lo lee. Adentro del
       # contenedor sigue siendo 5432 siempre.
-      - "${DB_PUERTO_ANFITRION:-5432}:5432"
+      - "${BIND_ANFITRION:-0.0.0.0}:${DB_PUERTO_ANFITRION:-5432}:5432"
     volumes:
       # NOMBRADO, no anonimo. Es la diferencia entre que `docker rm` se lleve la
       # base o no.
