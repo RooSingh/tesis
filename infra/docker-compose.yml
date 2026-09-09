@@ -57,7 +57,16 @@ services:
     # es justamente lo que puede cambiar de version ---y de valores por
     # omision--- sin que nadie lo pida. La etiqueta apunta a la imagen que ya
     # estaba en la maquina, de modo que recrear no descarga nada.
-    image: eclipse-mosquitto:2.1.2
+    #
+    # EL SUFIJO `-alpine` NO ES UNA VARIANTE ELEGIDA: es la unica forma en que
+    # esa version esta publicada. `eclipse-mosquitto:2.1.2` **no existe en el
+    # registro** ---la serie 2.1 se publica solo como `2.1.x-alpine`--- y con esa
+    # etiqueta `up -d` falla en una maquina nueva con `manifest unknown`. En la
+    # maquina de origen no se noto porque la imagen ya estaba descargada. Que es
+    # exactamente la misma quedo comprobado el 2026-09-08: el manifiesto de
+    # `latest` ---la etiqueta con la que se habia descargado--- y el de
+    # `2.1.2-alpine` son identicos byte a byte.
+    image: eclipse-mosquitto:2.1.2-alpine
     container_name: tesis-mosquitto
     # `no` reproduce la conducta que el contenedor tenia. Conviene evaluar
     # `unless-stopped`, que lo levantaria solo tras un reinicio de Docker ---esta
@@ -95,7 +104,17 @@ services:
       POSTGRES_PASSWORD: tesis_pass
       POSTGRES_DB: tesis_db
     ports:
-      - "5432:5432"
+      # EL PUERTO DEL ANFITRION SALE DEL ENTORNO, con 5432 por omision: en la
+      # maquina de origen no cambia nada. Existe porque 5432 es el puerto por
+      # omision de PostgreSQL y por eso mismo suele estar tomado por otra cosa
+      # en una computadora que ya corre otros trabajos; ahi `up -d` falla con
+      # `port is already allocated` y la unica salida honesta es publicar en
+      # otro puerto, no bajar la base ajena.
+      #
+      # Quien lo cambie tiene que exportar **tambien** `DB_PORT` con el mismo
+      # valor, porque es de donde `backend/config.py` lo lee. Adentro del
+      # contenedor sigue siendo 5432 siempre.
+      - "${DB_PUERTO_ANFITRION:-5432}:5432"
     volumes:
       # NOMBRADO, no anonimo. Es la diferencia entre que `docker rm` se lleve la
       # base o no.

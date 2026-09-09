@@ -23,3 +23,6 @@ logs/
 
 # Restos de una recuperacion de git: son sus propios archivos de bloqueo.
 _to_delete/
+
+# El puerto del anfitrion para la base, que es de cada maquina y no del trabajo.
+infra/.env
