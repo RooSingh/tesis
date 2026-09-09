@@ -73,6 +73,26 @@ class AyudantesDeSerieTests(unittest.TestCase):
 
         self._correr("continuaciones_asincronas.js")
 
+    def test_la_posicion_del_coche_sale_del_instante_en_que_se_midio(self) -> None:
+        """Instantes medidos contra rejilla pareja, huecos y cruce de meta."""
+
+        self._correr("posicion_en_el_tiempo.js")
+
+    def test_la_adquisicion_y_la_fase_se_eligen_como_las_declara_la_api(self) -> None:
+        self._correr("eleccion_de_adquisicion.js")
+
+    def test_todo_el_tablero_muestra_el_mismo_instante(self) -> None:
+        """Un solo tiempo de presentacion para instrumentos, coche y graficos.
+
+        Interpolacion con reloj irregular, canales de distinta frecuencia con
+        nulos, senales discretas en escalon, huecos, extremos, marcas
+        repetidas, pausa, seek, cambio de velocidad, vueltas de distinta
+        duracion, cruce de meta, bordes de la ventana movil e inmutabilidad de
+        las muestras.
+        """
+
+        self._correr("tiempo_de_presentacion.js")
+
 
 class RepresentacionDeDatosVivosTests(unittest.TestCase):
     """Lo que no puede volver, por como se rompio.
