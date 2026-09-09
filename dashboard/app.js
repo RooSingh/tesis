@@ -1078,7 +1078,7 @@ document.getElementById("btn-accion").addEventListener("click", () => {
       /* Encender la captura es pedir seguir la sesion que se cree. Todavia no
          se sabe cual es ---el capturador la nombra al recibir el primer
          paquete--- asi que se habilita adoptar la proxima y fijarla. */
-      if (a.sigueVivo) { vivo.objetivo = null; vivo.aceptaNueva = true; vivo.otra = null; }
+      if (a.sigueVivo) { vivo.objetivo = null; vivo.aceptaNueva = true; vivo.pedida = true; vivo.otra = null; }
       avisar(a.hecho(d), false);
       // Lo que cambio en la base se ve pidiendo el catalogo de nuevo.
       pedir("/sesiones?limite=400")
@@ -1099,7 +1099,7 @@ document.getElementById("btn-accion").addEventListener("click", () => {
          falta hacer nada. */
       const enCurso = e.estado === 409 && e.detalle && e.detalle.trabajo_en_curso;
       if (a.sigueVivo && enCurso && enCurso.familia === "captura") {
-        vivo.objetivo = null; vivo.aceptaNueva = true; vivo.otra = null;
+        vivo.objetivo = null; vivo.aceptaNueva = true; vivo.pedida = true; vivo.otra = null;
         avisar("Ya estaba escuchando" +
                (enCurso.duracion_s ? " desde hace " + Math.round(enCurso.duracion_s) + " s" : "") +
                ". Se sigue esa captura.", false);
@@ -6095,6 +6095,13 @@ const vivo = {
   //: objetivo. Lo pone en verdadero el arranque sin nada abierto y el boton de
   //: empezar a capturar; nunca un mensaje.
   aceptaNueva: true,
+  //: Si **una persona pidio escuchar**, y no el arranque por omision.
+  //:
+  //: `aceptaNueva` no alcanzaba para distinguirlos porque arranca en verdadero:
+  //: leerlo antes que la sesion abierta habria convertido al tablero en
+  //: seguidor de cualquier sesion que apareciera, que es justo lo que se
+  //: evitaba. Este solo lo enciende el boton, y se apaga al adoptar.
+  pedida: false,
   //: El recorrido que se va midiendo, por vehiculo: pares [x, z] del mundo,
   //: en el orden en que llegaron. Es la **misma senal** con la que el backend
   //: arma el trazado de una sesion guardada ---`world_position_x` y
@@ -6172,6 +6179,14 @@ function recordarVista(id) {
 function puedeAdoptarVivo(sesionId) {
   // Ya se eligio a quien seguir: solo esa.
   if (vivo.objetivo) return vivo.objetivo === sesionId;
+  /* Se pidio escuchar, y eso manda sobre lo que este abierto.
+     Sin esto, pulsar «empezar a escuchar» mientras se reproduce una sesion
+     guardada no hacia nada visible: el permiso quedaba debajo de esta linea y
+     la telemetria nueva se descartaba por no ser la que se estaba mirando. El
+     tablero se quedaba congelado en la sesion vieja, con el boton todavia
+     ofreciendo empezar. Ocurrio el 2026-09-09 con Suzuka entrando y Red Bull
+     Ring en pantalla. */
+  if (vivo.pedida) return true;
   // La sesion que se esta mirando, si justo empieza a emitir.
   if (estado.abierta) return estado.abierta.session_id === sesionId;
   // Nada abierto y permiso para elegir: se adopta la primera y **se fija**.
@@ -6335,6 +6350,7 @@ function incorporarTelemetriaViva(m, recuperando) {
        seguidor de cualquier otra que apareciera despues. */
     vivo.objetivo = m.session_id;
     vivo.aceptaNueva = false;
+    vivo.pedida = false;
     /* Y lo que estaba pidiendo la sesion anterior deja de valer. Sin esto, una
        consulta historica en vuelo volvia despues del cambio, pasaba la
        comprobacion de vigencia ---porque el numero de apertura no habia
@@ -6810,6 +6826,7 @@ function abrirSesionGuardada(id) {
      caso queda «siguiendo lo que aparezca». */
   vivo.objetivo = (vivo.sesion && vivo.sesion === id) ? id : null;
   vivo.aceptaNueva = false;
+  vivo.pedida = false;
   /* LO QUE HACE FALTA PARA ABRIR, Y LO QUE PUEDE LLEGAR DESPUES.
      Abrir la sesion esperaba a las seis consultas, y una de ellas ---los
      avisos--- tarda cuatro segundos: recorre la sesion entera buscando el
