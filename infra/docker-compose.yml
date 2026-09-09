@@ -68,11 +68,18 @@ services:
     # `2.1.2-alpine` son identicos byte a byte.
     image: eclipse-mosquitto:2.1.2-alpine
     container_name: tesis-mosquitto
-    # `no` reproduce la conducta que el contenedor tenia. Conviene evaluar
-    # `unless-stopped`, que lo levantaria solo tras un reinicio de Docker ---esta
-    # jornada hubo uno y los contenedores quedaron abajo--- pero es un cambio de
-    # conducta y se deja a decision de la autora.
-    restart: "no"
+    # DESDE EL ENTORNO, CON `no` POR OMISION.
+    #
+    # `no` reproduce la conducta que el contenedor tenia en la maquina de
+    # trabajo, y ahi sigue siendo lo correcto: una jornada hubo un reinicio de
+    # Docker y que los contenedores quedaran abajo fue informacion, no un
+    # estorbo.
+    #
+    # En una maquina desatendida es al reves. Una Raspberry que se cuelga de la
+    # corriente vuelve sola, y si los contenedores no vuelven con ella el
+    # sistema queda caido sin que nadie se entere. Ahi se pone
+    # `unless-stopped`, en el `.env` de esta carpeta.
+    restart: ${DOCKER_REINICIO:-no}
     ports:
       # Solo el 1883. El listener del panel en 9883 existe en la configuracion y
       # **no estaba publicado al anfitrion**; se reproduce tal cual para no
@@ -94,15 +101,23 @@ services:
     # modo que en esta no se descarga nada y en otra se descarga exactamente esa.
     image: timescale/timescaledb@sha256:61f891691050da6032023c01ea885730eeeba06b7c17b403e7d0b9c49c37dfe9
     container_name: tesis-timescaledb
-    restart: "no"
+    # Lo mismo que arriba, y con mas motivo: aca vive lo que no se puede perder.
+    restart: ${DOCKER_REINICIO:-no}
     environment:
       # Las mismas credenciales que `backend/config.py` tiene por omision. Son
       # locales y estan en el codigo desde el principio: no son un secreto que
       # este archivo revele, son la configuracion de un servicio que solo
       # escucha en esta maquina.
-      POSTGRES_USER: tesis_user
-      POSTGRES_PASSWORD: tesis_pass
-      POSTGRES_DB: tesis_db
+      #
+      # Salen del entorno con esos mismos valores por omision. Existe para poder
+      # poner otra contrasena donde la maquina aloja algo mas, sin editar un
+      # archivo versionado. **Solo tienen efecto cuando el volumen se crea**:
+      # PostgreSQL las usa al inicializar la base y despues las ignora, de modo
+      # que cambiarlas sobre un volumen que ya existe no cambia nada y da la
+      # falsa impresion de haber cambiado algo.
+      POSTGRES_USER: ${DB_USER:-tesis_user}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-tesis_pass}
+      POSTGRES_DB: ${DB_NAME:-tesis_db}
     ports:
       # EL PUERTO DEL ANFITRION SALE DEL ENTORNO, con 5432 por omision: en la
       # maquina de origen no cambia nada. Existe porque 5432 es el puerto por
