@@ -82,6 +82,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from backend import catalogo_corridas
+from backend import config
 from backend import catalogo_sesiones
 from backend import db
 from backend import live_stream
@@ -728,7 +729,14 @@ def captura_iniciar(peticion: PeticionCaptura) -> dict:
                "--puerto", str(puerto)]
     if not peticion.publicar:
         comando.append("--sin-publicar")
-    if peticion.parrilla_completa:
+    # La parrilla completa se puede limitar por entorno, y **si se limita se
+    # dice**. Ignorar en silencio lo que pidio quien llama seria peor que el
+    # problema que esto evita: el tablero seguiria creyendo que captura los
+    # veintidos coches y no habria forma de notarlo hasta contar las filas. El
+    # motivo y las mediciones estan en `backend/config.py`.
+    parrilla = peticion.parrilla_completa and not config.CAPTURA_SOLO_VEHICULO_PROPIO
+    limitada = peticion.parrilla_completa and not parrilla
+    if parrilla:
         comando.append("--parrilla-completa")
     if peticion.sesion:
         comando += ["--run-id", peticion.sesion]
@@ -741,6 +749,13 @@ def captura_iniciar(peticion: PeticionCaptura) -> dict:
     respuesta = trabajo.a_dict()
     respuesta["puerto"] = puerto
     respuesta["run_id"] = peticion.sesion
+    respuesta["parrilla_completa"] = parrilla
+    if limitada:
+        respuesta["parrilla_limitada_porque"] = (
+            "Esta instalacion captura solo el vehiculo propio "
+            "(CAPTURA_SOLO_VEHICULO_PROPIO). La parrilla completa multiplica "
+            "por veintidos las senales, y en esta maquina se descartaba el 87 % "
+            "---tambien las del coche propio---.")
     respuesta["destino"] = str(CAPTURAS_F1)
     respuesta["advertencia"] = (
         "El nombre del archivo lo deriva el capturador del flujo. `sesion` viaja "

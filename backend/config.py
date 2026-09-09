@@ -182,3 +182,29 @@ DIRECTORIO_TABLERO = os.getenv(
     "DIRECTORIO_TABLERO",
     str(Path(__file__).resolve().parent.parent / "dashboard"),
 )
+
+
+#: Si la captura se limita al vehiculo propio, ignorando lo que pida quien la
+#: inicie.
+#:
+#: POR QUE EXISTE, Y CON QUE MEDICION
+#: ----------------------------------
+#: Publicar la parrilla completa multiplica por veintidos las senales que la
+#: cadena tiene que llevar, y hay maquinas donde eso no entra. Medido sobre la
+#: Raspberry el 2026-09-09, con una contrarreloj real de 250,5 s que el
+#: simulador entrego a 20 Hz limpios:
+#:
+#:     con la parrilla completa   25.591 senales/s pedidas
+#:     el consumidor sostuvo       3.811 senales/s
+#:     solo el vehiculo propio     1.866 senales/s pedidas
+#:
+#: Se le pidio 6,7 veces su techo: el intermediario descarto el 87 % de los
+#: envios y llego el 14,9 %. **No se perdieron los rivales: se perdio casi todo,
+#: tambien del coche propio.** Limitado al vehiculo propio entra con el doble de
+#: margen y no se descarta nada.
+#:
+#: Por omision esta apagado y la captura hace lo que le pidan, de modo que donde
+#: la cadena da abasto no cambia nada. Encendido, `POST /captura/iniciar`
+#: **lo declara en su respuesta**: una peticion ignorada en silencio seria peor
+#: que el problema que evita.
+CAPTURA_SOLO_VEHICULO_PROPIO = os.getenv("CAPTURA_SOLO_VEHICULO_PROPIO", "0") == "1"
