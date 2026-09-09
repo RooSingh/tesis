@@ -13,7 +13,12 @@ REM
 REM PARA APAGARLO, ver scripts\desactivar_servicios.ps1
 REM ---------------------------------------------------------------------------
 
-set RAIZ=C:\Users\Usuario\Documents\GitHub\tesis
+REM La raiz sale de la ubicacion de este archivo ---`%~dp0` es la carpeta
+REM `scripts\`--- y no de una ruta escrita a mano. Estaba fija en
+REM `C:\Users\Usuario\Documents\GitHub\tesis`, que es la ruta de UNA maquina:
+REM en cualquier otra, o con el repositorio en otra carpeta, el servicio
+REM arranca y no encuentra nada.
+for %%I in ("%~dp0..") do set RAIZ=%%~fI
 set PYTHON=%RAIZ%\.venv\Scripts\python.exe
 set REGISTRO=%RAIZ%\logs\backend.log
 

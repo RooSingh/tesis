@@ -14,7 +14,12 @@ REM
 REM PARA APAGARLO CUANDO EL PROYECTO TERMINE, ver scripts\desactivar_capturador.ps1
 REM ---------------------------------------------------------------------------
 
-set RAIZ=C:\Users\Usuario\Documents\GitHub\tesis
+REM La raiz sale de la ubicacion de este archivo ---`%~dp0` es la carpeta
+REM `scripts\`--- y no de una ruta escrita a mano. Estaba fija en
+REM `C:\Users\Usuario\Documents\GitHub\tesis`, que es la ruta de UNA maquina:
+REM en cualquier otra, o con el repositorio en otra carpeta, el servicio
+REM arranca y no encuentra nada.
+for %%I in ("%~dp0..") do set RAIZ=%%~fI
 REM El interprete del ENTORNO VIRTUAL, no el del sistema.
 REM
 REM Con el del sistema el capturador arranca y graba, pero no puede publicar:

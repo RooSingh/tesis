@@ -107,8 +107,20 @@ MQTT_SYS_DROPPED_TOPIC = "$SYS/broker/publish/messages/dropped"
 
 BACKEND_APP_NAME = "tesis-telemetry-backend"
 
-DB_HOST = "localhost"
-DB_PORT = 5432
-DB_NAME = "tesis_db"
-DB_USER = "tesis_user"
-DB_PASSWORD = "tesis_pass"
+#: La base, tambien desde el entorno y con los mismos valores por omision: sin
+#: definir nada, todo se comporta igual que antes.
+#:
+#: Estan asi por el mismo motivo que `MQTT_PORT`: poder levantar una pila
+#: aparte ---otra base, en otro puerto--- y comprobar contra ella sin tocar la
+#: de siempre. Es lo que permitio verificar que las migraciones reconstruyen el
+#: esquema en una base virgen, que era la unica forma de saberlo sin arriesgar
+#: los ochenta y nueve millones de filas.
+#:
+#: La contrasena esta en el codigo desde el principio y se la deja: es la de un
+#: servicio local que solo escucha en esta maquina, y sacarla a una variable sin
+#: sacarla del historial de git no la volveria secreta.
+DB_HOST = os.getenv("DB_HOST", "localhost")
+DB_PORT = int(os.getenv("DB_PORT", "5432"))
+DB_NAME = os.getenv("DB_NAME", "tesis_db")
+DB_USER = os.getenv("DB_USER", "tesis_user")
+DB_PASSWORD = os.getenv("DB_PASSWORD", "tesis_pass")

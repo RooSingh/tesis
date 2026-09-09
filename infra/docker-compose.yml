@@ -18,16 +18,24 @@
 # Montando la configuracion desde el repositorio, el ajuste **viaja con el codigo**
 # y sobrevive a recrear el contenedor.
 #
-# LA BASE DE DATOS NO ESTA ACA, Y ES A PROPOSITO
-# ----------------------------------------------
-# Su contenedor tambien se creo con `docker run`, pero su situacion es distinta:
-# tanto sus datos como su ajuste fino ---`shared_buffers` en 1,7 GB,
-# `effective_cache_size` en 5 GB, dieciseis trabajadores de fondo--- viven en un
-# volumen con nombre y **sobreviven a recrearlo**. Lo unico que no es reproducible
-# es el comando de creacion.
+# LA BASE DE DATOS AHORA TAMBIEN, Y HUBO QUE CORREGIR UNA AFIRMACION
+# ------------------------------------------------------------------
+# Este archivo decia que la base se quedaba afuera porque sus datos vivian «en un
+# volumen con nombre» y sobrevivian a recrear el contenedor. **Eso era falso.**
+# Comprobado el 2026-09-08 con `docker inspect`: el volumen es anonimo, se llama
+# `70960a174506d1...`, y un `docker rm -v` se lleva las filas sin preguntar. La
+# afirmacion que justificaba dejarla afuera era justamente el motivo para traerla.
 #
-# Traerla aca exigiria referenciar su volumen exactamente bien, y un error ahi son
-# ochenta y siete millones de filas. No hay apuro que lo justifique.
+# El otro motivo aparecio al preguntarse que hace falta para levantar el trabajo
+# en otra computadora: sin esto, no hay de donde sacar ni la version de la imagen
+# ni el ajuste de PostgreSQL, que no estaba en ningun archivo del repositorio.
+#
+# EL CONTENEDOR QUE YA EXISTE NO SE TOCA
+# --------------------------------------
+# En la maquina donde la base ya corre, `up -d` **no la migra**: Docker se niega a
+# crear un contenedor con un nombre en uso y no pasa nada. Mover los datos del
+# volumen anonimo al nombrado es una operacion aparte, deliberada, y no la hace
+# este archivo.
 #
 # COMO SE USA
 # -----------
@@ -35,6 +43,9 @@
 #
 # Y despues, siempre:
 #   python scripts/verificar_topes_intermediario.py
+#
+# En una maquina nueva, ademas, las migraciones en orden:
+#   for f in database/*.sql; do python scripts/apply_database_migration.py $f; done
 #
 # Ese guion no lee la configuracion sino que **mide la conducta**, que es lo unico
 # que distingue un ajuste aplicado de uno leido y descartado. Estos topes no se
@@ -65,6 +76,92 @@ services:
       - mosquitto_data:/mosquitto/data
       - mosquitto_log:/mosquitto/log
 
+  timescaledb:
+    # La misma que corre hoy: PostgreSQL 16.14 con TimescaleDB 2.28.3.
+    #
+    # `latest-pg16` es una etiqueta movil, igual que `latest`, y este archivo ya
+    # explica arriba por que eso no sirve. Se fija por digesto, que es lo unico
+    # que no puede cambiar debajo: apunta a la imagen que esta en la maquina, de
+    # modo que en esta no se descarga nada y en otra se descarga exactamente esa.
+    image: timescale/timescaledb@sha256:61f891691050da6032023c01ea885730eeeba06b7c17b403e7d0b9c49c37dfe9
+    container_name: tesis-timescaledb
+    restart: "no"
+    environment:
+      # Las mismas credenciales que `backend/config.py` tiene por omision. Son
+      # locales y estan en el codigo desde el principio: no son un secreto que
+      # este archivo revele, son la configuracion de un servicio que solo
+      # escucha en esta maquina.
+      POSTGRES_USER: tesis_user
+      POSTGRES_PASSWORD: tesis_pass
+      POSTGRES_DB: tesis_db
+    ports:
+      - "5432:5432"
+    volumes:
+      # NOMBRADO, no anonimo. Es la diferencia entre que `docker rm` se lleve la
+      # base o no.
+      - timescaledb_data:/var/lib/postgresql/data
+    # EL AJUSTE, EN EL REPOSITORIO Y NO ADENTRO DEL VOLUMEN.
+    #
+    # Estos valores los produjo `timescaledb-tune` la primera vez que el
+    # contenedor arranco, y quedaron en un `postgresql.conf` **dentro del
+    # volumen**: no habia forma de saber cuales eran sin entrar a preguntarle a
+    # la base. Pasados como argumentos quedan escritos, y ademas ganan sobre el
+    # archivo, de modo que lo que dice el repositorio es lo que corre.
+    #
+    # ESTAN DIMENSIONADOS PARA ESTA MAQUINA, de 8 GB de memoria. En una con otra
+    # cantidad hay que rehacerlos ---`timescaledb-tune` los recalcula--- y
+    # anotarlos aca. Dejarlos como estan en una maquina mas chica hace que
+    # PostgreSQL no arranque.
+    command:
+      - postgres
+      - -c
+      - shared_preload_libraries=timescaledb
+      - -c
+      - shared_buffers=1713MB
+      - -c
+      - effective_cache_size=5139MB
+      - -c
+      - maintenance_work_mem=877080kB
+      - -c
+      - work_mem=3426kB
+      - -c
+      - wal_buffers=16MB
+      - -c
+      - min_wal_size=512MB
+      - -c
+      - max_wal_size=1024MB
+      - -c
+      - checkpoint_completion_target=0.9
+      # Disco de estado solido: un salto no cuesta mucho mas que una lectura
+      # secuencial, y con el valor de fabrica ---4--- el planificador prefiere
+      # recorrer la tabla antes que usar un indice.
+      - -c
+      - random_page_cost=1.1
+      - -c
+      - effective_io_concurrency=256
+      - -c
+      - max_worker_processes=35
+      - -c
+      - max_parallel_workers=16
+      - -c
+      - max_parallel_workers_per_gather=8
+      - -c
+      - timescaledb.max_background_workers=16
+      - -c
+      - autovacuum_max_workers=10
+      - -c
+      - autovacuum_naptime=10
+      - -c
+      - max_locks_per_transaction=128
+      # La compilacion al vuelo cuesta mas de lo que ahorra en consultas que ya
+      # estan resueltas por indice y por fragmento.
+      - -c
+      - jit=off
+      - -c
+      - default_toast_compression=lz4
+      - -c
+      - timezone=UTC
+
 volumes:
   # Nombrados en lugar de anonimos. Los anteriores eran anonimos y quedan
   # huerfanos al recrear: no se pierde nada porque la persistencia en disco no
@@ -72,3 +169,6 @@ volumes:
   # sabia por haberla perdido en un reinicio.
   mosquitto_data:
   mosquitto_log:
+  # El de la base **si** guarda algo que no se puede perder. El contenedor que
+  # corre hoy usa uno anonimo; este no lo reemplaza ni lo toca.
+  timescaledb_data:

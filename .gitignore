@@ -16,3 +16,10 @@ informe/tesis/figuras/carrera_silverstone_*.png
 
 # Registro del capturador permanente. Es salida de ejecucion, no fuente.
 logs/
+
+# Archivos de bloqueo de Office. Existen solo mientras el documento esta
+# abierto y no son parte de nada.
+~$*
+
+# Restos de una recuperacion de git: son sus propios archivos de bloqueo.
+_to_delete/

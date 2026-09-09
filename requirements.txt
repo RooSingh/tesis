@@ -1,0 +1,69 @@
+# Las dependencias de Python, con la version exacta que esta en uso.
+#
+# POR QUE ESTAN PINEADAS TODAS, TAMBIEN LAS INDIRECTAS
+# ----------------------------------------------------
+# Lo que se quiere reproducir en otra maquina no es «una version compatible»
+# sino **la que produjo las mediciones del informe**. Una dependencia indirecta
+# que cambia de version cambia el comportamiento igual que una directa, y no
+# deja rastro en ningun import.
+#
+# Salio de `pip freeze` sobre el entorno con el que corre la suite completa
+# ---1.007 pruebas--- el 2026-09-08.
+#
+# COMO SE USA
+# -----------
+#     python -m venv .venv
+#     .venv\Scripts\python -m pip install -r requirements.txt     (Windows)
+#     .venv/bin/python -m pip install -r requirements.txt         (Linux/macOS)
+#
+# QUE NO ESTA ACA
+# ---------------
+# * **reportlab**, que `scripts/generar_pdf_agregados_informe.py` importa y que
+#   **no esta instalado**: ese guion hoy no corre. Se deja anotado en vez de
+#   agregarlo, porque agregarlo seria declarar que una dependencia esta en uso
+#   sin haberlo comprobado.
+# * Las herramientas que no son paquetes de Python: Docker, Node ---para los
+#   arneses de `tests/js/`---, Chrome ---para `test_dashboard_browser`--- y
+#   MiKTeX si se compila el informe.
+# * `pytest`: la suite se corre con `unittest`, que viene con Python.
+
+# --- El nucleo: API, persistencia y mensajeria -----------------------------
+fastapi==0.139.1
+uvicorn==0.51.0
+starlette==1.3.1
+pydantic==2.13.4
+pydantic_core==2.46.4
+psycopg==3.3.4
+psycopg-binary==3.3.4
+paho-mqtt==2.1.0
+
+# --- Lo que arrastran los anteriores ---------------------------------------
+annotated-doc==0.0.4
+annotated-types==0.7.0
+anyio==4.14.2
+click==8.4.2
+colorama==0.4.6
+h11==0.16.0
+idna==3.18
+typing-inspection==0.4.2
+typing_extensions==4.16.0
+
+# --- La linea de CAN: lo que necesita `opendbc`, en `datasets/openDBC/` -----
+# No lo importa el codigo del trabajo sino la biblioteca de terceros que se usa
+# para decodificar el bus del vehiculo real.
+numpy==2.5.0
+pycapnp==2.2.3
+pyzmq==27.1.0
+tqdm==4.68.3
+zstandard==0.25.0
+
+# --- El material de validacion: descarga y recorte de video -----------------
+pillow==12.3.0
+requests==2.34.2
+yt-dlp==2026.8.19
+certifi==2026.6.17
+charset-normalizer==3.4.7
+urllib3==2.7.0
+
+# --- Zona horaria, para las marcas de tiempo en Windows ---------------------
+tzdata==2026.3
