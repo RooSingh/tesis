@@ -771,6 +771,43 @@ class UnAvisoEsDeUnVehiculoTests(unittest.TestCase):
         self.assertNotIn("vehicle_id", consulta)
 
 
+class LasVueltasSonDeQuienConduceTests(unittest.TestCase):
+    """`/vueltas` elegia el vehiculo con mas filas, y el tablero le hacia caso.
+
+    Su razonamiento estaba escrito y era correcto **cuando se capturaba un solo
+    coche**: «de los rivales la fuente publica cronometraje y no telemetria, de
+    modo que el que tiene mas filas es siempre el que se conduce». Desde que se
+    puede elegir a quien escuchar, los rivales traen exactamente las mismas
+    senales y con la misma frecuencia: el mas muestreado vuelve a ser cualquiera.
+
+    El tablero lo tomaba como autoritativo ---«ninguna otra la pisa», decia su
+    comentario--- de modo que abria en Russell una sesion corrida con Hamilton,
+    y volvia a Russell cada vez que se lo cambiaba a mano.
+
+    Se pregunta primero quien conduce. El mas muestreado queda de respaldo para
+    cuando la sesion no lo declara.
+    """
+
+    def test_prefiere_a_quien_declara_el_flujo(self) -> None:
+        falsa, parche = _con([])
+        with parche, patch.object(api_sesion, "_vehiculo_propio",
+                                  return_value="f1_25:session:7:car:19") as declarado:
+            api_sesion.listar_vueltas("f1_25:session:7")
+        self.assertTrue(declarado.called)
+        # Sabiendo quien conduce, no hace falta contar filas para adivinarlo.
+        consultas = [c for c, _ in falsa.consultas]
+        self.assertFalse([c for c in consultas if "ORDER BY 2 DESC" in c])
+
+    def test_sin_declaracion_vuelve_a_contar_filas(self) -> None:
+        """Es lo que habia, y con una captura de un vehiculo sigue acertando."""
+
+        falsa, parche = _con([])
+        with parche:
+            api_sesion.listar_vueltas("f1_25:session:7")
+        consultas = [c for c, _ in falsa.consultas]
+        self.assertTrue([c for c in consultas if "ORDER BY 2 DESC" in c])
+
+
 class LaParrillaDiceQuienConduceTests(unittest.TestCase):
     """El tablero adivinaba quien es el coche propio. Con cuatro, adivinaba mal.
 

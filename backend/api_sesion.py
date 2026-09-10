@@ -280,8 +280,24 @@ def listar_vueltas(
         f0, f1 = _limites_de_fase(cursor, fuente, session_id, adquisicion, fase)
         tramo, tramo_par = _clausula_de_tramo(f0, f1)
         if not vehiculo:
+            # PRIMERO SE PREGUNTA QUIEN CONDUCE.
+            #
+            # Debajo se elige el vehiculo con mas filas, y el razonamiento que
+            # lo justificaba estaba escrito y era correcto **mientras se
+            # capturaba un solo coche**: de los rivales la fuente publicaba
+            # cronometraje y no telemetria, de modo que el mas muestreado era
+            # siempre el propio.
+            #
+            # Desde que se puede elegir a quien escuchar, los rivales traen
+            # exactamente las mismas senales y con la misma frecuencia: el mas
+            # muestreado volvio a ser cualquiera. El 2026-09-10 esta consulta
+            # devolvio a Russell en una sesion corrida con Hamilton, y el
+            # tablero la tomaba como autoritativa.
+            vehiculo = _vehiculo_propio(cursor, fuente, session_id)
+        if not vehiculo:
             # El mas muestreado **de la fase pedida**: en la formacion de Spa
-            # rueda un vehiculo y en las pruebas de parrilla, veinte.
+            # rueda un vehiculo y en las pruebas de parrilla, veinte. Queda de
+            # respaldo para las capturas que no declaran quien conduce.
             elegido = _filas(cursor, """
                 SELECT vehicle_id, count(*)
                   FROM telemetry_messages
