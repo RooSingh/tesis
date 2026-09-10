@@ -121,7 +121,7 @@ def insertar_telemetria(mensaje: TelemetryMessage) -> None:
                     "curve_id": mensaje.curve_id,
                     "can_id": metadata.can_id,
                     "src": metadata.src,
-                    "metadata": json.dumps(metadata.model_dump(mode="json", exclude_none=True)),
+                    "metadata": metadata.model_dump_json(exclude_none=True),
                 },
             )
 
@@ -203,7 +203,7 @@ def _parametros_telemetria(mensaje: TelemetryMessage) -> dict[str, Any]:
         "curve_id": mensaje.curve_id,
         "can_id": metadata.can_id,
         "src": metadata.src,
-        "metadata": json.dumps(metadata.model_dump(mode="json", exclude_none=True)),
+        "metadata": metadata.model_dump_json(exclude_none=True),
     }
 
 
@@ -233,6 +233,71 @@ INSERT_TELEMETRY_SQL = """
 """
 
 
+TELEMETRY_COLUMNS = (
+    "timestamp", "vehicle_id", "driver_id", "session_id", "lap_id",
+    "source_type", "signal_name", "value_numeric", "value_boolean",
+    "value_text", "unit", "quality_flag", "track_segment_id", "sector_id",
+    "curve_id", "can_id", "src", "metadata", "replay_run_id", "replay_seq",
+    "desplazamiento_captura_us",
+)
+_COLUMNAS_TELEMETRIA_SQL = ", ".join(TELEMETRY_COLUMNS)
+CREAR_LOTE_TEMPORAL_SQL = """
+    CREATE TEMP TABLE IF NOT EXISTS telemetry_messages_batch
+    (LIKE telemetry_messages INCLUDING DEFAULTS)
+    ON COMMIT DELETE ROWS
+"""
+COPY_TELEMETRY_SQL = (
+    f"COPY pg_temp.telemetry_messages_batch ({_COLUMNAS_TELEMETRIA_SQL}) "
+    "FROM STDIN"
+)
+INSERT_TELEMETRY_FROM_BATCH_SQL = f"""
+    INSERT INTO telemetry_messages ({_COLUMNAS_TELEMETRIA_SQL})
+    SELECT {_COLUMNAS_TELEMETRIA_SQL}
+    FROM pg_temp.telemetry_messages_batch
+    ON CONFLICT DO NOTHING
+"""
+
+
+def _fila_telemetria(mensaje: TelemetryMessage) -> tuple[Any, ...]:
+    """Construye una fila en el mismo orden que ``TELEMETRY_COLUMNS``."""
+    value_numeric, value_boolean, value_text = _separar_valor(mensaje.value)
+    metadata = mensaje.metadata
+    replay_run_id, replay_seq = _identidad_replay(metadata)
+    return (
+        mensaje.timestamp,
+        mensaje.vehicle_id,
+        mensaje.driver_id,
+        mensaje.session_id,
+        mensaje.lap_id,
+        mensaje.source_type,
+        mensaje.signal_name,
+        value_numeric,
+        value_boolean,
+        value_text,
+        mensaje.unit,
+        mensaje.quality_flag,
+        mensaje.track_segment_id,
+        mensaje.sector_id,
+        mensaje.curve_id,
+        metadata.can_id,
+        metadata.src,
+        metadata.model_dump_json(exclude_none=True),
+        replay_run_id,
+        replay_seq,
+        _desplazamiento_de_captura(metadata),
+    )
+
+
+def _insertar_filas_por_copy(cur: psycopg.Cursor, filas: list[tuple[Any, ...]]) -> int:
+    """Carga un lote por COPY y conserva la deduplicacion de la tabla final."""
+    cur.execute(CREAR_LOTE_TEMPORAL_SQL)
+    with cur.copy(COPY_TELEMETRY_SQL) as copia:
+        for fila in filas:
+            copia.write_row(fila)
+    cur.execute(INSERT_TELEMETRY_FROM_BATCH_SQL)
+    return _filas_insertadas(cur.rowcount, len(filas))
+
+
 def _filas_insertadas(rowcount: int | None, esperadas: int) -> int:
     """Interpreta `cur.rowcount` de forma conservadora.
 
@@ -256,12 +321,10 @@ def insertar_telemetria_lote(mensajes: list[TelemetryMessage]) -> int:
     """
     if not mensajes:
         return 0
-    parametros = [_parametros_telemetria(mensaje) for mensaje in mensajes]
+    filas = [_fila_telemetria(mensaje) for mensaje in mensajes]
     with obtener_conexion() as conn:
         with conn.cursor() as cur:
-            cur.executemany(INSERT_TELEMETRY_SQL, parametros)
-            insertadas = cur.rowcount
-    return _filas_insertadas(insertadas, len(mensajes))
+            return _insertar_filas_por_copy(cur, filas)
 
 
 class EscritorTelemetria:
@@ -289,18 +352,17 @@ class EscritorTelemetria:
     def __call__(self, mensajes: list[TelemetryMessage]) -> int:
         if not mensajes:
             return 0
-        parametros = [_parametros_telemetria(mensaje) for mensaje in mensajes]
+        filas = [_fila_telemetria(mensaje) for mensaje in mensajes]
         with self.lock:
             try:
                 conn = self._conexion_activa()
                 with conn.transaction():
                     with conn.cursor() as cur:
-                        cur.executemany(INSERT_TELEMETRY_SQL, parametros)
-                        insertadas = cur.rowcount
+                        insertadas = _insertar_filas_por_copy(cur, filas)
             except Exception:
                 self._cerrar_sin_bloquear()
                 raise
-        return _filas_insertadas(insertadas, len(mensajes))
+        return insertadas
 
     def _cerrar_sin_bloquear(self) -> None:
         if self._conexion is not None:

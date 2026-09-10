@@ -408,9 +408,9 @@ def nombre_derivado(procedencia: dict, inicio: datetime) -> str:
 #: NO ES UN NUMERO DE GUSTO: ES LO QUE LA MEDICION PERMITE. Sobre la carrera de
 #: Spa con la parrilla entera, cada coche pide 1.511 senales/s y el propio 1.673,
 #: porque suma `motion_ex`. Los veintidos piden 33.250. Cronometrado sobre la
-#: Raspberry, el consumidor tarda 100,8 us por mensaje entre interpretar el JSON,
-#: validarlo, armar los parametros e insertar ---unos 9.900 mensajes/s en serie---
-#: de modo que seis coches, que piden 9.228, entran justos y ocho no entran.
+#: Raspberry, la cadena corregida sostuvo 10.240 senales/s durante dos minutos
+#: con seis coches: 1.228.842 recibidas y persistidas, cero descartes del broker
+#: y una cola acotada a 6.836. Seis entran; no se extrapola ese resultado a ocho.
 #:
 #: El tope existe porque el modo en que esto se rompe es el peor posible: no
 #: falla, se pierden muestras **de todos**, tambien del coche propio. Aceptar una

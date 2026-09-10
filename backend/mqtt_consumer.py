@@ -18,7 +18,7 @@ from collections import deque
 import threading
 
 import paho.mqtt.client as mqtt
-from pydantic import ValidationError
+from pydantic import TypeAdapter, ValidationError
 
 from backend.config import (
     MQTT_BATCH_SIZE,
@@ -46,6 +46,7 @@ MAX_MENSAJES_EN_MEMORIA = 20
 BATCH_SIZE = MQTT_BATCH_SIZE
 FLUSH_INTERVAL_SECONDS = MQTT_FLUSH_INTERVAL_SECONDS
 MAX_PENDING_MESSAGES = MQTT_MAX_PENDING_MESSAGES
+ADAPTADOR_LOTE_TELEMETRIA = TypeAdapter(list[TelemetryMessage])
 
 
 class TelemetryBatchBuffer:
@@ -338,13 +339,11 @@ class TelemetryBatchBuffer:
             return {**self.metrics, "pending": len(self.pending)}
 
 
-def _guardar_mensaje_en_memoria(mensaje: dict) -> None:
-    """Guarda un mensaje recibido en un buffer corto en memoria."""
-
-    ULTIMOS_MENSAJES.append(mensaje)
-
+def _guardar_mensajes_en_memoria(mensajes: list[dict]) -> None:
+    """Conserva de una vez solo la cola util de un lote ya validado."""
+    ULTIMOS_MENSAJES.extend(mensajes[-MAX_MENSAJES_EN_MEMORIA:])
     if len(ULTIMOS_MENSAJES) > MAX_MENSAJES_EN_MEMORIA:
-        del ULTIMOS_MENSAJES[0]
+        del ULTIMOS_MENSAJES[:-MAX_MENSAJES_EN_MEMORIA]
 
 
 # Tope de mensajes de error impresos por categoria. Sin este limite, una corrida
@@ -409,61 +408,51 @@ def on_message(client: mqtt.Client, userdata: TelemetryBatchBuffer, msg: mqtt.MQ
     """Callback ejecutado cuando llega un mensaje desde MQTT."""
 
     try:
-        payload = msg.payload.decode("utf-8")
-        contenido = json.loads(payload)
-    except (UnicodeDecodeError, json.JSONDecodeError) as error:
-        userdata.record_decode_error()
-        _informar_error_acotado("Mensaje descartado por decodificacion o validacion", error)
-        return
+        # Parsear con ``json.loads`` y despues validar recorria todo el payload
+        # dos veces. El camino normal hace ambas cosas dentro de pydantic-core.
+        # La forma sigue distinguiendo lote de mensaje suelto, sin agregar una
+        # marca al contrato que comparten los tres publicadores.
+        if msg.payload.lstrip().startswith(b"["):
+            aceptadas = ADAPTADOR_LOTE_TELEMETRIA.validate_json(msg.payload)
+        else:
+            aceptadas = [TelemetryMessage.model_validate_json(msg.payload)]
+    except ValidationError:
+        # Una senal invalida dentro de un lote no puede arrastrar a las demas.
+        # Este camino excepcional separa el JSON y valida una por una para
+        # conservar las validas y contar exactamente cada rechazo.
+        try:
+            contenido = json.loads(msg.payload)
+        except (UnicodeDecodeError, json.JSONDecodeError) as error:
+            userdata.record_decode_error()
+            _informar_error_acotado(
+                "Mensaje descartado por decodificacion o validacion", error)
+            return
+        crudos = contenido if isinstance(contenido, list) else [contenido]
+        aceptadas = []
+        for mensaje_dict in crudos:
+            try:
+                mensaje = TelemetryMessage.model_validate(mensaje_dict)
+            except ValidationError as error:
+                userdata.record_decode_error()
+                _informar_error_acotado(
+                    "Mensaje descartado por decodificacion o validacion", error)
+                continue
+            except Exception as error:
+                userdata.record_processing_error()
+                _informar_error_acotado("Error inesperado al procesar mensaje", error)
+                continue
+            aceptadas.append(mensaje)
     except Exception as error:
         userdata.record_processing_error()
         _informar_error_acotado("Error inesperado al procesar mensaje", error)
         return
 
-    # **Un mensaje suelto y un lote se distinguen por la forma, no por una
-    # marca.** Si lo que llega es una lista, son varias senales; si es un
-    # objeto, es una.
-    #
-    # Se aceptan las dos porque hay tres publicadores usando este contrato ---el
-    # capturador, la reproduccion del bus y la carga de la fuente deportiva--- y
-    # cambiarlos a los tres a la vez volveria imposible ubicar un fallo. Los que
-    # no agrupen siguen andando sin tocarlos.
-    #
-    # Por que existe el lote: cada mensaje con garantia de entrega paga un ida y
-    # vuelta con el intermediario, y **el cliente acepta unos 6.578 por segundo
-    # sin importar que lleven adentro**. Con una senal por mensaje, la parrilla
-    # completa descartaba el 96 % en la cola de salida; con 560 por lote, el
-    # caudal util pasa a 3,19 millones de senales por segundo y no se descarta
-    # ninguna.
-    crudos = contenido if isinstance(contenido, list) else [contenido]
-
-    aceptadas: list = []
-    for mensaje_dict in crudos:
-        try:
-            mensaje = TelemetryMessage.model_validate(mensaje_dict)
-        except ValidationError as error:
-            # **Se cuenta y se sigue con el resto del lote.** Una senal invalida
-            # entre quinientas sesenta no puede descartar las otras quinientas
-            # cincuenta y nueve, que es lo que pasaria si el error cortara aca.
-            userdata.record_decode_error()
-            _informar_error_acotado(
-                "Mensaje descartado por decodificacion o validacion", error)
-            continue
-        except Exception as error:
-            userdata.record_processing_error()
-            _informar_error_acotado("Error inesperado al procesar mensaje", error)
-            continue
-
-        try:
-            # Se reutiliza el diccionario ya parseado en lugar de `mensaje.model_dump()`.
-            # Serializar el modelo completo costaba una vuelta extra por cada mensaje,
-            # en el hilo de red, para conservar solo los ultimos veinte: sobre 6,2
-            # millones de mensajes ese trabajo se descartaba casi por completo.
-            _guardar_mensaje_en_memoria(mensaje_dict)
-            aceptadas.append(mensaje)
-        except Exception as error:
-            userdata.record_processing_error()
-            _informar_error_acotado("Error al encolar mensaje", error)
+    # Solo se materializan los veinte modelos que pueden sobrevivir en esta cola;
+    # convertir los anteriores seria trabajo descartado en el mismo callback.
+    _guardar_mensajes_en_memoria([
+        mensaje.model_dump(mode="json")
+        for mensaje in aceptadas[-MAX_MENSAJES_EN_MEMORIA:]
+    ])
 
     # EL MENSAJE ENTERO ENTRA A LA COLA DE UNA VEZ, CON SU ACUSE ANOTADO.
     #

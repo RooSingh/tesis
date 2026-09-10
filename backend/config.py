@@ -95,7 +95,7 @@ MQTT_QOS_EN_VIVO = int(os.getenv("MQTT_QOS_EN_VIVO", "1"))
 #: **la telemetria en vivo no tiene hoy clave de deduplicacion**.
 MQTT_CONFIRMACION_MANUAL = os.getenv("MQTT_CONFIRMACION_MANUAL", "1") != "0"
 
-MQTT_BATCH_SIZE = int(os.getenv("MQTT_BATCH_SIZE", "1000"))
+MQTT_BATCH_SIZE = int(os.getenv("MQTT_BATCH_SIZE", "5000"))
 MQTT_FLUSH_INTERVAL_SECONDS = float(os.getenv("MQTT_FLUSH_INTERVAL_SECONDS", "0.5"))
 
 # Cota superior de la cola en memoria del consumidor. En `0` el buffer crece sin
