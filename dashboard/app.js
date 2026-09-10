@@ -4379,7 +4379,24 @@ function posicionesAhora() {
     }
     const a = pares[lo];
     const b = pares[lo + 1];
-    if (!b) { salida[clave] = a[1]; return; }
+    /* UN COCHE DEL QUE YA NO HAY DATO NO SE DIBUJA DONDE ESTUVO.
+       Sin `b` no hay con que interpolar: o el instante cayo despues de la
+       ultima muestra, o ese vehiculo dejo de publicar. Devolver la ultima
+       posicion conocida deja su marca clavada en la pista mientras los demas
+       corren, y eso se lee como «esta ahi», que es falso.
+
+       Paso el 2026-09-10: un piloto elegido y desmarcado a los pocos segundos
+       quedo con veintinueve muestras de un solo segundo, y su marca se quedo
+       quieta las tres vueltas. Se muestra mientras el instante siga cerca de su
+       ultima medida ---un segundo, que a veinte hercios son veinte muestras---
+       y despues se deja de dibujar: no saber donde esta es preferible a
+       afirmar que sigue ahi. */
+    if (!b) {
+      const VENCE_MS = 1000;
+      if (relativo !== null && a[0] !== undefined && relativo - a[0] > VENCE_MS) return;
+      salida[clave] = a[1];
+      return;
+    }
 
     const dt = b[0] - a[0];
     const salto = b[1] - a[1];
