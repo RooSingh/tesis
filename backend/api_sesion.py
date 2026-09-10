@@ -33,8 +33,8 @@ from typing import Annotated, Any
 
 from fastapi import APIRouter, HTTPException, Query
 
-from backend import (catalogo_curvas, catalogo_sesiones, db, f1_udp,
-                     procedencia_sesiones)
+from backend import (anotador_vivo, catalogo_curvas, catalogo_sesiones, db,
+                     f1_udp, procedencia_sesiones)
 
 router = APIRouter()
 
@@ -2562,6 +2562,98 @@ _AVISOS_CACHE: OrderedDict = OrderedDict()
 AVISOS_EN_CACHE = 24
 
 
+#: Las reglas fisicas que el anotador en vivo evalua sobre el flujo, escritas
+#: para pedirselas a una sesion guardada.
+#:
+#: LOS UMBRALES SE IMPORTAN, NO SE COPIAN. Estan calibrados en
+#: `backend/anotador_vivo.py` contra vueltas reales, y una segunda copia se
+#: desincroniza sin que nadie lo note ---en este mismo archivo habia una tabla
+#: de superficies duplicada y equivocada en todas sus entradas---. Que las dos
+#: lecturas usen el mismo numero es lo que hace que una sesion mirada en vivo y
+#: la misma reproducida digan lo mismo.
+#:
+#: La medicion que respalda el umbral de deslizamiento: sobre 47.481 muestras,
+#: el deslizamiento trasero tiene mediana 0,02 y percentil 99 entre 0,18 y 0,22.
+#: El umbral de 0,25 queda apenas por encima de lo que ocurre normalmente, que
+#: es lo que se le pide a un umbral.
+REGLAS_FISICAS = [
+    {
+        "que": "Perdida de tren trasero",
+        "nivel": "alerta",
+        "canal": "wheel_slip_ratio_rear_*",
+        "umbral": ("deslizamiento trasero sobre %.2f con el acelerador sobre %.0f %%"
+                   % (anotador_vivo.UMBRAL_DESLIZAMIENTO, 50)),
+        "unidad": "%",
+    },
+    {
+        "que": "Impacto vertical",
+        "nivel": "alerta",
+        "canal": "g_force_vertical",
+        "umbral": "%.1f g" % anotador_vivo.UMBRAL_VERTICAL_G,
+        "unidad": "g",
+    },
+]
+
+
+def _primera_perdida_de_tren_trasero(cursor, fuente: str, session_id: str):
+    """El primer instante en que el eje trasero desliza **acelerando**.
+
+    El acelerador esta en la regla y no de adorno: el deslizamiento solo por si
+    mismo aparece tambien al frenar fuerte y en cada cambio de apoyo, y llamar a
+    eso perdida de tren trasero seria anotar la conduccion normal. Es la misma
+    condicion que el anotador evalua sobre el flujo.
+    """
+
+    cursor.execute("""
+        WITH p AS (
+            SELECT timestamp,
+                   max(value_numeric) FILTER (WHERE signal_name = 'wheel_slip_ratio_rear_left')  AS izq,
+                   max(value_numeric) FILTER (WHERE signal_name = 'wheel_slip_ratio_rear_right') AS der,
+                   max(value_numeric) FILTER (WHERE signal_name = 'throttle_position')           AS acelerador,
+                   max(value_numeric) FILTER (WHERE signal_name = 'lap_number')   AS vuelta,
+                   max(value_numeric) FILTER (WHERE signal_name = 'lap_distance') AS metro
+              FROM telemetry_messages
+             WHERE source_type = %s AND session_id = %s
+               AND signal_name = ANY(%s)
+             GROUP BY timestamp)
+        SELECT vuelta, metro, greatest(abs(izq), abs(der)) AS peor, timestamp FROM p
+         WHERE izq IS NOT NULL AND der IS NOT NULL AND acelerador IS NOT NULL
+           AND greatest(abs(izq), abs(der)) > %s AND acelerador > 0.5
+         ORDER BY timestamp LIMIT 1
+    """, (fuente, session_id,
+          ["wheel_slip_ratio_rear_left", "wheel_slip_ratio_rear_right",
+           "throttle_position", "lap_number", "lap_distance"],
+          anotador_vivo.UMBRAL_DESLIZAMIENTO))
+    return cursor.fetchone()
+
+
+def _primer_impacto_vertical(cursor, fuente: str, session_id: str):
+    """El primer golpe vertical, mirando el valor absoluto.
+
+    **En valor absoluto y no por el maximo**, que es lo que las reglas de canal
+    contra umbral hacen: un golpe hacia abajo llega como negativo y aquellas
+    nunca lo verian.
+    """
+
+    cursor.execute("""
+        WITH p AS (
+            SELECT timestamp,
+                   max(value_numeric) FILTER (WHERE signal_name = 'g_force_vertical') AS g,
+                   max(value_numeric) FILTER (WHERE signal_name = 'lap_number')   AS vuelta,
+                   max(value_numeric) FILTER (WHERE signal_name = 'lap_distance') AS metro
+              FROM telemetry_messages
+             WHERE source_type = %s AND session_id = %s
+               AND signal_name = ANY(%s)
+             GROUP BY timestamp)
+        SELECT vuelta, metro, g, timestamp FROM p
+         WHERE g IS NOT NULL AND abs(g) > %s
+         ORDER BY timestamp LIMIT 1
+    """, (fuente, session_id,
+          ["g_force_vertical", "lap_number", "lap_distance"],
+          anotador_vivo.UMBRAL_VERTICAL_G))
+    return cursor.fetchone()
+
+
 def _primera_salida_de_pista(cursor, fuente: str, session_id: str):
     """El primer instante con las cuatro ruedas fuera del asfalto, o `None`.
 
@@ -2721,15 +2813,38 @@ def avisos(session_id: str,
                     "; sobre superficie con agarre" if con_agarre else ""),
             })
 
+        # Las fisicas, que hasta hoy solo existian sobre el flujo en vivo.
+        for regla, buscar, formato in (
+                (REGLAS_FISICAS[0], _primera_perdida_de_tren_trasero,
+                 lambda v: "%.0f %% de deslizamiento en el eje trasero" % (abs(v) * 100)),
+                (REGLAS_FISICAS[1], _primer_impacto_vertical,
+                 lambda v: "%+.2f g" % v)):
+            fila = buscar(cursor, fuente, session_id)
+            if not fila:
+                continue
+            vuelta, metro, valor, instante = fila
+            encontrados.append({
+                "nivel": regla["nivel"],
+                "que": regla["que"],
+                "valor": round(valor, 2) if valor is not None else None,
+                "unidad": regla["unidad"],
+                "vuelta": int(vuelta) if vuelta is not None else None,
+                "metro": round(metro, 1) if metro is not None else None,
+                "instante": instante.isoformat() if instante else None,
+                "canal": regla["canal"],
+                "umbral": regla["umbral"],
+                "detalle": formato(valor) if valor is not None else None,
+            })
+
     encontrados.sort(key=lambda a: (-(a["vuelta"] or 0), -(a["metro"] or 0)))
     respuesta = {
         "session_id": session_id,
         "fuente": fuente,
         "avisos": encontrados[:limite],
-        # Las de canal contra umbral, mas la de superficie, que no tiene esa
-        # forma. Contarla aparte seria decir que se evaluaron catorce cuando se
-        # evaluaron quince.
-        "reglas_evaluadas": len(REGLAS_DE_AVISO) + 1,
+        # Las de canal contra umbral, mas la de superficie y las fisicas, que no
+        # tienen esa forma. Contar solo las primeras seria decir que se
+        # evaluaron catorce cuando se evaluaron diecisiete.
+        "reglas_evaluadas": len(REGLAS_DE_AVISO) + 1 + len(REGLAS_FISICAS),
         "criterio": ("primer instante en que cada condicion se cumple; cada aviso "
                      "declara su canal y su umbral"),
     }

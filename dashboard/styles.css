@@ -658,21 +658,37 @@
     display: flex; flex-direction: column; gap: 12px; height: 100%;
   }
   .panel-motor .barras-medidas { flex: 0 0 auto; }
-  /* DOS POR DOS, NO CUATRO EN FILA.
+  /* EN CUADRO Y NO EN FILA, Y SIN ATARSE A CUANTOS SON.
      En una columna angosta, cuatro medidores en fila salian de sesenta
      pixeles cada uno y dejaban el resto del panel vacio. En cuadro tienen el
-     doble de diametro y llenan el hueco que sobraba. */
+     doble de diametro y llenan el hueco que sobraba.
+
+     La version anterior fijaba **dos por dos**, o sea exactamente cuatro. Al
+     agregar la marcha y la maxima, los cuatro primeros se apretaron dentro de
+     esas dos filas y los dos ultimos cayeron en una fila implicita que se
+     dimensiono sola: cuatro diminutos y dos grandes en el mismo panel. Una
+     rejilla escrita contra un numero se rompe cuando ese numero cambia, y va a
+     volver a cambiar.
+
+     Ahora las columnas se acomodan a lo ancho que haya ---tantas como entren
+     con un minimo digno--- y las filas se reparten el alto en partes iguales,
+     sean dos o tres. Todos miden lo mismo, y ese mismo es el mayor que el
+     espacio permite. */
   /* `.banco-motor .fila-medidores` fija cuatro columnas y esta mas abajo en
      la hoja: con la misma especificidad ganaba por orden. Se nombra el banco
      tambien aca para que este mande. */
   .panel-motor .banco-motor .fila-medidores {
     flex: 1; min-height: 0;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    grid-template-rows: repeat(2, minmax(0, 1fr));
-    gap: 6px 14px; align-content: stretch;
+    grid-template-columns: repeat(auto-fit, minmax(96px, 1fr));
+    grid-template-rows: none;
+    grid-auto-rows: minmax(0, 1fr);
+    gap: 6px 12px; align-content: stretch;
   }
   .panel-motor .medidor { justify-items: center; align-content: center; }
-  .panel-motor .medidor svg { max-width: 132px; width: 100%; max-height: 100%; }
+  /* El tope sube de 132 a 168: con la rejilla acomodandose sola, la celda ya
+     no es siempre la mitad del panel, y un tope pensado para aquel caso dejaba
+     al medidor mas chico que su sitio. Quien manda ahora es la celda. */
+  .panel-motor .medidor svg { max-width: 168px; width: 100%; max-height: 100%; }
   .panel-motor .medidor .rotulo { font-size: .58rem; letter-spacing: .08em; }
   .panel-motor .medidor { gap: 2px; }
   .panel-motor .barras-medidas { margin-top: 0; gap: 7px; }
@@ -1245,7 +1261,12 @@
     grid-template-columns: minmax(0, 1fr) minmax(0, 2fr) minmax(0, 1fr);
     gap: 20px; align-items: center;
   }
-  .banco-motor .fila-medidores { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
+  /* Tantas columnas como entren, por el mismo motivo que en la columna
+     angosta: cuatro fijas dejaban una fila coja en cuanto los medidores
+     dejaron de ser cuatro. */
+  .banco-motor .fila-medidores {
+    grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: 10px;
+  }
   .banco-motor .barras-medidas { margin-top: 0; align-content: center; gap: 16px; }
   @media (max-width: 1180px) { .banco-motor { grid-template-columns: minmax(0, 1fr); } }
 
