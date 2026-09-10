@@ -963,6 +963,18 @@ def capturar_sesion(sock: socket.socket, primer_datagrama: bytes,
                         "motivo": publicador.motivo},
         "version_decodificador": f1_udp.VERSION_DECODIFICADOR,
         "formato_udp_admitido": f1_udp.FORMATO_ADMITIDO,
+        # LO QUE ANTES VIAJABA EN CADA SENAL, DECLARADO UNA VEZ.
+        #
+        # La version del adaptador iba en el metadato de cada mensaje, con lo
+        # que una carrera de cuatro coches la repetia unas seis mil veces por
+        # segundo. Es de la captura entera, y aca es donde la captura se
+        # describe: junto a la version del decodificador, que ya vivia aca por
+        # el mismo motivo.
+        #
+        # `simulated` no hace falta declararlo: el `source_type` de cada fila
+        # es `f1_25_udp_simulation` y su `quality_flag` es `simulated_f1_25`.
+        # Ya estaba dicho dos veces.
+        "version_adaptador": f1_25.VERSION_ADAPTADOR,
     }
     f1_capture.escribir_metadatos(ruta, extra)
     extra["conservada"] = True
