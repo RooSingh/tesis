@@ -589,6 +589,52 @@ def _perfil_declarado(sesion: dict) -> tuple:
                  (*AJUSTES, *AYUDAS, "track_id", "session_type", "total_laps"))
 
 
+def _ruta_de_metadatos(captura: Path) -> Path:
+    """Donde vive el archivo de metadatos de una captura."""
+    return captura.with_name(captura.name + ".meta.json")
+
+
+def _borrar_anotacion_en_curso(provisional: Path) -> None:
+    """Saca la anotacion provisional cuando su captura deja de serlo."""
+    _ruta_de_metadatos(provisional).unlink(missing_ok=True)
+
+
+def _anotar_en_curso(provisional: Path, inicio_utc: str, procedencia: dict) -> None:
+    """Deja la procedencia escrita mientras la captura sigue abierta.
+
+    Lo que se sabe **ya se puede decir**. El circuito y el tipo de sesion los
+    declara el flujo en sus primeros segundos; esperar al cierre para anotarlos
+    hacia que el tablero llamara «sesion sin procedencia declarada» a una
+    captura cuya procedencia estaba a la vista, y que una escucha detenida con
+    el coche en pista dejara el crudo mudo.
+
+    Lleva `en_curso` en verdadero para que nada confunda esto con una captura
+    terminada: la duracion, el recuento por tipo y lo publicado se saben recien
+    al final, y aca no estan.
+    """
+
+    if not procedencia.get("disponible"):
+        return
+    # SE ESCRIBE A MANO Y NO CON `escribir_metadatos`, A PROPOSITO.
+    #
+    # Esa funcion calcula la huella del crudo **y vuelve a recorrer todos sus
+    # datagramas** para contarlos: dos pasadas por un archivo que en una sesion
+    # larga pasa de los treinta megabytes. Hacerlo aca frenaria el bucle que
+    # esta recibiendo por UDP, y lo que se pierde en un socket parado no vuelve.
+    # La huella y el recuento son del archivo terminado; este todavia crece.
+    try:
+        _ruta_de_metadatos(provisional).write_text(
+            json.dumps({
+                "en_curso": True,
+                "archivo": provisional.name,
+                "inicio_utc": inicio_utc,
+                "procedencia": procedencia,
+            }, indent=2, ensure_ascii=False),
+            encoding="utf-8")
+    except Exception:  # noqa: BLE001 - anotar de mas nunca debe cortar la captura
+        pass
+
+
 def capturar_sesion(sock: socket.socket, primer_datagrama: bytes,
                     destino: Path, publicador: Publicador) -> dict:
     """Graba una sesion completa, desde el primer datagrama hasta el silencio."""
@@ -651,6 +697,26 @@ def capturar_sesion(sock: socket.socket, primer_datagrama: bytes,
                         if perfil != ultimo_perfil:
                             ultimo_perfil = perfil
                             estable_desde_s = time.perf_counter() - inicio
+                            # LA PROCEDENCIA SE DECLARA APENAS SE SABE, NO AL
+                            # CERRAR.
+                            #
+                            # Se escribia solo al terminar la sesion, y de ahi
+                            # salian dos problemas con la misma raiz: en vivo el
+                            # tablero mostraba «sesion sin procedencia
+                            # declarada» aunque el flujo ya hubiera dicho que
+                            # era Monza, y una escucha detenida con el juego en
+                            # pista dejaba el crudo sin metadatos ---habia que
+                            # rederivarlos a mano---.
+                            #
+                            # Se escribe cada vez que el perfil cambia, que son
+                            # unas pocas veces por sesion, y se reescribe entero
+                            # al cerrar. Un metadato provisional declara que lo
+                            # es: la duracion todavia no se sabe.
+                            _anotar_en_curso(provisional, inicio_utc,
+                                             derivar_procedencia(
+                                                 sesion, ayudas_vistas.estado(),
+                                                 cabecera, participantes,
+                                                 secundarios))
                 elif decodificado["paquete"] == "participants":
                     # El ultimo, como el resto: la parrilla se completa cuando la
                     # sesion arranca, no en el menu.
@@ -668,6 +734,7 @@ def capturar_sesion(sock: socket.socket, primer_datagrama: bytes,
         sesion, ayudas_vistas.estado(), cabecera, participantes, secundarios)
 
     if transcurrido < MINIMO_UTIL_S:
+        _borrar_anotacion_en_curso(provisional)
         provisional.unlink(missing_ok=True)
         return {"conservada": False, "duracion_s": round(transcurrido, 2),
                 "motivo": f"menos de {MINIMO_UTIL_S:.0f} s: no es una sesion"}
@@ -681,6 +748,7 @@ def capturar_sesion(sock: socket.socket, primer_datagrama: bytes,
     # sesion**. Es el mismo principio que rige el resto del capturador: se le
     # pregunta al dato, no al reloj.
     if not procedencia.get("disponible"):
+        _borrar_anotacion_en_curso(provisional)
         provisional.unlink(missing_ok=True)
         return {"conservada": False, "duracion_s": round(transcurrido, 2),
                 "motivo": "el flujo no declaro ninguna sesion: navegacion de menus"}
@@ -690,6 +758,10 @@ def capturar_sesion(sock: socket.socket, primer_datagrama: bytes,
     while ruta.exists():
         sufijo += 1
         ruta = destino / f"{nombre_derivado(procedencia, inicio_dt)}_{sufijo}.f1raw"
+    # El provisional se va con su nombre; su anotacion tambien. Dejarla
+    # convertiria una captura ya cerrada en dos: la de verdad y un fantasma con
+    # el nombre viejo, que el tablero listaria igual porque lee los metadatos.
+    _borrar_anotacion_en_curso(provisional)
     provisional.replace(ruta)
 
     extra = {

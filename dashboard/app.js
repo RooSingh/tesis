@@ -1037,7 +1037,7 @@ function cambiarFuente(nueva) {
    ============================================================ */
 function accionDeLaFuente() {
   if (fuente === "f1") {
-    return estadoSesion === "vivo"
+    return (estadoSesion === "vivo" || estadoSesion === "escuchando")
       ? { ruta: "/captura/detener", metodo: "POST", cuerpo: undefined,
           hecho: d => "Captura detenida. " + (d.capturas_cerradas !== undefined
             ? d.capturas_cerradas + " sesiones cerradas" : "Sin sesiones nuevas") }
@@ -1078,7 +1078,10 @@ document.getElementById("btn-accion").addEventListener("click", () => {
       /* Encender la captura es pedir seguir la sesion que se cree. Todavia no
          se sabe cual es ---el capturador la nombra al recibir el primer
          paquete--- asi que se habilita adoptar la proxima y fijarla. */
-      if (a.sigueVivo) { vivo.objetivo = null; vivo.aceptaNueva = true; vivo.pedida = true; vivo.otra = null; }
+      if (a.sigueVivo) {
+        vivo.objetivo = null; vivo.aceptaNueva = true; vivo.pedida = true; vivo.otra = null;
+        prepararEscucha();
+      }
       avisar(a.hecho(d) + (a.sigueVivo ? " · " + esperaDeTelemetria() : ""), false);
       /* EL CATALOGO NO ESTA LISTO CUANDO LA RESPUESTA VUELVE.
          Detener una captura refresca la sesion recien grabada **por detras**:
@@ -1105,6 +1108,7 @@ document.getElementById("btn-accion").addEventListener("click", () => {
       const enCurso = e.estado === 409 && e.detalle && e.detalle.trabajo_en_curso;
       if (a.sigueVivo && enCurso && enCurso.familia === "captura") {
         vivo.objetivo = null; vivo.aceptaNueva = true; vivo.pedida = true; vivo.otra = null;
+        prepararEscucha();
         avisar("Ya estaba escuchando" +
                (enCurso.duracion_s ? " desde hace " + Math.round(enCurso.duracion_s) + " s" : "") +
                ". Se sigue esa captura. " + esperaDeTelemetria(), false);
@@ -1192,7 +1196,10 @@ function pintarCiclo() {
     det.textContent = nombreDeSesion(s) + " · " + cifra(s.senales, 0) + " señales · " +
       cifra(s.vehiculos, 0) + " vehículos";
   }
-  acc.textContent = estadoSesion === "vivo" ? f.accionVivo : f.accion;
+  // Escuchando o recibiendo, lo que se ofrece es detener: la captura corre
+  // igual, y no poder pararla fue justamente el callejon sin salida.
+  acc.textContent = (estadoSesion === "vivo" || estadoSesion === "escuchando")
+    ? f.accionVivo : f.accion;
   document.getElementById("btn-limpiar").disabled = estadoSesion === "vacio";
   document.getElementById("btn-comparar").disabled = estadoSesion === "vacio" || fuente !== "f1" || AUTOS.length < 2;
 }
@@ -2166,7 +2173,7 @@ function pintarPista() {
        tiene por que esperar al dibujo. Se la proyecta con la misma
        transformacion del camino vigente. */
     let p = null;
-    if (PISTA.enConstruccion && PISTA.proyectarMundo) {
+    if (PISTA.proyectarMundo && (PISTA.enConstruccion || PISTA.medidoEnVivo)) {
       const suyo = vivo.recorrido.get(clave);
       if (suyo && suyo.length) {
         const ult = suyo[suyo.length - 1];
@@ -6126,6 +6133,36 @@ const vivo = {
   silencio: null,
 };
 
+/* Deja el tablero listo para una sesion que todavia no llego.
+
+   Pulsar «empezar a escuchar» no cambiaba nada visible: el boton seguia
+   ofreciendo empezar ---de modo que no habia como detener--- y los paneles
+   seguian mostrando la sesion que se estuviera reproduciendo, con sus datos y
+   su circuito, como si fueran lo que esta entrando. Dos afirmaciones falsas al
+   mismo tiempo.
+
+   El estado `escuchando` es el que faltaba: no es `vivo`, porque todavia no
+   llego ninguna muestra y decirlo seria mentir, y no es `cargado`, porque ya no
+   se esta mirando nada guardado. Es la espera, y se declara como tal. */
+function prepararEscucha() {
+  estadoSesion = "escuchando";
+  nuevaSesionEnCurso();
+  PISTA = { path: "", curvas: [], largo_m: null, desnivel_m: null, muestras: null };
+  CURVAS = [];
+  vaciarVivo(null);
+  sesionAbierta = null;
+  estado.abierta = null;
+  estado.vueltas = []; estado.series = {}; estado.pidiendo = {};
+  estado.posiciones = {}; estado.pidiendoPos = {};
+  cambiaronLasSeries();
+  estado.disponibles = new Set();
+  AUTOS = []; seleccion = new Set(); estado.vehiculoClave = null;
+  estado.cargando = false;
+  estado.motivo = "Escuchando. Sin telemetría todavía: en cuanto el juego " +
+                  "emita, el tablero se llena solo.";
+  conectarFlujoEnVivo();
+}
+
 function vaciarVivo(sesion) {
   vivo.sesion = sesion || null;
   vivo.ultimos.clear(); vivo.series.clear(); vivo.distancia.clear(); vivo.vuelta.clear();
@@ -6250,8 +6287,16 @@ function anotarPosicionViva(vehiculo, marca) {
 /* Rehace el dibujo del recorrido si crecio lo suficiente. Devuelve si cambio. */
 function armarTrazadoVivo() {
   if (estadoSesion !== "vivo") return false;
-  // Un trazado guardado, o uno ya congelado, manda sobre este.
-  if (PISTA.path && !PISTA.enConstruccion) return false;
+  /* Un trazado guardado manda sobre este. Uno medido en vivo, no: sigue
+     mejorando mientras la sesion siga emitiendo.
+
+     Antes se dejaba de rehacer al cerrar la primera vuelta, y el circuito
+     quedaba con la forma que hubiera alcanzado a medir esa vuelta ---con sus
+     huecos y sus tramos toscos--- para el resto de la sesion. Las vueltas
+     siguientes vuelven a pasar por los mismos metros y son justamente las que
+     lo rectifican. Se sigue cerrando el camino, que es lo que permite ver al
+     coche dar vueltas en vez de alargar una linea. */
+  if (PISTA.path && !PISTA.enConstruccion && !PISTA.medidoEnVivo) return false;
   const clave = claveVehiculoPropio();
   const puntos = clave ? vivo.recorrido.get(clave) : null;
   if (!puntos || puntos.length < 3) return false;
@@ -6261,16 +6306,20 @@ function armarTrazadoVivo() {
   }
   vivo.recorridoDibujado = puntos.length;
 
-  const armado = trazadoAPath(puntos, false, false);
+  // Una vez cerrado sigue cerrado: reabrirlo cada vez que se rectifica lo
+  // haria parpadear entre un circuito y una linea.
+  const yaCerrado = PISTA.medidoEnVivo === true && PISTA.enConstruccion === false;
+  const armado = trazadoAPath(puntos, false, yaCerrado);
   if (!armado.path) return false;
   PISTA = {
     path: armado.path,
-    largo_m: vivo.distancia.get(clave) || null,
+    largo_m: vivo.distancia.get(clave) || PISTA.largo_m || null,
     desnivel_m: null,
     muestras: puntos.length,
     vuelta: vivo.vuelta.get(clave) || null,
     curvas: CURVAS,
-    enConstruccion: true,
+    enConstruccion: !yaCerrado,
+    medidoEnVivo: yaCerrado || undefined,
     // Con esto la marca del vehiculo se ubica por su ultima posicion medida,
     // sin esperar a que el camino se vuelva a dibujar.
     proyectarMundo: armado.proyectarMundo,
@@ -6300,6 +6349,15 @@ function congelarTrazadoVivo(largoDeLaVuelta) {
     curvas: CURVAS,
     enConstruccion: false,
     medidoEnVivo: true,
+    /* SE CONSERVA LA PROYECCION, Y ESO ES LO QUE HACE QUE EL COCHE NO
+       DESAPAREZCA.
+       Al cerrar se dejaba de guardarla, y desde ahi la marca se ubicaba por
+       distancia recorrida sobre el camino. Cuando esa distancia no avanza
+       ---un reinicio, un teletransporte, una vuelta que el juego no cierra---
+       la marca se queda quieta o se va del dibujo, y lo que se ve es un
+       circuito sin coche. La posicion medida llega veinte veces por segundo y
+       no depende de nada de eso. */
+    proyectarMundo: armado.proyectarMundo,
   };
   const svg = document.getElementById("linea-pista");
   if (svg && svg.ownerSVGElement) delete svg.ownerSVGElement.dataset.reserva;
@@ -6481,7 +6539,12 @@ function incorporarTelemetriaViva(m, recuperando) {
   estadoSesion = "vivo";
   if (vivo.silencio) clearTimeout(vivo.silencio);
   vivo.silencio = setTimeout(() => {
-    if (estadoSesion === "vivo") { estadoSesion = estado.abierta ? "cargado" : "vacio"; render(); }
+    if (estadoSesion === "vivo") {
+      // Si se estaba escuchando, callar es volver a esperar, no cerrar.
+      estadoSesion = vivo.pedida || vivo.objetivo
+        ? "escuchando" : (estado.abierta ? "cargado" : "vacio");
+      render();
+    }
   }, 10000);
   /* Una muestra cambia valores y trazas, nunca la estructura. La unica
      excepcion es un vehiculo que aparece por primera vez, y eso se pide donde
