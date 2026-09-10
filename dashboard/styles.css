@@ -1654,6 +1654,34 @@
     font-family: var(--cuerpo); font-size: .72rem; font-weight: 700;
     letter-spacing: .03em; cursor: pointer;
   }
+  /* A QUIEN ESCUCHAR. Vive debajo del ciclo de vida y solo mientras se
+     escucha, de modo que no compite por sitio con nada el resto del tiempo.
+     Los nombres se envuelven: una parrilla son veinte y no entran en un
+     renglon. */
+  .elige-escucha {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px;
+    margin: 0 0 12px; padding: 10px 14px;
+    border: 1px solid var(--linea); border-radius: 12px;
+    background: var(--superficie-2);
+  }
+  .elige-escucha .eyebrow { margin: 0; }
+  .pilotos-escucha { display: flex; flex-wrap: wrap; gap: 6px; }
+  .pilotos-escucha button {
+    padding: 5px 11px; border-radius: 999px;
+    border: 1px solid var(--linea-fuerte);
+    background: var(--superficie); color: var(--texto-medio);
+    font-family: var(--cuerpo); font-size: .72rem; font-weight: 700;
+    letter-spacing: .03em; cursor: pointer;
+  }
+  .pilotos-escucha button[aria-pressed="true"] {
+    background: var(--acento); color: var(--sobre-acento); border-color: transparent;
+  }
+  /* Los que no entran se ven apagados y no se sacan de la lista: sacarlos
+     haria creer que ese piloto no esta en la carrera. */
+  .pilotos-escucha button:disabled { opacity: .38; cursor: not-allowed; }
+  .nota-escucha {
+    margin-left: auto; font-size: .72rem; color: var(--texto-tenue);
+  }
   .elige-pilotos button:hover { border-color: var(--acento); color: var(--texto); }
   .elige-pilotos button[aria-pressed="true"] {
     color: var(--sobre-acento); border-color: transparent;

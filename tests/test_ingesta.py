@@ -265,6 +265,106 @@ class CapturaTests(PruebaDeIngesta):
         self.assertIn("advertencia", respuesta)
         proceso.terminate()
 
+    def test_los_pilotos_elegidos_viajan_al_capturador(self) -> None:
+        """Se pasan por la linea de comandos, y el capturador los escribe.
+
+        No los escribe esta ruta: los escribe el capturador, para que haya **una
+        sola** fuente de a quien se escucha. Si los escribieran los dos, un
+        arranque y una eleccion simultanea podrian dejar el archivo diciendo una
+        cosa y el proceso usando otra.
+        """
+
+        self.parchear_directorios()
+        proceso = ProcesoFalso()
+        with patch.object(ingesta.subprocess, "Popen", return_value=proceso) as popen:
+            ingesta.captura_iniciar(ingesta.PeticionCaptura(
+                puerto=20999, pilotos=["Norris", "Leclerc"]))
+
+        comando = popen.call_args[0][0]
+        self.assertIn("--pilotos", comando)
+        self.assertEqual(comando[comando.index("--pilotos") + 1], "Norris,Leclerc")
+        proceso.terminate()
+
+    def test_sin_pilotos_no_se_toca_lo_que_habia_elegido(self) -> None:
+        """`None` es «no dije nada», no «borra la eleccion».
+
+        La eleccion sobrevive entre sesiones a proposito: quien sigue a los
+        mismos rivales no tiene que volver a marcarlos cada vez. Para vaciarla
+        esta la lista vacia, que si es una decision.
+        """
+
+        self.parchear_directorios()
+        proceso = ProcesoFalso()
+        with patch.object(ingesta.subprocess, "Popen", return_value=proceso) as popen:
+            ingesta.captura_iniciar(ingesta.PeticionCaptura(puerto=20999))
+        self.assertNotIn("--pilotos", popen.call_args[0][0])
+        proceso.terminate()
+
+    def test_no_se_aceptan_mas_pilotos_de_los_que_la_cadena_sostiene(self) -> None:
+        """El tope se explica, no se recorta en silencio.
+
+        Recortar sin decirlo dejaria al tablero mostrando seis nombres marcados
+        mientras el capturador escucha cuatro, y no habria forma de notarlo
+        salvo contando filas.
+        """
+
+        self.parchear_directorios()
+        with self.assertRaises(HTTPException) as fallo:
+            ingesta.captura_iniciar(ingesta.PeticionCaptura(
+                puerto=20999,
+                pilotos=["a", "b", "c", "d", "e", "f", "g"]))
+        self.assertEqual(fallo.exception.status_code, 422)
+        self.assertIn("1.511", fallo.exception.detail)
+
+
+class EleccionDePilotosEnVivoTests(PruebaDeIngesta):
+    """Cambiar a quien se escucha sin cortar la captura."""
+
+    def test_escribir_la_eleccion_la_deja_donde_el_capturador_la_lee(self) -> None:
+        capturas, _ = self.parchear_directorios()
+        respuesta = ingesta.captura_pilotos(
+            ingesta.PeticionPilotos(pilotos=["Verstappen", "Norris"]))
+
+        archivo = capturas / ".pilotos_elegidos.json"
+        self.assertTrue(archivo.is_file())
+        self.assertEqual(json.loads(archivo.read_text(encoding="utf-8")),
+                         {"pilotos": ["Verstappen", "Norris"]})
+        self.assertEqual(respuesta["pilotos"], ["Verstappen", "Norris"])
+        self.assertEqual(respuesta["maximo"], 6)
+
+    def test_una_lista_vacia_vacia_la_eleccion(self) -> None:
+        """Es la unica forma de volver a escuchar solo el coche propio."""
+
+        capturas, _ = self.parchear_directorios()
+        ingesta.captura_pilotos(ingesta.PeticionPilotos(pilotos=["Norris"]))
+        ingesta.captura_pilotos(ingesta.PeticionPilotos(pilotos=[]))
+        archivo = capturas / ".pilotos_elegidos.json"
+        self.assertEqual(json.loads(archivo.read_text(encoding="utf-8")),
+                         {"pilotos": []})
+
+    def test_leer_devuelve_lo_elegido_y_el_tope(self) -> None:
+        capturas, _ = self.parchear_directorios()
+        self.assertEqual(ingesta.captura_pilotos_actuales()["pilotos"], [])
+        ingesta.captura_pilotos(ingesta.PeticionPilotos(pilotos=["Norris"]))
+        leido = ingesta.captura_pilotos_actuales()
+        self.assertEqual(leido["pilotos"], ["Norris"])
+        self.assertEqual(leido["maximo"], 6)
+
+    def test_un_archivo_ilegible_se_lee_como_sin_eleccion(self) -> None:
+        """Y no como un error: el tablero tiene que poder dibujar la lista igual."""
+
+        capturas, _ = self.parchear_directorios()
+        (capturas / ".pilotos_elegidos.json").write_text("{roto", encoding="utf-8")
+        self.assertEqual(ingesta.captura_pilotos_actuales()["pilotos"], [])
+
+    def test_tampoco_aca_se_aceptan_mas_de_los_que_entran(self) -> None:
+        self.parchear_directorios()
+        with self.assertRaises(HTTPException) as fallo:
+            ingesta.captura_pilotos(ingesta.PeticionPilotos(
+                pilotos=["a", "b", "c", "d", "e", "f", "g"]))
+        self.assertEqual(fallo.exception.status_code, 422)
+
+
     def test_no_se_admiten_dos_capturas_a_la_vez(self) -> None:
         self.parchear_directorios()
         proceso = ProcesoFalso()

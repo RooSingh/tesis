@@ -676,6 +676,54 @@ class PeticionCaptura(BaseModel):
     sesion: str | None = None
     publicar: bool = True
     parrilla_completa: bool = False
+    #: A quien escuchar ademas del coche propio, por nombre.
+    #:
+    #: `None` es «no dije nada» y **no** «borra la eleccion»: la que habia
+    #: sobrevive, porque quien sigue a los mismos rivales no tiene que volver a
+    #: marcarlos en cada sesion. Para vaciarla esta la lista vacia, que si es
+    #: una decision de quien llama.
+    pilotos: list[str] | None = None
+
+
+class PeticionPilotos(BaseModel):
+    """A quien escuchar, mientras la captura ya esta corriendo."""
+
+    pilotos: list[str]
+
+
+#: Donde el capturador relee a quien escuchar. El nombre lo fija el capturador;
+#: aca se repite porque esta ruta escribe el mismo archivo, y una constante
+#: importada de un guion de `scripts/` ataria la API a la linea de comandos.
+ARCHIVO_PILOTOS = ".pilotos_elegidos.json"
+
+#: El tope, con su medicion. Ver `scripts/capturar_f1_25.py`.
+MAXIMO_PILOTOS = 6
+
+
+def _exigir_tope(pilotos: list[str]) -> list[str]:
+    """Rechaza una lista mas larga de la que la cadena sostiene, y dice por que.
+
+    **Se rechaza y no se recorta.** Recortar en silencio dejaria al tablero
+    mostrando seis nombres marcados mientras el capturador escucha cuatro, y no
+    habria forma de notarlo salvo contando filas.
+    """
+
+    limpios = [p.strip() for p in pilotos if p and p.strip()]
+    # El coche propio no se cuenta aparte: va siempre, y el tope es de vehiculos.
+    if len(limpios) + 1 > MAXIMO_PILOTOS:
+        raise HTTPException(
+            status_code=422,
+            detail=(f"Se pueden escuchar hasta {MAXIMO_PILOTOS} vehiculos a la "
+                    f"vez, el propio incluido, o sea {MAXIMO_PILOTOS - 1} "
+                    "pilotos elegidos. Medido sobre la carrera de Spa, cada "
+                    "coche pide 1.511 senales/s y el consumidor sostiene unas "
+                    "9.900 en serie: mas alla de ese tope no falla nada, se "
+                    "pierden muestras de todos, tambien del coche propio."))
+    return limpios
+
+
+def _archivo_de_pilotos() -> Path:
+    return CAPTURAS_F1 / ARCHIVO_PILOTOS
 
 
 def _capturas_desde(momento: float) -> list[dict]:
@@ -740,6 +788,13 @@ def captura_iniciar(peticion: PeticionCaptura) -> dict:
         comando.append("--parrilla-completa")
     if peticion.sesion:
         comando += ["--run-id", peticion.sesion]
+    # El archivo lo escribe **el capturador**, no esta ruta, para que haya una
+    # sola fuente de a quien se escucha. Si escribieran los dos, un arranque y
+    # una eleccion simultanea podrian dejar el archivo diciendo una cosa y el
+    # proceso usando otra.
+    if peticion.pilotos is not None:
+        comando += ["--pilotos", ",".join(_exigir_tope(peticion.pilotos))]
+    comando += ["--archivo-eleccion", str(_archivo_de_pilotos())]
 
     trabajo = trabajos.lanzar_proceso(
         "captura_f1_25", f"captura F1 25 en el puerto {puerto}", comando)
@@ -761,6 +816,45 @@ def captura_iniciar(peticion: PeticionCaptura) -> dict:
         "El nombre del archivo lo deriva el capturador del flujo. `sesion` viaja "
         "como identidad de reinyeccion (--run-id), no como nombre de archivo.")
     return respuesta
+
+
+@router.get("/captura/pilotos")
+def captura_pilotos_actuales() -> dict:
+    """A quien se esta escuchando, y cuantos caben.
+
+    **Un archivo ilegible se lee como sin eleccion, no como un error.** El
+    tablero tiene que poder dibujar la lista igual; si esta ruta fallara, la
+    unica forma de arreglar una eleccion rota seria borrar el archivo a mano.
+    """
+
+    pilotos: list[str] = []
+    try:
+        leido = json.loads(_archivo_de_pilotos().read_text(encoding="utf-8"))
+        if isinstance(leido, dict) and isinstance(leido.get("pilotos"), list):
+            pilotos = [str(p) for p in leido["pilotos"]]
+    except (OSError, json.JSONDecodeError):
+        pass
+    return {"pilotos": pilotos, "maximo": MAXIMO_PILOTOS,
+            "criterio": ("el coche propio va siempre y no se cuenta como "
+                         "elegido; el tope es de vehiculos, no de nombres")}
+
+
+@router.post("/captura/pilotos")
+def captura_pilotos(peticion: PeticionPilotos) -> dict:
+    """Cambia a quien se escucha, con la captura corriendo o sin ella.
+
+    No le habla al proceso: escribe el archivo que el capturador relee cuando
+    cambia su fecha. Por eso funciona igual antes de empezar ---la eleccion
+    espera--- y en mitad de una carrera, sin cortar la grabacion.
+    """
+
+    limpios = _exigir_tope(peticion.pilotos)
+    archivo = _archivo_de_pilotos()
+    archivo.parent.mkdir(parents=True, exist_ok=True)
+    archivo.write_text(json.dumps({"pilotos": limpios}, ensure_ascii=False),
+                       encoding="utf-8")
+    return {"pilotos": limpios, "maximo": MAXIMO_PILOTOS,
+            "archivo": str(archivo)}
 
 
 @router.post("/captura/detener")

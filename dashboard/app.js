@@ -1130,7 +1130,15 @@ function accionDeLaFuente() {
             ? d.capturas_cerradas + " sesiones cerradas" : "Sin sesiones nuevas") }
       // Encender el capturador es el acto explicito que pone a este tablero a
       // seguir el flujo. Sin eso, el objetivo queda sin fijar.
-      : { ruta: "/captura/iniciar", metodo: "POST", cuerpo: { parrilla_completa: true }, sigueVivo: true,
+      /* YA NO SE PIDE LA PARRILLA ENTERA.
+         Se pedia `parrilla_completa: true`, y eso son 33.250 senales/s medidas
+         sobre la carrera de Spa contra las ~9.900 que el consumidor sostiene:
+         llegaba el 15 %, y no el 15 % de los rivales sino de todo, tambien del
+         coche propio. Ahora se arranca con el coche propio y se agrega a quien
+         se quiera desde la lista de arriba, que es lo que el presupuesto
+         permite. La eleccion que hubiera quedado de la sesion anterior sigue
+         valiendo: no se manda `pilotos`, que borraria lo elegido. */
+      : { ruta: "/captura/iniciar", metodo: "POST", cuerpo: {}, sigueVivo: true,
           hecho: d => "Capturador escuchando" + (d.puerto ? " en el puerto " + d.puerto : "") +
                       (d.trabajo ? " · trabajo " + d.trabajo : "") };
   }
@@ -5554,6 +5562,93 @@ function pintarMetricas() {
   c.appendChild(nota);
 }
 
+/* ============================================================
+   A QUIEN ESCUCHAR, MIENTRAS SE ESCUCHA
+   ------------------------------------------------------------
+   No es el mismo selector que el de comparar. Aquel elige a quien **mirar**
+   entre lo que ya se capturo; este elige a quien **capturar**, y por eso
+   cuesta: cada vehiculo agregado son 1.511 senales/s mas que tienen que
+   atravesar el intermediario, el consumidor y la base.
+
+   Por que aparece recien cuando se esta escuchando: los nombres llegan en el
+   paquete de participantes, unos segundos despues de que la sesion arranca en
+   el juego. Antes de eso no hay lista que ofrecer, y ofrecer una inventada
+   seria peor que no ofrecer ninguna.
+
+   El coche propio no es un boton. Va siempre, porque es el unico del que el
+   protocolo entrega los datos completos, y un boton que no se puede apagar
+   promete una decision que no existe.
+   ============================================================ */
+
+let escuchados = null;      // los nombres elegidos, o `null` mientras no se leyo
+let topeEscucha = 6;
+
+function leerEscuchados() {
+  pedir("/captura/pilotos").then(d => {
+    if (!d) return;
+    escuchados = Array.isArray(d.pilotos) ? d.pilotos : [];
+    if (typeof d.maximo === "number") topeEscucha = d.maximo;
+    pintarEligeEscucha();
+  }).catch(() => { escuchados = []; });
+}
+
+function pintarEligeEscucha() {
+  const caja = document.getElementById("elige-escucha");
+  if (!caja) return;
+  const escuchando = fuente === "f1"
+    && (estadoSesion === "escuchando" || estadoSesion === "vivo");
+  caja.hidden = !escuchando;
+  if (!escuchando) return;
+  if (escuchados === null) { leerEscuchados(); return; }
+
+  const c = document.getElementById("pilotos-escucha");
+  const nota = document.getElementById("nota-escucha");
+  const parrilla = parrillaVigente();
+  c.innerHTML = "";
+  if (!parrilla || !parrilla.vehiculos.length) {
+    /* Se dice que se esta esperando y no que no hay nadie: son cosas
+       distintas, y la segunda haria pensar que el selector esta roto. */
+    nota.textContent = "Esperando a que el juego declare la parrilla…";
+    return;
+  }
+
+  const propio = (AUTOS.find(a => a.propio) || {}).id;
+  const cabenMas = escuchados.length + 1 < topeEscucha;
+  parrilla.vehiculos.forEach(v => {
+    if (v.vehicle_id === propio) return;
+    const b = document.createElement("button");
+    b.type = "button";
+    b.textContent = v.nombre;
+    const elegido = escuchados.indexOf(v.nombre) !== -1;
+    b.setAttribute("aria-pressed", String(elegido));
+    /* Los que no entran se muestran igual, apagados: sacarlos de la lista
+       haria creer que ese piloto no esta en la carrera. */
+    b.disabled = !elegido && !cabenMas;
+    b.addEventListener("click", () => cambiarEscuchado(v.nombre));
+    c.appendChild(b);
+  });
+
+  const cuantos = escuchados.length + 1;
+  nota.textContent = cuantos + " de " + topeEscucha + " vehículos"
+    + (cabenMas ? "" : " · es el máximo que la cadena sostiene sin perder muestras");
+}
+
+function cambiarEscuchado(nombre) {
+  const i = escuchados.indexOf(nombre);
+  const pedidos = i === -1 ? escuchados.concat([nombre])
+                           : escuchados.filter(n => n !== nombre);
+  /* Se pinta con lo que **contesto el backend**, no con lo que se mando: si el
+     tope rechaza la lista, el boton no debe quedar marcado. */
+  mandar("/captura/pilotos", "POST", { pilotos: pedidos })
+    .then(d => {
+      escuchados = d.pilotos || [];
+      pintarEligeEscucha();
+      avisar(i === -1 ? "Escuchando también a " + nombre
+                      : "Ya no se escucha a " + nombre, false);
+    })
+    .catch(e => { avisar(e.message, true); pintarEligeEscucha(); });
+}
+
 /* Selector de pilotos dentro de la vista a pantalla completa.
    En modo detalle no aparece: esa vista es de un solo vehiculo, y el propio
    es el unico del que hay telemetria privada. */
@@ -9919,6 +10014,7 @@ function render() {
   pintarEstructura();
   pintarValores();
   pintarTrazas();
+  pintarEligeEscucha();
 }
 /* La ayuda se despliega por CSS al pasar el puntero o al recibir el foco:
    no hace falta codigo. */
