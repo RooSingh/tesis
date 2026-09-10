@@ -37,6 +37,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+import signal
+import socket
 import subprocess
 import sys
 import threading
@@ -93,18 +96,35 @@ def _matar_arbol(proc: subprocess.Popen) -> None:
 
     En Windows el lanzador del entorno virtual arranca un hijo con el
     interprete real, de modo que terminar solo el padre deja al hijo escuchando
-    el puerto. Se comprobo hoy por la via contraria: matar cuatro padres
+    el puerto. Se comprobo por la via contraria: matar cuatro padres
     creyendolos duplicados bajo los ocho procesos de los servicios.
+
+    EN LINUX NO HAY `taskkill`, Y ESTA MEDICION VIVE EN LA RASPBERRY. El guion
+    se escribio en Windows y ahi se quedo: corrido en la maquina de despliegue
+    fallaba con `FileNotFoundError: taskkill` **en la limpieza**, o sea despues
+    de haber lanzado el capturador y el reproductor, que quedaban sueltos. Se
+    usa el grupo de procesos, que es el equivalente de `/T` y no necesita un
+    programa externo.
     """
 
     if proc.poll() is not None:
         return
-    subprocess.run(["taskkill", "/PID", str(proc.pid), "/T", "/F"],
-                   capture_output=True, check=False)
+    if os.name == "nt":
+        subprocess.run(["taskkill", "/PID", str(proc.pid), "/T", "/F"],
+                       capture_output=True, check=False)
+    else:
+        try:
+            os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+        except (ProcessLookupError, PermissionError):
+            proc.terminate()
     try:
         proc.wait(timeout=15)
     except subprocess.TimeoutExpired:
-        pass
+        if os.name != "nt":
+            try:
+                os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+            except (ProcessLookupError, PermissionError):
+                proc.kill()
 
 
 def _contar(run_id: str) -> int:
@@ -115,7 +135,7 @@ def _contar(run_id: str) -> int:
         return cur.fetchone()[0]
 
 
-def correr(captura: Path, segundos: float, puerto: int,
+def correr(captura: Path, segundos: float, puerto: int, pilotos: str | None,
            borrar: bool) -> dict:
     marca = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
     run_id = f"parrilla_completa_{marca}"
@@ -124,6 +144,30 @@ def correr(captura: Path, segundos: float, puerto: int,
 
     r: dict = {"run_id": run_id, "captura": captura.name,
                "segundos_pedidos": segundos, "puerto": puerto}
+
+    # EL PUERTO TIENE QUE ESTAR LIBRE, Y SI NO SE DICE.
+    #
+    # Una corrida anterior que murio en la limpieza dejo su capturador
+    # escuchando este mismo puerto. La siguiente arranco igual, el capturador
+    # viejo se quedo con los datagramas ---y con `--parrilla-completa`, que era
+    # lo que aquella corrida pedia--- y el nuevo no recibio ninguno. El banco
+    # informo "0 filas escritas" como si la cadena no hubiera entregado nada,
+    # cuando lo que pasaba es que estaba midiendo a otro proceso. Ademas dejo
+    # 1.455.855 filas en la base bajo la marca vieja.
+    #
+    # Un banco que mide sin saber a quien mide es peor que uno que no corre.
+    sonda = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        sonda.bind(("0.0.0.0", puerto))
+    except OSError:
+        raise SystemExit(
+            f"El puerto {puerto} ya esta ocupado. Casi seguro es un capturador "
+            "de una corrida anterior que no se limpio: buscalo con\n"
+            "  ps -eo pid,cmd | grep capturar_f1_25\n"
+            "y terminalo antes de repetir. Sus filas quedan en la base bajo su "
+            "propia marca `parrilla_completa_*` y se borran por ahi.")
+    finally:
+        sonda.close()
 
     print(f"  capturador de prueba en el puerto {puerto}, marca {run_id}",
           flush=True)
@@ -137,7 +181,8 @@ def correr(captura: Path, segundos: float, puerto: int,
          # esto era medir una carga que no es la que la prueba nombra.
          "--parrilla-completa",
          "--destino", str(destino)],
-        cwd=str(RAIZ), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        cwd=str(RAIZ), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        start_new_session=(os.name != "nt"))
     # El capturador tarda un instante en atarse al puerto. Emitir antes de que
     # escuche perderia los primeros datagramas sin avisar.
     time.sleep(4)
@@ -150,7 +195,8 @@ def correr(captura: Path, segundos: float, puerto: int,
     reproductor = subprocess.Popen(
         [sys.executable, "-u", "scripts/reproducir_captura_f1_25.py",
          str(captura), "--puerto", str(puerto), "--velocidad", "1"],
-        cwd=str(RAIZ), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        cwd=str(RAIZ), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        start_new_session=(os.name != "nt"))
     t0 = time.perf_counter()
     time.sleep(segundos)
     r["duracion_real_s"] = round(time.perf_counter() - t0, 1)
@@ -187,6 +233,10 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--captura", type=Path, default=CAPTURA_POR_DEFECTO)
     ap.add_argument("--segundos", type=float, default=180.0)
+    ap.add_argument("--pilotos", default=None,
+                    help="Nombres separados por coma. Mide el coche propio "
+                         "mas esos, que es la carga real; sin esto mide la "
+                         "parrilla entera, que es el techo que no entra.")
     ap.add_argument("--puerto", type=int, default=20778)
     ap.add_argument("--conservar", action="store_true",
                     help="No borra las filas de la prueba al terminar.")
@@ -197,7 +247,8 @@ def main() -> None:
     if not args.captura.exists():
         raise SystemExit(f"no existe {args.captura}")
 
-    r = correr(args.captura, args.segundos, args.puerto, not args.conservar)
+    r = correr(args.captura, args.segundos, args.puerto, args.pilotos,
+               not args.conservar)
     args.salida.write_text(json.dumps(r, indent=2, ensure_ascii=False),
                            encoding="utf-8")
 
