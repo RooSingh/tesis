@@ -156,6 +156,7 @@ const NOMBRES = [
   "ejeQueLaFuenteSostiene", "porQueNoHayDistancia", "hayVueltas",
   "ejeVigente", "motivoDelEjeEspacial", "coberturaDeLaVista",
   "explicacionDelTrazado",
+  "textoDeLaValidacion",
   "puntoDelBusEn", "_indiceEnElRecorrido", "valoresSobreElRecorrido",
   "tramosDelRecorrido", "tintaDelValor",
 ];
@@ -171,6 +172,7 @@ const CONSTANTES = ["SENAL_DE", "SENAL_CAN", "SENAL_OPENF1",
                     "CANALES_POR_FUENTE",
                     "PASOS_DE_LA_ESCALA_G",
                     "PUNTOS_DE_LA_ESTELA",
+                    "MUESTRAS_PARA_CONTRASTAR", "CORRELACION_QUE_CONVENCE",
                     "METRICAS"];
 
 const sacadas = new Function(
@@ -240,6 +242,7 @@ const {
   ejeQueLaFuenteSostiene, porQueNoHayDistancia, hayVueltas,
   ejeVigente, motivoDelEjeEspacial, coberturaDeLaVista,
   explicacionDelTrazado,
+  textoDeLaValidacion,
   pedirTrazado, rutasPedidas,
   senalesParaElRecorrido,
   pieDelRecorrido,
@@ -258,6 +261,7 @@ const {
   CANALES_POR_FUENTE,
   PASOS_DE_LA_ESCALA_G,
   PUNTOS_DE_LA_ESTELA,
+  MUESTRAS_PARA_CONTRASTAR, CORRELACION_QUE_CONVENCE,
 } = sacadas;
 
 globalThis.instante = () => calcularInstante();
@@ -3331,6 +3335,106 @@ prueba("sin ninguna vuelta declarada tampoco hay vueltas", () => {
   globalThis.fuente = "f1";
   globalThis.estado.vueltas = [];
   assert.strictEqual(hayVueltas(), false);
+});
+
+/* ==================================================================
+   24. LA COMPROBACION QUE VIAJABA Y NO LEIA NADIE
+   ------------------------------------------------------------------
+   El recorrido del bus es una integracion, y una integracion no se comprueba
+   sola: acumula lo que le den. Pero hay una comprobacion, y es la mas fuerte
+   que esta fuente admite.
+
+   En una curva las ruedas de afuera recorren mas que las de adentro, y esa
+   diferencia dividida por la velocidad de guiñada da el **ancho de via**. Es
+   geometria pura. Y ese numero **no viaja en el bus**: que la guiñada y las
+   cuatro ruedas ---decodificadas por separado--- coincidan en una dimension
+   fisica del vehiculo es lo mas fuerte que se puede afirmar sobre un
+   decodificado.
+
+   Medido sobre los tramos cargados: 1,57 m con r 0,99 en `sample_16`, 1,57 con
+   0,96 en `sample_20`, 1,54 con 0,98 en `sample_12`. Tres tramos
+   independientes sobre la misma cifra.
+
+   El punto de acceso ya la calculaba y la mandaba en cada respuesta. No la leia
+   nadie: el resultado principal de esta fuente vivia en un campo que la
+   pantalla nunca abria.
+   ================================================================== */
+
+prueba("cuando la guiñada y las ruedas coinciden, se dice y con sus cifras", () => {
+  /* Los numeros son los de `sample_16`, medidos. */
+  globalThis.fuente = "can";
+  const texto = textoDeLaValidacion({ muestras: 822, ancho_de_via_m: 1.5719,
+                                      correlacion: 0.9903 });
+  assert.ok(/coinciden/.test(texto), texto);
+  assert.ok(/1,57 m de vía/.test(texto), texto);
+  assert.ok(/r 0,99/.test(texto), texto);
+  assert.ok(/822 muestras/.test(texto), "no se dice sobre cuantas muestras: " + texto);
+});
+
+prueba("un tramo recto no deja con que contrastar, y eso no es una falla", () => {
+  /* `sample_01` da cero muestras porque la comprobacion descarta lo que gira
+     menos de un grado por segundo. Es ausencia de evidencia, no un fallo, y
+     hay que declararla en vez de esconderla. */
+  const texto = textoDeLaValidacion({ muestras: 0, ancho_de_via_m: null,
+                                      correlacion: null });
+  assert.ok(/sin curvas/.test(texto), texto);
+  assert.ok(!/coinciden/.test(texto), "se afirmo una coincidencia sin muestras");
+});
+
+prueba("con un puñado de muestras no se presenta una correlacion perfecta", () => {
+  /* `sample_28` da r = 1,00 con SIETE muestras. Un uno coma cero sobre siete
+     puntos no es un acuerdo: es una recta entre dos nubes que casi no se
+     mueven. Presentarlo seria prestarle a la cifra una autoridad que no tiene. */
+  const texto = textoDeLaValidacion({ muestras: 7, ancho_de_via_m: 1.58,
+                                      correlacion: 1.0 });
+  assert.ok(/pocas curvas/.test(texto), texto);
+  assert.ok(!/1,58/.test(texto), "se mostro el ancho de via de siete muestras: " + texto);
+  assert.ok(!/coinciden/.test(texto));
+});
+
+prueba("si las dos señales no coinciden, tampoco se afirma que si", () => {
+  /* El caso que el propio backend documenta: sin el piso de velocidad, un
+     segmento con paradas daba 0,44 m con correlacion 0,25. */
+  const texto = textoDeLaValidacion({ muestras: 400, ancho_de_via_m: 0.44,
+                                      correlacion: 0.25 });
+  assert.ok(/no coinciden/.test(texto), texto);
+  assert.ok(/0,44 m de vía/.test(texto), "se escondio la cifra que no cierra: " + texto);
+});
+
+prueba("el umbral de muestras y el de correlacion son los que se aplican", () => {
+  const justo = { muestras: MUESTRAS_PARA_CONTRASTAR, ancho_de_via_m: 1.57,
+                  correlacion: CORRELACION_QUE_CONVENCE };
+  assert.ok(/coinciden en/.test(textoDeLaValidacion(justo)),
+            "en el umbral exacto se rechaza lo que se declara aceptar");
+  const unaMenos = Object.assign({}, justo, { muestras: MUESTRAS_PARA_CONTRASTAR - 1 });
+  assert.ok(/pocas curvas/.test(textoDeLaValidacion(unaMenos)));
+});
+
+prueba("sin comprobacion en la respuesta no se inventa una", () => {
+  assert.strictEqual(textoDeLaValidacion(null), "");
+  assert.strictEqual(textoDeLaValidacion(undefined), "");
+  assert.strictEqual(textoDeLaValidacion({ muestras: 900, ancho_de_via_m: null,
+                                           correlacion: null }), "");
+});
+
+prueba("el titulo del panel explica por que ese numero vale algo", () => {
+  /* Un «1,57 m» suelto no dice nada. Lo que lo hace evidencia es que el ancho
+     de via no viaja en el bus. */
+  globalThis.fuente = "can";
+  _fijar.pista({ derivado: true, advertencia: "Forma reconstruida por integracion.",
+                 validacion: { muestras: 822, ancho_de_via_m: 1.57, correlacion: 0.99 } });
+  const texto = explicacionDelTrazado();
+  assert.ok(/Forma reconstruida/.test(texto), texto);
+  assert.ok(/sin que el bus lo publique/.test(texto),
+            "no se dice por que la coincidencia es evidencia: " + texto);
+  assert.ok(/1,57 m de vía/.test(texto));
+});
+
+prueba("y sin comprobacion el titulo no promete una", () => {
+  globalThis.fuente = "can";
+  _fijar.pista({ derivado: true, advertencia: "Forma reconstruida por integracion.",
+                 validacion: null });
+  assert.strictEqual(explicacionDelTrazado(), "Forma reconstruida por integracion.");
 });
 
 console.log("identidad_y_cronometraje: " + hechas + " comprobaciones");

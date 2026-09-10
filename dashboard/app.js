@@ -442,7 +442,18 @@ const COORDENADAS_POR_FUENTE = {
    cae en el motivo declarado para la fuente, y recien despues en la descripcion
    general de la fuente, que es la que describe una posicion medida. */
 function explicacionDelTrazado() {
-  if (PISTA.derivado) return PISTA.advertencia || porQueNoHayCoordenadas();
+  if (PISTA.derivado) {
+    const base = PISTA.advertencia || porQueNoHayCoordenadas();
+    /* Y como se la contrasta, que es lo que hace que una integracion se pueda
+       creer: el ancho de via no viaja en el bus, asi que dos señales
+       decodificadas por separado coincidiendo en el es la comprobacion mas
+       fuerte que esta fuente admite. */
+    const contraste = textoDeLaValidacion(PISTA.validacion);
+    return contraste
+      ? base + " Se contrasta contra las cuatro ruedas, que deducen el ancho de " +
+        "vía del vehículo sin que el bus lo publique: " + contraste + "."
+      : base;
+  }
   const f = FUENTES[fuente];
   return (f && f.pista) || "";
 }
@@ -2132,6 +2143,58 @@ function pintarG() {
 
 /* El punto recorre la estela. Es la unica animacion por temporizador de la
    vista, y se apaga si la persona declaro preferir movimiento reducido. */
+/* QUE TAN LEJOS SE PUEDE CONTRASTAR UNA FORMA DERIVADA, Y DICHO.
+   ============================================================
+   El recorrido del bus es una integracion, y una integracion no se comprueba
+   sola: acumula lo que le den. Pero hay una comprobacion, y es fuerte.
+
+   En una curva las ruedas de afuera recorren mas que las de adentro, y esa
+   diferencia dividida por la velocidad de guiñada da el **ancho de via** del
+   vehiculo. Es geometria pura, sin ningun supuesto sobre el neumatico. Y ese
+   numero **no viaja en el bus**: nadie transmite el ancho de via. Que dos
+   señales decodificadas por separado ---la guiñada y las cuatro ruedas---
+   coincidan en una dimension fisica del vehiculo es lo mas fuerte que se puede
+   afirmar sobre un decodificado.
+
+   El punto de acceso ya la calculaba y la mandaba en cada respuesta. No la leia
+   nadie: el resultado principal de esta fuente vivia en un campo que la
+   pantalla nunca abria.
+
+   CUANDO NO SE PUEDE AFIRMAR, SE DICE. La comprobacion descarta las muestras
+   por debajo de un giro minimo, de modo que un tramo recto no deja con que
+   medir: `sample_01` da cero muestras, y eso no es una falla sino la ausencia
+   de evidencia, que hay que declarar y no esconder. Y con un puñado de
+   muestras una correlacion de 1,00 no significa nada ---`sample_28` da 1,00
+   con siete---, asi que por debajo del minimo se dice que no alcanza en vez de
+   presentar un numero que no se sostiene.
+   ============================================================ */
+
+/* Cuantas muestras hacen falta para que el ajuste diga algo. Con siete, una
+   correlacion de 1,00 es una recta entre dos nubes de puntos que casi no se
+   mueven; con cincuenta ya hay curvas de verdad detras. */
+const MUESTRAS_PARA_CONTRASTAR = 50;
+
+/* Por debajo de esta correlacion las dos señales no estan describiendo lo
+   mismo, y el ancho de via que sale del ajuste no es una medida del vehiculo. */
+const CORRELACION_QUE_CONVENCE = 0.8;
+
+function textoDeLaValidacion(v) {
+  if (!v) return "";
+  const n = v.muestras || 0;
+  if (n < MUESTRAS_PARA_CONTRASTAR) {
+    return n
+      ? "pocas curvas en este tramo para contrastarlo con las ruedas"
+      : "sin curvas en este tramo: nada con que contrastar la forma";
+  }
+  const ancho = v.ancho_de_via_m, r = v.correlacion;
+  if (!Number.isFinite(ancho) || !Number.isFinite(r)) return "";
+  const medida = cifra(ancho, 2) + " m de vía · r " + cifra(r, 2) +
+                 " sobre " + cifra(n, 0) + " muestras";
+  return r >= CORRELACION_QUE_CONVENCE
+    ? "guiñada y ruedas coinciden en " + medida
+    : "guiñada y ruedas no coinciden: " + medida;
+}
+
 /* Cuantos puntos dibuja la estela. Ochenta sobre un circulo de ciento treinta y
    seis unidades de diametro es algo mas de uno cada dos: por debajo se ven los
    escalones y por encima el trazo se vuelve una mancha. */
@@ -2296,6 +2359,7 @@ function metroDeCurva(cu) {
 function pintarPista() {
   const linea = document.getElementById("linea-pista");
   linea.setAttribute("d", PISTA.path);
+  pintarValidacionDeLaForma();
   pintarElectorDelRecorrido();
   pintarTrazaPorSenal(linea);
 
@@ -8348,6 +8412,17 @@ function senalesParaElRecorrido() {
   }).filter(Boolean);
 }
 
+/* La comprobacion contra las ruedas, en pantalla. Solo cuando la forma es
+   derivada: sobre un circuito declarado no hay nada que contrastar. */
+function pintarValidacionDeLaForma() {
+  const el = document.getElementById("validacion-recorrido");
+  if (!el) return;
+  const texto = PISTA.derivado ? textoDeLaValidacion(PISTA.validacion) : "";
+  if (el.textContent === texto) return;
+  el.textContent = texto;
+  el.dataset.alcanza = /coinciden en /.test(texto) ? "si" : "no";
+}
+
 /* El elector: una pastilla por señal, mas «ninguna». Se rehace solo cuando
    cambia lo que ofrece. */
 function pintarElectorDelRecorrido() {
@@ -8654,6 +8729,9 @@ function pedirRecorridoDelBus() {
         origen_utc: (r.eje_temporal || {}).origen_utc || null,
         derivado: true,
         advertencia: r.advertencia || "",
+        /* La comprobacion mas fuerte que esta fuente admite, y viajaba sin que
+           nadie la leyera. Ver `textoDeLaValidacion`. */
+        validacion: r.validacion_guinada || null,
       };
       estado.trazado = r;
       const svg = document.getElementById("linea-pista");

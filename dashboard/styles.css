@@ -1291,6 +1291,15 @@
     opacity: .45; border-style: dashed;
   }
   .elige-senal-recorrido button[data-quieta="si"][aria-pressed="true"] { opacity: 1; }
+  /* La comprobacion contra las ruedas. Va sobre el elector de señal porque es
+     una afirmacion sobre el dibujo de arriba, no sobre lo que se elija abajo. */
+  .validacion-forma {
+    margin: 8px 0 0; font-size: .66rem; line-height: 1.35;
+    color: var(--texto-medio); font-family: var(--cifra);
+  }
+  .validacion-forma:empty { display: none; }
+  .validacion-forma[data-alcanza="no"] { color: var(--texto-tenue); font-style: italic; }
+
   .leyenda-recorrido {
     margin: 6px 0 0; font-size: .66rem; color: var(--texto-tenue);
     font-family: var(--cifra);
