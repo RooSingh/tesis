@@ -186,9 +186,33 @@ def procedencia_de_sesion(session_id: str) -> dict[str, Any]:
     """
 
     proc = procedencia_sesiones.de(session_id)
+    # QUIEN ES CADA VEHICULO VIENE ACA MISMO, y no en otra consulta.
+    #
+    # El tablero la sacaba de `/adquisiciones`, que se pide al abrir una sesion
+    # guardada y no mientras se escucha: durante la captura el vehiculo se
+    # llamaba «Vehiculo 0» aunque el paquete de participantes ya hubiera dicho
+    # el nombre. Es el mismo indice y el mismo archivo que la procedencia, de
+    # modo que separarlas seria leer dos veces lo mismo.
+    #
+    # `parrilla_de` **se abstiene** cuando la sesion tiene varias capturas que
+    # declaran participantes distintos: ahi no hay una parrilla «de la sesion» y
+    # hace falta saber cual adquisicion se esta mirando.
+    declarada = procedencia_sesiones.parrilla_de(session_id)
+    parrilla = {"disponible": False,
+                "motivo": ("ninguna captura de esta sesion declara una parrilla, "
+                           "o hay mas de una y declaran participantes distintos")}
+    if declarada and declarada.get("vehiculos"):
+        parrilla = {
+            "disponible": True,
+            "vehiculos": _vehiculos_nombrados(session_id, declarada),
+            "vehiculos_en_carrera": declarada.get("vehiculos_en_carrera"),
+            "origen": declarada.get("origen"),
+            "captura": (declarada.get("captura") or {}).get("archivo"),
+        }
     return {
         "session_id": session_id,
         "procedencia": proc,
+        "parrilla": parrilla,
         # Que no haya no es un fallo: una captura que todavia no vio un paquete
         # de sesion con tipo declarado no tiene procedencia que dar.
         "motivo_ausencia": None if proc else (
@@ -1199,6 +1223,38 @@ def _medir_fases(cursor, fuente: str, session_id: str,
 FORMA_DEL_VEHICULO = "%s:car:%d"
 
 
+def _vehiculos_nombrados(session_id: str, declarada: dict,
+                         con_telemetria: set[str] | None = None) -> list[dict]:
+    """Los participantes de una parrilla, unidos a la clave tecnica del vehiculo.
+
+    LA UNION SE DECLARA, NO SE ADIVINA. `vehicle_id` se compone en el adaptador
+    como `<session_id>:car:<indice>`, y ese es el unico camino del indice del
+    protocolo a la clave de la base.
+
+    `con_telemetria` es opcional porque no siempre se sabe. Saberlo cuesta
+    recorrer la base buscando que vehiculos tienen muestras, y hay un caso donde
+    no hace falta: mientras la sesion se esta capturando, lo que se quiere es el
+    nombre, y quien tiene muestras cambia con cada mensaje que llega. Cuando no
+    se pasa, el campo **no se inventa**: no aparece.
+    """
+
+    salida = []
+    for v in declarada["vehiculos"]:
+        clave = FORMA_DEL_VEHICULO % (session_id, v["indice"])
+        fila = {
+            "indice": v["indice"],
+            "vehicle_id": clave,
+            "nombre": v["nombre"],
+            "numero": v["numero"],
+            "equipo": v["equipo"],
+            "es_ia": v["es_ia"],
+        }
+        if con_telemetria is not None:
+            fila["con_telemetria"] = clave in con_telemetria
+        salida.append(fila)
+    return salida
+
+
 def _parrilla_de_la_adquisicion(session_id: str, fuente: str, desde, hasta,
                                 shas: list, con_telemetria: set[str]) -> dict:
     """La parrilla de **esta adquisicion**, unida a las claves tecnicas.
@@ -1240,18 +1296,7 @@ def _parrilla_de_la_adquisicion(session_id: str, fuente: str, desde, hasta,
                            % len(candidatas)),
                 "con_telemetria": len(con_telemetria)}
 
-    vehiculos = []
-    for v in declarada["vehiculos"]:
-        clave = FORMA_DEL_VEHICULO % (session_id, v["indice"])
-        vehiculos.append({
-            "indice": v["indice"],
-            "vehicle_id": clave,
-            "nombre": v["nombre"],
-            "numero": v["numero"],
-            "equipo": v["equipo"],
-            "es_ia": v["es_ia"],
-            "con_telemetria": clave in con_telemetria,
-        })
+    vehiculos = _vehiculos_nombrados(session_id, declarada, con_telemetria)
 
     return {
         "disponible": True,

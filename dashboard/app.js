@@ -6267,12 +6267,23 @@ function pedirProcedenciaViva(sesion, intentos) {
   pedir("/sesiones/" + encodeURIComponent(sesion) + "/procedencia")
     .then(d => {
       if (!estado.abierta || estado.abierta.session_id !== sesion) return;
+      /* QUIEN ES CADA VEHICULO, POR EL MISMO CAMINO QUE YA EXISTIA.
+         `anotarParrillas` es lo que usa la reproduccion, y toma adquisiciones:
+         se le pasa una sola, porque una captura en curso es una sola. Con una
+         unica clave, `parrillaVigente` la toma sin necesidad de que haya
+         adquisicion elegida ---en vivo no la hay--- y los vehiculos dejan de
+         llamarse «Vehiculo 0» mientras se corre. */
+      if (d && d.parrilla && d.parrilla.disponible) {
+        anotarParrillas(sesion, [{ clave: "en-vivo", parrilla: d.parrilla }]);
+        renombrarAutos();
+      }
       if (d && d.procedencia) {
         estado.abierta.procedencia = d.procedencia;
         if (d.procedencia.circuito) estado.abierta.circuito = d.procedencia.circuito;
         render();
         return;
       }
+      if (d && d.parrilla && d.parrilla.disponible) render();
       /* Todavia no hay: el flujo puede no haber declarado su tipo de sesion.
          Se vuelve a preguntar unas pocas veces, cada vez mas espaciado, y se
          deja de insistir. Sin procedencia el tablero ya sabe que decir. */
