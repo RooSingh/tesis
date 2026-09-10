@@ -1186,6 +1186,25 @@
     flex: 1; text-align: center; font-style: italic; font-family: var(--cuerpo);
   }
 
+  /* El elector de señal del recorrido y su leyenda. Solo aparecen cuando hay
+     una forma derivada que pintar. */
+  .elige-senal-recorrido { display: none; flex-wrap: wrap; gap: 4px; margin-top: 8px; }
+  .elige-senal-recorrido[data-hay="si"] { display: flex; }
+  .elige-senal-recorrido button {
+    padding: 3px 8px; border-radius: 999px; border: 1px solid var(--linea);
+    background: transparent; color: var(--texto-medio); cursor: pointer;
+    font-family: var(--cuerpo); font-size: .68rem;
+  }
+  .elige-senal-recorrido button[aria-pressed="true"] {
+    background: var(--acento); color: var(--sobre-acento); border-color: var(--acento);
+  }
+  .leyenda-recorrido {
+    margin: 6px 0 0; font-size: .66rem; color: var(--texto-tenue);
+    font-family: var(--cifra);
+  }
+  .leyenda-recorrido:empty { display: none; }
+
+
   @media (max-width: 720px) {
     .celda-2 { grid-column: span 1; }
   }

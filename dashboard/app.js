@@ -1411,6 +1411,10 @@ function aplicarDisponibilidad() {
        el coche y el segundo cierra. */
     if (PISTA.enConstruccion) partes.push("recorrido en construcción, medido en vivo");
     else if (PISTA.medidoEnVivo) partes.push("medido en vivo, primera vuelta cerrada");
+    /* Un recorrido derivado no se puede ver igual que uno medido. La forma sale
+       de integrar velocidad y guiñada, así que es fiel en su trazo y no dice
+       nada del sitio del mundo donde ocurrió. */
+    else if (PISTA.derivado) partes.push("forma derivada por integración, sin coordenadas");
     /* Si la marca del vehiculo se esta dibujando entre dos muestras, se dice.
        Es una representacion y no una medicion: el dato guardado y lo que se
        exporta siguen siendo las muestras, sin tocar. */
@@ -2085,6 +2089,8 @@ function metroDeCurva(cu) {
 function pintarPista() {
   const linea = document.getElementById("linea-pista");
   linea.setAttribute("d", PISTA.path);
+  pintarElectorDelRecorrido();
+  pintarTrazaPorSenal(linea);
 
   /* EL DIBUJO SE AJUSTA A SU CAJA.
      El `viewBox` estaba fijo en 360 x 170 y el recorrido no lo llenaba: el
@@ -2272,6 +2278,14 @@ function pintarPista() {
         const q = PISTA.proyectarMundo(ult[0], ult[1]);
         p = { x: q[0], y: q[1] };
       }
+    }
+    /* SOBRE UN RECORRIDO DERIVADO, EL COCHE VA POR SU INSTANTE.
+       `frac` es una fraccion de tiempo y el camino esta parametrizado por
+       longitud: las dos coinciden solo con velocidad constante. En este tramo
+       casi lo es, que es lo que haria pasar el error por bueno. */
+    if (!p && PISTA.derivado) {
+      const q = puntoDelBusEn(instante().tUtcMs);
+      if (q) p = q;
     }
     if (!p) p = linea.getPointAtLength(largo * frac);
     /* Por etiqueta y no por posicion: el grupo lleva ademas un `<title>` con la
@@ -7945,6 +7959,273 @@ function ubicarAvisos(lista) {
   }).sort((x, y) => x.en - y.en);
 }
 
+/* Con que señales se puede pintar el recorrido: las que este tablero sabe
+   dibujar y esta sesion trajo con dato. La que manda es la respuesta, no una
+   lista escrita aca. */
+function senalesParaElRecorrido() {
+  return canalesDeLaFuente().filter(id => {
+    const st = serieTemporal(id, vueltaEnFraccion(0), claveVehiculoPropio());
+    return !!(st && st.t.length);
+  });
+}
+
+/* El elector: una pastilla por señal, mas «ninguna». Se rehace solo cuando
+   cambia lo que ofrece. */
+function pintarElectorDelRecorrido() {
+  const c = document.getElementById("elige-senal-recorrido");
+  if (!c) return;
+  if (!PISTA.derivado) { c.dataset.hay = "no"; c.innerHTML = ""; return; }
+  const cuales = senalesParaElRecorrido();
+  c.dataset.hay = cuales.length ? "si" : "no";
+  const firma = cuales.join(",") + "|" + (canalDelRecorrido || "");
+  if (c.dataset.firma === firma) return;
+  c.dataset.firma = firma;
+  c.innerHTML = "";
+  [null].concat(cuales).forEach(id => {
+    const m = id ? METRICAS.find(x => x.id === id) : null;
+    const b = document.createElement("button");
+    b.type = "button";
+    b.textContent = m ? m.rotulo : "Ninguna";
+    b.setAttribute("aria-pressed", String(canalDelRecorrido === id));
+    b.addEventListener("click", () => {
+      canalDelRecorrido = id;
+      const capa = document.querySelector("#traza-por-senal");
+      if (capa) capa.dataset.firma = "";
+      c.dataset.firma = "";
+      const pie = document.getElementById("leyenda-recorrido");
+      if (pie && !id) pie.textContent = "";
+      render();
+    });
+    c.appendChild(b);
+  });
+}
+
+/* Pinta el recorrido por la señal elegida, encima del camino gris.
+
+   Se rehace solo cuando cambia algo que lo afecta ---la señal, la sesion, el
+   tema--- y no en cada cuadro: son doscientos nodos y el cabezal se mueve
+   sesenta veces por segundo. */
+function pintarTrazaPorSenal(linea) {
+  const svg = linea.ownerSVGElement;
+  if (!svg) return;
+  let capa = svg.querySelector("#traza-por-senal");
+  const canal = PISTA.derivado ? canalDelRecorrido : null;
+  if (!canal) {
+    if (capa) { capa.remove(); }
+    linea.style.opacity = "";
+    return;
+  }
+  if (!capa) {
+    capa = document.createElementNS("http://www.w3.org/2000/svg", "g");
+    capa.id = "traza-por-senal";
+    svg.insertBefore(capa, linea.nextSibling);
+  }
+  const firma = [canal, PISTA.path.length, tinta("--acento"),
+                 sesionAbierta].join("|");
+  if (capa.dataset.firma === firma) return;
+  capa.dataset.firma = firma;
+
+  const valores = valoresSobreElRecorrido(canal);
+  const tramos = tramosDelRecorrido(valores);
+  if (!tramos.length) { capa.innerHTML = ""; linea.style.opacity = ""; return; }
+  let mn = Infinity, mx = -Infinity;
+  valores.forEach(v => {
+    if (v === null || !Number.isFinite(v)) return;
+    if (v < mn) mn = v;
+    if (v > mx) mx = v;
+  });
+  /* El camino gris queda debajo y se atenua: sigue diciendo por donde se fue en
+     los tramos donde la señal no llego. */
+  linea.style.opacity = "0.35";
+  capa.innerHTML = tramos.map(t =>
+    '<path d="' + t.d + '" fill="none" stroke-width="3.2" stroke-linecap="round" ' +
+    'stroke="' + tintaDelValor(t.valor, mn, mx) + '"></path>').join("");
+  const pie = document.getElementById("leyenda-recorrido");
+  if (pie) {
+    const m = METRICAS.find(x => x.id === canal);
+    pie.textContent = Number.isFinite(mn)
+      ? (m ? m.rotulo : canal) + " · de " + cifra(mn, 2) + " a " + cifra(mx, 2) +
+        " " + unidadDeCanal(canal)
+      : (m ? m.rotulo : canal) + " · sin dato sobre este recorrido";
+  }
+}
+
+/* ============================================================
+   EL RECORRIDO, PINTADO POR LO QUE SE ESTABA MIDIENDO
+   ------------------------------------------------------------
+   Un recorrido dice por donde se fue. Con una señal encima dice **como** se
+   fue: donde se levanto el pie, donde cargo el eje, donde la direccion se
+   quedo quieta. Es la figura que un tramo de bus permite y que un grafico
+   contra el tiempo no da, porque el tiempo no tiene forma.
+
+   COMO SE ATAN LAS DOS COSAS. Cada punto del recorrido trae su instante, y cada
+   señal se lee en un instante: se usa el **mismo** que ya comparten los
+   instrumentos y el coche. No hay un segundo reloj ni una interpolacion nueva.
+
+   QUE NO SE HACE. No se colorea por una escala absoluta inventada: los extremos
+   son los de lo que se ve, y se escriben. Y no se pinta una señal escalonada
+   con un degrade, porque entre pisado y suelto no hay medio pisado: esas se
+   dibujan con dos tintas y nada en el medio.
+   ============================================================ */
+
+/* Cuantos tramos tiene la traza pintada. Doscientos sobre un dibujo de
+   trescientos sesenta unidades de ancho es algo mas de un tramo por unidad:
+   por debajo se ven los escalones, por encima son nodos que nadie distingue. */
+const TRAMOS_DE_LA_TRAZA = 200;
+
+/* La señal con la que se pinta el recorrido, o `null` para no pintarlo. */
+let canalDelRecorrido = null;
+
+/* El valor de `canal` en cada punto del recorrido, leido en su instante.
+   Devuelve `null` cuando no hay con que: sin recorrido, sin origen declarado o
+   sin serie temporal de esa señal. */
+function valoresSobreElRecorrido(canal) {
+  if (!PISTA.marcas_ms || !PISTA.origen_utc || !PISTA.mundo) return null;
+  const origen = Date.parse(PISTA.origen_utc);
+  if (!Number.isFinite(origen)) return null;
+  const clave = claveVehiculoPropio();
+  const st = serieTemporal(canal, vueltaEnFraccion(0), clave);
+  if (!st || !st.t.length) return null;
+  const escalonada = esCanalEscalonado(canal);
+  return PISTA.marcas_ms.map(ms => {
+    const t = origen + ms;
+    return escalonada ? valorEscalonadoEn(st, t) : valorContinuoEn(st, t);
+  });
+}
+
+/* Los tramos del recorrido con su valor: un objeto por tramo, con el camino
+   que lo dibuja y el valor de la señal en el. Se reduce a `TRAMOS_DE_LA_TRAZA`
+   quedandose con el **ultimo** punto de cada tramo, que es el que manda hasta
+   el siguiente. */
+function tramosDelRecorrido(valores) {
+  if (!valores || !PISTA.mundo || PISTA.mundo.length < 2) return [];
+  const n = PISTA.mundo.length;
+  const paso = Math.max(1, Math.floor(n / TRAMOS_DE_LA_TRAZA));
+  const tramos = [];
+  let desde = 0;
+  /* El ultimo corte es el ultimo punto y no el ultimo multiplo del paso: con
+     2999 puntos y paso 14 el bucle terminaba en el 2996 y los tres finales se
+     quedaban sin pintar, un cabo gris al final del recorrido. */
+  const cortes = [];
+  for (let i = paso; i < n - 1; i += paso) cortes.push(i);
+  cortes.push(n - 1);
+  for (const i of cortes) {
+    const trozo = [];
+    for (let k = desde; k <= i; k++) {
+      const q = PISTA.proyectarMundo(PISTA.mundo[k][0], PISTA.mundo[k][1]);
+      trozo.push((k === desde ? "M" : "L") + q[0].toFixed(1) + " " + q[1].toFixed(1));
+    }
+    /* El valor del tramo es el del punto donde termina: es el que estuvo
+       vigente durante ese trozo del recorrido. */
+    const v = valores[Math.min(i, valores.length - 1)];
+    tramos.push({ d: trozo.join(" "), valor: v === undefined ? null : v });
+    desde = i;
+  }
+  return tramos;
+}
+
+/* De un valor a una tinta, entre los extremos de lo que se ve. Una escala de
+   dos colores y no de arcoiris: un arcoiris ordena mal ---nadie sabe si el
+   verde es mas que el naranja--- y este tablero ya usa el acento para «mas». */
+function tintaDelValor(v, mn, mx) {
+  if (v === null || v === undefined || !Number.isFinite(v)) return tinta("--linea");
+  const u = mx > mn ? Math.max(0, Math.min(1, (v - mn) / (mx - mn))) : 0.5;
+  return "color-mix(in oklab, var(--acento) " + Math.round(u * 100) +
+         "%, var(--linea-fuerte))";
+}
+
+/* DONDE ESTABA EL VEHICULO EN ESTE INSTANTE, SOBRE EL RECORRIDO DERIVADO.
+
+   El coche de una sesion con distancia se coloca por su metro. Acá no hay
+   metro: hay una forma con una marca de tiempo por punto. Se busca el punto por
+   su instante ---busqueda binaria, esto corre una vez por cuadro--- y se lo
+   proyecta con la misma transformacion del camino dibujado.
+
+   Colocarlo por la fraccion del cabezal habria estado casi bien y por casualidad:
+   la fraccion es de tiempo y el camino esta parametrizado por longitud, y las
+   dos coinciden solo si la velocidad es constante. En este tramo casi lo es, que
+   es justo lo que haria pasar el error por bueno.
+
+   `null` cuando no se puede ubicar: sin recorrido, sin marcas o sin origen
+   declarado. */
+function puntoDelBusEn(tUtcMs) {
+  if (!PISTA.marcas_ms || !PISTA.marcas_ms.length || !PISTA.proyectarMundo) return null;
+  if (!PISTA.origen_utc || tUtcMs === null || tUtcMs === undefined) return null;
+  const origen = Date.parse(PISTA.origen_utc);
+  if (!Number.isFinite(origen)) return null;
+  const i = _indiceEnElRecorrido(tUtcMs - origen);
+  if (i === null) return null;
+  const q = PISTA.proyectarMundo(PISTA.mundo[i][0], PISTA.mundo[i][1]);
+  return { x: q[0], y: q[1], indice: i };
+}
+
+/* El ultimo punto medido en ese instante o antes; `null` si el instante es
+   anterior al primero, porque ahi el vehiculo no estaba en ningun lado todavia. */
+function _indiceEnElRecorrido(tMs) {
+  const m = PISTA.marcas_ms;
+  if (!(tMs >= m[0])) return null;
+  let lo = 0, hi = m.length - 1;
+  while (lo < hi) {
+    const medio = (lo + hi + 1) >> 1;
+    if (m[medio] <= tMs) lo = medio; else hi = medio - 1;
+  }
+  return lo;
+}
+
+/* EL RECORRIDO DEL BUS: DERIVADO, Y DICHO.
+   No es una posicion medida. Se integra velocidad y velocidad de guiñada, de
+   modo que la forma es fiel pero su orientacion absoluta y su sitio en el mundo
+   no son recuperables ---la respuesta lo declara y ese texto se muestra---.
+
+   Cada punto viene con el instante en que el vehiculo estuvo ahi, en
+   milisegundos desde el arranque del segmento. Es lo que permite colocar el
+   coche sobre el recorrido con el **mismo** instante que ya comparten los
+   instrumentos, y lo que permite pintar la traza por lo que se estaba midiendo. */
+function pedirRecorridoDelBus() {
+  if (!estado.abierta) return;
+  const apertura = aperturaVigente();
+  TESTIGO.trazadosPedidos++;
+  conCarga("trazado", () =>
+  pedir("/can/recorrido/" + encodeURIComponent(estado.abierta.session_id),
+        { senal: senalDeSesion() })
+    .then(r => {
+      if (!sigueVigente(apertura)) return;
+      const puntos = (r && r.puntos) || [];
+      if (puntos.length < 3) { TESTIGO.trazadosDescartados++; return; }
+      TESTIGO.trazadosAplicados++;
+      /* Sin invertir: la reconstruccion ya entrega el plano en el sentido en
+         que se recorrio, y darlo vuelta espejaria las curvas.
+
+         Y SIN CERRAR. `trazadoAPath` cierra el camino con `Z` porque un
+         circuito vuelve a su largada. Un tramo de ruta no vuelve: cerrarlo
+         dibuja una recta del final al principio que nadie recorrio, y en un
+         tramo casi recto esa recta es todo el dibujo otra vez. */
+      const armado = trazadoAPath(puntos.map(q => [q.x, q.y]), false, false);
+      PISTA = {
+        path: armado.path,
+        proyectar: armado.proyectar,
+        proyectarMundo: armado.proyectarMundo,
+        mundo: puntos.map(q => [q.x, q.y]),
+        largo_m: r.recorrido_m,
+        desnivel_m: null,
+        muestras: puntos.length,
+        curvas: [],
+        /* Lo que hace falta para ubicar un instante sobre esta forma. */
+        marcas_ms: puntos.map(q => q.t_ms),
+        origen_utc: (r.eje_temporal || {}).origen_utc || null,
+        derivado: true,
+        advertencia: r.advertencia || "",
+      };
+      estado.trazado = r;
+      const svg = document.getElementById("linea-pista");
+      if (svg && svg.ownerSVGElement) delete svg.ownerSVGElement.dataset.reserva;
+      const g = document.getElementById("marcas-pista");
+      if (g) g.dataset.firma = "";
+      render();
+    })
+    .catch(e => { if (e instanceof TypeError) console.error(e); }));
+}
+
 /* EL TRAZADO SE DIBUJA CON UNA VUELTA COMPLETA Y SIN SALTOS.
    Sin elegir vuelta, la API contesta con la primera, y si esa vuelta tiene un
    salto de horas ---dos cargas de la misma sesion pegadas--- el recorrido sale
@@ -7952,6 +8233,13 @@ function ubicarAvisos(lista) {
    primera vuelta que sea continua y completa; si no hay ninguna, se pide sin
    elegir y se declara. */
 function pedirTrazado(ruta) {
+  /* EL BUS NO PUBLICA COORDENADAS, Y AUN ASI TIENE UNA FORMA.
+     `/trazado` sale de `world_position_*`, que la simulacion declara y el bus
+     no: para una sesion del bus contesta vacio y el panel se quedaba con el
+     rotulo «recorrido reconstruido» y nada debajo ---una etiqueta sin nada
+     detras---. La forma existe: se obtiene integrando velocidad y guinada, y
+     `/can/recorrido` la calcula desde hace tiempo. Nadie se la pedia. */
+  if (!hayEjeDeDistancia()) { pedirRecorridoDelBus(); return; }
   const buena = estado.vueltas.find(v => v.continua !== false && v.completa);
   const cual = buena ? "&vuelta=" + buena.numero : "";
   TESTIGO.trazadosPedidos++;

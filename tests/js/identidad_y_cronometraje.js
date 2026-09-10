@@ -115,12 +115,16 @@ const NOMBRES = [
   "serieDeCanal", "serieAcumuladaDeCanal", "tramoAcumuladoDeVuelta",
   "vueltasEnTramoAcumulado", "claveVehiculoPropio", "duracionDeVuelta", "duracionSesionS",
   "vueltasDeLaSesion", "iniciosDeVuelta", "calcularInstante",
+  "vueltaEnFraccion", "trazadoAPath",
+  "puntoDelBusEn", "_indiceEnElRecorrido", "valoresSobreElRecorrido",
+  "tramosDelRecorrido", "tintaDelValor",
 ];
 
 const CONSTANTES = ["SENAL_DE", "UNIDAD_QUE_MUESTRA_EL_TABLERO",
                     "DIVISOR_ENTRE_UNIDADES", "SIN_VEHICULO",
                     "UNIDAD_POR_FUENTE",
                     "MARGEN_DEL_TRAZADO", "ALTURA_DEL_ROTULO", "CUERPO_DEL_ROTULO",
+                    "TRAMOS_DE_LA_TRAZA",
                     "METRICAS"];
 
 const sacadas = new Function(
@@ -177,8 +181,10 @@ const {
   pintarLeyendaTraza, exportarCsv,
   elegirCorrida, nuevaSesionEnCurso, fijarContextoDeCorrida, selloDeIdentidad,
   _fijar,
+  trazadoAPath, puntoDelBusEn, _indiceEnElRecorrido,
+  valoresSobreElRecorrido, tramosDelRecorrido, tintaDelValor,
   UNIDAD_QUE_MUESTRA_EL_TABLERO, MARGEN_DEL_TRAZADO, ALTURA_DEL_ROTULO,
-  CUERPO_DEL_ROTULO, METRICAS,
+  CUERPO_DEL_ROTULO, METRICAS, TRAMOS_DE_LA_TRAZA,
 } = sacadas;
 
 globalThis.instante = () => calcularInstante();
@@ -2112,6 +2118,248 @@ prueba("el pie escribe la quietud solo cuando el minimo iguala al maximo", () =>
   globalThis.fuente = "can";
   assert.notStrictEqual(sinCambiosEnElTramo("brake", 0), "");
   assert.notStrictEqual(sinCambiosEnElTramo("speed", 0), "");
+});
+
+/* ==================================================================
+   17. EL RECORRIDO DERIVADO: UBICAR POR INSTANTE, PINTAR POR SEÑAL
+   ------------------------------------------------------------------
+   El bus no publica coordenadas. La forma del recorrido sale de integrar
+   velocidad y velocidad de guiñada, y cada punto trae el instante en que el
+   vehiculo estuvo ahi. Eso permite dos cosas que un trazado sin marcas no
+   permite: colocar el coche por su instante ---el mismo que ya comparten los
+   instrumentos--- y pintar el recorrido con lo que se estaba midiendo.
+
+   LOS DEFECTOS QUE ESTO CUIDA.
+
+   1. Colocar el coche por la fraccion del cabezal sobre la longitud del camino.
+      La fraccion es de tiempo y el camino esta parametrizado por longitud: las
+      dos coinciden **solo** con velocidad constante. En un tramo de autopista
+      casi lo es, que es justo lo que haria pasar el error por bueno.
+   2. Cerrar el camino con `Z`. Un circuito vuelve a su largada; un tramo de
+      ruta no. Cerrarlo dibuja una recta del final al principio que nadie
+      recorrio.
+   3. Interpolar una señal escalonada sobre el recorrido: entre pisado y suelto
+      no hay medio pisado.
+   4. Dejar el cabo final sin pintar, porque los tramos se cortaban en el ultimo
+      multiplo del paso y no en el ultimo punto.
+   ================================================================== */
+
+/* Un recorrido derivado a escala: `n` puntos con su instante, la forma armada
+   con la misma funcion que usa el tablero y sin cerrar. */
+function recorridoDerivado(mundo, marcas) {
+  const armado = trazadoAPath(mundo, false, false);
+  const pista = {
+    path: armado.path,
+    proyectar: armado.proyectar,
+    proyectarMundo: armado.proyectarMundo,
+    mundo: mundo,
+    marcas_ms: marcas,
+    origen_utc: iso(T0),
+    derivado: true,
+    muestras: mundo.length,
+    curvas: [],
+  };
+  /* `PISTA` vive dentro de la funcion construida: se fija por el gancho y se
+     devuelve, porque leerla desde `globalThis` devolveria otra cosa. */
+  _fijar.pista(pista);
+  return { armado: armado, pista: pista };
+}
+
+/* Veinte puntos cada 100 ms sobre una ese, con las series de las dos vueltas
+   ya cargadas: es el mismo tramo que `dosVueltasConCronometro` describe. */
+function tramoDelBus() {
+  dosVueltasConCronometro();
+  const mundo = [], marcas = [];
+  for (let i = 0; i < 20; i++) {
+    mundo.push([i * 10, Math.sin(i / 4) * 30]);
+    marcas.push(i * 100);
+  }
+  return recorridoDerivado(mundo, marcas);
+}
+
+prueba("antes del primer punto medido el vehiculo no esta en ningun lado", () => {
+  tramoDelBus();
+  assert.strictEqual(puntoDelBusEn(T0 - 1), null,
+                     "ubico el coche en un instante anterior al recorrido");
+  assert.strictEqual(_indiceEnElRecorrido(-1), null);
+});
+
+prueba("en el primer instante medido ya esta, y esta en el primer punto", () => {
+  tramoDelBus();
+  assert.strictEqual(_indiceEnElRecorrido(0), 0);
+});
+
+prueba("la busqueda binaria da lo mismo que recorrer la lista", () => {
+  /* Marcas irregulares a proposito: un bus pierde tramas y los saltos no son
+     todos iguales. */
+  const marcas = [0, 7, 90, 91, 400, 1200, 1201, 1600, 1900];
+  const mundo = marcas.map((m, i) => [i * 10, i * i]);
+  recorridoDerivado(mundo, marcas);
+  for (let t = -50; t <= 2000; t += 3) {
+    let esperado = null;
+    for (let k = 0; k < marcas.length; k++) if (marcas[k] <= t) esperado = k;
+    assert.strictEqual(_indiceEnElRecorrido(t), esperado, "en t=" + t);
+  }
+});
+
+prueba("el coche va por su instante y no por la longitud del camino", () => {
+  /* Un tramo donde el vehiculo se detiene: la primera mitad del tiempo cubre
+     casi todo el trazo y la segunda casi nada. Colocarlo por la fraccion de
+     longitud lo pondria en el medio del dibujo; su instante dice que ya estaba
+     al final. */
+  const mundo = [], marcas = [];
+  for (let i = 0; i < 10; i++) { mundo.push([i * 100, 0]); marcas.push(i * 100); }
+  for (let i = 0; i < 10; i++) { mundo.push([900 + i, 0]); marcas.push(1000 + i * 100); }
+  recorridoDerivado(mundo, marcas);
+  const mitadDelTiempo = puntoDelBusEn(T0 + 950);
+  assert.strictEqual(mitadDelTiempo.indice, 9,
+                     "a mitad de tiempo no estaba en el punto que midio el reloj");
+  /* Y en el mundo ya recorrio 900 de los 909 metros: la mitad del tiempo es el
+     97 % del camino, no el 50 %. */
+  const total = 909, hecho = 900;
+  assert.ok(hecho / total > 0.95, "el tramo de prueba no distingue las dos cosas");
+});
+
+prueba("el punto se proyecta con la transformacion del camino dibujado", () => {
+  const armado = tramoDelBus();
+  const p = puntoDelBusEn(T0 + 700);
+  const q = armado.armado.proyectarMundo(70, Math.sin(7 / 4) * 30);
+  assert.ok(Math.abs(p.x - q[0]) < 1e-9 && Math.abs(p.y - q[1]) < 1e-9,
+            "la marca no cae sobre el punto que dibuja el camino");
+});
+
+prueba("sin origen declarado no se ubica nada, y no se inventa uno", () => {
+  const pista = tramoDelBus().pista;
+  _fijar.pista(Object.assign({}, pista, { origen_utc: null }));
+  assert.strictEqual(puntoDelBusEn(T0 + 500), null);
+  _fijar.pista(Object.assign({}, pista, { origen_utc: "no es una fecha" }));
+  assert.strictEqual(puntoDelBusEn(T0 + 500), null);
+});
+
+prueba("un tramo de ruta no se cierra: no vuelve a donde empezo", () => {
+  const mundo = [[0, 0], [10, 1], [20, 0], [30, 2]];
+  assert.ok(!/ Z$/.test(trazadoAPath(mundo, false, false).path),
+            "el camino del bus cierra con Z y dibuja una recta que nadie hizo");
+  assert.ok(/ Z$/.test(trazadoAPath(mundo, false, true).path),
+            "un circuito dejo de cerrarse");
+});
+
+prueba("hay un valor de la señal por cada punto del recorrido", () => {
+  const pista = tramoDelBus().pista;
+  const v = valoresSobreElRecorrido("speed");
+  assert.strictEqual(v.length, pista.marcas_ms.length);
+  assert.ok(v.every(x => x !== null && Number.isFinite(x)),
+            "quedaron puntos sin valor sobre un tramo con dato en todos");
+});
+
+prueba("la señal se lee en el instante del punto, no en su indice", () => {
+  tramoDelBus();
+  const v = valoresSobreElRecorrido("speed");
+  /* La vuelta 1 va de 200 km/h a 219, una muestra cada 100 ms, y el recorrido
+     tiene sus puntos en las mismas marcas. */
+  assert.strictEqual(v[0], 200);
+  assert.strictEqual(v[7], 207);
+  assert.strictEqual(v[19], 219);
+});
+
+prueba("una señal escalonada no se degrada sobre el recorrido", () => {
+  /* El puesto salta de P5 a P4 a los 1000 ms. Los puntos del recorrido caen
+     **entre** muestras ---a mitad de camino, que es el caso general: la
+     reconstruccion tiene su propia cadencia y no la del canal--- de modo que
+     interpolar daria un P4,5 justo donde se produjo el adelantamiento. */
+  dosVueltasConCronometro();
+  const mundo = [], marcas = [];
+  for (let i = 0; i < 19; i++) { mundo.push([i * 10, i * 2]); marcas.push(i * 100 + 50); }
+  recorridoDerivado(mundo, marcas);
+  const v = valoresSobreElRecorrido("posicion");
+  assert.ok(v.every(x => x === null || x === 4 || x === 5),
+            "aparecio un puesto intermedio sobre el recorrido: " + v.join(","));
+  assert.strictEqual(v[9], 5, "a los 950 ms el adelantamiento todavia no ocurrio");
+  assert.strictEqual(v[10], 4);
+});
+
+prueba("sin recorrido o sin serie no hay valores, y no hay ceros", () => {
+  const pista = tramoDelBus().pista;
+  assert.strictEqual(valoresSobreElRecorrido("no-existe"), null);
+  _fijar.pista(Object.assign({}, pista, { marcas_ms: null }));
+  assert.strictEqual(valoresSobreElRecorrido("speed"), null);
+});
+
+prueba("los tramos cubren el recorrido entero, hasta el ultimo punto", () => {
+  /* Con mas puntos que tramos el paso es mayor que uno y el cabo final se caia:
+     el bucle cortaba en el ultimo multiplo del paso. */
+  const n = TRAMOS_DE_LA_TRAZA * 5 + 7;
+  const mundo = [], marcas = [];
+  for (let i = 0; i < n; i++) { mundo.push([i, Math.sin(i / 30) * 40]); marcas.push(i); }
+  const armado = recorridoDerivado(mundo, marcas).armado;
+  const tramos = tramosDelRecorrido(mundo.map(() => 1));
+  /* Del orden de `TRAMOS_DE_LA_TRAZA`: el paso es entero, asi que sobra algun
+     tramo, y el cabo final agrega uno mas. Lo que no puede es haber uno por
+     punto ---seiscientos nodos que nadie distingue--- ni faltar la mitad. */
+  assert.ok(tramos.length >= TRAMOS_DE_LA_TRAZA &&
+            tramos.length <= TRAMOS_DE_LA_TRAZA + 2,
+            "se dibujaron " + tramos.length + " tramos");
+  const ultimo = armado.proyectarMundo(mundo[n - 1][0], mundo[n - 1][1]);
+  const cierre = "L" + ultimo[0].toFixed(1) + " " + ultimo[1].toFixed(1);
+  assert.ok(tramos[tramos.length - 1].d.endsWith(cierre),
+            "el ultimo punto del recorrido se quedo sin pintar");
+});
+
+prueba("los tramos se encadenan sin agujeros entre uno y el siguiente", () => {
+  const n = 617;
+  const mundo = [], marcas = [];
+  for (let i = 0; i < n; i++) { mundo.push([i, (i % 17) * 3]); marcas.push(i); }
+  recorridoDerivado(mundo, marcas);
+  const tramos = tramosDelRecorrido(mundo.map(() => 1));
+  for (let k = 1; k < tramos.length; k++) {
+    const arranca = tramos[k].d.slice(1).split(" ").slice(0, 2).join(" ");
+    const termina = tramos[k - 1].d.split("L").pop();
+    assert.strictEqual(arranca, termina,
+                       "hay un salto entre el tramo " + (k - 1) + " y el " + k);
+  }
+});
+
+prueba("con menos puntos que tramos se dibuja un tramo por punto", () => {
+  const pista = tramoDelBus().pista;
+  const tramos = tramosDelRecorrido(pista.mundo.map(() => 1));
+  assert.strictEqual(tramos.length, pista.mundo.length - 1);
+});
+
+prueba("el valor de un tramo es el del punto donde termina", () => {
+  tramoDelBus();
+  const valores = valoresSobreElRecorrido("speed");
+  const tramos = tramosDelRecorrido(valores);
+  assert.strictEqual(tramos[0].valor, 201);
+  assert.strictEqual(tramos[tramos.length - 1].valor, 219);
+});
+
+prueba("un recorrido de menos de dos puntos no da tramos", () => {
+  recorridoDerivado([[0, 0]], [0]);
+  assert.deepStrictEqual(tramosDelRecorrido([1]), []);
+  assert.deepStrictEqual(tramosDelRecorrido(null), []);
+});
+
+prueba("un tramo sin valor se pinta con la tinta de lo que no se sabe", () => {
+  const nada = tintaDelValor(null, 0, 10);
+  assert.strictEqual(nada, tintaDelValor(undefined, 0, 10));
+  assert.strictEqual(nada, tintaDelValor(NaN, 0, 10));
+  assert.ok(!/color-mix/.test(nada),
+            "un tramo sin dato entro en la escala de color como si tuviera uno");
+});
+
+prueba("la escala va del minimo al maximo de lo que se ve, y se satura", () => {
+  assert.ok(/ 0%/.test(tintaDelValor(0, 0, 10)), tintaDelValor(0, 0, 10));
+  assert.ok(/ 100%/.test(tintaDelValor(10, 0, 10)));
+  assert.ok(/ 50%/.test(tintaDelValor(5, 0, 10)));
+  /* Fuera de los extremos no se sale de la escala ni se envuelve. */
+  assert.ok(/ 0%/.test(tintaDelValor(-5, 0, 10)));
+  assert.ok(/ 100%/.test(tintaDelValor(99, 0, 10)));
+});
+
+prueba("una señal quieta no pinta el recorrido de un extremo", () => {
+  /* Con minimo igual a maximo la razon seria 0/0. Se pinta a medio camino: la
+     señal existe y no se movio, que no es lo mismo que estar en el minimo. */
+  assert.ok(/ 50%/.test(tintaDelValor(7, 7, 7)), tintaDelValor(7, 7, 7));
 });
 
 console.log("identidad_y_cronometraje: " + hechas + " comprobaciones");
