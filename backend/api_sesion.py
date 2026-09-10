@@ -2467,7 +2467,6 @@ BANDERA_TEXTO = {-1: "sin dato", 0: "ninguna", 1: "verde",
                  2: "azul", 3: "amarilla", 4: "roja"}
 
 
-@router.get("/sesiones/{session_id}/contexto")
 def _senales_del_vehiculo() -> list[str]:
     """Los canales que describen al coche y no a la sesion.
 
@@ -2481,6 +2480,7 @@ def _senales_del_vehiculo() -> list[str]:
     return pedidas + list(CANALES_CARROCERIA.values())
 
 
+@router.get("/sesiones/{session_id}/contexto")
 def contexto(
         session_id: str,
         adquisicion: Annotated[str | None, Query()] = None,
