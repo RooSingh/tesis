@@ -2775,4 +2775,80 @@ prueba("el bus no publica puesta a punto, y eso no cambio", () => {
   assert.strictEqual(nombreDeSenal(pide.puesta), "brake_bias_front");
 });
 
+/* ==================================================================
+   19. ESCONDER UN PANEL NO PUEDE BORRAR EL HECHO
+   ------------------------------------------------------------------
+   En el bus, «puesta a punto» y «vehiculos» no tienen nada que dar nunca: un
+   bus de serie no publica configuracion del vehiculo, y una captura de un
+   vehiculo no tiene con quien compararse. Sacarlos de la vista esta bien; que
+   con ellos desaparezca el dato de que esa fuente no los sostiene, no.
+
+   La tabla del pie ---«Que sostiene cada fuente»--- es donde esa comparacion es
+   el tema. Cada panel que la hoja de estilos esconde por fuente tiene que tener
+   ahi su fila, y la fila lo declara nombrando el panel. Sin eso, esconder un
+   panel es perder lo que ese panel decia.
+   ================================================================== */
+
+const CSS = fs.readFileSync(
+  path.join(__dirname, "..", "..", "dashboard", "styles.css"), "utf8");
+
+/* Los paneles que la hoja de estilos esconde nombrandolos, por fuente. */
+function panelesEscondidosPorFuente() {
+  const escondidos = {};
+  const re = /:root\[data-fuente="([^"]+)"\]\s*\[data-panel="([^"]+)"\]/g;
+  let m;
+  while ((m = re.exec(CSS))) (escondidos[m[1]] = escondidos[m[1]] || []).push(m[2]);
+  return escondidos;
+}
+
+/* Los paneles que la tabla del pie declara. */
+function panelesEnLaTabla() {
+  const filas = [];
+  const re = /<tr data-panel="([^"]+)">/g;
+  let m;
+  while ((m = re.exec(HTML))) filas.push(m[1]);
+  return filas;
+}
+
+prueba("el bus esconde puesta a punto y la comparacion entre vehiculos", () => {
+  const escondidos = panelesEscondidosPorFuente();
+  assert.deepStrictEqual((escondidos.can || []).sort(), ["puesta", "vehiculos"]);
+});
+
+prueba("todo panel escondido por fuente sigue declarado en la tabla del pie", () => {
+  const escondidos = panelesEscondidosPorFuente();
+  const enLaTabla = panelesEnLaTabla();
+  Object.keys(escondidos).forEach(f => {
+    escondidos[f].forEach(panel => {
+      assert.ok(enLaTabla.indexOf(panel) !== -1,
+                "la fuente " + f + " esconde «" + panel + "» y la tabla del pie no " +
+                "dice que esa fuente no lo sostiene: el hecho se perdio con el panel");
+    });
+  });
+});
+
+prueba("la fila de un panel escondido tiene una columna por fuente", () => {
+  /* Cinco celdas: el instrumento, las tres fuentes y la señal que lo habilita.
+     Una fila corta diria de menos justo donde se la va a leer. */
+  const re = /<tr data-panel="[^"]+">(.*?)<\/tr>/g;
+  let m, filas = 0;
+  while ((m = re.exec(HTML))) {
+    filas++;
+    const celdas = m[1].match(/<td[^>]*>/g) || [];
+    assert.strictEqual(celdas.length, 5, "la fila tiene " + celdas.length + " celdas");
+  }
+  assert.ok(filas >= 2, "no se encontraron las filas de los paneles escondidos");
+});
+
+prueba("la tabla dice que el bus no sostiene ninguno de los dos", () => {
+  const re = /<tr data-panel="(puesta|vehiculos)">(.*?)<\/tr>/g;
+  let m;
+  while ((m = re.exec(HTML))) {
+    const celdas = m[2].match(/<td[^>]*>.*?<\/td>/g);
+    /* La ultima columna es la señal; la del bus es la cuarta. */
+    assert.ok(/class="no"/.test(celdas[3]),
+              "la tabla declara que el bus sostiene «" + m[1] + "», y el tablero lo esconde");
+  }
+});
+
 console.log("identidad_y_cronometraje: " + hechas + " comprobaciones");

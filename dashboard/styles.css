@@ -771,6 +771,16 @@
   :root[data-fuente="can"] .cabina .col-cabina.izquierda > .instrumento:not([data-panel="trazado"]) {
     display: none;
   }
+  /* Y ABAJO, DOS PANELES QUE EN EL BUS NO TIENEN NADA QUE DAR NUNCA.
+     No es que esta sesion no los trajo ---para eso esta `data-necesita`, que
+     marca la ausencia y escribe el motivo a la vista---: es que un bus de serie
+     no publica configuracion del vehiculo, y una captura de **un** vehiculo no
+     tiene con quien compararse. Un panel que solo puede decir «no» le quita el
+     sitio a lo que si se midio. El hecho no se pierde: sigue escrito en la
+     tabla del pie, que es donde comparar las tres fuentes es el tema. */
+  :root[data-fuente="can"] [data-panel="puesta"],
+  :root[data-fuente="can"] [data-panel="vehiculos"] { display: none; }
+
   :root[data-fuente="can"] .cabina .graficos-cabina {
     grid-column: 2; grid-row: 1;
     grid-template-columns: repeat(4, minmax(0, 1fr));

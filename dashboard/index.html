@@ -490,6 +490,10 @@
       <div class="cuerpo-instrumento">
         <div class="envoltura-tabla">
           <table class="disponibilidad">
+            <!-- Las filas de los instrumentos que alguna fuente esconde llevan el
+                 nombre del panel: es el unico registro que queda de lo que esa
+                 fuente no sostiene una vez que el panel no esta en pantalla, y
+                 una prueba comprueba que el registro exista. -->
             <thead><tr><th>Instrumento</th><th>F1 25</th><th>OpenF1</th><th>CAN real</th><th>Señal que lo habilita</th></tr></thead>
             <tbody>
               <tr><td>Traza de velocidad</td><td class="si">sí</td><td class="si">sí</td><td class="si">sí</td><td><code>speed</code></td></tr>
@@ -502,6 +506,8 @@
               <tr><td>Neumáticos y frenos</td><td class="si">sí</td><td class="no">no</td><td class="no">no</td><td><code>tyre_*</code>, <code>brake_temperature_*</code></td></tr>
               <tr><td>Daño por parte</td><td class="si">sí</td><td class="no">no</td><td class="no">no</td><td><code>wing_damage_*</code>, <code>floor_damage</code></td></tr>
               <tr><td>Combustible y ERS</td><td class="si">sí</td><td class="no">no</td><td class="no">no</td><td><code>fuel_mass</code>, <code>ers_stored_energy</code></td></tr>
+              <tr data-panel="puesta"><td>Puesta a punto</td><td class="si">sí</td><td class="no">no</td><td class="no">no</td><td><code>brake_bias_front</code>, <code>fuel_mix</code>, <code>tyre_compound</code></td></tr>
+              <tr data-panel="vehiculos"><td>Comparación entre vehículos</td><td class="si">parrilla completa</td><td class="si">parrilla completa</td><td class="no">un solo vehículo</td><td>la captura del bus es de un vehículo: no hay con quién comparar</td></tr>
               <tr><td>Clima y pista</td><td class="si">sí</td><td class="parcial">por contexto</td><td class="no">no</td><td><code>air_temperature</code></td></tr>
               <tr><td>Biometría del piloto</td><td class="no">no</td><td class="no">no</td><td class="no">no</td><td>ninguna fuente la entrega</td></tr>
             </tbody>
