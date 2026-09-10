@@ -6,6 +6,9 @@
     --acento: #6d28d9; --acento-vivo: #7c3aed; --acento-veta: rgba(109,40,217,.1);
     --ok: #136c34; --alerta: #9a4708; --critico: #b91c1c;
     --auto-1: #6d28d9; --auto-2: #9a4708; --auto-3: #0e7490; --auto-4: #136c34;
+    /* Dos mas: el capturador admite seis vehiculos ---el propio y cinco
+       rivales--- y con cuatro colores dos pilotos compartian trazo. */
+    --auto-5: #b91c1c; --auto-6: #a21caf;
     --velo: #6d28d9; --sobre-acento: #ffffff;
     /* La barra de reproduccion no es un panel mas: es el borde de la
        aplicacion. Tiene su propio fondo porque con el de los paneles se
@@ -25,7 +28,7 @@
       --texto: #e8f2f8; --texto-medio: #9fbdd0; --texto-tenue: #6d8ba1;
       --acento: #b794f6; --acento-vivo: #d8b4fe; --acento-veta: rgba(183,148,246,.14);
       --ok: #4ade80; --alerta: #fbbf24; --critico: #f87171;
-      --auto-1: #b794f6; --auto-2: #fbbf24; --auto-3: #22d3ee; --auto-4: #4ade80;
+      --auto-1: #b794f6; --auto-2: #fbbf24; --auto-3: #22d3ee; --auto-4: #4ade80; --auto-5: #fb7185; --auto-6: #f0abfc;
       --velo: #22d3ee; --sobre-acento: #12071f;
       --sombra: 0 1px 0 rgba(183,148,246,.07), 0 20px 48px rgba(0,0,0,.5);
       --barra-fondo: #182a3f; --barra-linea: rgba(183,148,246,.45);
@@ -38,7 +41,7 @@
     --texto: #e8f2f8; --texto-medio: #9fbdd0; --texto-tenue: #6d8ba1;
     --acento: #b794f6; --acento-vivo: #d8b4fe; --acento-veta: rgba(183,148,246,.14);
     --ok: #4ade80; --alerta: #fbbf24; --critico: #f87171;
-    --auto-1: #b794f6; --auto-2: #fbbf24; --auto-3: #22d3ee; --auto-4: #4ade80;
+    --auto-1: #b794f6; --auto-2: #fbbf24; --auto-3: #22d3ee; --auto-4: #4ade80; --auto-5: #fb7185; --auto-6: #f0abfc;
     --velo: #22d3ee; --sobre-acento: #12071f;
       --sombra: 0 1px 0 rgba(183,148,246,.07), 0 20px 48px rgba(0,0,0,.5);
       --barra-fondo: #182a3f; --barra-linea: rgba(183,148,246,.45);

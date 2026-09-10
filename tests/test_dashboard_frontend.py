@@ -297,8 +297,23 @@ class IdentidadYUnidadesTests(unittest.TestCase):
         self.assertEqual(llamadas, 2, "la pantalla y la lámina tienen que pintar lo mismo")
 
     def test_el_nombre_se_escapa_tambien_en_la_leyenda_del_trazado(self) -> None:
-        self.assertNotIn("'\"></i>' + n + '</span>'", self.codigo)
-        self.assertIn("textoSeguro(n)", self.codigo)
+        """Se comprueba lo que la leyenda hace, no como se llama su variable.
+
+        Fijaba el literal `textoSeguro(n)`, y eso ata la prueba al nombre de una
+        variable: al pasar la leyenda a llevar el color del vehiculo ---y no el
+        de su lugar en la lista--- la variable dejo de llamarse `n` y la prueba
+        fallo sin que nada de lo que afirma hubiera cambiado.
+        """
+
+        import re
+        cuerpo = self.codigo[self.codigo.index("function pintarLeyendaTraza("):]
+        cuerpo = cuerpo[:cuerpo.index("\nfunction ")]
+        self.assertIn("textoSeguro(", cuerpo,
+                      "la leyenda del trazado tiene que escapar el nombre")
+        # Y que no haya ninguna concatenacion del nombre sin escapar.
+        self.assertFalse(
+            re.search(r"\+ *(?:a\.)?nombre *\+", cuerpo),
+            "hay un nombre concatenado sin pasar por `textoSeguro`")
 
 
 class RepresentacionDeDatosVivosTests(unittest.TestCase):

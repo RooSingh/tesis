@@ -535,6 +535,16 @@ class Publicador:
         #: Nombre de cada indice, del mismo paquete. Es lo que permite elegir por
         #: nombre: el indice del arreglo no significa nada para quien conduce.
         self._nombres: dict[int, str] = {}
+        #: De que sesion son los indices y los nombres de arriba.
+        #:
+        #: El publicador vive lo que vive el proceso, y el proceso atraviesa
+        #: varias sesiones de juego: arranca al iniciar sesion en la maquina y se
+        #: queda. Sin esto, entre el primer paquete de una sesion nueva y su
+        #: paquete de participantes ---que llega cada cinco segundos--- los
+        #: nombres elegidos se resuelven contra la parrilla vieja. **Los indices
+        #: del arreglo se reusan**: el 1 de una sesion es otro piloto en la
+        #: siguiente, y se publicarian sus datos como si fueran de aquel.
+        self._sesion_de_la_parrilla: int | None = None
         #: LA ELECCION SE LEE DE UN ARCHIVO Y NO DE UN ARGUMENTO.
         #:
         #: Los nombres de la parrilla recien se conocen cuando llega el paquete
@@ -641,6 +651,23 @@ class Publicador:
         # identidad--- de modo que el filtro lo descarta. Pero es el unico que
         # dice **quienes corren**, y sin el la parrilla completa publicaria
         # tambien los lugares vacios del arreglo.
+        # LA PARRILLA VIEJA SE OLVIDA AL CAMBIAR DE SESION, NO AL LLEGAR LA NUEVA.
+        #
+        # Esperar al paquete de participantes deja una ventana de hasta cinco
+        # segundos ---su frecuencia--- en la que los nombres elegidos se
+        # resuelven contra la parrilla anterior. Se olvida en cuanto la cabecera
+        # dice otro `session_uid`: es preferible no publicar rivales durante esos
+        # segundos a publicarlos mal.
+        #
+        # Lo que **no** se olvida son los nombres que la persona eligio: son una
+        # decision suya y no un dato de la sesion que termino. Se vuelven a
+        # resolver solos cuando llegue la parrilla nueva.
+        uid = (decodificado.get("cabecera") or {}).get("session_uid")
+        if uid is not None and uid != self._sesion_de_la_parrilla:
+            self._sesion_de_la_parrilla = uid
+            self._validos = None
+            self._nombres = {}
+
         if decodificado["paquete"] == "participants":
             self._validos = frozenset(
                 i for i, v in enumerate(decodificado["vehiculos"]) if v.get("name"))

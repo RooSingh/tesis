@@ -124,6 +124,52 @@ class TelemetryBatchBuffer:
             if len(self.pending) >= self.batch_size:
                 self.batch_ready.notify()
 
+    def encolar_mensaje(self, mensajes: list, mid: int, qos: int) -> None:
+        """Encola las senales de **un** mensaje del intermediario y anota su acuse.
+
+        LAS DOS COSAS BAJO EL MISMO CERROJO, Y ESE ES EL PUNTO.
+
+        Antes se encolaba senal por senal con `enqueue` y se anotaba el acuse
+        recien al terminar el mensaje. Entre la primera senal encolada y esa
+        anotacion hay un instante en que el trabajador ---que corre en otro
+        hilo--- puede tomar un lote, escribirlo y consumir de la cola de acuses
+        una cobertura **que todavia no existe**. La senal queda persistida y el
+        mensaje del intermediario pendiente para siempre: nunca se confirma, y
+        el intermediario lo retiene o lo reenvia. Reproducido con `batch_size=1`.
+
+        Lo que hace visible el estado al trabajador es soltar el cerrojo, porque
+        es lo unico que necesita para tomar un lote. Encolando y anotando sin
+        soltarlo en el medio, no hay instante en que una senal este en la cola
+        sin su cobertura.
+
+        Un mensaje sin senales validas se confirma en el acto: ningun lote lo va
+        a cubrir nunca, y sin confirmarlo el intermediario lo reenvia sin fin.
+        """
+
+        if not mensajes:
+            if self.confirmar is not None:
+                self.confirmar(mid, qos)
+            return
+
+        with self.batch_ready:
+            # La contrapresion espera **antes** de anotar nada: mientras se
+            # espera se suelta el cerrojo, y anotar el acuse antes dejaria la
+            # cobertura sin sus senales, que es el defecto simetrico.
+            if self.max_pending and len(self.pending) >= self.max_pending:
+                self.metrics["backpressure_waits"] += 1
+                self.batch_ready.wait_for(
+                    lambda: self.stop_event.is_set() or len(self.pending) < self.max_pending,
+                    timeout=self.flush_interval * 4,
+                )
+            if self.confirmar is not None:
+                self.acuses.append([mid, qos, len(mensajes)])
+            self.pending.extend(mensajes)
+            self.metrics["received"] += len(mensajes)
+            self.metrics["max_pending"] = max(self.metrics["max_pending"],
+                                              len(self.pending))
+            if len(self.pending) >= self.batch_size:
+                self.batch_ready.notify()
+
     def registrar_mensaje(self, mid: int, qos: int, senales: int) -> None:
         """Anota un mensaje del intermediario a la espera de su acuse.
 
@@ -391,7 +437,7 @@ def on_message(client: mqtt.Client, userdata: TelemetryBatchBuffer, msg: mqtt.MQ
     # ninguna.
     crudos = contenido if isinstance(contenido, list) else [contenido]
 
-    aceptadas = 0
+    aceptadas: list = []
     for mensaje_dict in crudos:
         try:
             mensaje = TelemetryMessage.model_validate(mensaje_dict)
@@ -414,22 +460,24 @@ def on_message(client: mqtt.Client, userdata: TelemetryBatchBuffer, msg: mqtt.MQ
             # en el hilo de red, para conservar solo los ultimos veinte: sobre 6,2
             # millones de mensajes ese trabajo se descartaba casi por completo.
             _guardar_mensaje_en_memoria(mensaje_dict)
-            userdata.enqueue(mensaje)
-            aceptadas += 1
+            aceptadas.append(mensaje)
         except Exception as error:
             userdata.record_processing_error()
             _informar_error_acotado("Error al encolar mensaje", error)
 
-    # **Se anota el mensaje del intermediario recien aca**, con la cuenta de
-    # senales que efectivamente entraron a la cola. El acuse sale despues, cuando
-    # un lote las haya escrito.
+    # EL MENSAJE ENTERO ENTRA A LA COLA DE UNA VEZ, CON SU ACUSE ANOTADO.
     #
-    # Se anota siempre, incluso con cero aceptadas: un mensaje cuyas senales se
-    # rechazaron todas igual hay que confirmarlo, o el intermediario lo reenvia
-    # sin fin. Ese caso se confirma en el acto, porque ningun lote lo va a
-    # cubrir.
-    userdata.registrar_mensaje(getattr(msg, "mid", 0),
-                               getattr(msg, "qos", 0), aceptadas)
+    # Antes se encolaba senal por senal y se anotaba el acuse recien aca. Entre
+    # la primera senal encolada y esta linea hay un instante en que el
+    # trabajador ---otro hilo--- puede tomar un lote, escribirlo y consumir una
+    # cobertura que todavia no existe: la senal queda persistida y el mensaje
+    # del intermediario pendiente para siempre.
+    #
+    # Con cero aceptadas se confirma en el acto, dentro del mismo metodo: un
+    # mensaje cuyas senales se rechazaron todas igual hay que confirmarlo, o el
+    # intermediario lo reenvia sin fin, y ningun lote lo va a cubrir.
+    userdata.encolar_mensaje(aceptadas, getattr(msg, "mid", 0),
+                             getattr(msg, "qos", 0))
 
 
 def on_disconnect(client: mqtt.Client, userdata: TelemetryBatchBuffer, disconnect_flags, reason_code, properties) -> None:

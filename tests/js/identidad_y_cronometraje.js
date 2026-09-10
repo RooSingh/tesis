@@ -95,6 +95,9 @@ globalThis.AUTOS = [];
    `armarAutos` lo consulta. Sin declararlo aca, la funcion extraida no
    encuentra la variable y falla en la primera llamada. */
 globalThis.propioAMano = null;
+globalThis.TINTAS_DE_AUTO = ["--auto-1", "--auto-2", "--auto-3",
+                             "--auto-4", "--auto-5", "--auto-6"];
+globalThis._tintaPorVehiculo = new Map();
 globalThis.vivo = { series: new Map(), ultimos: new Map(), recorrido: new Map(),
                     distancia: new Map(), vuelta: new Map(), recorridoDibujado: 0 };
 globalThis.document = { getElementById: () => null };
@@ -120,6 +123,9 @@ const NOMBRES = [
   "numeroMedido", "nombreDeSenal", "recortarPorDominio",
   "textoSeguro", "claveCorta", "identidadDeVehiculo",
   "renombrarAutos", "armarAutos", "camposDeIdentidad",
+  // El color es del vehiculo y no de su lugar en la lista: `armarAutos` se lo
+  // pregunta a esta, que recuerda el que le dio la primera vez.
+  "tintaDeVehiculo",
   "anotarParrillas", "parrillaVigente",
   "secundarioDeVehiculo", "quienConduce",
   "vehiculosConTelemetriaGuardada", "autoPropio",
@@ -219,18 +225,19 @@ const sacadas = new Function(
      con `globalThis` no las toca, y leerlas asi devuelve otra cosa. */
   "  rutasPedidas: () => { const r = _rutas; _rutas = []; return r; }," +
   "  fijarContextoDeCorrida: v => { _contextoDeCorrida = v; }," +
+  "  _enUnidad," +
   "  selloDeIdentidad: () => _selloDeIdentidad," +
   "  _fijar," +
   "});")();
 
 const {
   textoSeguro, identidadDeVehiculo, anotarParrillas, parrillaVigente,
-  renombrarAutos, armarAutos,
+  renombrarAutos, armarAutos, tintaDeVehiculo,
   secundarioDeVehiculo, vehiculosConTelemetriaGuardada, autoPropio,
   camposDeIdentidad, quienConduce,
   unidadDeCanal, sinCambiosEnElTramo,
   divisorDeUnidad, unidadDeclaradaDe, divisorDePresentacion,
-  estaEnLaUnidadQueSeMuestra, serieCrudaDeCanal, trazarSerie,
+  estaEnLaUnidadQueSeMuestra, serieCrudaDeCanal, trazarSerie, _enUnidad,
   serieDeCanal, serieAcumuladaDeCanal,
   tiempoDeVuelta, diferenciaEnSegundos, esCanalEscalonado, serieTemporal,
   valorEscalonadoEn, valorContinuoEn, calcularInstante,
@@ -3442,3 +3449,67 @@ prueba("y sin comprobacion el titulo no promete una", () => {
 });
 
 console.log("identidad_y_cronometraje: " + hechas + " comprobaciones");
+
+/* ============================================================
+   SEIS VEHICULOS, Y QUE EL COLOR NO SE MUEVA
+   ============================================================ */
+
+prueba("el color es del vehiculo y no de su lugar en la lista", () => {
+  reiniciar();
+  globalThis._tintaPorVehiculo = new Map();
+  const A = "f1_25:session:1:car:3";
+  const B = "f1_25:session:1:car:7";
+
+  armarAutos([A, B]);
+  const colorA = globalThis.AUTOS.find(v => v.id === A).tinta;
+  const colorB = globalThis.AUTOS.find(v => v.id === B).tinta;
+  assert.notStrictEqual(colorA, colorB, "dos vehiculos, dos colores");
+
+  /* Aparece uno nuevo **adelante**: con la asignacion por posicion, A y B se
+     corrian un lugar y cambiaban de color. */
+  armarAutos(["f1_25:session:1:car:0", A, B]);
+  assert.strictEqual(globalThis.AUTOS.find(v => v.id === A).tinta, colorA);
+  assert.strictEqual(globalThis.AUTOS.find(v => v.id === B).tinta, colorB);
+
+  // Y desaparecer y volver tampoco lo cambia.
+  armarAutos([B]);
+  armarAutos([A, B]);
+  assert.strictEqual(globalThis.AUTOS.find(v => v.id === A).tinta, colorA);
+});
+
+prueba("seis vehiculos tienen seis colores distintos", () => {
+  reiniciar();
+  globalThis._tintaPorVehiculo = new Map();
+  const claves = [0, 3, 7, 11, 15, 19].map(i => "f1_25:session:1:car:" + i);
+  armarAutos(claves);
+  const colores = new Set(globalThis.AUTOS.map(a => a.tinta));
+  assert.strictEqual(globalThis.AUTOS.length, 6);
+  assert.strictEqual(colores.size, 6, "dos pilotos compartirian trazo");
+});
+
+/* ============================================================
+   LA VENTANA MOVIL DEJA DE CRECER Y EL CONTENIDO SIGUE CAMBIANDO
+   ============================================================ */
+
+prueba("la vista convertida avanza aunque el largo se clave en el tope", () => {
+  /* El largo era la identidad de la vista memorizada, con el argumento de que
+     «el arreglo solo crece». Deja de crecer al llenarse la ventana: desde ahi
+     cada muestra nueva saca la mas vieja y el contenido cambia sin que el largo
+     se mueva. */
+  const serie = [];
+  for (let i = 0; i < 600; i++) serie.push([i, 1000, i]);
+  serie.rev = 600;
+
+  const primera = _enUnidad(serie, 10, "vivo|c|presion|" + serie.rev);
+  assert.strictEqual(primera[599][1], 100);
+
+  // Entra una muestra nueva: el largo sigue en 600 y el contenido no.
+  serie.shift();
+  serie.push([600, 2000, 600]);
+  serie.rev = 601;
+
+  const segunda = _enUnidad(serie, 10, "vivo|c|presion|" + serie.rev);
+  assert.strictEqual(segunda.length, 600, "la ventana movil se conserva");
+  assert.strictEqual(segunda[599][1], 200,
+                     "la vista convertida se quedo con el contenido viejo");
+});

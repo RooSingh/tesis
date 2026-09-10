@@ -897,3 +897,81 @@ class PublicacionPorLoteTests(unittest.TestCase):
         cargas, pub = self._publicar(0)
         self.assertEqual(cargas, [])
         self.assertEqual(pub.mensajes, 0)
+
+
+class DosSesionesSeguidasTests(unittest.TestCase):
+    """La parrilla de una sesion no puede nombrar a los coches de la siguiente.
+
+    EL DEFECTO. El publicador vive lo que vive el proceso, y el proceso atraviesa
+    varias sesiones de juego: se arranca al iniciar sesion en la maquina y se
+    queda. Los indices y los nombres se llenan con el paquete de participantes y
+    **no se limpiaban al cambiar de sesion**.
+
+    Entre el primer paquete de la sesion nueva y su paquete de participantes
+    ---que llega cada cinco segundos--- hay una ventana en la que el capturador
+    resuelve los nombres elegidos contra la parrilla vieja. Los indices del
+    arreglo se reusan: el 3 de la sesion anterior es otro piloto en esta. Se
+    publicarian datos de un rival que en esta sesion es otro, y quedarian
+    guardados como suyos.
+
+    LO QUE SE CONSERVA. Los nombres que la persona eligio, que son una decision
+    suya y no un dato de la sesion. Se vuelven a resolver cuando llegue la
+    parrilla nueva.
+    """
+
+    def _publicador(self):
+        p = capturar_f1_25.Publicador(activo=False)
+        p._parrilla_completa = False
+        return p
+
+    def _participantes(self, session_uid, nombres):
+        return {"paquete": "participants",
+                "cabecera": {"session_uid": session_uid, "player_car_index": 0},
+                "vehiculos": [{"name": n} for n in nombres]}
+
+    def test_al_cambiar_de_sesion_se_olvida_la_parrilla_vieja(self):
+        p = self._publicador()
+        p.publicar(self._participantes(111, ["Yo", "Norris", "Leclerc"]), "x", 0)
+        self.assertEqual(p._nombres, {0: "Yo", 1: "Norris", 2: "Leclerc"})
+
+        # Llega un paquete cualquiera de OTRA sesion, antes de su parrilla.
+        p.publicar({"paquete": "car_telemetry",
+                       "cabecera": {"session_uid": 222, "player_car_index": 0}},
+                      "x", 0)
+        self.assertEqual(p._nombres, {},
+                         "los nombres de la sesion anterior siguen en pie")
+        self.assertIsNone(p._validos,
+                          "los indices de la sesion anterior siguen en pie")
+
+    def test_la_eleccion_de_la_persona_sobrevive_al_cambio(self):
+        """Es una decision suya, no un dato de la sesion que termino."""
+
+        p = self._publicador()
+        p._pilotos = ["Norris"]
+        p.publicar(self._participantes(111, ["Yo", "Norris"]), "x", 0)
+        p.publicar({"paquete": "car_telemetry",
+                       "cabecera": {"session_uid": 222, "player_car_index": 0}},
+                      "x", 0)
+        self.assertEqual(p._pilotos, ["Norris"])
+
+    def test_el_mismo_indice_no_publica_al_piloto_de_la_sesion_anterior(self):
+        """Los indices se reusan: el 1 de una sesion es otro en la siguiente."""
+
+        p = self._publicador()
+        p._pilotos = ["Norris"]
+        p.publicar(self._participantes(111, ["Yo", "Norris"]), "x", 0)
+        elegidos_antes = capturar_f1_25.indices_elegidos(p._nombres, p._pilotos, propio=0)
+        self.assertEqual(elegidos_antes, frozenset({0, 1}))
+
+        p.publicar({"paquete": "car_telemetry",
+                       "cabecera": {"session_uid": 222, "player_car_index": 0}},
+                      "x", 0)
+        # Sin parrilla nueva, no hay a quien resolver: solo el coche propio.
+        self.assertEqual(
+            capturar_f1_25.indices_elegidos(p._nombres, p._pilotos, propio=0),
+            frozenset({0}))
+
+        p.publicar(self._participantes(222, ["Yo", "Hamilton", "Norris"]), "x", 0)
+        self.assertEqual(
+            capturar_f1_25.indices_elegidos(p._nombres, p._pilotos, propio=0),
+            frozenset({0, 2}), "Norris ahora es el indice 2, no el 1")

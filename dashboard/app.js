@@ -721,8 +721,28 @@ function identidadDeVehiculo(clave) {
    El propio es el vehiculo del que **hay serie**, que es el que la consulta de
    series devolvio primero. Si todavia no llego ninguna, el primero de la
    lista. */
+/* EL COLOR ES DEL VEHICULO, NO DE SU LUGAR EN LA LISTA.
+   Se asignaba por la posicion dentro de `AUTOS`, y esa posicion cambia: la
+   lista se rehace cuando aparece un vehiculo nuevo, y con la seleccion armada a
+   mano el orden depende de en que orden se marco. El mismo piloto cambiaba de
+   color entre el trazado, los graficos y las tarjetas, y volvia a cambiar al
+   marcar a otro. Un color que se mueve no sirve para seguir a nadie.
+
+   Se recuerda la primera vez que se ve cada clave y no se reasigna. Se olvida
+   al soltar la sesion, que es donde las claves dejan de existir. */
+const TINTAS_DE_AUTO = ["--auto-1", "--auto-2", "--auto-3",
+                        "--auto-4", "--auto-5", "--auto-6"];
+let _tintaPorVehiculo = new Map();
+
+function tintaDeVehiculo(clave) {
+  if (!_tintaPorVehiculo.has(clave)) {
+    _tintaPorVehiculo.set(
+      clave, TINTAS_DE_AUTO[_tintaPorVehiculo.size % TINTAS_DE_AUTO.length]);
+  }
+  return _tintaPorVehiculo.get(clave);
+}
+
 function armarAutos(claves) {
-  const tintas = ["--auto-1", "--auto-2", "--auto-3", "--auto-4"];
   /* LO QUE LA PARRILLA DECLARA GANA A LO QUE SE PUEDA DEDUCIR.
      La parrilla dice cual es el coche propio ---sale de `player_car_index`, que
      el juego pone en la cabecera de cada paquete--- y esa es la respuesta. Las
@@ -752,8 +772,8 @@ function armarAutos(claves) {
        el panel dijera «19 · telemetría completa», dos hechos de distinta
        naturaleza pegados con un punto. */
     aporta: c === propio ? "telemetría completa" : "solo posición en pista",
-    tinta: tintas[i % tintas.length],
-    color: "var(" + tintas[i % tintas.length] + ")",
+    tinta: tintaDeVehiculo(c),
+    color: "var(" + tintaDeVehiculo(c) + ")",
     propio: c === propio,
   }, camposDeIdentidad(c)));
 }
@@ -3042,7 +3062,12 @@ function _armarSerieDeCanal(canal, vuelta, clave, divisor) {
   if (estadoSesion === "vivo") {
     const vehiculo = vivo.series.get(clave || claveVehiculoPropio());
     const cruda = vehiculo ? (vehiculo.get(senal) || []) : [];
-    return divisor === 1 ? cruda : _enUnidad(cruda, divisor, "vivo|" + (clave || "") + "|" + senal + "|" + cruda.length);
+    /* La llave lleva la **revision** y no el largo: el largo se clava en el
+       tope de la ventana movil y deja de distinguir un contenido de otro. */
+    return divisor === 1 ? cruda
+         : _enUnidad(cruda, divisor,
+                     "vivo|" + (clave || "") + "|" + senal + "|" +
+                     (cruda.rev || cruda.length));
   }
   const bloque = estado.series[vuelta];
   if (!bloque) return null;
@@ -3075,9 +3100,13 @@ function _armarSerieDeCanal(canal, vuelta, clave, divisor) {
   return salida;
 }
 
-/* La vista convertida de una serie viva, memorizada por su largo. El arreglo
-   solo crece, de modo que el largo alcanza para saber si cambio; sin esto se
-   armaria una copia por canal y por cuadro. */
+/* La vista convertida de una serie viva, memorizada por su **revision**.
+   Sin esto se armaria una copia por canal y por cuadro.
+
+   Decia «memorizada por su largo, porque el arreglo solo crece». Era cierto
+   hasta las seiscientas muestras; desde ahi cada una nueva saca la mas vieja y
+   el largo se queda quieto mientras el contenido cambia. La revision cuenta lo
+   que entro, que es lo que distingue un contenido de otro. */
 const _vistasVivas = new Map();
 function _enUnidad(serie, divisor, llave) {
   const guardada = _vistasVivas.get(llave);
@@ -4864,7 +4893,7 @@ function exportarPng(canalId) {
   }
 
   // --- trazas ---
-  const paleta = ["--auto-1", "--auto-2", "--auto-3", "--auto-4"];
+  const paleta = TINTAS_DE_AUTO;
   /* EL EJE ES LA DISTANCIA, NO LA POSICION EN EL ARREGLO.
      `i / (d.length - 1)` estira cada serie hasta ocupar todo el ancho: dos
      vehiculos con distinta cantidad de muestras quedaban dibujados uno encima
@@ -4877,7 +4906,7 @@ function exportarPng(canalId) {
     ctx.beginPath();
     trazarSerie(ctx, reducirAAncho(d, d0, d1, ancho), enXLamina,
                 v => Y1 - ((v - mn) / (mx - mn)) * alto, escalonadaLamina);
-    ctx.strokeStyle = tinta(paleta[ai % 4]);
+    ctx.strokeStyle = tinta(tintaDeVehiculo(ids[ai]) || paleta[ai % paleta.length]);
     ctx.lineWidth = 2.6;
     ctx.lineJoin = "round";
     ctx.stroke();
@@ -4889,7 +4918,7 @@ function exportarPng(canalId) {
   ctx.textAlign = "left";
   ids.forEach((id, i) => {
     const a = AUTOS.find(v => v.id === id) || AUTOS[0];
-    ctx.fillStyle = tinta(paleta[i % 4]);
+    ctx.fillStyle = tinta(tintaDeVehiculo(id) || paleta[i % paleta.length]);
     ctx.fillRect(lx, ly - 12, 34, 6);
     ctx.fillStyle = tinta("--texto");
     ctx.font = "600 22px 'IBM Plex Sans', sans-serif";
@@ -4995,7 +5024,7 @@ function exportarComparacion() {
      de la vuelta, alineados solo en apariencia ---y comparar es exactamente lo
      que esta pantalla existe para hacer. */
   const bin = fuente === "can";
-  const paleta = ["--auto-1", "--auto-2", "--auto-3", "--auto-4"];
+  const paleta = TINTAS_DE_AUTO;
 
   activas.forEach((m, pi) => {
     const Y0 = ARRIBA + pi * ALTO_PANEL;
@@ -5074,7 +5103,7 @@ function exportarComparacion() {
     const anchoX = Math.max(1e-9, d1 - d0);
     const escalonadaComp = esCanalEscalonado(m.id);
     datos.forEach((segs, ai) => {
-      ctx.strokeStyle = tinta(paleta[ai % 4]);
+      ctx.strokeStyle = tinta(tintaDeVehiculo(ids[ai]) || paleta[ai % paleta.length]);
       ctx.lineWidth = 2.2;
       ctx.lineJoin = "round";
       /* Un trazo por tramo: dos vueltas que no se tocan no se unen con una
@@ -5118,7 +5147,7 @@ function exportarComparacion() {
   ctx.textAlign = "left";
   ids.forEach((id, i) => {
     const a = AUTOS.find(v => v.id === id) || AUTOS[0];
-    ctx.fillStyle = tinta(paleta[i % 4]);
+    ctx.fillStyle = tinta(tintaDeVehiculo(id) || paleta[i % paleta.length]);
     ctx.fillRect(lx, ly - 12, 34, 6);
     ctx.fillStyle = tinta("--texto");
     ctx.font = "600 22px 'IBM Plex Sans', sans-serif";
@@ -5332,7 +5361,7 @@ function dibujarTraza() {
     ids = [disponibles.indexOf(propio) !== -1 ? propio : disponibles[0]];
   }
   if (!ids.length) { pintarEsperando(); return; }
-  const paleta = ["--auto-1", "--auto-2", "--auto-3", "--auto-4"];
+  const paleta = TINTAS_DE_AUTO;
   const bin = fuente === "can";
   const enPantalla = [];
 
@@ -5502,7 +5531,7 @@ function dibujarTraza() {
           TESTIGO.trazasConDatoNuevo++;
         }
       }
-      ctx.strokeStyle = tinta(paleta[ai % 4]);
+      ctx.strokeStyle = tinta(tintaDeVehiculo(ids[ai]) || paleta[ai % paleta.length]);
       ctx.lineWidth = ids.length > 2 ? 1.2 : 1.7;
       ctx.lineJoin = "round";
       ctx.stroke();
@@ -5633,10 +5662,13 @@ function moverCabezalesGraficos() {
 }
 
 function pintarLeyendaTraza() {
-  const paleta = ["var(--auto-1)", "var(--auto-2)", "var(--auto-3)", "var(--auto-4)"];
-  const nombres = [...seleccion]
+  /* La leyenda lleva el color **del vehiculo**, no el del lugar que ocupa en la
+     seleccion: es la misma que se ve en los graficos y en el trazado, y si no
+     coincidieran la leyenda diria lo contrario que el dibujo que explica. */
+  const elegidos = [...seleccion]
     .map(id => AUTOS.find(a => a.id === id))
-    .filter(Boolean).map(a => a.nombre);
+    .filter(Boolean);
+  const nombres = elegidos.map(a => a.nombre);
   const leyenda = document.getElementById("leyenda-traza");
   /* EL NOMBRE ES UN DATO, NO MARCADO.
      Mientras `nombre` era el sufijo del identificador tecnico ---«19»--- esto
@@ -5647,8 +5679,8 @@ function pintarLeyendaTraza() {
      en el dato: alterar el nombre para que un renderizador sea seguro
      ensuciaria la comparacion, el titulo accesible y el CSV. */
   if (leyenda) leyenda.innerHTML =
-    nombres.map((n, i) => '<span><i style="background:' + paleta[i % 4] + '"></i>' +
-      textoSeguro(n) + '</span>').join("");
+    elegidos.map(a => '<span><i style="background:' + a.color + '"></i>' +
+      textoSeguro(a.nombre) + '</span>').join("");
   const bin = fuente === "can";
   const notaT = document.getElementById("nota-traza");
   if (notaT) notaT.textContent = bin
@@ -5986,10 +6018,14 @@ function pintarEligePilotos() {
         // solo, y quedarse con ninguno es vaciar la vista para empezar de
         // nuevo. Forzar un minimo obligaba a deseleccionar en cierto orden.
         seleccion.delete(a.id);
-      } else if (seleccion.size < 4) {
+      } else if (seleccion.size < TINTAS_DE_AUTO.length) {
         seleccion.add(a.id);
       } else {
-        avisar("La comparación admite hasta cuatro vehículos.", true);
+        /* Seis, que es lo que el capturador admite escuchar a la vez: el coche
+           propio y cinco rivales. El tope de la comparacion es el de la paleta,
+           porque mas alla de ahi dos pilotos compartirian trazo. */
+        avisar("La comparación admite hasta " + TINTAS_DE_AUTO.length +
+               " vehículos.", true);
         return;
       }
       pintarEligePilotos();
@@ -6469,7 +6505,7 @@ function dibujarComparacion() {
   const margenIzq = 62, margenDer = 12;
   const ancho = w - margenIzq - margenDer;
   const ids = vista.ids;
-  const paleta = ["--auto-1", "--auto-2", "--auto-3", "--auto-4"];
+  const paleta = TINTAS_DE_AUTO;
 
   if (vista.vacia) {
     ctx.fillStyle = tinta("--texto-tenue"); ctx.font = "14px 'IBM Plex Sans', sans-serif";
@@ -6531,7 +6567,7 @@ function dibujarComparacion() {
         trazarSerie(ctx, d,
                     x0 => margenIzq + ((x0 - xMin) / Math.max(1e-9, xMax - xMin)) * ancho,
                     v => y1 - ((v - mn) / (mx - mn)) * (y1 - y0), escalonadaPanel);
-        ctx.strokeStyle = tinta(paleta[ai % 4]);
+        ctx.strokeStyle = tinta(tintaDeVehiculo(ids[ai]) || paleta[ai % paleta.length]);
         ctx.lineWidth = 1.6; ctx.stroke();
       });
     });
@@ -6799,7 +6835,7 @@ function prepararEscucha() {
   cambiaronLasSeries();
   estado.disponibles = new Set();
   AUTOS = []; seleccion = new Set(); estado.vehiculoClave = null;
-  propioAMano = null;
+  propioAMano = null; _tintaPorVehiculo = new Map();
   estado.cargando = false;
   estado.motivo = "Escuchando. Sin telemetría todavía: en cuanto el juego " +
                   "emita, el tablero se llena solo.";
@@ -6964,6 +7000,16 @@ function anotarPosicionViva(vehiculo, marca) {
   TESTIGO.posicionesDistintas++;
   puntos.push([x, z]);
   if (puntos.length > MAX_PUNTOS_DE_RECORRIDO) puntos.shift();
+  /* CUANTAS POSICIONES DISTINTAS ENTRARON, NO CUANTAS QUEDAN.
+     El redibujo se decidia por cuanto habia crecido el arreglo. Deja de crecer
+     al llegar a las cuatro mil: desde ahi cada posicion nueva saca la mas
+     vieja, la resta da cero y **el circuito deja de refinarse**. Justo al reves
+     de lo que se queria: las vueltas siguientes vuelven a pasar por los mismos
+     metros y son las que lo rectifican.
+
+     Un contador que solo sube distingue «entro una posicion nueva» de «el
+     arreglo tiene el mismo tamano». */
+  puntos.rev = (puntos.rev || 0) + 1;
 }
 
 /* Rehace el dibujo del recorrido si crecio lo suficiente. Devuelve si cambio. */
@@ -6982,11 +7028,15 @@ function armarTrazadoVivo() {
   const clave = claveVehiculoPropio();
   const puntos = clave ? vivo.recorrido.get(clave) : null;
   if (!puntos || puntos.length < 3) return false;
-  if (puntos.length - vivo.recorridoDibujado < PUNTOS_ENTRE_REDIBUJOS
+  /* Se compara contra la revision, que cuenta lo que entro. El tope de
+     redibujos se conserva: sigue siendo uno cada `PUNTOS_ENTRE_REDIBUJOS`
+     posiciones distintas, y no uno por paquete. */
+  const revision = puntos.rev || puntos.length;
+  if (revision - vivo.recorridoDibujado < PUNTOS_ENTRE_REDIBUJOS
       && vivo.recorridoDibujado > 0) {
     return false;
   }
-  vivo.recorridoDibujado = puntos.length;
+  vivo.recorridoDibujado = revision;
 
   // Una vez cerrado sigue cerrado: reabrirlo cada vez que se rectifica lo
   // haria parpadear entre un circuito y una linea.
@@ -7125,7 +7175,7 @@ function incorporarTelemetriaViva(m, recuperando) {
     cambiaronLasSeries();
     estado.disponibles = new Set();
     AUTOS = []; seleccion = new Set(); estado.vehiculoClave = null;
-  propioAMano = null;
+  propioAMano = null; _tintaPorVehiculo = new Map();
     marcar(document.getElementById("sel-fuente"), "fuente", fuente);
   }
 
@@ -7225,6 +7275,18 @@ function incorporarTelemetriaViva(m, recuperando) {
        Sin eso, dos muestras de la misma distancia son indistinguibles. */
     serie.push([distancia, valor, relojDeMuestra(m)]);
     if (serie.length > MAX_MUESTRAS_VIVO) serie.splice(0, serie.length - MAX_MUESTRAS_VIVO);
+    /* LA REVISION, PORQUE EL LARGO DEJA DE CRECER.
+       La vista convertida a la unidad de presentacion se memorizaba por el
+       largo del arreglo, con el argumento de que «el arreglo solo crece». Deja
+       de crecer al llegar a las seiscientas muestras: desde ahi cada muestra
+       nueva saca la mas vieja, el contenido cambia y el largo no. La vista
+       memorizada se congelaba, y los canales que se muestran convertidos
+       ---presiones, temperaturas--- dejaban de moverse **justo cuando la
+       ventana se llena**, o sea al medio minuto de escuchar.
+
+       Un contador que solo sube distingue las dos cosas: cuantas muestras
+       entraron, no cuantas quedan. */
+    serie.rev = (serie.rev || 0) + 1;
   }
 
   estadoSesion = "vivo";
