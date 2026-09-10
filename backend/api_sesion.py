@@ -33,7 +33,7 @@ from typing import Annotated, Any
 
 from fastapi import APIRouter, HTTPException, Query
 
-from backend import (catalogo_curvas, catalogo_sesiones, db,
+from backend import (catalogo_curvas, catalogo_sesiones, db, f1_udp,
                      procedencia_sesiones)
 
 router = APIRouter()
@@ -2451,9 +2451,30 @@ REGLAS_DE_AVISO = [
      "que": "Aviso por limites de pista", "unidad": ""},
 ]
 
-#: Tipos de superficie que no son pista. El piano **no** esta: se puede rodar
-#: sobre un piano sin perder agarre, y en la trazada normal se pisa.
-SUPERFICIES_FUERA = {2: "grava", 3: "arena", 4: "tierra", 6: "cesped artificial"}
+#: LA TABLA DE SUPERFICIES SE LEE DEL DECODIFICADOR, NO SE COPIA.
+#:
+#: Aca habia una copia, sin usar en ninguna parte y **corrida**: declaraba 2 como
+#: grava cuando 2 es hormigon, 4 como tierra cuando 4 es grava, 6 como cesped
+#: artificial cuando 6 es arena. Y le faltaba el 7, que es el cesped, o sea la
+#: superficie sobre la que se sale de pista casi siempre: en una sesion de Abu
+#: Dabi son 508 muestras.
+#:
+#: Una segunda tabla del mismo hecho no se mantiene sola, y esta lo demostro. La
+#: unica que vale es `f1_udp.SUPERFICIES`, que es la que ya usa el anotador en
+#: vivo, de modo que las dos lecturas ---la de en vivo y la de despues--- hablan
+#: del mismo mundo.
+
+#: Fuera de pista, segun el articulo 33.3 del reglamento deportivo: ninguna
+#: parte del vehiculo en contacto con la pista, y **el piano no es pista**. Es
+#: la misma regla que aplica `backend/anotador_vivo.py` sobre el flujo en vivo;
+#: estaba solo alli, de modo que una sesion mirada en vivo anotaba salidas que
+#: la misma sesion reproducida no mostraba.
+REGLA_FUERA_DE_PISTA = {
+    "que": "Fuera de pista",
+    "nivel": "alerta",
+    "canal": "surface_type_*",
+    "umbral": "las cuatro ruedas sobre superficie que no es asfalto",
+}
 
 
 #: Los avisos de una sesion guardada no cambian: recorren la sesion entera
@@ -2466,6 +2487,46 @@ SUPERFICIES_FUERA = {2: "grava", 3: "arena", 4: "tierra", 6: "cesped artificial"
 #: las ultimas que se pidieron, que son las que alguien esta mirando.
 _AVISOS_CACHE: OrderedDict = OrderedDict()
 AVISOS_EN_CACHE = 24
+
+
+def _primera_salida_de_pista(cursor, fuente: str, session_id: str):
+    """El primer instante con las cuatro ruedas fuera del asfalto, o `None`.
+
+    Se pide en una consulta y no recorriendo la sesion: la condicion es sobre
+    los cuatro canales **del mismo instante**, de modo que hay que juntarlos
+    antes de compararlos.
+
+    **Con un canal ausente la regla se abstiene**, igual que en vivo: podria
+    faltar justamente la rueda que seguia tocando la pista, y afirmar una salida
+    sin haber podido mirar las cuatro seria inventar el hecho.
+    """
+
+    esquinas = ["surface_type_%s" % e for e in ESQUINAS]
+    cursor.execute("""
+        WITH p AS (
+            SELECT timestamp,
+                   max(value_numeric) FILTER (WHERE signal_name = %s) AS a,
+                   max(value_numeric) FILTER (WHERE signal_name = %s) AS b,
+                   max(value_numeric) FILTER (WHERE signal_name = %s) AS c,
+                   max(value_numeric) FILTER (WHERE signal_name = %s) AS d,
+                   max(value_numeric) FILTER (WHERE signal_name = 'lap_number')   AS vuelta,
+                   max(value_numeric) FILTER (WHERE signal_name = 'lap_distance') AS metro
+              FROM telemetry_messages
+             WHERE source_type = %s AND session_id = %s
+               AND signal_name = ANY(%s)
+             GROUP BY timestamp)
+        SELECT vuelta, metro, a, b, c, d, timestamp FROM p
+         WHERE a IS NOT NULL AND b IS NOT NULL AND c IS NOT NULL AND d IS NOT NULL
+           AND a <> %s AND b <> %s AND c <> %s AND d <> %s
+         ORDER BY timestamp LIMIT 1
+    """, tuple(esquinas) + (fuente, session_id,
+                            esquinas + ["lap_number", "lap_distance"])
+         + (f1_udp.SUPERFICIE_DE_PISTA,) * 4)
+    fila = cursor.fetchone()
+    if not fila:
+        return None
+    vuelta, metro, a, b, c, d, instante = fila
+    return vuelta, metro, [int(a), int(b), int(c), int(d)], instante
 
 
 @router.get("/sesiones/{session_id}/avisos")
@@ -2556,12 +2617,46 @@ def avisos(session_id: str,
                 "umbral": regla["umbral"],
             })
 
+        # FUERA DE PISTA, QUE HASTA AHORA SOLO EXISTIA EN VIVO.
+        #
+        # Las catorce reglas de arriba miran **un canal contra un umbral**, y la
+        # salida de pista no es eso: es una condicion sobre los cuatro a la vez
+        # ---ninguna rueda sobre asfalto--- de modo que no entra en esa forma y
+        # por eso no estaba. Medido sobre la sesion de Abu Dabi: veintitres
+        # cuadros con las cuatro ruedas fuera, y la respuesta traia cero avisos.
+        fila = _primera_salida_de_pista(cursor, fuente, session_id)
+        if fila is not None:
+            vuelta, metro, codigos, instante = fila
+            nombres = sorted({f1_udp.SUPERFICIES.get(c, "id-%d" % c) for c in codigos})
+            # Sobre piano se deja la pista **sin perder agarre**, que es la
+            # trazada normal de muchas curvas. Se anota igual ---el reglamento no
+            # distingue--- y se dice, porque no es lo mismo pisar un piano que
+            # irse al cesped.
+            con_agarre = all(c in f1_udp.SUPERFICIES_CON_AGARRE for c in codigos)
+            encontrados.append({
+                "nivel": "info" if con_agarre else REGLA_FUERA_DE_PISTA["nivel"],
+                "que": REGLA_FUERA_DE_PISTA["que"],
+                "valor": None,
+                "unidad": "",
+                "vuelta": int(vuelta) if vuelta is not None else None,
+                "metro": round(metro, 1) if metro is not None else None,
+                "instante": instante.isoformat() if instante else None,
+                "canal": REGLA_FUERA_DE_PISTA["canal"],
+                "umbral": REGLA_FUERA_DE_PISTA["umbral"],
+                "detalle": "las cuatro ruedas sobre %s%s" % (
+                    "/".join(nombres),
+                    "; sobre superficie con agarre" if con_agarre else ""),
+            })
+
     encontrados.sort(key=lambda a: (-(a["vuelta"] or 0), -(a["metro"] or 0)))
     respuesta = {
         "session_id": session_id,
         "fuente": fuente,
         "avisos": encontrados[:limite],
-        "reglas_evaluadas": len(REGLAS_DE_AVISO),
+        # Las de canal contra umbral, mas la de superficie, que no tiene esa
+        # forma. Contarla aparte seria decir que se evaluaron catorce cuando se
+        # evaluaron quince.
+        "reglas_evaluadas": len(REGLAS_DE_AVISO) + 1,
         "criterio": ("primer instante en que cada condicion se cumple; cada aviso "
                      "declara su canal y su umbral"),
     }

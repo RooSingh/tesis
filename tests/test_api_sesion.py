@@ -14,7 +14,7 @@ from unittest.mock import MagicMock, patch
 
 from fastapi import HTTPException
 
-from backend import api_sesion, catalogo_curvas
+from backend import api_sesion, catalogo_curvas, f1_udp
 
 
 class ConexionFalsa:
@@ -541,10 +541,41 @@ class AvisosTests(unittest.TestCase):
         self.assertEqual(r["avisos"], [])
         self.assertIn("no hay con que levantar un aviso", r["motivo"])
 
-    def test_el_piano_no_cuenta_como_salida_de_pista(self) -> None:
-        """Se puede rodar sobre un piano sin perder agarre: es la trazada normal."""
-        self.assertNotIn(1, api_sesion.SUPERFICIES_FUERA)
-        self.assertIn(2, api_sesion.SUPERFICIES_FUERA)
+    def test_el_piano_deja_la_pista_pero_no_el_agarre(self) -> None:
+        """Dos afirmaciones distintas que esta prueba antes mezclaba en una.
+
+        Fijaba una tabla propia de este modulo ---`SUPERFICIES_FUERA`--- que
+        estaba corrida y no se usaba en ninguna parte: daba el 2 por grava
+        cuando el 2 es hormigon, y le faltaba el 7, que es el cesped y es la
+        superficie sobre la que se sale de pista casi siempre.
+
+        Lo que la prueba queria decir sigue siendo cierto y se dice contra la
+        tabla del decodificador, que es la unica: **rodar sobre un piano no es
+        perder el agarre**, porque en muchas curvas la trazada normal lo pisa.
+
+        Y no es lo mismo que la otra: para el reglamento el piano **no es
+        pista** ---articulo 33.3--- de modo que las cuatro ruedas sobre piano si
+        son una salida. Una nocion es fisica y la otra normativa, y el aviso las
+        declara por separado.
+        """
+
+        self.assertIn(1, f1_udp.SUPERFICIES_CON_AGARRE)
+        self.assertNotEqual(1, f1_udp.SUPERFICIE_DE_PISTA)
+        self.assertEqual("piano", f1_udp.SUPERFICIES[1])
+        self.assertEqual("cesped", f1_udp.SUPERFICIES[7])
+
+    def test_la_salida_de_pista_se_evalua_y_se_cuenta(self) -> None:
+        """La regla de superficie existe y entra en el recuento que se declara.
+
+        Vivia solo en el anotador en vivo, de modo que una sesion mirada
+        mientras corria anotaba salidas que la misma sesion reproducida no
+        mostraba. Medido sobre Abu Dabi: veintitres cuadros con las cuatro
+        ruedas fuera y cero avisos en la respuesta.
+        """
+
+        self.assertTrue(api_sesion.REGLA_FUERA_DE_PISTA["canal"])
+        self.assertIn(api_sesion.REGLA_FUERA_DE_PISTA["nivel"],
+                      {"critico", "alerta", "info"})
 
     def test_cada_regla_declara_su_canal_y_su_umbral(self) -> None:
         """Un aviso sin origen ni umbral es una afirmacion que no se puede discutir."""
