@@ -1241,6 +1241,12 @@
   .elige-senal-recorrido button[aria-pressed="true"] {
     background: var(--acento); color: var(--sobre-acento); border-color: var(--acento);
   }
+  /* La señal que no se movio en este tramo se ofrece igual ---uno puede querer
+     confirmarlo--- pero se ve que no tiene nada que mostrar. */
+  .elige-senal-recorrido button[data-quieta="si"] {
+    opacity: .45; border-style: dashed;
+  }
+  .elige-senal-recorrido button[data-quieta="si"][aria-pressed="true"] { opacity: 1; }
   .leyenda-recorrido {
     margin: 6px 0 0; font-size: .66rem; color: var(--texto-tenue);
     font-family: var(--cifra);

@@ -143,6 +143,9 @@ const NOMBRES = [
   "vueltasDeLaSesion", "iniciosDeVuelta", "calcularInstante",
   "vueltaEnFraccion", "trazadoAPath",
   "pedirTrazado",
+  "senalesParaElRecorrido",
+  "pieDelRecorrido",
+  "cifra",
   "hayCoordenadasMedidas", "porQueNoHayCoordenadas", "hayEjeDeDistancia",
   "explicacionDelTrazado",
   "puntoDelBusEn", "_indiceEnElRecorrido", "valoresSobreElRecorrido",
@@ -156,6 +159,7 @@ const CONSTANTES = ["SENAL_DE", "UNIDAD_QUE_MUESTRA_EL_TABLERO",
                     "TRAMOS_DE_LA_TRAZA",
                     "COORDENADAS_POR_FUENTE", "EJE_DE_DISTANCIA_POR_FUENTE",
                     "FUENTES",
+                    "CANALES_POR_FUENTE",
                     "METRICAS"];
 
 const sacadas = new Function(
@@ -224,11 +228,15 @@ const {
   hayCoordenadasMedidas, porQueNoHayCoordenadas, hayEjeDeDistancia,
   explicacionDelTrazado,
   pedirTrazado, rutasPedidas,
+  senalesParaElRecorrido,
+  pieDelRecorrido,
+  cifra,
   COORDENADAS_POR_FUENTE, EJE_DE_DISTANCIA_POR_FUENTE,
   valoresSobreElRecorrido, tramosDelRecorrido, tintaDelValor,
   UNIDAD_QUE_MUESTRA_EL_TABLERO, MARGEN_DEL_TRAZADO, ALTURA_DEL_ROTULO,
   CUERPO_DEL_ROTULO, METRICAS, TRAMOS_DE_LA_TRAZA,
   FUENTES: FUENTES_REALES,
+  CANALES_POR_FUENTE,
 } = sacadas;
 
 globalThis.instante = () => calcularInstante();
@@ -2153,7 +2161,7 @@ prueba("de una magnitud quieta solo se puede decir su valor", () => {
   /* «Sin pisadas» no aplica a una velocidad: de una magnitud constante lo unico
      que se puede afirmar es cuanto valia. */
   globalThis.fuente = "can";
-  assert.strictEqual(sinCambiosEnElTramo("speed", 107.5), "sin cambios · 107.50 km/h");
+  assert.strictEqual(sinCambiosEnElTramo("speed", 107.5), "sin cambios · 107,50 km/h");
 });
 
 prueba("el pie escribe la quietud solo cuando el minimo iguala al maximo", () => {
@@ -2414,6 +2422,99 @@ prueba("tener posicion medida y tener metro medido son dos preguntas", () => {
   assert.strictEqual(hayEjeDeDistancia(), false, "OpenF1 no declara distancia");
   assert.strictEqual(hayCoordenadasMedidas(), true,
                      "a OpenF1 se le quito el trazado que si publica");
+});
+
+prueba("el elector dice cual señal se movio antes de que la elijan", () => {
+  /* En un minuto de autopista casi ninguna cambia. Sin esto hay que probar las
+     trece pastillas para descubrir cuales tres tienen algo que mostrar. */
+  reiniciar();
+  globalThis.fuente = "can";
+  globalThis.canalesDeLaFuente = () => CANALES_POR_FUENTE.can;
+  cargarVuelta(1, [0, 100, 200, 300],
+               { distancia_m: [0, 5, 10, 15], speed: [107, 108, 109, 108],
+                 gas_pressed: [0, 0, 0, 0], brake_pressed: [0, 0, 1, 0] },
+               { gas_pressed: "bool", brake_pressed: "bool" });
+  globalThis.estado.vueltas = [{ numero: 1, duracion_s: 0.3,
+                                 desde_utc: iso(T0), hasta_utc: iso(T0 + 300) }];
+  armarAutos([CAR19]);
+  const por = {};
+  senalesParaElRecorrido().forEach(s => { por[s.id] = s; });
+  assert.ok(por.speed, "la velocidad no llego al elector");
+  assert.strictEqual(por.speed.quieta, false, "una velocidad que cambio se dio por quieta");
+  assert.strictEqual(por.throttle.quieta, true, "un pedal nunca pisado se ofrecio como si tuviera algo");
+  assert.strictEqual(por.brake.quieta, false, "una pisada en el tramo se perdio");
+});
+
+prueba("de una señal quieta se guarda el valor, para poder decirlo", () => {
+  reiniciar();
+  globalThis.fuente = "can";
+  globalThis.canalesDeLaFuente = () => CANALES_POR_FUENTE.can;
+  cargarVuelta(1, [0, 100], { distancia_m: [0, 5], speed: [107, 107] }, {});
+  globalThis.estado.vueltas = [{ numero: 1, duracion_s: 0.1,
+                                 desde_utc: iso(T0), hasta_utc: iso(T0 + 100) }];
+  armarAutos([CAR19]);
+  const s = senalesParaElRecorrido().find(x => x.id === "speed");
+  assert.strictEqual(s.quieta, true);
+  assert.strictEqual(sinCambiosEnElTramo(s.id, s.valor), "sin cambios · 107,00 km/h");
+});
+
+prueba("una señal sin dato no se ofrece en el elector", () => {
+  reiniciar();
+  globalThis.fuente = "can";
+  globalThis.canalesDeLaFuente = () => CANALES_POR_FUENTE.can;
+  cargarVuelta(1, [0, 100], { distancia_m: [0, 5], speed: [107, 108] }, {});
+  globalThis.estado.vueltas = [{ numero: 1, duracion_s: 0.1,
+                                 desde_utc: iso(T0), hasta_utc: iso(T0 + 100) }];
+  armarAutos([CAR19]);
+  const ids = senalesParaElRecorrido().map(s => s.id);
+  assert.ok(ids.includes("speed"));
+  assert.ok(!ids.includes("throttle"), "se ofrecio una señal que la sesion no trajo");
+});
+
+prueba("un pedal que nunca se piso no se cuenta como un rango", () => {
+  /* «Acelerador · de 0.00 a 0.00 pisado» son dos cifras iguales que el ojo lee
+     como un rango, y deja creyendo que el tablero no hizo nada. */
+  globalThis.fuente = "can";
+  assert.strictEqual(pieDelRecorrido("throttle", 0, 0),
+                     "Acelerador · sin pisadas en este tramo");
+  assert.ok(!/0\.00 a 0\.00/.test(pieDelRecorrido("throttle", 0, 0)));
+});
+
+prueba("una magnitud quieta dice cuanto valia, no un rango de cero", () => {
+  globalThis.fuente = "can";
+  assert.strictEqual(pieDelRecorrido("speed", 107.5, 107.5),
+                     "Velocidad · sin cambios · 107,50 km/h");
+});
+
+prueba("una señal que se movio escribe sus dos extremos y su unidad", () => {
+  globalThis.fuente = "can";
+  assert.strictEqual(pieDelRecorrido("speed", 106.59, 108.51),
+                     "Velocidad · de 106,59 a 108,51 km/h");
+});
+
+prueba("sin dato sobre el recorrido se dice eso y no un cero", () => {
+  globalThis.fuente = "can";
+  assert.strictEqual(pieDelRecorrido("speed", Infinity, -Infinity),
+                     "Velocidad · sin dato sobre este recorrido");
+});
+
+prueba("una columna que llego entera en nulos no se ofrece", () => {
+  /* No es lo mismo que la sesion no traiga la casilla: la casilla vino y sin un
+     solo valor. La serie existe y esta vacia. */
+  reiniciar();
+  globalThis.fuente = "can";
+  globalThis.canalesDeLaFuente = () => CANALES_POR_FUENTE.can;
+  cargarVuelta(1, [0, 100], { distancia_m: [0, 5], speed: [107, 108],
+                              gas_pressed: [null, null] },
+               { gas_pressed: "bool" });
+  globalThis.estado.vueltas = [{ numero: 1, duracion_s: 0.1,
+                                 desde_utc: iso(T0), hasta_utc: iso(T0 + 100) }];
+  armarAutos([CAR19]);
+  /* El contrato de `serieTemporal`: o hay serie con muestras, o no hay serie.
+     Una columna sin un solo valor cae del lado del `null`. */
+  assert.strictEqual(serieTemporal("throttle", 1, CAR19), null);
+  assert.ok(!senalesParaElRecorrido().some(s => s.id === "throttle"),
+            "se ofrecio pintar el recorrido con una columna sin un solo valor");
 });
 
 prueba("una forma derivada la explica quien la calculo", () => {

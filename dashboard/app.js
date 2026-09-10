@@ -831,7 +831,11 @@ function sinCambiosEnElTramo(id, valor) {
   if (unidadDeCanal(id) === "pisado") {
     return valor ? "pisado todo el tramo" : "sin pisadas en este tramo";
   }
-  return "sin cambios · " + valor.toFixed(2) + " " + unidadDeCanal(id);
+  /* `cifra` y no `toFixed`: el resto del tablero escribe los numeros como se
+     escriben en el pais ---coma decimal--- y este renglon convive con ellos en
+     el mismo pie. Dos separadores distintos en el mismo panel se leen como dos
+     magnitudes distintas. */
+  return "sin cambios · " + cifra(valor, 2) + " " + unidadDeCanal(id);
 }
 
 function unidadDeCanal(id) {
@@ -8000,10 +8004,27 @@ function ubicarAvisos(lista) {
    dibujar y esta sesion trajo con dato. La que manda es la respuesta, no una
    lista escrita aca. */
 function senalesParaElRecorrido() {
-  return canalesDeLaFuente().filter(id => {
-    const st = serieTemporal(id, vueltaEnFraccion(0), claveVehiculoPropio());
-    return !!(st && st.t.length);
-  });
+  const clave = claveVehiculoPropio();
+  const vuelta = vueltaEnFraccion(0);
+  return canalesDeLaFuente().map(id => {
+    /* `serieTemporal` contesta `null` o una serie con al menos una muestra:
+       una columna que llego entera en nulos no arma serie. No hay un tercer
+       caso que atajar. */
+    const st = serieTemporal(id, vuelta, clave);
+    if (!st) return null;
+    /* SI LA SEÑAL SE MOVIO, SE SABE ANTES DE ELEGIRLA.
+       Trece pastillas y en un minuto de autopista casi ninguna cambia: pintar
+       el recorrido con una señal quieta lo deja de un color liso, que se lee
+       igual que si el tablero no hubiera hecho nada. Que la pastilla lo diga de
+       antemano evita tener que probarlas una por una para descubrirlo. */
+    let mn = Infinity, mx = -Infinity;
+    st.v.forEach(v => {
+      if (v === null || !Number.isFinite(v)) return;
+      if (v < mn) mn = v;
+      if (v > mx) mx = v;
+    });
+    return { id: id, quieta: Number.isFinite(mn) && mn === mx, valor: mn };
+  }).filter(Boolean);
 }
 
 /* El elector: una pastilla por señal, mas «ninguna». Se rehace solo cuando
@@ -8014,15 +8035,21 @@ function pintarElectorDelRecorrido() {
   if (!PISTA.derivado) { c.dataset.hay = "no"; c.innerHTML = ""; return; }
   const cuales = senalesParaElRecorrido();
   c.dataset.hay = cuales.length ? "si" : "no";
-  const firma = cuales.join(",") + "|" + (canalDelRecorrido || "");
+  const firma = cuales.map(s => s.id + (s.quieta ? "!" : "")).join(",") +
+                "|" + (canalDelRecorrido || "");
   if (c.dataset.firma === firma) return;
   c.dataset.firma = firma;
   c.innerHTML = "";
-  [null].concat(cuales).forEach(id => {
+  [null].concat(cuales).forEach(s => {
+    const id = s && s.id;
     const m = id ? METRICAS.find(x => x.id === id) : null;
     const b = document.createElement("button");
     b.type = "button";
     b.textContent = m ? m.rotulo : "Ninguna";
+    if (s && s.quieta) {
+      b.dataset.quieta = "si";
+      b.title = sinCambiosEnElTramo(id, s.valor);
+    }
     b.setAttribute("aria-pressed", String(canalDelRecorrido === id));
     b.addEventListener("click", () => {
       canalDelRecorrido = id;
@@ -8079,11 +8106,7 @@ function pintarTrazaPorSenal(linea) {
     'stroke="' + tintaDelValor(t.valor, mn, mx) + '"></path>').join("");
   const pie = document.getElementById("leyenda-recorrido");
   if (pie) {
-    const m = METRICAS.find(x => x.id === canal);
-    pie.textContent = Number.isFinite(mn)
-      ? (m ? m.rotulo : canal) + " · de " + cifra(mn, 2) + " a " + cifra(mx, 2) +
-        " " + unidadDeCanal(canal)
-      : (m ? m.rotulo : canal) + " · sin dato sobre este recorrido";
+    pie.textContent = pieDelRecorrido(canal, mn, mx);
   }
 }
 
@@ -8159,6 +8182,20 @@ function tramosDelRecorrido(valores) {
     desde = i;
   }
   return tramos;
+}
+
+/* QUE DICE EL PIE DEL RECORRIDO, EN UNA FRASE.
+   «De 0.00 a 0.00 pisado» es una forma pobre de decir que el pedal no se toco
+   nunca: son dos cifras iguales que el ojo lee como un rango, y deja al que
+   mira creyendo que el tablero no hizo nada. El pie del grafico ya tiene las
+   palabras para esto ---«sin pisadas en este tramo»--- y son las mismas. */
+function pieDelRecorrido(canal, mn, mx) {
+  const m = METRICAS.find(x => x.id === canal);
+  const rotulo = m ? m.rotulo : canal;
+  if (!Number.isFinite(mn)) return rotulo + " · sin dato sobre este recorrido";
+  if (mn === mx) return rotulo + " · " + sinCambiosEnElTramo(canal, mn);
+  return rotulo + " · de " + cifra(mn, 2) + " a " + cifra(mx, 2) +
+         " " + unidadDeCanal(canal);
 }
 
 /* De un valor a una tinta, entre los extremos de lo que se ve. Una escala de
