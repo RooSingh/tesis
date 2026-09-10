@@ -42,6 +42,14 @@ function extraer(nombre) {
   throw new Error("no cierra la funcion " + nombre);
 }
 
+/* Las tablas del archivo, para no reescribirlas aca: `calcularInstante`
+   pregunta por la unidad de lo que lee. */
+function constante(nombre) {
+  const i = fuenteApp.indexOf("const " + nombre + " =");
+  if (i === -1) throw new Error("no esta la constante " + nombre);
+  return fuenteApp.slice(i, fuenteApp.indexOf(";", i) + 1);
+}
+
 /* El estado del modulo que estas funciones leen, puesto en el ambito global:
    es lo que ve un cuerpo construido con `new Function`. */
 globalThis.estadoSesion = "cargado";
@@ -64,6 +72,7 @@ globalThis._esencialResuelta = false;
 globalThis.PISTA = { largo_m: 7000 };
 globalThis.HUECO_DE_CAPTURA_MS = 2000;
 globalThis.EJE_DISTANCIA = " distancia";
+globalThis.EJE_DISTANCIA_SESION = " distancia de sesion";
 globalThis._selloSeries = 0;
 globalThis._selloDeLoArmado = -1;
 globalThis._seriesArmadas = new Map();
@@ -77,6 +86,7 @@ globalThis.SENAL_DE = {
 };
 globalThis.SENAL_CAN = { throttle: "gas_pressed", brake: "brake_pressed" };
 globalThis.SENAL_OPENF1 = { brake: "brake_applied", drs: "drs_state_code" };
+globalThis.corrida = { adquisicion: null, fase: null, disponibles: null, mezclada: false };
 globalThis.estado = { series: {}, posiciones: {}, vueltas: [], abierta: null, puesta: null };
 
 const NOMBRES = [
@@ -84,18 +94,29 @@ const NOMBRES = [
   "esCanalEscalonado", "_cacheTemporal", "serieTemporal", "_serieTemporalCruda",
   "continuidadDeVuelta", "_umbralDeVuelta", "tiempoEfectivoEntre", "hayCorteEntre",
   "_antesDe", "valorContinuoEn", "valorEscalonadoEn",
+  "serieAcumuladaDeCanal", "tramoAcumuladoDeVuelta", "vueltasEnTramoAcumulado",
+  "trazaContinua", "hayCorteEntreVueltas", "hayCorteEntreVentanas",
+  "vueltaSiguienteDeclarada",
   "relojDeVuelta", "_armarRelojDeVuelta", "_tramosContinuos", "_tramosDeMuestras",
   "tiempoDePresentacion", "recortarConBordes",
+  "unidadDeclaradaDe", "divisorDePresentacion", "estaEnLaUnidadQueSeMuestra",
+  "divisorDeUnidad", "serieCrudaDeCanal", "_armarSerieDeCanal", "_enUnidad",
   "serieDeCanal", "claveVehiculoPropio", "duracionDeVuelta", "duracionSesionS",
   "vueltasDeLaSesion", "iniciosDeVuelta", "calcularInstante",
   "paresDePosicion", "posicionesAhora",
 ];
-const sacadas = new Function(NOMBRES.map(extraer).join("\n\n") +
-                             "\nreturn { " + NOMBRES.join(", ") + " };")();
+const sacadas = new Function(
+  constante("UNIDAD_QUE_MUESTRA_EL_TABLERO") + "\n" +
+  constante("DIVISOR_ENTRE_UNIDADES") + "\n" +
+  "const _vistasVivas = new Map();\n" +
+  NOMBRES.map(extraer).join("\n\n") +
+  "\nreturn { " + NOMBRES.join(", ") + " };")();
 const {
   serieTemporal, valorContinuoEn, valorEscalonadoEn, tiempoDePresentacion,
   relojDeVuelta, recortarConBordes, calcularInstante, posicionesAhora,
   esCanalEscalonado, _antesDe, continuidadDeVuelta, tiempoEfectivoEntre,
+  serieAcumuladaDeCanal, tramoAcumuladoDeVuelta, vueltasEnTramoAcumulado,
+  trazaContinua, vueltaSiguienteDeclarada,
 } = sacadas;
 
 /* `posicionesAhora` pregunta por el instante. Se lo damos: el de verdad, el que
@@ -890,6 +911,267 @@ prueba("la vista temporal se arma una sola vez por vuelta, vehiculo y senal", ()
   assert.strictEqual(a, b, "se rearma en cada cuadro");
   globalThis._selloSeries++;
   assert.notStrictEqual(serieTemporal("speed", 1, "car:0"), a,
+    "no se invalido al cambiar los datos");
+});
+
+/* ==========================================================================
+   LA VENTANA MOVIL NO SE CORTA EN LA META
+   ==========================================================================
+   El defecto: la ventana se corria sobre la distancia de vuelta, que vuelve a
+   cero al cruzar. A los nueve metros de la vuelta nueva medía nueve metros,
+   con la anterior en memoria y sin dibujar. Medido en Spa cruzando de la 3 a
+   la 4: de 52 puntos abarcando 1.200 m a 2 puntos abarcando 9.
+   ========================================================================== */
+
+/* DOS VUELTAS DE VERDAD, encadenadas como las entrega la API: la acumulada no
+   se reinicia y la de vuelta si. Cada vuelta son 7.000 m en 100 s. */
+function cargarDosVueltas(opciones) {
+  const o = opciones || {};
+  reiniciar();
+  const armar = (numero, base, t0) => {
+    const marcas = [], local = [], sesion = [], vel = [], marcha = [];
+    for (let i = 0; i <= 100; i++) {
+      marcas.push(t0 + i * 1000);
+      local.push(i * 70);
+      sesion.push(base + i * 70);
+      vel.push(200 + (i % 10) * 5);
+      marcha.push(4 + (i % 3));
+    }
+    const cols = { distancia_m: local, distancia_sesion_m: sesion,
+                   speed: vel, gear_selected: marcha };
+    if (o.sinAcumulada === numero || o.sinAcumulada === "todas") delete cols.distancia_sesion_m;
+    if (o.acumuladaConNulos === numero) {
+      cols.distancia_sesion_m = sesion.map((x, i) => (i % 7 === 3 ? null : x));
+    }
+    cargarVuelta(numero, marcas, cols);
+    return { base: base, t0: t0, fin: t0 + 100000 };
+  };
+  /* La vuelta 1 arranca en el metro 0 de sesion; la 2, donde termino la 1 mas
+     el paso de una muestra. */
+  const a = armar(1, 0, 0);
+  const b = armar(2, 7000 + 70, o.corte ? 100000 + o.corte : 101000);
+  /* `cortePorLaVentana` reproduce lo que devuelve la API de verdad: las dos
+     vueltas internamente continuas ---`huecos: []`--- y el corte visible solo
+     como separacion entre sus ventanas declaradas, porque el backend calcula
+     los saltos con `PARTITION BY vuelta` y el de en medio no cae en ninguna. */
+  const dentro = o.corte && !o.cortePorLaVentana;
+  const v2 = { numero: 2, duracion_s: 100,
+      hueco_mayor_s: dentro ? o.corte / 1000 : 0.05,
+      huecos: dentro ? [{ desde_utc: iso(T0 + 100000), hasta_utc: iso(T0 + 100000 + o.corte),
+                          duracion_s: o.corte / 1000 }] : [],
+      desde_utc: iso(T0 + b.t0), hasta_utc: iso(T0 + b.fin) };
+  if (o.sinVentana === 2) { delete v2.desde_utc; delete v2.hasta_utc; }
+  if (o.solapadas) v2.desde_utc = iso(T0 + a.t0 + 50000);   // empieza antes de que termine la 1
+  declararVueltas([
+    { numero: 1, duracion_s: 100, hueco_mayor_s: 0.05, huecos: [],
+      desde_utc: iso(T0 + a.t0), hasta_utc: iso(T0 + a.fin) },
+    v2,
+  ]);
+  return { a, b };
+}
+
+prueba("la acumulada sale de la medida, no de multiplicar por el largo", () => {
+  cargarDosVueltas();
+  const t1 = tramoAcumuladoDeVuelta(1, "car:0");
+  const t2 = tramoAcumuladoDeVuelta(2, "car:0");
+  assert.strictEqual(t1.desde, 0);
+  assert.strictEqual(t1.hasta, 7000);
+  assert.strictEqual(t2.desde, 7070);
+  assert.strictEqual(t2.hasta, 14070);
+  /* El desplazamiento de vuelta a sesion es medido: la vuelta 2 empieza en el
+     metro local 0 y en el de sesion 7.070. */
+  assert.strictEqual(t2.desfase, 7070);
+});
+
+prueba("una vuelta sin acumulada no aporta, y se dice", () => {
+  /* No se la reconstruye con `(vuelta - 1) * largo`: sin el dato, esa vuelta
+     no entra en la ventana. */
+  cargarDosVueltas({ sinAcumulada: 1 });
+  assert.strictEqual(tramoAcumuladoDeVuelta(1, "car:0"), null);
+  assert.deepStrictEqual(serieAcumuladaDeCanal("speed", 1, "car:0"), []);
+  assert.deepStrictEqual(vueltasEnTramoAcumulado(0, 20000, "car:0"), [2]);
+});
+
+prueba("los nulos de la acumulada se sueltan, no se rellenan", () => {
+  cargarDosVueltas({ acumuladaConNulos: 1 });
+  const s = serieAcumuladaDeCanal("speed", 1, "car:0");
+  assert.ok(s.length < 101, "no se descarto ninguna muestra sin sitio en el eje");
+  assert.ok(s.every(p => Number.isFinite(p[0])), "quedo un punto sin distancia");
+  for (let i = 1; i < s.length; i++) {
+    assert.ok(s[i][0] > s[i - 1][0], "el eje acumulado dejo de crecer");
+  }
+});
+
+prueba("cruzando la meta la ventana sigue midiendo 1.200 m", () => {
+  /* ES EL CASO. A los 100 m de la vuelta 2 tienen que seguir estando los
+     ultimos 1.100 de la vuelta 1. */
+  cargarDosVueltas();
+  const enSesion = 7070 + 100;              // 100 m dentro de la vuelta 2
+  const vs = vueltasEnTramoAcumulado(enSesion - 1200, enSesion, "car:0");
+  assert.deepStrictEqual(vs, [1, 2], "la vuelta anterior no entra en la ventana");
+  const tramos = trazaContinua("speed", "car:0", enSesion - 1200, enSesion);
+  const recortados = tramos.map(d => recortarConBordes(d, enSesion - 1200, enSesion, false));
+  const puntos = recortados.reduce((n, d) => n + d.length, 0);
+  assert.ok(puntos > 10, "quedaron " + puntos + " puntos: la ventana se vacio");
+  const primero = recortados[0][0][0];
+  const ultimo = recortados[recortados.length - 1][recortados[recortados.length - 1].length - 1][0];
+  assert.ok(Math.abs((ultimo - primero) - 1200) < 1e-6,
+    "la ventana abarca " + (ultimo - primero) + " m en vez de 1.200");
+  /* Y hay muestras de los dos lados de la meta. */
+  assert.ok(primero < 7000 && ultimo > 7070,
+    "la ventana no cruza la meta: " + primero + " a " + ultimo);
+});
+
+prueba("dos vueltas seguidas y sin corte se dibujan de un solo trazo", () => {
+  cargarDosVueltas();
+  const enSesion = 7070 + 100;
+  const tramos = trazaContinua("speed", "car:0", enSesion - 1200, enSesion);
+  assert.strictEqual(tramos.length, 1,
+    "se partio el trazo entre dos vueltas que se midieron seguidas");
+});
+
+prueba("con un corte de captura en el medio no se unen", () => {
+  /* Cinco segundos sin muestras entre el final de una vuelta y el arranque de
+     la siguiente: una recta ahi seria un recorrido que nadie midio. */
+  cargarDosVueltas({ corte: 5000 });
+  const t2 = tramoAcumuladoDeVuelta(2, "car:0");
+  const enSesion = t2.desde + 100;
+  const tramos = trazaContinua("speed", "car:0", enSesion - 1200, enSesion);
+  assert.strictEqual(tramos.length, 2, "se unieron dos vueltas separadas por un corte");
+});
+
+prueba("un corte ENTRE dos vueltas se ve, aunque las dos digan huecos vacios", () => {
+  /* EL DEFECTO. El backend calcula los saltos con `PARTITION BY vuelta`, asi
+     que el hueco que cae **entre** la ultima muestra de una vuelta y la primera
+     de la siguiente no aparece en la lista de ninguna de las dos: las dos son
+     internamente continuas y declaran `huecos: []`. Preguntando solo por esas
+     listas, el tablero unia los dos tramos y trazaba una recta sobre cinco
+     segundos sin captura.
+
+     Se reproduce la respuesta real: `huecos: []` en las dos y una separacion
+     entre sus ventanas declaradas. No se inventa una entrada en una lista
+     donde el backend no la pondria. */
+  cargarDosVueltas({ corte: 5000, cortePorLaVentana: true });
+  assert.deepStrictEqual(estado.vueltas[0].huecos, [], "el fixture no es el caso real");
+  assert.deepStrictEqual(estado.vueltas[1].huecos, [], "el fixture no es el caso real");
+  const t2 = tramoAcumuladoDeVuelta(2, "car:0");
+  const tramos = trazaContinua("speed", "car:0", t2.desde - 1100, t2.desde + 100);
+  assert.strictEqual(tramos.length, 2,
+    "se unieron dos vueltas separadas por cinco segundos sin captura");
+});
+
+prueba("el cruce normal se sigue uniendo", () => {
+  /* La correccion no puede partir lo que si es continuo: entre una vuelta y la
+     siguiente hay un intervalo de muestreo, no un corte. */
+  cargarDosVueltas();
+  const t2 = tramoAcumuladoDeVuelta(2, "car:0");
+  const tramos = trazaContinua("speed", "car:0", t2.desde - 1100, t2.desde + 100);
+  assert.strictEqual(tramos.length, 1, "se partio un cruce continuo");
+});
+
+prueba("el limite del umbral entre vueltas", () => {
+  /* Justo por debajo del umbral del contrato de captura se unen; justo por
+     encima, no. El umbral es el mismo con el que la API separa la duracion
+     efectiva de la bruta, no una medida del submuestreo. */
+  cargarDosVueltas({ corte: 1900, cortePorLaVentana: true });
+  assert.strictEqual(
+    trazaContinua("speed", "car:0", 6000, 9000).length, 1,
+    "se partio por una separacion que el contrato no llama corte");
+  cargarDosVueltas({ corte: 2100, cortePorLaVentana: true });
+  assert.strictEqual(
+    trazaContinua("speed", "car:0", 6000, 9000).length, 2,
+    "no se partio por una separacion que el contrato si llama corte");
+});
+
+prueba("con ventanas invalidas o solapadas no se afirma continuidad", () => {
+  /* Si los limites declarados no permiten decidir ---faltan, o la siguiente
+     empieza antes de que termine la anterior--- no se sabe si se midio
+     seguido, y no saberlo no es lo mismo que saber que si. */
+  cargarDosVueltas({ sinVentana: 2 });
+  assert.strictEqual(trazaContinua("speed", "car:0", 6000, 9000).length, 2,
+    "sin limites declarados se afirmo que las dos vueltas se tocan");
+  cargarDosVueltas({ solapadas: true });
+  assert.strictEqual(trazaContinua("speed", "car:0", 6000, 9000).length, 2,
+    "con ventanas solapadas se afirmo que las dos vueltas se tocan");
+});
+
+prueba("dos vueltas que no son consecutivas tampoco se unen", () => {
+  /* La del medio no esta cargada: entre una y otra falta una vuelta entera. */
+  cargarDosVueltas();
+  const veh = estado.series[2];
+  delete estado.series[2];
+  estado.series[3] = veh;                    // la 2 pasa a ser la 3
+  globalThis._selloSeries++;
+  const tramos = trazaContinua("speed", "car:0", 6000, 8000);
+  assert.strictEqual(tramos.length, 2,
+    "se unieron dos vueltas con una sin cargar en el medio");
+});
+
+prueba("la posicion en el eje acumulado sale del instante compartido", () => {
+  cargarDosVueltas();
+  globalThis.cabezal = 0.4;                  // dentro de la vuelta 1
+  const t = calcularInstante();
+  assert.strictEqual(t.vuelta, 1);
+  /* La acumulada y la de vuelta son la misma cuenta con distinto origen, y las
+     dos salen del mismo `tUtcMs`: aca la vuelta 1 arranca en el metro 0. */
+  assert.ok(Math.abs(t.metroSesion - t.metro) < 1e-6,
+    "la acumulada no coincide con la de vuelta en la primera: " +
+    t.metroSesion + " contra " + t.metro);
+  /* Ya en la vuelta 2, la acumulada lleva el desplazamiento medido. */
+  globalThis.cabezal = 0.75;
+  const t2 = calcularInstante();
+  assert.strictEqual(t2.vuelta, 2);
+  assert.ok(Math.abs(t2.metroSesion - (7070 + t2.metro)) < 1e-6,
+    "la acumulada de la vuelta 2 no lleva su desplazamiento");
+});
+
+prueba("sin acumulada no hay ventana continua, y no se inventa", () => {
+  cargarDosVueltas({ sinAcumulada: "todas" });
+  globalThis.cabezal = 0.75;
+  const t = calcularInstante();
+  assert.strictEqual(t.vuelta, 2);
+  assert.strictEqual(t.metroSesion, null,
+    "se invento una distancia acumulada que la fuente no trae");
+  assert.ok(t.metro > 0, "la distancia de vuelta tiene que seguir estando");
+});
+
+prueba("las senales discretas siguen en escalon sobre el eje acumulado", () => {
+  cargarDosVueltas();
+  const s = serieAcumuladaDeCanal("gear", 2, "car:0");
+  assert.ok(s.length > 0);
+  assert.ok(s.every(p => Number.isInteger(p[1])), "aparecio una marcha intermedia");
+  /* Y el borde de la ventana no la mezcla. */
+  const r = recortarConBordes(s, s[3][0] + 10, s[6][0] - 10, true);
+  assert.ok(r.every(p => Number.isInteger(p[1])),
+    "el borde invento una marcha entre dos medidas");
+});
+
+prueba("la siguiente vuelta es la declarada, no numero + 1", () => {
+  cargarDosVueltas();
+  declararVueltas([{ numero: 1 }, { numero: 3 }, { numero: 4 }]);
+  assert.strictEqual(vueltaSiguienteDeclarada(1), 3,
+    "se pidio la vuelta 2, que la sesion no declara");
+  assert.strictEqual(vueltaSiguienteDeclarada(3), 4);
+  assert.strictEqual(vueltaSiguienteDeclarada(4), null, "en la ultima no hay siguiente");
+  assert.strictEqual(vueltaSiguienteDeclarada(99), null);
+});
+
+prueba("armar la ventana no toca las muestras", () => {
+  cargarDosVueltas();
+  const antes = JSON.stringify(estado.series[1].vehiculos["car:0"]) +
+                JSON.stringify(estado.series[2].vehiculos["car:0"]);
+  for (let m = 6000; m < 9000; m += 25) trazaContinua("speed", "car:0", m - 1200, m);
+  assert.strictEqual(JSON.stringify(estado.series[1].vehiculos["car:0"]) +
+                     JSON.stringify(estado.series[2].vehiculos["car:0"]), antes,
+    "la ventana continua escribio sobre las muestras");
+});
+
+prueba("la serie acumulada se arma una sola vez", () => {
+  cargarDosVueltas();
+  const a = serieAcumuladaDeCanal("speed", 1, "car:0");
+  assert.strictEqual(serieAcumuladaDeCanal("speed", 1, "car:0"), a, "se rearma en cada cuadro");
+  globalThis._selloSeries++;
+  assert.notStrictEqual(serieAcumuladaDeCanal("speed", 1, "car:0"), a,
     "no se invalido al cambiar los datos");
 });
 

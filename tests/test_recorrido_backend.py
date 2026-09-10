@@ -26,13 +26,14 @@ from __future__ import annotations
 import math
 import sys
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 RAIZ = Path(__file__).resolve().parent.parent
 if str(RAIZ) not in sys.path:
     sys.path.insert(0, str(RAIZ))
 
-from backend import recorrido  # noqa: E402
+from backend import app, recorrido  # noqa: E402
 
 
 def _serie_en_curva(ancho_de_via: float, velocidad_kmh: float,
@@ -131,35 +132,79 @@ class ReconstruyeLaForma(unittest.TestCase):
 
 
 class ElPuntoDeAccesoDeclaraQueEsDerivado(unittest.TestCase):
-    """Quien consuma la respuesta tiene que saberlo sin leer documentacion."""
+    """Quien consuma la respuesta tiene que saberlo sin leer documentacion.
+
+    Estas comprobaciones miraban el texto de `app.py` en una ventana fija de
+    tres mil caracteres. Eso alcanzaba mientras la funcion no creciera, y dejo
+    de alcanzar en cuanto crecio: fallaban tres sin que el comportamiento
+    hubiera cambiado. Ahora se **llama al punto de acceso** con la base
+    sustituida y se mira lo que devuelve, que es lo que un consumidor ve.
+    """
+
+    #: Un segmento de mentira: dos segundos en linea recta a 36 km/h, con la
+    #: guinada en cero. Diez metros por segundo, veinte metros de recorrido.
+    SERIES = {
+        "speed": {t * 100.0: 36.0 for t in range(21)},
+        "yaw_rate": {t * 100.0: 0.0 for t in range(21)},
+    }
+
+    def _pedir(self, series=None, origen="2026-09-09T12:00:00+00:00"):
+        with patch.object(app.db, "obtener_series_de_senales",
+                          return_value=self.SERIES if series is None else series), \
+             patch.object(app.catalogo_sesiones, "rango_de", return_value=origen):
+            return app.can_recorrido("can:segmento:sample_01")
 
     def test_la_respuesta_declara_su_naturaleza(self):
-        fuente = (RAIZ / "backend" / "app.py").read_text(encoding="utf-8")
-        i = fuente.index("def can_recorrido")
-        cuerpo = fuente[i:i + 3000]
-        self.assertIn('"naturaleza": "derivado"', cuerpo)
+        self.assertEqual(self._pedir()["naturaleza"], "derivado")
 
     def test_la_respuesta_lleva_la_advertencia(self):
-        fuente = (RAIZ / "backend" / "app.py").read_text(encoding="utf-8")
-        i = fuente.index("def can_recorrido")
-        cuerpo = fuente[i:i + 3000]
-        self.assertIn("advertencia", cuerpo)
+        r = self._pedir()
+        self.assertIn("integracion", r["advertencia"])
+        self.assertIn("no son recuperables", r["advertencia"])
 
     def test_devuelve_la_comprobacion_junto_con_el_recorrido(self):
         """El recorrido sin su validacion es un dibujo sin respaldo."""
+        self.assertIn("validacion_guinada", self._pedir())
 
-        fuente = (RAIZ / "backend" / "app.py").read_text(encoding="utf-8")
-        i = fuente.index("def can_recorrido")
-        cuerpo = fuente[i:i + 3000]
-        self.assertIn("validacion_guinada", cuerpo)
+    def test_cada_punto_lleva_su_instante(self):
+        """Sin la marca, la forma no se puede cruzar con ninguna senal."""
+        puntos = self._pedir()["puntos"]
+        self.assertTrue(puntos)
+        for punto in puntos:
+            self.assertIn("t_ms", punto)
+        marcas = [p["t_ms"] for p in puntos]
+        self.assertEqual(marcas, sorted(marcas), "las marcas no van en orden")
 
-    def test_una_sesion_sin_las_dos_senales_no_devuelve_un_recorrido_vacio(self):
-        """Devolver cero metros dejaria creer que el vehiculo no se movio."""
+    def test_hay_una_marca_por_punto_y_no_una_menos(self):
+        """`zip` recorta en silencio: una marca de menos perderia el ultimo punto.
 
-        fuente = (RAIZ / "backend" / "app.py").read_text(encoding="utf-8")
-        i = fuente.index("def can_recorrido")
-        cuerpo = fuente[i:i + 3000]
-        self.assertIn("status_code=404", cuerpo)
+        Son veinte y no veintiuno porque el emparejado descarta el primer
+        instante, que no tiene con que emparejarse hacia atras.
+        """
+        r = self._pedir()
+        self.assertEqual(len(r["puntos"]), 20)
+        self.assertEqual(r["puntos"][0]["t_ms"], 100.0)
+        self.assertEqual(r["puntos"][-1]["t_ms"], 2000.0)
+        # Diez metros por segundo durante 1,9 s.
+        self.assertAlmostEqual(r["recorrido_m"], 19.0, places=1)
+
+    def test_declara_de_donde_cuelga_el_cero_y_que_es_ese_instante(self):
+        """Las marcas son diferencias; el origen es una asignacion declarada."""
+        eje = self._pedir()["eje_temporal"]
+        self.assertEqual(eje["campo"], "t_ms")
+        self.assertEqual(eje["unidad"], "ms")
+        self.assertEqual(eje["origen_utc"], "2026-09-09T12:00:00+00:00")
+        self.assertIn("no medido", eje["naturaleza_del_origen"])
+
+    def test_sin_origen_conocido_lo_dice_en_vez_de_inventarlo(self):
+        eje = self._pedir(origen=None)["eje_temporal"]
+        self.assertIsNone(eje["origen_utc"])
+
+    def test_las_marcas_no_se_convierten_a_utc(self):
+        """Lo que se integra son diferencias: fecharlas daria precision falsa."""
+        puntos = self._pedir()["puntos"]
+        self.assertLess(puntos[-1]["t_ms"], 1e6,
+                        "las marcas parecen milisegundos de epoca, no del segmento")
 
 
 if __name__ == "__main__":

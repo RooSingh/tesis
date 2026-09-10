@@ -14,7 +14,8 @@ from unittest.mock import MagicMock, patch
 
 from fastapi import HTTPException
 
-from backend import api_sesion, catalogo_curvas
+from adapters import f1_25 as adaptador_f1_25
+from backend import anotador_vivo, api_sesion, catalogo_curvas, f1_udp
 
 
 class ConexionFalsa:
@@ -126,11 +127,395 @@ class SeriesPorDistanciaTests(unittest.TestCase):
         self.assertLessEqual(len(r["vehiculos"]["car1"]["distancia_m"]), 60)
 
 
+class SeriesPorTiempoTests(unittest.TestCase):
+    """La ruta historica de las fuentes que no publican distancia."""
+
+    def test_can_devuelve_segundos_sin_inventar_metros(self) -> None:
+        from datetime import datetime, timedelta, timezone
+
+        inicio = datetime(2026, 9, 9, 12, 0, tzinfo=timezone.utc)
+        # timestamp, vehicle_id, speed, brake_pressed, unit speed, unit brake
+        filas = [
+            (inicio, "can:sample_01", 100.0, 0.0, "km/h", "boolean"),
+            (inicio + timedelta(seconds=2), "can:sample_01", 110.0, 1.0,
+             "km/h", "boolean"),
+        ]
+        falsa, parche = _con(filas)
+        with parche:
+            r = api_sesion.series_por_tiempo(
+                "can:segmento:sample_01",
+                senales="speed,brake_pressed",
+                puntos=50,
+            )
+
+        serie = r["vehiculos"]["can:sample_01"]
+        self.assertEqual(serie["tiempo_s"], [0.0, 2.0])
+        self.assertEqual(serie["speed"], [100.0, 110.0])
+        self.assertEqual(serie["brake_pressed"], [0.0, 1.0])
+        self.assertNotIn("distancia_m", serie)
+        self.assertEqual(r["duracion_s"], 2.0)
+        self.assertEqual(r["unidades"]["speed"], "km/h")
+
+    def test_ninguna_senal_del_bus_desaparece_al_submuestrear(self) -> None:
+        """El defecto que dejaba el tablero en blanco sobre una sesion entera.
+
+        Un bus intercala sus tramas: agrupando por instante exacto, cada fila
+        trae **una** señal. Salteando una de cada N, una señal cuyas filas caen
+        en un patron que comparte factor con el paso desaparece entera.
+
+        Medido sobre `sample_28`: 6.158 filas, 3.079 con `speed`, todas en los
+        indices pares. Pidiendo las trece señales del bus, `speed` volvia con
+        cero muestras de tres mil. El grafico de velocidad decia «sin dato en
+        esta vuelta» y, como el eje temporal se apoya en esa señal, los otros
+        doce se quedaban sin ventana y tampoco dibujaban.
+        """
+
+        from datetime import datetime, timedelta, timezone
+
+        inicio = datetime(2026, 9, 9, 12, 0, tzinfo=timezone.utc)
+        senales = ["speed", "yaw_rate", "accel_lateral"]
+        filas = []
+        for i in range(3000):
+            valores = [None] * len(senales)
+            valores[i % len(senales)] = float(i)
+            filas.append((inicio + timedelta(milliseconds=10 * i), "can:rav4:sample_28",
+                          *valores, "km/h", "deg/s", "m/s^2"))
+
+        falsa, parche = _con(filas)
+        with parche:
+            r = api_sesion.series_por_tiempo(
+                "can:segmento:sample_28",
+                senales=",".join(senales),
+                puntos=600,
+            )
+
+        serie = r["vehiculos"]["can:rav4:sample_28"]
+        self.assertTrue(r["submuestreado"])
+        for senal in senales:
+            con = sum(1 for x in serie[senal] if x is not None)
+            self.assertGreater(
+                con, 0,
+                "la señal %s volvio con cero muestras de mil: el grafico dice "
+                "«sin dato» sobre una sesion completa" % senal)
+        # Y no una sobreviviendo a costa de las otras.
+        cuantas = [sum(1 for x in serie[s] if x is not None) for s in senales]
+        self.assertEqual(min(cuantas), max(cuantas),
+                         "unas señales sobrevivieron mas que otras: %s" % cuantas)
+
+    def test_la_muestra_que_vuelve_es_la_que_se_midio(self) -> None:
+        """Plegar no es promediar: cada valor sigue siendo una medicion."""
+
+        from datetime import datetime, timedelta, timezone
+
+        inicio = datetime(2026, 9, 9, 12, 0, tzinfo=timezone.utc)
+        filas = []
+        for i in range(200):
+            valores = [float(i) if i % 2 == 0 else None,
+                       float(i) if i % 2 == 1 else None]
+            filas.append((inicio + timedelta(milliseconds=10 * i), "veh",
+                          *valores, "km/h", "deg/s"))
+        falsa, parche = _con(filas)
+        with parche:
+            r = api_sesion.series_por_tiempo(
+                "can:segmento:sample_28", senales="speed,yaw_rate", puntos=50)
+
+        serie = r["vehiculos"]["veh"]
+        # Paso 4: el primer tramo son las filas 0..3, con `speed` en 0 y 2.
+        self.assertEqual(serie["speed"][0], 0.0)
+        self.assertEqual(serie["yaw_rate"][0], 1.0)
+        self.assertEqual(serie["tiempo_s"][0], 0.0)
+        self.assertEqual(serie["speed"][1], 4.0)
+        # Los valores son los medidos, no promedios ni interpolaciones.
+        for x in serie["speed"]:
+            if x is not None:
+                self.assertEqual(x % 2, 0.0, "aparecio un valor que nadie midio")
+
+    def test_consulta_booleanos_y_acota_fuente_sesion(self) -> None:
+        falsa, parche = _con([])
+        with parche:
+            api_sesion.series_por_tiempo(
+                "can:segmento:sample_01", senales="brake_pressed")
+        consulta, parametros = falsa.consultas[-1]
+        self.assertIn("value_boolean", consulta)
+        self.assertIn("source_type = %s", consulta)
+        self.assertIn("session_id = %s", consulta)
+        self.assertIn("can_real_replay", parametros)
+
+    def test_el_nombre_de_senal_no_se_interpola_como_identificador_sql(self) -> None:
+        falsa, parche = _con([])
+        nombre = 'speed"; DROP TABLE telemetry_messages; --'
+        with parche:
+            api_sesion.series_por_tiempo(
+                "can:segmento:sample_01", senales=nombre)
+        consulta, parametros = falsa.consultas[-1]
+        self.assertNotIn(nombre, consulta)
+        self.assertIn(nombre, parametros)
+
+    def test_exige_senales_y_respeta_el_tope_temporal(self) -> None:
+        with self.assertRaises(HTTPException) as vacia:
+            api_sesion.series_por_tiempo("can:segmento:sample_01", senales=" , ")
+        self.assertEqual(vacia.exception.status_code, 422)
+        with self.assertRaises(HTTPException) as muchas:
+            api_sesion.series_por_tiempo(
+                "can:segmento:sample_01",
+                senales=",".join("s%d" % i for i in range(21)),
+            )
+        self.assertEqual(muchas.exception.status_code, 422)
+
+
+class SinEjeDeDistanciaTests(unittest.TestCase):
+    """Cada fuente sin eje espacial explica **su** motivo, no el de otra.
+
+    El mensaje era uno solo, escrito para OpenF1 ---los huecos de 83 m entre
+    muestras--- y se devolvia igual para cualquier fuente sin distancia. Quien
+    abria una captura del bus leia una explicacion sobre una fuente que no
+    estaba usando, y ademas equivocada: en el bus el problema no es que el
+    muestreo sea pobre, es que la senal no existe.
+    """
+
+    def test_el_bus_explica_que_no_publica_odometro(self) -> None:
+        with self.assertRaises(HTTPException) as caso:
+            api_sesion.series_por_distancia("can:segmento:sample_01", senales="speed")
+        detalle = caso.exception.detail
+        self.assertEqual(caso.exception.status_code, 422)
+        self.assertIn("odometro", detalle)
+        self.assertIn("can_real_replay", detalle)
+        self.assertNotIn("OpenF1", detalle)
+        self.assertNotIn("83 m", detalle)
+
+    def test_la_fuente_deportiva_sigue_explicando_sus_huecos(self) -> None:
+        with self.assertRaises(HTTPException) as caso:
+            api_sesion.series_por_distancia("9939", senales="speed")
+        detalle = caso.exception.detail
+        self.assertIn("83 m", detalle)
+        self.assertNotIn("odometro", detalle)
+
+    def test_se_declara_que_no_es_un_fallo_reintentable(self) -> None:
+        """Mover el cabezal mil veces no hace que el bus declare distancia."""
+        for sesion in ("can:segmento:sample_01", "9939"):
+            with self.assertRaises(HTTPException) as caso:
+                api_sesion.series_por_distancia(sesion, senales="speed")
+            self.assertIn("no es un fallo que se pueda reintentar",
+                          caso.exception.detail.lower())
+
+    def test_las_vueltas_dan_el_mismo_motivo_que_las_series(self) -> None:
+        """Tres rutas contestaban lo mismo con tres textos distintos."""
+        r = api_sesion.listar_vueltas("can:segmento:sample_01")
+        self.assertEqual(r["vueltas"], [])
+        self.assertIn("odometro", r["motivo"])
+
+    def test_las_posiciones_tambien(self) -> None:
+        with self.assertRaises(HTTPException) as caso:
+            api_sesion.posiciones_en_pista("can:segmento:sample_01", vuelta=1)
+        self.assertIn("odometro", caso.exception.detail)
+
+    def test_una_fuente_sin_motivo_escrito_no_inventa_uno(self) -> None:
+        self.assertIn("no declara distancia recorrida",
+                      api_sesion._sin_distancia("una_fuente_nueva"))
+
+
+class UnidadesDeLaSerieTests(unittest.TestCase):
+    """La respuesta declara en que unidad viene cada senal.
+
+    EL DEFECTO QUE ESTO CIERRA. `delta_to_race_leader` se compone en
+    milisegundos y el tablero lo imprimia crudo bajo un rotulo que decia
+    segundos. El navegador no tenia como saberlo: la respuesta no declaraba la
+    unidad de nada, y una lista de nombres escrita a mano en el tablero habria
+    roto `penalty_time` y `safety_car_delta`, que viajan en la misma consulta y
+    **ya estan en segundos**.
+    """
+
+    def test_declara_la_unidad_de_cada_senal_pedida(self) -> None:
+        # (timestamp, vehicle_id, distancia, distancia_sesion, gap, castigo,
+        #  unidad del gap, unidad del castigo)
+        filas = [("t1", "car1", 10.0, 10.0, 2937.0, 5.0, "ms", "s"),
+                 ("t2", "car1", 20.0, 20.0, 2986.0, 5.0, "ms", "s")]
+        falsa, parche = _con(filas)
+        with parche:
+            r = api_sesion.series_por_distancia(
+                "f1_25:session:1", senales="delta_to_race_leader,penalty_time")
+        self.assertEqual(r["unidades"],
+                         {"delta_to_race_leader": "ms", "penalty_time": "s"})
+
+    def test_los_valores_viajan_en_su_unidad_de_origen(self) -> None:
+        """Convertir aca cambiaria lo que la base guarda de lo que dice la API."""
+        filas = [("t1", "car1", 10.0, 10.0, 2937.0, "ms")]
+        falsa, parche = _con(filas)
+        with parche:
+            r = api_sesion.series_por_distancia(
+                "f1_25:session:1", senales="delta_to_race_leader")
+        self.assertEqual(r["vehiculos"]["car1"]["delta_to_race_leader"], [2937.0])
+        self.assertEqual(r["unidades"]["delta_to_race_leader"], "ms")
+
+    def test_la_unidad_sale_de_la_primera_fila_que_la_declare(self) -> None:
+        """Una fila sin esa senal la deja nula; no es que la senal no tenga unidad."""
+        filas = [("t1", "car1", 10.0, 10.0, None, None),
+                 ("t2", "car1", 20.0, 20.0, 2937.0, "ms")]
+        falsa, parche = _con(filas)
+        with parche:
+            r = api_sesion.series_por_distancia(
+                "f1_25:session:1", senales="delta_to_race_leader")
+        self.assertEqual(r["unidades"]["delta_to_race_leader"], "ms")
+
+    def test_una_senal_sin_una_sola_fila_no_declara_unidad_inventada(self) -> None:
+        filas = [("t1", "car1", 10.0, 10.0, 100.0, None, "km/h", None)]
+        falsa, parche = _con(filas)
+        with parche:
+            r = api_sesion.series_por_distancia(
+                "f1_25:session:1", senales="speed,current_lap_time")
+        self.assertEqual(r["unidades"], {"speed": "km/h"})
+        self.assertNotIn("current_lap_time", r["unidades"])
+
+    def test_sin_filas_la_respuesta_igual_trae_el_mapa_de_unidades(self) -> None:
+        """Quien lo lee no tiene que distinguir «vacio» de «no vino el campo»."""
+        falsa, parche = _con([])
+        with parche:
+            r = api_sesion.series_por_distancia("f1_25:session:1", senales="speed")
+        self.assertEqual(r["unidades"], {})
+
+    def test_la_unidad_se_pide_sobre_las_mismas_filas_y_no_en_otra_consulta(self) -> None:
+        """Una pasada mas sobre cinco millones de filas para leer un texto fijo."""
+        filas = [("t1", "car1", 10.0, 10.0, 2937.0, "ms")]
+        falsa, parche = _con(filas)
+        with parche:
+            api_sesion.series_por_distancia("f1_25:session:1",
+                                            senales="delta_to_race_leader")
+        principales = [c for c, _ in falsa.consultas if "FILTER" in c]
+        self.assertEqual(len(principales), 1)
+        self.assertIn("max(unit) FILTER", principales[0])
+
+
+class ParrillaDeLaSesionTests(unittest.TestCase):
+    """Quien es cada vehiculo, y de cuantos hay telemetria: dos cosas.
+
+    `AUTOS.length <= 1` en el tablero confundia «un solo vehiculo con telemetria
+    guardada» con «esta sesion no tiene participantes». En la carrera de Spa la
+    parrilla declara veinte y la base tiene uno.
+    """
+
+    PARRILLA = {
+        "vehiculos": [
+            {"indice": 0, "nombre": "PIASTRI", "numero": 81,
+             "equipo": "McLaren", "es_ia": True},
+            {"indice": 19, "nombre": "NORRIS", "numero": 4,
+             "equipo": "McLaren", "es_ia": False},
+        ],
+        "vehiculos_en_carrera": 20,
+        "origen": "metadato de captura, derivado del paquete de participantes",
+    }
+
+    def _armar(self, session_id="f1_25:session:1", con_telemetria=(), parrilla=None,
+               candidatas=None, desde=None, hasta=None, shas=()):
+        cands = candidatas if candidatas is not None else ([parrilla] if parrilla else [])
+        with patch.object(api_sesion.procedencia_sesiones, "candidatas_de_parrilla",
+                          return_value=cands):
+            return api_sesion._parrilla_de_la_adquisicion(
+                session_id, api_sesion._fuente_de(session_id), desde, hasta,
+                list(shas), set(con_telemetria))
+
+    def test_une_cada_participante_con_su_clave_tecnica(self) -> None:
+        r = self._armar(con_telemetria={"f1_25:session:1:car:19"},
+                        parrilla=self.PARRILLA)
+        self.assertTrue(r["disponible"])
+        norris = [v for v in r["vehiculos"] if v["indice"] == 19][0]
+        self.assertEqual(norris["vehicle_id"], "f1_25:session:1:car:19")
+        self.assertEqual(norris["nombre"], "NORRIS")
+        self.assertEqual(norris["numero"], 4)
+        self.assertEqual(norris["equipo"], "McLaren")
+        self.assertTrue(norris["con_telemetria"])
+
+    def test_conocer_el_nombre_no_es_tener_las_senales(self) -> None:
+        r = self._armar(con_telemetria={"f1_25:session:1:car:19"},
+                        parrilla=self.PARRILLA)
+        piastri = [v for v in r["vehiculos"] if v["indice"] == 0][0]
+        self.assertEqual(piastri["nombre"], "PIASTRI")
+        self.assertFalse(piastri["con_telemetria"])
+        self.assertEqual(r["con_telemetria"], 1)
+        self.assertEqual(len(r["vehiculos"]), 2)
+
+    def test_la_cobertura_es_de_la_base_y_no_de_la_parrilla(self) -> None:
+        r = self._armar(con_telemetria={"f1_25:session:1:car:19",
+                                        "f1_25:session:1:car:5"},
+                        parrilla=self.PARRILLA)
+        self.assertEqual(r["con_telemetria"], 2,
+                         "se conto lo que la parrilla nombra y no lo que hay guardado")
+
+    def test_sin_metadato_lo_declara_y_no_inventa_nombres(self) -> None:
+        r = self._armar(con_telemetria={"f1_25:session:1:car:19"}, parrilla=None)
+        self.assertFalse(r["disponible"])
+        self.assertNotIn("vehiculos", r)
+        self.assertIn("motivo", r)
+        self.assertEqual(r["con_telemetria"], 1)
+
+    def test_una_fuente_que_no_declara_participantes_lo_dice(self) -> None:
+        r = self._armar(session_id="can:segmento:sample_30",
+                        con_telemetria={"can:vehicle:rav4"}, parrilla=self.PARRILLA)
+        self.assertFalse(r["disponible"])
+        self.assertIn("simulacion", r["motivo"])
+
+    def test_la_forma_de_la_clave_es_la_que_acuna_el_adaptador(self) -> None:
+        """`adapters/f1_25.py` compone `<session_id>:car:<indice>`.
+
+        Escrita dos veces, un cambio en el adaptador dejaria la union rota sin
+        que nada lo dijera; esta prueba la ata al formato que este modulo declara.
+        """
+        self.assertEqual(api_sesion.FORMA_DEL_VEHICULO % ("f1_25:session:7", 19),
+                         "f1_25:session:7:car:19")
+
+    def test_dos_capturas_con_gente_distinta_no_nombran_a_nadie(self) -> None:
+        """Antes ganaba la mas larga, que no es una prueba de pertenencia."""
+        otra = {"vehiculos": [{"indice": 19, "nombre": "PIASTRI", "numero": 81,
+                               "equipo": "McLaren", "es_ia": False}],
+                "origen": "x", "captura": {"sha256": "bbb"}}
+        propia = dict(self.PARRILLA, captura={"sha256": "aaa"})
+        r = self._armar(con_telemetria={"f1_25:session:1:car:19"},
+                        candidatas=[propia, otra])
+        self.assertFalse(r["disponible"])
+        self.assertTrue(r["ambigua"])
+        self.assertNotIn("vehiculos", r)
+        self.assertIn("no permiten decir", r["motivo"])
+
+    def test_la_huella_del_archivo_desambigua(self) -> None:
+        otra = {"vehiculos": [{"indice": 19, "nombre": "PIASTRI", "numero": 81,
+                               "equipo": "McLaren", "es_ia": False}],
+                "origen": "x", "captura": {"sha256": "bbb"}}
+        propia = dict(self.PARRILLA, captura={"sha256": "aaa"})
+        r = self._armar(con_telemetria={"f1_25:session:1:car:19"},
+                        candidatas=[propia, otra], shas=["aaa"])
+        self.assertTrue(r["disponible"])
+        self.assertEqual([v["nombre"] for v in r["vehiculos"] if v["indice"] == 19],
+                         ["NORRIS"])
+
+    def test_dos_capturas_que_declaran_lo_mismo_no_son_ambiguas(self) -> None:
+        r = self._armar(con_telemetria={"f1_25:session:1:car:19"},
+                        candidatas=[self.PARRILLA, dict(self.PARRILLA)])
+        self.assertTrue(r["disponible"])
+
+    def test_no_se_publica_la_ruta_ni_el_sidecar_entero(self) -> None:
+        propia = dict(self.PARRILLA,
+                      captura={"sha256": "aaa", "archivo": "spa.f1raw",
+                               "inicio_utc": "2026-09-01T12:00:00+00:00",
+                               "duracion_s": 10.0})
+        r = self._armar(con_telemetria=set(), parrilla=propia)
+        self.assertEqual(r["captura"], "spa.f1raw")
+        self.assertNotIn("sha256", str(r))
+        self.assertNotIn("/", str(r["captura"]))
+
+    def test_se_busca_por_sesion_y_no_por_indice_suelto(self) -> None:
+        r = self._armar(session_id="f1_25:session:2",
+                        con_telemetria={"f1_25:session:2:car:19"},
+                        parrilla=self.PARRILLA)
+        norris = [v for v in r["vehiculos"] if v["indice"] == 19][0]
+        self.assertEqual(norris["vehicle_id"], "f1_25:session:2:car:19")
+        self.assertTrue(norris["con_telemetria"])
+
+
 class VueltasTests(unittest.TestCase):
     def test_una_fuente_sin_distancia_lo_dice_y_no_falla(self) -> None:
         r = api_sesion.listar_vueltas("9939")
         self.assertEqual(r["vueltas"], [])
-        self.assertIn("no declara distancia", r["motivo"])
+        self.assertIn("no tiene eje de distancia", r["motivo"])
+        self.assertIn("83 m", r["motivo"])
 
     def test_marca_como_incompleta_una_vuelta_que_no_arranca_en_cero(self) -> None:
         """Un tramo no es una vuelta, y ofrecerlo para comparar seria enganoso."""
@@ -231,10 +616,41 @@ class AvisosTests(unittest.TestCase):
         self.assertEqual(r["avisos"], [])
         self.assertIn("no hay con que levantar un aviso", r["motivo"])
 
-    def test_el_piano_no_cuenta_como_salida_de_pista(self) -> None:
-        """Se puede rodar sobre un piano sin perder agarre: es la trazada normal."""
-        self.assertNotIn(1, api_sesion.SUPERFICIES_FUERA)
-        self.assertIn(2, api_sesion.SUPERFICIES_FUERA)
+    def test_el_piano_deja_la_pista_pero_no_el_agarre(self) -> None:
+        """Dos afirmaciones distintas que esta prueba antes mezclaba en una.
+
+        Fijaba una tabla propia de este modulo ---`SUPERFICIES_FUERA`--- que
+        estaba corrida y no se usaba en ninguna parte: daba el 2 por grava
+        cuando el 2 es hormigon, y le faltaba el 7, que es el cesped y es la
+        superficie sobre la que se sale de pista casi siempre.
+
+        Lo que la prueba queria decir sigue siendo cierto y se dice contra la
+        tabla del decodificador, que es la unica: **rodar sobre un piano no es
+        perder el agarre**, porque en muchas curvas la trazada normal lo pisa.
+
+        Y no es lo mismo que la otra: para el reglamento el piano **no es
+        pista** ---articulo 33.3--- de modo que las cuatro ruedas sobre piano si
+        son una salida. Una nocion es fisica y la otra normativa, y el aviso las
+        declara por separado.
+        """
+
+        self.assertIn(1, f1_udp.SUPERFICIES_CON_AGARRE)
+        self.assertNotEqual(1, f1_udp.SUPERFICIE_DE_PISTA)
+        self.assertEqual("piano", f1_udp.SUPERFICIES[1])
+        self.assertEqual("cesped", f1_udp.SUPERFICIES[7])
+
+    def test_la_salida_de_pista_se_evalua_y_se_cuenta(self) -> None:
+        """La regla de superficie existe y entra en el recuento que se declara.
+
+        Vivia solo en el anotador en vivo, de modo que una sesion mirada
+        mientras corria anotaba salidas que la misma sesion reproducida no
+        mostraba. Medido sobre Abu Dabi: veintitres cuadros con las cuatro
+        ruedas fuera y cero avisos en la respuesta.
+        """
+
+        self.assertTrue(api_sesion.REGLA_FUERA_DE_PISTA["canal"])
+        self.assertIn(api_sesion.REGLA_FUERA_DE_PISTA["nivel"],
+                      {"critico", "alerta", "info"})
 
     def test_cada_regla_declara_su_canal_y_su_umbral(self) -> None:
         """Un aviso sin origen ni umbral es una afirmacion que no se puede discutir."""
@@ -242,6 +658,308 @@ class AvisosTests(unittest.TestCase):
             self.assertTrue(regla["canal"])
             self.assertIsInstance(regla["umbral"], float)
             self.assertIn(regla["nivel"], {"critico", "alerta", "info"})
+
+    def test_los_umbrales_van_en_la_unidad_en_que_la_senal_se_guarda(self) -> None:
+        """El anotador en vivo mira la senal cruda; estas reglas miran la guardada.
+
+        No son la misma escala y esa es toda la trampa. El adaptador publica el
+        acelerador y el freno **multiplicados por cien**, porque los declara en
+        por ciento; el anotador en vivo los evalua antes de eso, en la fraccion
+        de cero a uno que entrega el juego. Importar el umbral del anotador y
+        compararlo contra la columna guardada ---que fue exactamente lo que se
+        hizo--- convierte "acelerador sobre el 50 %" en "acelerador sobre el
+        0,5 %", que no excluye nada: es practicamente "el pedal no esta del todo
+        suelto".
+
+        Por eso los umbrales de estos dos canales viven aca con el sufijo de su
+        unidad, y esta prueba fija la conversion. Los otros ---deslizamiento,
+        giro, fuerza vertical--- se guardan con factor 1,0 y se siguen
+        importando tal cual.
+        """
+
+        factores = adaptador_f1_25.SENALES_TELEMETRIA
+        self.assertEqual(factores["throttle"][2], 100.0)
+        self.assertEqual(factores["brake"][2], 100.0)
+
+        self.assertEqual(api_sesion.UMBRAL_ACELERADOR_PCT,
+                         0.5 * factores["throttle"][2])
+        self.assertEqual(api_sesion.UMBRAL_FRENO_SUELTO_PCT,
+                         anotador_vivo.UMBRAL_FRENO_SUELTO * factores["brake"][2])
+
+    def test_la_caida_brusca_de_velocidad_tambien_existe_sobre_lo_guardado(self) -> None:
+        """La tercera regla del anotador, que solo vivia sobre el flujo.
+
+        Las otras dos ---tren trasero e impacto vertical--- son una condicion
+        sobre un instante. Esta es sobre una ventana: cuanto cayo la velocidad
+        en medio segundo, con el freno suelto en **toda** esa ventana. Por eso
+        quedo afuera cuando se trajeron las demas, y por eso una sesion mirada
+        en vivo anotaba caidas que la misma sesion reproducida no mostraba.
+        """
+
+        nombres = [r["que"] for r in api_sesion.REGLAS_FISICAS]
+        self.assertIn("Caida brusca de velocidad", nombres)
+
+    def test_la_caida_se_mide_con_los_numeros_calibrados_en_el_anotador(self) -> None:
+        """Que la consulta lleve los valores del anotador y no unos propios.
+
+        Se comprueba sobre los parametros que el modulo le pasa a la base, que
+        es lo que este modulo decide. Que PostgreSQL sepa correr una ventana no
+        es lo que puede romperse al editar; que alguien escriba aca un 40
+        distinto del 40 del anotador, si.
+        """
+
+        falsa, parche = _con([])
+        with parche:
+            api_sesion._primera_caida_brusca(
+                falsa.cursor_obj, "f1_25_udp_simulation", "f1_25:session:1")
+
+        consulta, parametros = falsa.consultas[-1]
+        self.assertIn(anotador_vivo.UMBRAL_CAIDA_KMH, parametros)
+        self.assertIn(api_sesion.UMBRAL_FRENO_SUELTO_PCT, parametros)
+        self.assertIn("%d milliseconds" % (anotador_vivo.VENTANA_CAIDA_S * 1000),
+                      consulta)
+
+
+class UnAvisoEsDeUnVehiculoTests(unittest.TestCase):
+    """Ninguna regla puede mezclar vehiculos, y con uno solo no se notaba.
+
+    Todas estas consultas giran la tabla larga a una fila por instante con
+    `max(value_numeric) FILTER (WHERE signal_name = ...)`. Con **un** vehiculo
+    capturado ese `max` es el unico valor que hay y la consulta es correcta. Con
+    cuatro, toma el mayor de los cuatro por cada canal por separado: el giro de
+    uno con el volante de otro y el deslizamiento de un tercero. Eso no describe
+    a ningun coche, y el aviso que sale de ahi afirma algo que no ocurrio.
+
+    Estuvo latente desde siempre y aparecio el 2026-09-10, la primera carrera
+    con la parrilla acotada a cuatro. **Un defecto que solo se ve con datos que
+    todavia no existian es un defecto igual.**
+
+    La prueba es de la clase entera y no de cada regla: lo que hay que impedir
+    es que se agregue la proxima consulta sin acotar.
+    """
+
+    REGLAS = ("_primera_perdida_de_tren_trasero", "_primer_trompo",
+              "_primer_impacto_vertical", "_primera_caida_brusca",
+              "_primera_salida_de_pista")
+
+    def test_toda_regla_acota_a_un_vehiculo(self) -> None:
+        for nombre in self.REGLAS:
+            with self.subTest(regla=nombre):
+                falsa, parche = _con([])
+                with parche:
+                    getattr(api_sesion, nombre)(
+                        falsa.cursor_obj, "f1_25_udp_simulation",
+                        "f1_25:session:1", "f1_25:session:1:car:0")
+                consulta, parametros = falsa.consultas[-1]
+                self.assertIn("vehicle_id", consulta,
+                              "%s gira la tabla sin acotar el vehiculo" % nombre)
+                self.assertIn("f1_25:session:1:car:0", parametros)
+
+    def test_sin_saber_cual_es_el_propio_no_se_acota_y_se_dice(self) -> None:
+        """Con una sesion vieja de un solo vehiculo no hay a quien acotar.
+
+        Devolver cero avisos seria peor que devolverlos sin acotar: con un unico
+        vehiculo el `max` no mezcla nada y la lectura sigue siendo correcta. Lo
+        que no puede pasar es que se calle.
+        """
+
+        falsa, parche = _con([])
+        with parche:
+            api_sesion._primer_trompo(
+                falsa.cursor_obj, "f1_25_udp_simulation", "f1_25:session:1", None)
+        consulta, _ = falsa.consultas[-1]
+        self.assertNotIn("vehicle_id", consulta)
+
+
+class NingunaConsultaLeeVariosVehiculosSinDecirloTests(unittest.TestCase):
+    """La prueba que existe para que este defecto no vuelva una sexta vez.
+
+    El 2026-09-10, en un solo dia, el mismo error aparecio en cinco lugares:
+    las ocho consultas de avisos y trazado, las marcas sobre la pista, la
+    eleccion del coche propio en el tablero, `/vueltas` y el estado del
+    vehiculo. Todos compartian la misma forma: una lectura **correcta mientras
+    se capturaba un vehiculo** y arbitraria en cuanto hubo cuatro.
+
+    Buscarlos de a uno los encontraba despues de que molestaran. Esta prueba
+    los busca antes: recorre las consultas del modulo y exige que toda la que
+    lea una senal de vehiculo diga de cual.
+
+    LO QUE NO CUENTA COMO SENAL DE VEHICULO. `lap_number` sirve tambien para
+    delimitar adquisiciones y fases, que son hechos de la sesion y no de un
+    coche; el clima y las banderas son de la pista. Esos se leen sin acotar a
+    proposito.
+    """
+
+    #: Prefijos de las senales que describen a **un** coche.
+    DE_VEHICULO = ("tyre_", "wheel_", "brake_", "engine_", "wing_", "floor_",
+                   "diffuser_", "sidepod_", "gearbox_", "surface_type",
+                   "g_force", "yaw_rate", "world_position", "throttle_position",
+                   "brake_position", "steering_normalized", "gear_selected",
+                   "ers_", "fuel_", "drs_")
+
+    def test_toda_consulta_de_senales_de_vehiculo_declara_el_vehiculo(self) -> None:
+        import inspect
+        import re
+
+        fuente = inspect.getsource(api_sesion)
+        cortes = [(m.start(), m.group(1))
+                  for m in re.finditer(r"\ndef ([a-zA-Z_]+)\(", fuente)]
+        cortes.append((len(fuente), None))
+
+        sin_acotar = []
+        for (i, nombre), (j, _) in zip(cortes, cortes[1:]):
+            cuerpo = fuente[i:j]
+            if "FROM telemetry_messages" not in cuerpo:
+                continue
+            if not any(p in cuerpo for p in self.DE_VEHICULO):
+                continue
+            # Acotada si nombra la columna o usa el ayudante que la agrega.
+            if "vehicle_id" in cuerpo or "_acotar_al_vehiculo" in cuerpo:
+                continue
+            # La unica excepcion, y por definicion: es la funcion que **responde**
+            # cual es el vehiculo. No puede acotarse por su propia respuesta.
+            if nombre == "_vehiculo_propio":
+                continue
+            sin_acotar.append(nombre)
+
+        self.assertEqual(
+            sin_acotar, [],
+            "estas funciones leen senales de un vehiculo sin decir de cual, "
+            "que con varios capturados mezcla los canales de todos: %s"
+            % ", ".join(sin_acotar))
+
+
+class ElEstadoDelVehiculoEsDeUnVehiculoTests(unittest.TestCase):
+    """El panel pedia el ultimo valor de cada senal sin decir de que coche.
+
+    `DISTINCT ON (signal_name)` sobre la sesion entera devuelve, para cada
+    canal, la fila mas reciente **de cualquier vehiculo**. Con uno solo eso era
+    su estado. Con cuatro es el del que publico ultimo, canal por canal: la
+    temperatura de una goma de uno junto al dano de otro.
+
+    Medido el 2026-09-10 en Red Bull Ring: Hamilton termino con los dos
+    alerones delanteros al 100 % de dano, 2.974 muestras lo declaran, y el
+    panel decia «sin dano, ninguna pieza lo declara».
+    """
+
+    def test_el_estado_se_pide_de_un_vehiculo(self) -> None:
+        falsa, parche = _con([])
+        with parche, patch.object(api_sesion, "_vehiculo_propio",
+                                  return_value="f1_25:session:1:car:19"):
+            api_sesion.estado_del_vehiculo("f1_25:session:1")
+        for consulta, parametros in falsa.consultas:
+            if "DISTINCT ON (signal_name)" in consulta:
+                self.assertIn("vehicle_id", consulta)
+                self.assertIn("f1_25:session:1:car:19", parametros)
+
+    def test_se_puede_pedir_el_de_otro_piloto(self) -> None:
+        """Mirar a un rival es una pregunta legitima, y hoy hay datos suyos.
+
+        Con otra sesion que la prueba de arriba: la cache de canales ausentes es
+        por sesion, y reusar el identificador haria que esta no consultara nada
+        y pasara sin comprobar lo que dice comprobar.
+        """
+
+        falsa, parche = _con([])
+        with parche:
+            api_sesion.estado_del_vehiculo("f1_25:session:2",
+                                           vehiculo="f1_25:session:2:car:3")
+        pedidos = [p for c, p in falsa.consultas if "DISTINCT ON (signal_name)" in c]
+        self.assertTrue(pedidos)
+        for parametros in pedidos:
+            self.assertIn("f1_25:session:2:car:3", parametros)
+
+
+class LasVueltasSonDeQuienConduceTests(unittest.TestCase):
+    """`/vueltas` elegia el vehiculo con mas filas, y el tablero le hacia caso.
+
+    Su razonamiento estaba escrito y era correcto **cuando se capturaba un solo
+    coche**: «de los rivales la fuente publica cronometraje y no telemetria, de
+    modo que el que tiene mas filas es siempre el que se conduce». Desde que se
+    puede elegir a quien escuchar, los rivales traen exactamente las mismas
+    senales y con la misma frecuencia: el mas muestreado vuelve a ser cualquiera.
+
+    El tablero lo tomaba como autoritativo ---«ninguna otra la pisa», decia su
+    comentario--- de modo que abria en Russell una sesion corrida con Hamilton,
+    y volvia a Russell cada vez que se lo cambiaba a mano.
+
+    Se pregunta primero quien conduce. El mas muestreado queda de respaldo para
+    cuando la sesion no lo declara.
+    """
+
+    def test_prefiere_a_quien_declara_el_flujo(self) -> None:
+        falsa, parche = _con([])
+        with parche, patch.object(api_sesion, "_vehiculo_propio",
+                                  return_value="f1_25:session:7:car:19") as declarado:
+            api_sesion.listar_vueltas("f1_25:session:7")
+        self.assertTrue(declarado.called)
+        # Sabiendo quien conduce, no hace falta contar filas para adivinarlo.
+        consultas = [c for c, _ in falsa.consultas]
+        self.assertFalse([c for c in consultas if "ORDER BY 2 DESC" in c])
+
+    def test_sin_declaracion_vuelve_a_contar_filas(self) -> None:
+        """Es lo que habia, y con una captura de un vehiculo sigue acertando."""
+
+        falsa, parche = _con([])
+        with parche:
+            api_sesion.listar_vueltas("f1_25:session:7")
+        consultas = [c for c, _ in falsa.consultas]
+        self.assertTrue([c for c in consultas if "ORDER BY 2 DESC" in c])
+
+
+class LaParrillaDiceQuienConduceTests(unittest.TestCase):
+    """El tablero adivinaba quien es el coche propio. Con cuatro, adivinaba mal.
+
+    Lo tomaba del vehiculo cuya serie devolvia primero la consulta. Con **un**
+    vehiculo capturado eso acertaba por construccion: habia uno solo. Con
+    cuatro es arbitrario, y el 2026-09-10 la sesion de Red Bull Ring, corrida
+    con Hamilton, abrio mostrando a Russell ---y el panel de vehiculo en ceros,
+    porque de un rival el protocolo no publica ni temperaturas ni presiones---.
+
+    Es el mismo defecto que se corrigio en las reglas de aviso el mismo dia:
+    **deducir del sintoma lo que la fuente declara**. `player_car_index` viene
+    en la cabecera de cada paquete y dice quien conduce.
+    """
+
+    def test_la_parrilla_marca_cual_es_el_propio(self) -> None:
+        declarada = {"vehiculos": [
+            {"indice": 3, "nombre": "Russell", "numero": 63,
+             "equipo": "Mercedes", "es_ia": True},
+            {"indice": 19, "nombre": "Hamilton", "numero": 44,
+             "equipo": "Ferrari", "es_ia": False}]}
+        salida = api_sesion._vehiculos_nombrados(
+            "f1_25:session:1", declarada, propio="f1_25:session:1:car:19")
+        por_nombre = {v["nombre"]: v for v in salida}
+        self.assertTrue(por_nombre["Hamilton"]["es_propio"])
+        self.assertFalse(por_nombre["Russell"]["es_propio"])
+
+    def test_sin_declaracion_no_se_marca_a_ninguno(self) -> None:
+        """Marcar al primero seria volver a adivinar, con otra excusa."""
+
+        declarada = {"vehiculos": [
+            {"indice": 0, "nombre": "Verstappen", "numero": 33,
+             "equipo": "Red Bull Racing", "es_ia": False}]}
+        salida = api_sesion._vehiculos_nombrados("f1_25:session:1", declarada)
+        self.assertFalse(salida[0]["es_propio"])
+
+
+class VehiculoPropioTests(unittest.TestCase):
+    """De quien son los avisos: de quien conduce, y lo declara el flujo."""
+
+    def test_lo_saca_del_indice_que_declara_el_paquete(self) -> None:
+        """No se infiere de que senales tiene: se lee de lo que el juego dijo."""
+
+        falsa, parche = _con([("3",)])
+        with parche:
+            clave = api_sesion._vehiculo_propio(
+                falsa.cursor_obj, "f1_25_udp_simulation", "f1_25:session:99")
+        self.assertEqual(clave, "f1_25:session:99:car:3")
+
+    def test_sin_declaracion_devuelve_nada_en_vez_de_adivinar(self) -> None:
+        falsa, parche = _con([])
+        with parche:
+            self.assertIsNone(api_sesion._vehiculo_propio(
+                falsa.cursor_obj, "f1_25_udp_simulation", "f1_25:session:99"))
 
 
 class CurvasTests(unittest.TestCase):
@@ -612,6 +1330,126 @@ class SubmuestreoAcotadoTests(unittest.TestCase):
         filas = list(range(1000))
         recorte, _ = api_sesion._reducir(filas, 300)
         self.assertEqual(recorte, sorted(recorte))
+
+
+class ReducirNoPuedeBorrarUnCanalTests(unittest.TestCase):
+    """Saltear filas es borrar señales cuando cada fila trae una sola.
+
+    En el simulador un paquete publica todas sus magnitudes con el mismo sello y
+    cada fila trae todas las columnas: saltear filas adelgaza. En un bus
+    vehicular cada trama lleva lo suyo y llega cuando le toca, de modo que
+    agrupando por instante exacto **cada fila tiene una sola señal**.
+
+    Medido sobre `sample_28`: 6.158 filas, de las cuales 3.079 traen `speed` y
+    estan exactamente en los indices pares. Con `paso` par sobrevivian todas y
+    se borraban las de al lado; con `paso` impar sobrevivia la mitad; pidiendo
+    las trece señales del bus, `speed` desaparecia entera. El tablero decia «sin
+    dato en esta vuelta» sobre una sesion completa, y como el eje temporal se
+    apoya en esa señal, los otros doce graficos se quedaban sin ventana.
+    """
+
+    @staticmethod
+    def _bus(total: int, cuantas: int = 2) -> list:
+        """Filas como las arma la consulta temporal: una señal por instante.
+
+        `cuantas` señales intercaladas con regularidad, que es como publica un
+        bus. La columna 0 es el instante y la 1 el vehiculo.
+        """
+
+        filas = []
+        for i in range(total):
+            valores = [None] * cuantas
+            valores[i % cuantas] = float(i)
+            filas.append((i, "veh", *valores))
+        return filas
+
+    def test_ninguna_senal_desaparece_sea_cual_sea_el_paso(self) -> None:
+        for cuantas in (2, 3, 5, 13):
+            filas = self._bus(6158, cuantas)
+            for puntos in (300, 600, 800, 1000, 1200, 2000):
+                recorte, _ = api_sesion._reducir(filas, puntos, (2, 2 + cuantas))
+                for c in range(cuantas):
+                    con = sum(1 for f in recorte if f[2 + c] is not None)
+                    self.assertGreater(
+                        con, 0,
+                        "con %d señales y puntos=%d, la señal %d quedo en cero "
+                        "muestras de %d filas" % (cuantas, puntos, c, len(filas)))
+
+    def test_no_se_pierde_ninguna_muestra_cuando_el_tramo_es_corto(self) -> None:
+        """Trece señales, 6.158 filas y 1.200 puntos: no se tira nada.
+
+        El tramo son seis filas y cada señal aporta una de cada trece, de modo
+        que ninguna aparece en todos los tramos. Pero cada señal tiene 474
+        muestras en total y las 474 salen: reducir de 6.158 filas a 1.027 no le
+        costo una sola muestra a ninguna. Es la diferencia entre plegar y
+        saltear.
+        """
+
+        cuantas = 13
+        filas = self._bus(6158, cuantas)
+        recorte, _ = api_sesion._reducir(filas, 1200, (2, 2 + cuantas))
+        self.assertLessEqual(len(recorte), 1200)
+        for c in range(cuantas):
+            tenia = sum(1 for f in filas if f[2 + c] is not None)
+            quedan = sum(1 for f in recorte if f[2 + c] is not None)
+            self.assertEqual(quedan, tenia,
+                             "la señal %d tenia %d muestras y quedaron %d"
+                             % (c, tenia, quedan))
+
+    def test_con_tramos_largos_cada_senal_pierde_lo_mismo(self) -> None:
+        """Cuando hay que tirar, se tira parejo y no una señal entera."""
+
+        cuantas = 13
+        filas = self._bus(6158, cuantas)
+        recorte, _ = api_sesion._reducir(filas, 200, (2, 2 + cuantas))
+        quedan = [sum(1 for f in recorte if f[2 + c] is not None)
+                  for c in range(cuantas)]
+        self.assertEqual(min(quedan), max(quedan),
+                         "unas señales sobrevivieron mas que otras: %s" % quedan)
+
+    def test_el_valor_plegado_es_el_primero_del_tramo(self) -> None:
+        """Se pliega, no se promedia: lo que queda es una muestra medida."""
+
+        filas = self._bus(600, 2)
+        recorte, _ = api_sesion._reducir(filas, 100, (2, 4))
+        # paso = 6: el primer tramo son las filas 0..5, con `speed` en 0, 2 y 4.
+        self.assertEqual(recorte[0][2], 0.0)
+        self.assertEqual(recorte[0][3], 1.0)
+        self.assertEqual(recorte[1][2], 6.0)
+
+    def test_el_instante_es_el_de_la_fila_que_abre_el_tramo(self) -> None:
+        filas = self._bus(600, 2)
+        recorte, _ = api_sesion._reducir(filas, 100, (2, 4))
+        self.assertEqual(recorte[0][0], 0)
+        self.assertEqual(recorte[1][0], 6)
+        self.assertEqual([f[0] for f in recorte], sorted(f[0] for f in recorte))
+
+    def test_el_ultimo_tramo_entra_entero(self) -> None:
+        """La ultima muestra medida no se puede perder por el redondeo."""
+
+        for total in (601, 999, 1201, 6158):
+            filas = self._bus(total, 3)
+            recorte, _ = api_sesion._reducir(filas, 300, (2, 5))
+            self.assertLessEqual(len(recorte), 300, "total=%d" % total)
+            ultimo = max(v for f in recorte for v in f[2:] if v is not None)
+            self.assertGreaterEqual(
+                ultimo, float(total - 3),
+                "se perdio el final del tramo: total=%d" % total)
+
+    def test_sin_plegables_no_cambia_lo_que_hacia(self) -> None:
+        """El camino espacial no se toca: ahi cada fila trae todas sus columnas."""
+
+        filas = list(range(1000))
+        # Uno de cada cuatro, y la ultima fila repuesta: la regla de siempre.
+        esperado = list(range(1000))[::4]
+        esperado.append(999)
+        self.assertEqual(api_sesion._reducir(filas, 300)[0], esperado)
+
+    def test_por_debajo_del_limite_tampoco_pliega(self) -> None:
+        filas = self._bus(120, 3)
+        recorte, reducida = api_sesion._reducir(filas, 300, (2, 5))
+        self.assertEqual(recorte, filas)
+        self.assertFalse(reducida)
 
 
 class SenalesAusentesRecordadasTests(unittest.TestCase):

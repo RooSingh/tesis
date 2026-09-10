@@ -32,3 +32,7 @@ infra/.env
 
 # Iteraciones descartables de figuras. Las que valen viven en informe/tesis/figuras.
 Claude outputs/
+
+# Cache del registro de skills del asistente. Es estado de la herramienta de
+# quien edita, no del trabajo, y cambia con cada maquina.
+.atl/

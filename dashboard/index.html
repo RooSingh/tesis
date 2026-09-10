@@ -54,7 +54,20 @@
     <button class="boton secundario" id="btn-corrida" type="button" hidden></button>
     <button class="boton secundario" id="btn-comparar" type="button">Comparar pilotos</button>
     <button class="boton peligro" id="btn-limpiar" type="button">Limpiar sesión</button>
-    <span class="sin-api" title="Las acciones se ejecutan mediante la API">API</span>
+  </div>
+
+  <!-- ============================================================
+       A QUIEN ESCUCHAR
+       ------------------------------------------------------------
+       Solo aparece mientras se escucha, y solo cuando el juego ya dijo
+       quienes corren: los nombres llegan en el paquete de participantes,
+       unos segundos despues de que la sesion arranca, de modo que antes de
+       eso no hay lista que ofrecer.
+       ============================================================ -->
+  <div class="elige-escucha" id="elige-escucha" hidden>
+    <p class="eyebrow">A quién escuchar</p>
+    <div class="pilotos-escucha" id="pilotos-escucha"></div>
+    <span class="nota-escucha" id="nota-escucha"></span>
   </div>
 
   <!-- ============================================================
@@ -68,6 +81,11 @@
   <div class="transporte" id="transporte" data-modo="reproduccion">
 
     <!-- Modo reproduccion: la sesion se recorre. -->
+    <!-- Por qué no hay reproducción, cuando la fuente no tiene eje de distancia.
+         Ocupa el lugar de los mandos en vez de dejarlos ofreciendo algo que
+         falla al primer paso. -->
+    <p class="sin-reproduccion" id="nota-transporte"></p>
+
     <div class="mandos" id="mandos-reproduccion">
       <button class="boton-transporte" id="tr-atras" type="button"
               title="Retroceder 10 segundos" aria-label="Retroceder 10 segundos">
@@ -190,6 +208,15 @@
           <g id="marcas-pista"></g>
         </svg>
         <div class="leyenda-curvas" id="leyenda-curvas"></div>
+        <!-- Con que señal se pinta el recorrido, cuando la forma es derivada.
+             Vacío y oculto en las fuentes que traen un circuito medido. -->
+        <!-- Lo unico que permite contrastar una forma que sale de integrar: el
+             ancho de via que deducen la guiñada y las cuatro ruedas por
+             separado. Vacio y oculto cuando la forma es medida. -->
+        <p class="validacion-forma" id="validacion-recorrido"></p>
+        <div class="elige-senal-recorrido" id="elige-senal-recorrido" role="group"
+             aria-label="Señal con la que se pinta el recorrido"></div>
+        <p class="leyenda-recorrido" id="leyenda-recorrido"></p>
         <div class="globo-curva" id="globo-curva" role="tooltip" hidden></div>
       </div>
     </section>
@@ -300,11 +327,13 @@
       <section class="instrumento vertical en-cabina" data-panel="cronometraje">
       <header><h2>Cronometraje</h2></header>
       <dl class="tira-cronometraje">
-        <div><dt>Vehículo</dt><dd class="destacado">—</dd></div>
-        <div><dt>Vuelta</dt><dd>16<span style="color:var(--texto-tenue);font-size:.8rem">/58</span></dd></div>
-        <div><dt>Actual</dt><dd>1:21.52</dd></div>
-        <div><dt>Al líder</dt><dd class="negativo">−1.075</dd></div>
+        <div><dt>Piloto</dt><dd class="destacado" id="crono-piloto">—</dd></div>
+        <div><dt>Posición</dt><dd id="crono-posicion">—</dd></div>
+        <div><dt>Vuelta</dt><dd id="crono-vuelta">—</dd></div>
+        <div><dt>Cronómetro</dt><dd id="crono-tiempo">—</dd></div>
+        <div><dt>Al líder</dt><dd id="crono-diferencia">—</dd></div>
       </dl>
+      <p class="pie-instrumento" id="crono-cobertura"></p>
     </section>
       <section class="instrumento panel-avisos en-cabina" data-panel="avisos" data-necesita="tyre_temperature_surface_front_left">
       <header>
@@ -377,7 +406,7 @@
         <div class="lista-autos" id="lista-autos"></div>
       </div>
     </section>
-    <section class="instrumento celda-1 vertical abajo" data-panel="aceleraciones" data-necesita="g_force_lateral">
+    <section class="instrumento celda-1 vertical abajo" data-panel="aceleraciones" data-necesita="glat">
       <header>
         <h2>Aceleraciones</h2>
         <span class="fuente-canal" id="canal-g"></span>
@@ -419,8 +448,11 @@
             <text class="rotulo-g" x="90" y="172" text-anchor="middle">TRACCION</text>
             <text class="rotulo-g" x="14" y="94">IZQ</text>
             <text class="rotulo-g" x="166" y="94" text-anchor="end">DER</text>
+            <!-- Cuanto vale el borde del diagrama. La escala se ajusta a la vuelta,
+                 asi que sin este numero el dibujo no dice nada de cuanto empuja. -->
+            <text class="escala-g" id="escala-g" x="38" y="42" text-anchor="middle"></text>
             <path class="estela-g" id="estela-g"></path>
-            <circle class="halo-g" id="halo-g" cx="90" cy="90" r="11"></circle>
+            <circle class="halo-g" id="halo-g" cx="90" cy="90" r="9"></circle>
             <circle class="punto-g" id="punto-g" cx="90" cy="90" r="5"></circle>
           </svg>
           <dl class="lista-canales" id="canales-g"></dl>
@@ -479,6 +511,10 @@
       <div class="cuerpo-instrumento">
         <div class="envoltura-tabla">
           <table class="disponibilidad">
+            <!-- Las filas de los instrumentos que alguna fuente esconde llevan el
+                 nombre del panel: es el unico registro que queda de lo que esa
+                 fuente no sostiene una vez que el panel no esta en pantalla, y
+                 una prueba comprueba que el registro exista. -->
             <thead><tr><th>Instrumento</th><th>F1 25</th><th>OpenF1</th><th>CAN real</th><th>Señal que lo habilita</th></tr></thead>
             <tbody>
               <tr><td>Traza de velocidad</td><td class="si">sí</td><td class="si">sí</td><td class="si">sí</td><td><code>speed</code></td></tr>
@@ -491,6 +527,8 @@
               <tr><td>Neumáticos y frenos</td><td class="si">sí</td><td class="no">no</td><td class="no">no</td><td><code>tyre_*</code>, <code>brake_temperature_*</code></td></tr>
               <tr><td>Daño por parte</td><td class="si">sí</td><td class="no">no</td><td class="no">no</td><td><code>wing_damage_*</code>, <code>floor_damage</code></td></tr>
               <tr><td>Combustible y ERS</td><td class="si">sí</td><td class="no">no</td><td class="no">no</td><td><code>fuel_mass</code>, <code>ers_stored_energy</code></td></tr>
+              <tr data-panel="puesta"><td>Puesta a punto</td><td class="si">sí</td><td class="no">no</td><td class="no">no</td><td><code>brake_bias_front</code>, <code>fuel_mix</code>, <code>tyre_compound</code></td></tr>
+              <tr data-panel="vehiculos"><td>Comparación entre vehículos</td><td class="si">parrilla completa</td><td class="si">parrilla completa</td><td class="no">un solo vehículo</td><td>la captura del bus es de un vehículo: no hay con quién comparar</td></tr>
               <tr><td>Clima y pista</td><td class="si">sí</td><td class="parcial">por contexto</td><td class="no">no</td><td><code>air_temperature</code></td></tr>
               <tr><td>Biometría del piloto</td><td class="no">no</td><td class="no">no</td><td class="no">no</td><td>ninguna fuente la entrega</td></tr>
             </tbody>

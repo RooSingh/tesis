@@ -33,8 +33,8 @@ from typing import Annotated, Any
 
 from fastapi import APIRouter, HTTPException, Query
 
-from backend import (catalogo_curvas, catalogo_sesiones, db,
-                     procedencia_sesiones)
+from backend import (anotador_vivo, catalogo_curvas, catalogo_sesiones, db,
+                     f1_udp, procedencia_sesiones)
 
 router = APIRouter()
 
@@ -49,12 +49,35 @@ router = APIRouter()
 #: queda en otro numero.
 HUECO_MAXIMO_S = 2.0
 
-#: Nombre de la senal de distancia por fuente. La fuente deportiva no declara
-#: distancia recorrida y por eso no figura: en OpenF1 no hay eje espacial
-#: defendible, medido el 2026-09-06 (huecos de hasta 83 m entre muestras).
+#: Nombre de la senal de distancia por fuente. Las que no figuran no tienen eje
+#: espacial, y cada una por su motivo: ver `SIN_DISTANCIA_PORQUE`.
 DISTANCIA_POR_FUENTE = {
     "f1_25_udp_simulation": "lap_distance",
 }
+
+#: POR QUE ESA FUENTE NO TIENE EJE DE DISTANCIA, UNA RAZON POR FUENTE.
+#:
+#: El mensaje era uno solo y explicaba el caso de OpenF1 ---los huecos de 83 m
+#: entre muestras---, y se devolvia igual para cualquier fuente sin distancia.
+#: Quien abria una captura del bus leia una explicacion sobre una fuente que no
+#: estaba usando, y ademas equivocada: en el bus el problema no es que el
+#: muestreo sea pobre, es que **la senal no existe**. Un motivo que no
+#: corresponde es peor que no dar ninguno, porque manda a buscar donde no hay.
+SIN_DISTANCIA_PORQUE = {
+    "openf1_historical_replay": (
+        "el muestreo de 3,7 Hz deja huecos de hasta 83 m entre muestras "
+        "---medido el 2026-09-06--- y el eje espacial no es defendible"),
+    "can_real_replay": (
+        "el bus del vehiculo publica velocidad de rueda pero no odometro ni "
+        "distancia de vuelta, de modo que no hay metro medido con el que "
+        "ubicar una muestra en el circuito"),
+}
+
+
+def _sin_distancia(fuente: str) -> str:
+    """El motivo por el que esta fuente no tiene eje de distancia."""
+    return SIN_DISTANCIA_PORQUE.get(
+        fuente, "esta fuente no declara distancia recorrida")
 
 #: Posicion en el plano, por fuente.
 POSICION_POR_FUENTE = {
@@ -146,6 +169,62 @@ def reconstruir_catalogo() -> dict[str, Any]:
 # 3. Vueltas de una sesion
 # --------------------------------------------------------------------------
 
+@router.get("/sesiones/{session_id}/procedencia")
+def procedencia_de_sesion(session_id: str) -> dict[str, Any]:
+    """Circuito, tipo de sesion y parrilla de una sesion, sin pasar por el catalogo.
+
+    POR QUE NO ALCANZABA CON `/sesiones`. Esa lista sale de `sesiones_catalogo`,
+    que se recuenta por detras y **no incluye una sesion que se esta capturando
+    ahora**. Mientras se escucha, el tablero no la encuentra ahi y arma una
+    entrada propia sin procedencia, de modo que llamaba «sesion sin procedencia
+    declarada» a una captura cuyo circuito el flujo ya habia declarado, y solo
+    le ponia el nombre al terminar.
+
+    Esto la lee de los metadatos de captura, que el capturador escribe apenas el
+    flujo se declara. No toca la base: es el mismo indice que enriquece el
+    catalogo.
+    """
+
+    proc = procedencia_sesiones.de(session_id)
+    # QUIEN ES CADA VEHICULO VIENE ACA MISMO, y no en otra consulta.
+    #
+    # El tablero la sacaba de `/adquisiciones`, que se pide al abrir una sesion
+    # guardada y no mientras se escucha: durante la captura el vehiculo se
+    # llamaba «Vehiculo 0» aunque el paquete de participantes ya hubiera dicho
+    # el nombre. Es el mismo indice y el mismo archivo que la procedencia, de
+    # modo que separarlas seria leer dos veces lo mismo.
+    #
+    # `parrilla_de` **se abstiene** cuando la sesion tiene varias capturas que
+    # declaran participantes distintos: ahi no hay una parrilla «de la sesion» y
+    # hace falta saber cual adquisicion se esta mirando.
+    declarada = procedencia_sesiones.parrilla_de(session_id)
+    parrilla = {"disponible": False,
+                "motivo": ("ninguna captura de esta sesion declara una parrilla, "
+                           "o hay mas de una y declaran participantes distintos")}
+    if declarada and declarada.get("vehiculos"):
+        # Quien conduce sale del flujo, no de que vehiculo tenga mas senales.
+        with db.obtener_conexion() as _c, _c.cursor() as _cur:
+            _propio = _vehiculo_propio(_cur, _fuente_de(session_id), session_id)
+        parrilla = {
+            "disponible": True,
+            "vehiculos": _vehiculos_nombrados(session_id, declarada,
+                                              propio=_propio),
+            "vehiculos_en_carrera": declarada.get("vehiculos_en_carrera"),
+            "origen": declarada.get("origen"),
+            "captura": (declarada.get("captura") or {}).get("archivo"),
+        }
+    return {
+        "session_id": session_id,
+        "procedencia": proc,
+        "parrilla": parrilla,
+        # Que no haya no es un fallo: una captura que todavia no vio un paquete
+        # de sesion con tipo declarado no tiene procedencia que dar.
+        "motivo_ausencia": None if proc else (
+            "Todavia no hay metadatos de captura para esta sesion: el flujo no "
+            "declaro su tipo de sesion, o la captura no la hizo esta maquina."),
+    }
+
+
 @router.get("/sesiones/{session_id}/vueltas")
 def listar_vueltas(
         session_id: str,
@@ -188,7 +267,8 @@ def listar_vueltas(
             "session_id": session_id,
             "fuente": fuente,
             "vueltas": [],
-            "motivo": "Esta fuente no declara distancia recorrida: no hay vueltas que delimitar por metro.",
+            "motivo": ("Esta fuente no tiene eje de distancia: %s. Sin metro medido "
+                       "no hay vueltas que delimitar." % _sin_distancia(fuente)),
         }
 
     with db.obtener_conexion() as conexion, conexion.cursor() as cursor:
@@ -200,8 +280,24 @@ def listar_vueltas(
         f0, f1 = _limites_de_fase(cursor, fuente, session_id, adquisicion, fase)
         tramo, tramo_par = _clausula_de_tramo(f0, f1)
         if not vehiculo:
+            # PRIMERO SE PREGUNTA QUIEN CONDUCE.
+            #
+            # Debajo se elige el vehiculo con mas filas, y el razonamiento que
+            # lo justificaba estaba escrito y era correcto **mientras se
+            # capturaba un solo coche**: de los rivales la fuente publicaba
+            # cronometraje y no telemetria, de modo que el mas muestreado era
+            # siempre el propio.
+            #
+            # Desde que se puede elegir a quien escuchar, los rivales traen
+            # exactamente las mismas senales y con la misma frecuencia: el mas
+            # muestreado volvio a ser cualquiera. El 2026-09-10 esta consulta
+            # devolvio a Russell en una sesion corrida con Hamilton, y el
+            # tablero la tomaba como autoritativa.
+            vehiculo = _vehiculo_propio(cursor, fuente, session_id)
+        if not vehiculo:
             # El mas muestreado **de la fase pedida**: en la formacion de Spa
-            # rueda un vehiculo y en las pruebas de parrilla, veinte.
+            # rueda un vehiculo y en las pruebas de parrilla, veinte. Queda de
+            # respaldo para las capturas que no declaran quien conduce.
             elegido = _filas(cursor, """
                 SELECT vehicle_id, count(*)
                   FROM telemetry_messages
@@ -459,8 +555,9 @@ def posiciones_en_pista(
     if not senal_distancia:
         raise HTTPException(
             status_code=422,
-            detail=("La fuente %s no declara distancia recorrida: no se puede "
-                    "ubicar a los vehiculos sobre la vuelta." % fuente))
+            detail=("La fuente %s no tiene eje de distancia: %s. No se puede "
+                    "ubicar a los vehiculos sobre la vuelta, y no es un fallo "
+                    "que se pueda reintentar." % (fuente, _sin_distancia(fuente))))
 
     with db.obtener_conexion() as conexion, conexion.cursor() as cursor:
         v0, v1 = (_ventana_de_alcance(cursor, fuente, session_id, adquisicion)
@@ -580,7 +677,8 @@ def posiciones_en_pista(
 # 1 y 4. Series contra distancia, para uno o varios vehiculos
 # --------------------------------------------------------------------------
 
-def _reducir(filas: list, puntos: int) -> tuple[list, bool]:
+def _reducir(filas: list, puntos: int,
+             plegables: tuple[int, int] | None = None) -> tuple[list, bool]:
     """Deja como mucho `puntos` filas, conservando los dos extremos.
 
     `max(1, len // puntos)` no acota. Con 599 filas y `puntos=300` la division
@@ -603,12 +701,52 @@ def _reducir(filas: list, puntos: int) -> tuple[list, bool]:
     fila trae varias señales sobre una misma distancia: el extremo de una no es
     el de las otras, y elegir la fila por una de ellas falsearia a todas las
     demas.
+
+    UNA FILA POR INSTANTE EXACTO ES UNA FILA POR SEÑAL, Y ENTONCES SALTEAR
+    FILAS ES BORRAR CANALES.
+
+    Lo de arriba supone que cada fila trae varias señales. En el simulador es
+    cierto: un paquete de movimiento publica todas sus magnitudes con el mismo
+    sello. En un bus vehicular no: cada trama lleva lo suyo y llega cuando le
+    toca, de modo que agrupando por instante exacto **cada fila tiene una sola
+    señal** y las demas en nulo.
+
+    Sobre eso, `filas[::paso]` no adelgaza: elimina. Medido sobre `sample_28`,
+    6.158 filas de las cuales 3.079 traen `speed`, y estan **exactamente en los
+    indices pares**, porque el bus las intercala con regularidad. Con `paso`
+    par sobreviven todas y se borran las de al lado; con `paso` impar sobrevive
+    la mitad; y pidiendo las trece señales del bus el patron cambia y `speed`
+    desaparece entera: cero muestras de tres mil. El tablero mostraba «sin dato
+    en esta vuelta» sobre una sesion completa, y como el eje temporal se apoya
+    en esa señal, los otros doce graficos se quedaban sin ventana y tampoco
+    dibujaban.
+
+    `plegables` dice que columnas son señales. Cuando se da, el tramo no se
+    saltea: se **pliega**. Las `paso` filas contiguas se funden en una y cada
+    columna se queda con su primera muestra del tramo, de modo que ninguna señal
+    puede desaparecer por como el bus intercala sus tramas. El instante de la
+    fila es el de la primera del tramo; una muestra plegada puede quedar
+    atribuida hasta el ancho del tramo antes de cuando se midio, y esa es la
+    aproximacion que este submuestreo declara con `submuestreado`.
     """
 
     total = len(filas)
     if total <= puntos:
         return filas, False
     paso = -(-total // puntos)              # division hacia arriba
+    if plegables is not None:
+        desde, hasta = plegables
+        recorte = []
+        for i in range(0, total, paso):
+            tramo = filas[i:i + paso]
+            fundida = list(tramo[0])
+            for fila in tramo[1:]:
+                for c in range(desde, hasta):
+                    if fundida[c] is None and fila[c] is not None:
+                        fundida[c] = fila[c]
+            recorte.append(tuple(fundida))
+        # El ultimo tramo contiene la ultima fila: no hace falta reponerla.
+        return recorte, True
     recorte = list(filas[::paso])
     if recorte[-1] is not filas[-1]:
         if len(recorte) >= puntos:
@@ -909,6 +1047,47 @@ def _captura_us() -> str:
             "(metadata->'extra'->>'desplazamiento_captura_us')::bigint)")
 
 
+def _orden_dentro_de_la_sesion() -> str:
+    """Con que se ordenan las muestras de una sesion, y por que no es el otro.
+
+    EL RELOJ DE CAPTURA NO SIRVE PARA ORDENAR, Y SE MIDIO POR QUE
+    ------------------------------------------------------------
+    `_captura_us()` se llama a si mismo monotonico, y lo es **dentro de una
+    captura**. Deja de serlo apenas hay dos: cada una numera su desplazamiento
+    desde cero, de modo que ordenarlas juntas las **entrelaza**.
+
+    Eso no es un caso raro. En el simulador se reinicia la vuelta sin terminar
+    la sesion ---para no perder tiempo--- y el resultado son dos capturas del
+    mismo `session_uid`, las dos originales, las dos con `replay_run_id` nulo:
+    indistinguibles.
+
+    Medido el 2026-09-09 sobre una contrarreloj de Spielberg con dos capturas:
+    ordenando por reloj de captura, `session_time_s` retrocedia **401 veces**, y
+    los 401 saltos eran de **exactamente -51,434 s**. Un reloj que se reinicia
+    de verdad da saltos distintos; una constante repetida cuatrocientas veces
+    son dos series con un desfase fijo. El resultado eran 401 fases inventadas
+    ---casi todas rotuladas «Espera de luces» en una sesion que no tiene
+    luces--- y el coche saltando entre dos puntos de la pista separados por
+    cincuenta y un segundos.
+
+    EL CONTADOR DE CUADROS SI ES MONOTONICO EN LA SESION
+    ----------------------------------------------------
+    Lo emite el juego y no el capturador, de modo que no sabe ni le importa
+    cuantas veces se empezo a grabar. Sobre esa misma sesion: 10.898 valores
+    distintos para 10.898 muestras ---uno por muestra, sin repetir--- y
+    ordenando por el, `session_time_s` retrocede **cero veces**.
+
+    Se conserva `COALESCE` con el reloj de captura para lo que no traiga
+    contador: OpenF1 y el bus del vehiculo real no lo tienen, y ahi el orden
+    anterior sigue siendo el correcto. Las capturas de F1 25 si lo traen, tambien
+    las viejas ---comprobado sobre las 60.468 muestras del original de Spa---,
+    de modo que este cambio no deja a ninguna sin ordenar.
+    """
+
+    return ("COALESCE((metadata->'extra'->>'frame_identifier')::bigint, %s)"
+            % _captura_us())
+
+
 def _clausula_de_tramo(f0: int | None, f1: int | None) -> tuple[str, list]:
     """La condicion que acota a una fase, lista para concatenar.
 
@@ -978,17 +1157,17 @@ def _medir_fases_de_todas(cursor, fuente: str, session_id: str) -> dict:
     cap = _captura_us()
     cursor.execute("""
         WITH p AS (
-          SELECT replay_run_id AS run, %s AS d,
+          SELECT replay_run_id AS run, %s AS d, %s AS orden,
                  (metadata->'extra'->>'session_time_s')::double precision AS reloj
             FROM telemetry_messages
            WHERE source_type = %%s AND session_id = %%s
              AND signal_name = 'lap_number'),
         q AS (SELECT run, d, reloj,
-                     lag(reloj) OVER (PARTITION BY run ORDER BY d) AS ant
+                     lag(reloj) OVER (PARTITION BY run ORDER BY orden) AS ant
                 FROM p WHERE d IS NOT NULL AND reloj IS NOT NULL)
         SELECT run, d FROM q
          WHERE ant IS NOT NULL AND reloj < ant ORDER BY run, d
-    """ % cap, (fuente, session_id))
+    """ % (cap, _orden_dentro_de_la_sesion()), (fuente, session_id))
     cortes: dict = {}
     for run, d in cursor.fetchall():
         cortes.setdefault(run or ORIGEN_SIN_CORRIDA, []).append(d)
@@ -1082,6 +1261,160 @@ def _medir_fases(cursor, fuente: str, session_id: str,
     return _armar_fases([inicio] + [c[0] for c in cortes] + [fin])
 
 
+# --------------------------------------------------------------------------
+# Quien es cada vehiculo, y de cuantos hay telemetria
+# --------------------------------------------------------------------------
+#
+# SON DOS COSAS DISTINTAS Y SE DECLARAN POR SEPARADO.
+#
+# La **identidad** sale del metadato de captura: el paquete de participantes
+# dice que el vehiculo de indice 19 es NORRIS, numero 4, McLaren. No esta en la
+# base a proposito ---guardar un nombre como senal de telemetria almacenaria el
+# mismo texto millones de veces para decir veinte cosas que no cambian--- y por
+# eso se lee de donde vive.
+#
+# La **cobertura** sale de la base: cuantos de esos vehiculos llegaron a tener
+# una sola muestra guardada. En la carrera de Spa la parrilla declara veinte y
+# la base tiene uno. Conocer el nombre de los otros diecinueve no es tener sus
+# señales, y presentarlo junto seria afirmar que las hay.
+
+#: Como se llama el vehiculo de indice `n` de una sesion. Es el mismo formato
+#: que acuña el adaptador al normalizar (`adapters/f1_25.py`); escrito aca una
+#: sola vez para que la union no se arme con un `split` del identificador.
+FORMA_DEL_VEHICULO = "%s:car:%d"
+
+
+def _vehiculos_nombrados(session_id: str, declarada: dict,
+                         con_telemetria: set[str] | None = None,
+                         propio: str | None = None) -> list[dict]:
+    """Los participantes de una parrilla, unidos a la clave tecnica del vehiculo.
+
+    LA UNION SE DECLARA, NO SE ADIVINA. `vehicle_id` se compone en el adaptador
+    como `<session_id>:car:<indice>`, y ese es el unico camino del indice del
+    protocolo a la clave de la base.
+
+    `con_telemetria` es opcional porque no siempre se sabe. Saberlo cuesta
+    recorrer la base buscando que vehiculos tienen muestras, y hay un caso donde
+    no hace falta: mientras la sesion se esta capturando, lo que se quiere es el
+    nombre, y quien tiene muestras cambia con cada mensaje que llega. Cuando no
+    se pasa, el campo **no se inventa**: no aparece.
+    """
+
+    salida = []
+    for v in declarada["vehiculos"]:
+        clave = FORMA_DEL_VEHICULO % (session_id, v["indice"])
+        fila = {
+            "indice": v["indice"],
+            "vehicle_id": clave,
+            "nombre": v["nombre"],
+            "numero": v["numero"],
+            "equipo": v["equipo"],
+            "es_ia": v["es_ia"],
+            # QUIEN CONDUCE, DECLARADO Y NO ADIVINADO.
+            #
+            # El tablero lo tomaba del vehiculo cuya serie devolvia primero la
+            # consulta. Con un vehiculo capturado eso acertaba por construccion;
+            # con cuatro es arbitrario, y una sesion corrida con Hamilton abria
+            # mostrando a Russell ---y el panel de vehiculo en ceros, porque de
+            # un rival el protocolo no publica ni temperaturas ni presiones---.
+            #
+            # Sin declaracion no se marca a ninguno: marcar al primero seria
+            # volver a adivinar con otra excusa.
+            "es_propio": propio is not None and clave == propio,
+        }
+        if con_telemetria is not None:
+            fila["con_telemetria"] = clave in con_telemetria
+        salida.append(fila)
+    return salida
+
+
+def _parrilla_de_la_adquisicion(session_id: str, fuente: str, desde, hasta,
+                                shas: list, con_telemetria: set[str],
+                                propio: str | None = None) -> dict:
+    """La parrilla de **esta adquisicion**, unida a las claves tecnicas.
+
+    LA UNION SE DECLARA, NO SE ADIVINA. `vehicle_id` se compone en el adaptador
+    como `<session_id>:car:<indice>`, y ese es el unico camino del indice del
+    protocolo a la clave de la base. Se arma la clave que le corresponderia a
+    cada participante y se dice, para cada una, si la base tiene muestras suyas.
+
+    NO SE REUTILIZA UNA PARRILLA DE OTRA CAPTURA. La busqueda es por
+    `session_id`: que dos sesiones tengan un `car:19` no las relaciona, porque
+    el indice es la posicion del vehiculo en el paquete de esa sesion.
+
+    Y TAMPOCO SE REUTILIZA LA DE OTRA ADQUISICION DE LA MISMA SESION. Volver a
+    capturar produce filas con el mismo `session_uid`, y esas dos capturas
+    pueden declarar gente distinta en el mismo indice. Antes ganaba la mas
+    larga, que no es una prueba de pertenencia: ahora se ata cada adquisicion a
+    su captura por la huella del archivo o por la ventana en que se escribio, y
+    si no se puede atar se dice que es ambigua y nadie queda nombrado.
+    """
+    if fuente != "f1_25_udp_simulation":
+        return {"disponible": False,
+                "motivo": "solo la simulacion declara participantes",
+                "con_telemetria": len(con_telemetria)}
+
+    candidatas = procedencia_sesiones.candidatas_de_parrilla(session_id)
+    if not candidatas:
+        return {"disponible": False,
+                "motivo": ("ninguna captura cerrada declara la parrilla de esta "
+                           "sesion: se escribe al cerrar el archivo"),
+                "con_telemetria": len(con_telemetria)}
+
+    declarada = _elegir_parrilla(candidatas, desde, hasta, shas)
+    if declarada is None:
+        return {"disponible": False, "ambigua": True,
+                "motivo": ("%d capturas comparten esta sesion y declaran "
+                           "participantes distintos; sus metadatos no permiten "
+                           "decir cual corresponde a esta adquisicion"
+                           % len(candidatas)),
+                "con_telemetria": len(con_telemetria)}
+
+    vehiculos = _vehiculos_nombrados(session_id, declarada, con_telemetria, propio)
+
+    return {
+        "disponible": True,
+        "vehiculos": vehiculos,
+        "vehiculos_en_carrera": declarada.get("vehiculos_en_carrera"),
+        # Cuantos vehiculos de la base tienen muestras, se los haya reconocido
+        # en la parrilla o no: es la cobertura de la telemetria, no un recuento
+        # de los que se pudieron nombrar.
+        "con_telemetria": len(con_telemetria),
+        "origen": declarada["origen"],
+        # De la captura solo viaja lo que sirve para reconocerla. Ni la ruta ni
+        # el resto del sidecar: eso se queda del lado del servidor.
+        "captura": (declarada.get("captura") or {}).get("archivo"),
+        "es_una_foto": declarada.get("es_una_foto"),
+        "que_no_significa": (
+            "que un vehiculo figure en la parrilla no dice que haya una sola "
+            "muestra suya: `con_telemetria` lo declara por vehiculo"),
+    }
+
+
+def _elegir_parrilla(candidatas: list[dict], desde, hasta, shas: list) -> dict | None:
+    """Cual de las capturas de esta sesion es la de esta adquisicion.
+
+    Con una sola no hay nada que elegir. Con varias que declaran exactamente los
+    mismos participantes tampoco: cual sea da igual. Recien cuando difieren hay
+    que atarlas, y si no se puede se devuelve `None`, que el tablero lee como
+    «Vehículo 19». Inventar la asociacion para evitar ese respaldo seria
+    ponerle a un vehiculo el nombre del de otra carrera.
+    """
+    if len(candidatas) == 1:
+        return candidatas[0]
+    if all(procedencia_sesiones.mismos_participantes(candidatas[0], c)
+           for c in candidatas[1:]):
+        return candidatas[0]
+    atadas = [c for c in candidatas
+              if procedencia_sesiones.pertenece_a(c, desde, hasta, shas)]
+    if len(atadas) == 1:
+        return atadas[0]
+    if atadas and all(procedencia_sesiones.mismos_participantes(atadas[0], c)
+                      for c in atadas[1:]):
+        return atadas[0]
+    return None
+
+
 @router.get("/sesiones/{session_id}/adquisiciones")
 def adquisiciones(session_id: str) -> dict:
     """Cuantas veces se capturo o se reprodujo esta sesion, y en que fases.
@@ -1094,7 +1427,12 @@ def adquisiciones(session_id: str) -> dict:
     with db.obtener_conexion() as conexion, conexion.cursor() as cursor:
         cursor.execute("""
             SELECT replay_run_id, count(*), count(DISTINCT vehicle_id),
-                   min(timestamp), max(timestamp)
+                   min(timestamp), max(timestamp),
+                   array_agg(DISTINCT vehicle_id),
+                   -- La huella del archivo del que salieron estas filas, cuando
+                   -- el capturador la escribio. Es lo que ata una adquisicion a
+                   -- su captura sin depender de cual sea la mas larga.
+                   array_agg(DISTINCT metadata->'extra'->>'captura_sha256')
               FROM telemetry_messages
              WHERE source_type = %s AND session_id = %s
                AND signal_name = 'lap_number'
@@ -1104,7 +1442,12 @@ def adquisiciones(session_id: str) -> dict:
         crudas = cursor.fetchall()
 
         salida = []
-        for run, filas, vehiculos, desde, hasta in crudas:
+        con_telemetria: set[str] = set()
+        for fila in crudas:
+            run, filas, vehiculos, desde, hasta = fila[:5]
+            suyos = [x for x in (fila[5] if len(fila) > 5 else None) or [] if x]
+            shas = [x for x in (fila[6] if len(fila) > 6 else None) or [] if x]
+            con_telemetria.update(suyos)
             clave = run or ORIGEN_SIN_CORRIDA
             salida.append({
                 "clave": clave,
@@ -1114,6 +1457,12 @@ def adquisiciones(session_id: str) -> dict:
                 "vehiculos": vehiculos,
                 "desde_utc": desde.isoformat() if desde else None,
                 "hasta_utc": hasta.isoformat() if hasta else None,
+                # QUIEN ES CADA VEHICULO **EN ESTA ADQUISICION**. Va aca y no en
+                # la raiz porque dos capturas de la misma sesion pueden declarar
+                # gente distinta en el mismo indice.
+                "parrilla": _parrilla_de_la_adquisicion(
+                    session_id, fuente, desde, hasta, shas, set(suyos),
+                    _vehiculo_propio(cursor, fuente, session_id)),
                 "fases": _fases_de(cursor, fuente, session_id, clave),
             })
 
@@ -1135,6 +1484,133 @@ def adquisiciones(session_id: str) -> dict:
         "si_hay_mas_de_una": (
             "elegir con `?adquisicion=` en cada consulta. Sin elegir, las rutas "
             "devuelven todo junto y lo declaran, que es lo que hacian antes"),
+    }
+
+
+@router.get("/sesiones/{session_id}/series-tiempo")
+def series_por_tiempo(
+    session_id: str,
+    senales: Annotated[str, Query(description="Nombres de senal separados por coma")],
+    vehiculos: Annotated[str | None, Query(description="Identificadores separados por coma")] = None,
+    puntos: Annotated[int, Query(ge=50, le=5000)] = 600,
+    adquisicion: Annotated[str | None, Query(
+        description="Que adquisicion mirar: `original`, un `replay_run_id`, o `todas`")] = None,
+    fase: Annotated[int | None, Query(ge=1)] = None,
+) -> dict[str, Any]:
+    """Series contra el reloj de sesion para fuentes sin distancia medida."""
+
+    fuente = _fuente_de(session_id)
+    pedidas = [s.strip() for s in senales.split(",") if s.strip()]
+    if not pedidas:
+        raise HTTPException(status_code=422, detail="Hay que pedir al menos una señal.")
+    if len(pedidas) > 20:
+        raise HTTPException(status_code=422, detail="Hasta veinte señales por consulta temporal.")
+
+    condiciones = ["source_type = %s", "session_id = %s"]
+    parametros: list[Any] = [fuente, session_id]
+    with db.obtener_conexion() as conexion, conexion.cursor() as cursor:
+        ventana = _ventana_de_alcance(cursor, fuente, session_id, adquisicion)
+        fase_desde, fase_hasta = _limites_de_fase(
+            cursor, fuente, session_id, adquisicion, fase)
+    if ventana:
+        condiciones.append("timestamp BETWEEN %s AND %s")
+        parametros.extend([ventana[0], ventana[1]])
+    predicados_fase, parametros_fase = _predicados_de_tramo(
+        fase_desde, fase_hasta)
+    condiciones.extend(predicados_fase)
+    parametros.extend(parametros_fase)
+
+    autos = [v.strip() for v in vehiculos.split(",") if v.strip()] if vehiculos else []
+    if autos:
+        condiciones.append("vehicle_id = ANY(%s)")
+        parametros.append(autos)
+    condiciones.append("signal_name = ANY(%s)")
+    parametros.append(pedidas)
+
+    # Los canales binarios CAN viven en value_boolean. Llevarlos a 0/1 en esta
+    # vista permite graficarlos sin alterar el valor persistido ni su unidad.
+    columnas = []
+    columnas_par: list[Any] = []
+    for indice, senal in enumerate(pedidas):
+        columnas.append(
+            'max(COALESCE(value_numeric, CASE WHEN value_boolean THEN 1.0 '
+            'WHEN value_boolean IS FALSE THEN 0.0 END)) '
+            'FILTER (WHERE signal_name = %s) AS senal_%d' % ("%s", indice))
+        columnas_par.append(senal)
+    for indice, senal in enumerate(pedidas):
+        columnas.append(
+            'max(unit) FILTER (WHERE signal_name = %s) AS unidad_%d'
+            % ("%s", indice))
+        columnas_par.append(senal)
+
+    consulta = """
+        SELECT timestamp, vehicle_id,
+               {columnas}
+          FROM telemetry_messages
+         WHERE {donde}
+         GROUP BY timestamp, vehicle_id
+         ORDER BY vehicle_id, timestamp
+    """.format(columnas=",\n               ".join(columnas),
+               donde=" AND ".join(condiciones))
+
+    with db.obtener_conexion() as conexion, conexion.cursor() as cursor:
+        cursor.execute(consulta, tuple(columnas_par + parametros))
+        filas = cursor.fetchall()
+
+    if not filas:
+        return {"session_id": session_id, "fuente": fuente, "senales": pedidas,
+                "vehiculos": {}, "muestras": 0, "unidades": {},
+                "motivo": "La sesion no tiene esas senales en el rango pedido."}
+
+    origen = min(f[0] for f in filas)
+    idx_unidades = 2 + len(pedidas)
+    unidades: dict[str, str] = {}
+    for fila in filas:
+        for i, senal in enumerate(pedidas):
+            if senal not in unidades and fila[idx_unidades + i] is not None:
+                unidades[senal] = fila[idx_unidades + i]
+
+    por_vehiculo: dict[str, list[tuple]] = {}
+    for fila in filas:
+        por_vehiculo.setdefault(fila[1], []).append(fila)
+
+    salida: dict[str, Any] = {}
+    submuestreado = False
+    originales = 0
+    for vehiculo, suyas in por_vehiculo.items():
+        originales = max(originales, len(suyas))
+        # Las columnas 2..2+n son las señales; despues vienen sus unidades.
+        recorte, reducida = _reducir(suyas, puntos, (2, 2 + len(pedidas)))
+        submuestreado = submuestreado or reducida
+        serie: dict[str, list] = {
+            "tiempo_s": [round((f[0] - origen).total_seconds(), 6) for f in recorte],
+            "timestamp_utc": [f[0].isoformat() for f in recorte],
+        }
+        for i, senal in enumerate(pedidas):
+            serie[senal] = [
+                round(f[2 + i], 4) if f[2 + i] is not None else None
+                for f in recorte
+            ]
+        salida[vehiculo] = serie
+
+    return {
+        "session_id": session_id,
+        "fuente": fuente,
+        "senales": pedidas,
+        "vehiculos": salida,
+        "unidades": unidades,
+        "muestras": sum(len(v["tiempo_s"]) for v in salida.values()),
+        "submuestreado": submuestreado,
+        "muestras_originales": originales,
+        "reduccion": ("una de cada %d" % -(-originales // puntos)) if submuestreado else None,
+        "puntos_pedidos": puntos,
+        "desde_utc": origen.isoformat(),
+        "hasta_utc": max(f[0] for f in filas).isoformat(),
+        "duracion_s": round((max(f[0] for f in filas) - origen).total_seconds(), 6),
+        "eje": "tiempo desde el inicio del tramo, en segundos",
+        "ejes_disponibles": {
+            "tiempo": {"campo": "tiempo_s", "unidad": "s", "reloj": "reloj de sesion"},
+        },
     }
 
 
@@ -1167,16 +1643,16 @@ def series_por_distancia(
     if not senal_distancia:
         raise HTTPException(
             status_code=422,
-            detail=("La fuente %s no declara distancia recorrida. En OpenF1 el muestreo "
-                    "deja huecos de hasta 83 m y el eje espacial no es defendible; "
-                    "usar las rutas por tiempo." % fuente),
+            detail=("La fuente %s no tiene eje de distancia: %s. No es un fallo "
+                    "que se pueda reintentar; para esta fuente hay que usar las "
+                    "rutas por tiempo." % (fuente, _sin_distancia(fuente))),
         )
 
     pedidas = [s.strip() for s in senales.split(",") if s.strip()]
     if not pedidas:
-        raise HTTPException(status_code=422, detail="Hay que pedir al menos una senal.")
+        raise HTTPException(status_code=422, detail="Hay que pedir al menos una señal.")
     if len(pedidas) > 12:
-        raise HTTPException(status_code=422, detail="Hasta doce senales por consulta.")
+        raise HTTPException(status_code=422, detail="Hasta doce señales por consulta.")
 
     autos = [v.strip() for v in vehiculos.split(",")] if vehiculos else []
 
@@ -1260,6 +1736,22 @@ def series_por_distancia(
     for s in pedidas:
         columnas.append('max(value_numeric) FILTER (WHERE signal_name = %s) AS "%s"' % ("%s", s))
         columnas_par.append(s)
+    # LA UNIDAD SALE DE LAS MISMAS FILAS QUE EL VALOR.
+    #
+    # POR QUE HACIA FALTA. `delta_to_race_leader` se compone en milisegundos y
+    # el tablero lo imprimia crudo bajo un rotulo que decia segundos: 2.937 ms
+    # se leian como «2937.000». El navegador no tenia como saberlo, porque la
+    # respuesta no declaraba la unidad de nada.
+    #
+    # POR QUE DE ACA Y NO DE UNA TABLA. Dividir por mil en el navegador segun
+    # una lista de nombres escrita a mano rompe la primera vez que otra fuente
+    # publique un canal parecido ya en segundos ---`penalty_time` y
+    # `safety_car_delta` ya lo estan---. La unidad viaja en cada fila desde que
+    # el adaptador la normaliza; se la agrega sobre las filas que la consulta ya
+    # esta leyendo, sin una pasada mas.
+    for s in pedidas:
+        columnas.append('max(unit) FILTER (WHERE signal_name = %s) AS "unidad:%s"' % ("%s", s))
+        columnas_par.append(s)
     consulta = consulta % ",\n                   ".join(columnas)
     consulta = consulta.replace("{donde}", " AND ".join(condiciones))
     consulta = consulta.replace("{filtro_vuelta}", "AND vuelta = %s" if vuelta is not None else "")
@@ -1288,13 +1780,28 @@ def series_por_distancia(
 
     if not filas:
         return {"session_id": session_id, "fuente": fuente, "senales": pedidas,
-                "vehiculos": {}, "muestras": 0,
+                "vehiculos": {}, "muestras": 0, "unidades": {},
                 "motivo": "La sesion no tiene esas senales en el rango pedido."}
 
     desplazamiento = 2 if vuelta is not None else 1  # timestamp, vehicle_id
     idx_dist = 2
     idx_dist_sesion = 3 + (1 if vuelta is not None else 0)
     idx_primera = idx_dist_sesion + 1
+    idx_unidades = idx_primera + len(pedidas)
+
+    # QUE UNIDAD TRAJO CADA SENAL. Se toma la primera fila que la declare: la
+    # columna es `NOT NULL` en el esquema, de modo que un nulo aca solo puede
+    # significar que esa senal no aparece en esa fila.
+    unidades: dict[str, str] = {}
+    for f in filas:
+        if len(unidades) == len(pedidas):
+            break
+        for i, s in enumerate(pedidas):
+            if s in unidades:
+                continue
+            u = f[idx_unidades + i] if len(f) > idx_unidades + i else None
+            if u is not None:
+                unidades[s] = u
 
     por_vehiculo: dict[str, list[tuple]] = {}
     for f in filas:
@@ -1336,6 +1843,11 @@ def series_por_distancia(
         "vuelta": vuelta,
         "senales": pedidas,
         "vehiculos": salida,
+        # La unidad en que viene cada senal, tal como la persistio el
+        # adaptador. Quien la muestre convierte una sola vez y sabe cuando no
+        # tiene que convertir: no todas las que se parecen estan en la misma
+        # unidad.
+        "unidades": unidades,
         "muestras": sum(len(v["distancia_m"]) for v in salida.values()),
         "submuestreado": submuestreado,
         # Cuantas muestras habia antes de reducir, para que el grafico pueda
@@ -1443,6 +1955,20 @@ def trazado(session_id: str, vuelta: int | None = None,
         # aunque el dibujo cerrara.
         _tf0, _tf1 = _limites_de_fase(cursor, fuente, session_id, adquisicion, fase)
         _tramo, _tramo_par = _clausula_de_tramo(_tf0, _tf1)
+        # EL TRAZADO ES EL DE UN COCHE, NO EL DE LA PARRILLA.
+        #
+        # Esta consulta gira la tabla a una fila por instante con
+        # `max(value_numeric)`. Con un vehiculo eso es su posicion. Con cuatro es
+        # **la mayor x de los cuatro junto a la mayor z de los cuatro**, que no
+        # es donde estuvo ninguno: es una esquina de la caja que los contiene, y
+        # dibuja un circuito que no existe.
+        #
+        # Se vio el 2026-09-10 en Austin, la primera carrera con la parrilla
+        # acotada: el trazado salio como una tira angosta en vez del circuito.
+        # El defecto estaba desde siempre y hacia falta un segundo coche para
+        # que se notara.
+        _propio = _vehiculo_propio(cursor, fuente, session_id)
+        _cv, _cv_par = _acotar_al_vehiculo(_propio)
         cursor.execute("""
             WITH p AS (
                 SELECT timestamp,
@@ -1454,14 +1980,14 @@ def trazado(session_id: str, vuelta: int | None = None,
                   FROM telemetry_messages
                  WHERE source_type = %s AND session_id = %s AND signal_name = ANY(%s)
                    AND (%s::timestamptz IS NULL OR timestamp BETWEEN %s AND %s)""" +
-            _tramo + """
+            _cv + _tramo + """
                  GROUP BY timestamp)
             SELECT x, z, y, distancia, vuelta FROM p
              WHERE x IS NOT NULL AND z IS NOT NULL
              ORDER BY vuelta NULLS LAST, distancia NULLS LAST, timestamp
         """, tuple([eje_x, eje_z, fuente, session_id, interes,
                     _tv[0] if _tv else None, _tv[0] if _tv else None,
-                    _tv[1] if _tv else None] + _tramo_par))
+                    _tv[1] if _tv else None] + _cv_par + _tramo_par))
         filas = cursor.fetchall()
 
     if not filas:
@@ -1628,7 +2154,8 @@ def _restar(instante_iso: str, segundos: int) -> str | None:
 
 def _ultimos_valores(cursor, fuente: str, session_id: str, senales: list[str],
                      hasta_utc: str | None = None,
-                     ventana_alcance: tuple[str, str] | None = None) -> dict[str, float]:
+                     ventana_alcance: tuple[str, str] | None = None,
+                     vehiculo: str | None = None) -> dict[str, float]:
     """Ultimo valor de cada senal **hasta un instante**, o de toda la sesion.
 
     Se resuelve con una sola consulta y `DISTINCT ON`, que sobre las columnas
@@ -1647,6 +2174,17 @@ def _ultimos_valores(cursor, fuente: str, session_id: str, senales: list[str],
     momento**, que es lo unico que se puede afirmar de un tablero que se
     recorre.
     """
+    # EL ESTADO ES DE UN VEHICULO, Y CON UNO SOLO NO SE NOTABA.
+    #
+    # `DISTINCT ON (signal_name)` sobre la sesion entera devuelve, para cada
+    # canal, la fila mas reciente **de cualquier vehiculo**. Con uno solo eso
+    # era su estado. Con cuatro es el del que publico ultimo, canal por canal:
+    # la temperatura de una goma de uno junto al dano de otro.
+    #
+    # Medido el 2026-09-10 en Red Bull Ring: Hamilton termino con los dos
+    # alerones delanteros al 100 % de dano, 2.974 muestras lo declaran, y el
+    # panel decia «sin dano, ninguna pieza lo declara».
+    _cv, _cvp = _acotar_al_vehiculo(vehiculo)
     if not senales:
         return {}
 
@@ -1667,11 +2205,18 @@ def _ultimos_valores(cursor, fuente: str, session_id: str, senales: list[str],
     # ventana no encuentra se busca sin acotar, **solo para esas senales**. No
     # se pierde nada; lo unico que cambia es cuanto se recorre en el caso
     # normal.
-    # La cache de ausentes es por sesion **y por alcance**: una senal que no
-    # esta en una adquisicion puede estar en otra, y recordar la ausencia sin el
-    # alcance haria que una prueba de parrilla "confirmara" que a la carrera
-    # original le falta un canal.
-    _clave_ausentes = (fuente, session_id, ventana_alcance)
+    # La cache de ausentes es por sesion, por alcance **y por vehiculo**.
+    #
+    # Por alcance: una senal que no esta en una adquisicion puede estar en otra,
+    # y recordar la ausencia sin el alcance haria que una prueba de parrilla
+    # "confirmara" que a la carrera original le falta un canal.
+    #
+    # Por vehiculo, desde que estas consultas se acotan: de un rival el
+    # protocolo no publica clima ni puesta a punto, de modo que preguntarle a el
+    # y recordar la ausencia sin decir de quien deja al coche propio marcado
+    # como si tampoco los tuviera. Se vio en pantalla: «SIN CLIMA» sobre una
+    # sesion cuya API devolvia veinticuatro grados.
+    _clave_ausentes = (fuente, session_id, ventana_alcance, vehiculo)
     salida: dict[str, Any] = {}
 
     def _consultar_ventana(faltan: list[str], desde: str, hasta: str) -> None:
@@ -1681,14 +2226,15 @@ def _ultimos_valores(cursor, fuente: str, session_id: str, senales: list[str],
             SELECT DISTINCT ON (signal_name)
                    signal_name, value_numeric, value_boolean, value_text, unit, timestamp
               FROM telemetry_messages
-             WHERE source_type = %s AND session_id = %s AND signal_name = ANY(%s)
+             WHERE source_type = %s AND session_id = %s AND signal_name = ANY(%s)"""
+                   + _cv + """
                AND timestamp >= %s AND timestamp <= %s
                AND (%s::timestamptz IS NULL OR timestamp BETWEEN %s AND %s)
              ORDER BY signal_name, timestamp DESC
-        """, (fuente, session_id, faltan, desde, hasta,
+        """, tuple([fuente, session_id, faltan] + _cvp + [desde, hasta,
               ventana_alcance[0] if ventana_alcance else None,
               ventana_alcance[0] if ventana_alcance else None,
-              ventana_alcance[1] if ventana_alcance else None))
+              ventana_alcance[1] if ventana_alcance else None]))
         for nombre, num, boo, txt, unidad, ts in cursor.fetchall():
             valor = num if num is not None else (boo if boo is not None else txt)
             salida[nombre] = {"valor": valor, "unidad": unidad,
@@ -1696,7 +2242,7 @@ def _ultimos_valores(cursor, fuente: str, session_id: str, senales: list[str],
 
     def _consultar(faltan: list[str], desde: str | None) -> None:
         condicion = ""
-        parametros: list[Any] = [fuente, session_id, faltan]
+        parametros: list[Any] = [fuente, session_id, faltan] + _cvp
         # El alcance acota siempre, incluso en el paso «sin acotar»: ese paso no
         # acota **por tiempo de sesion**, pero no puede salirse de la
         # adquisicion elegida.
@@ -1713,7 +2259,8 @@ def _ultimos_valores(cursor, fuente: str, session_id: str, senales: list[str],
             SELECT DISTINCT ON (signal_name)
                    signal_name, value_numeric, value_boolean, value_text, unit, timestamp
               FROM telemetry_messages
-             WHERE source_type = %s AND session_id = %s AND signal_name = ANY(%s)""" +
+             WHERE source_type = %s AND session_id = %s AND signal_name = ANY(%s)"""
+                   + _cv + """""" +
             condicion + """
              ORDER BY signal_name, timestamp DESC
         """, tuple(parametros))
@@ -1787,6 +2334,8 @@ def estado_del_vehiculo(
         session_id: str,
         hasta: Annotated[str | None, Query(
             description="Instante ISO-8601: estado del vehiculo vigente hasta ahi")] = None,
+        vehiculo: Annotated[str | None, Query(
+            description="De que vehiculo; por omision, el de quien conduce")] = None,
         ) -> dict[str, Any]:
     """Neumaticos, frenos y dano, por esquina y por pieza.
 
@@ -1801,7 +2350,11 @@ def estado_del_vehiculo(
     pedidas += list(CANALES_CARROCERIA.values())
 
     with db.obtener_conexion() as conexion, conexion.cursor() as cursor:
-        valores = _ultimos_valores(cursor, fuente, session_id, pedidas, hasta)
+        # Sin decir cual, el de quien conduce. Mirar a un rival es una pregunta
+        # legitima ---hoy hay datos suyos--- pero hay que pedirla.
+        de_quien = vehiculo or _vehiculo_propio(cursor, fuente, session_id)
+        valores = _ultimos_valores(cursor, fuente, session_id, pedidas, hasta,
+                                   vehiculo=de_quien)
 
     esquinas: dict[str, dict] = {}
     for e in ESQUINAS:
@@ -1827,7 +2380,7 @@ def estado_del_vehiculo(
         "carroceria": carroceria,
         "ausentes": ausentes,
         "motivo_ausencia": (
-            "Esta fuente no publica estado de neumaticos ni de dano."
+            "Esta fuente no publica estado de neumaticos ni de daño."
             if not esquinas and not carroceria else None
         ),
     }
@@ -1921,12 +2474,29 @@ BANDERA_TEXTO = {-1: "sin dato", 0: "ninguna", 1: "verde",
                  2: "azul", 3: "amarilla", 4: "roja"}
 
 
+def _senales_del_vehiculo() -> list[str]:
+    """Los canales que describen al coche y no a la sesion.
+
+    Se derivan de los mismos mapas que arma el panel, no de una lista aparte:
+    una segunda copia se desactualiza el dia que se agregue una esquina.
+    """
+
+    pedidas = []
+    for plantilla in CANALES_POR_ESQUINA.values():
+        pedidas += [plantilla % e for e in ESQUINAS]
+    return pedidas + list(CANALES_CARROCERIA.values())
+
+
 @router.get("/sesiones/{session_id}/contexto")
 def contexto(
         session_id: str,
         adquisicion: Annotated[str | None, Query()] = None,
         hasta: Annotated[str | None, Query(
             description="Instante ISO-8601: el contexto vigente hasta ahi")] = None,
+        vehiculo: Annotated[str | None, Query(
+            description="De que vehiculo es el estado; por omision, el de quien "
+                        "conduce. El clima y la puesta a punto no cambian: son "
+                        "de la sesion")] = None,
         ) -> dict[str, Any]:
     """Clima, estado del vehiculo y puesta a punto **en una sola consulta**.
 
@@ -1952,8 +2522,27 @@ def contexto(
         # de la carrera original no son los de una prueba de parrilla corrida
         # tres dias despues.
         _cv = _ventana_de_alcance(cursor, fuente, session_id, adquisicion)
+        # DE QUIEN ES CADA PARTE.
+        #
+        # `DISTINCT ON (signal_name)` sin acotar el vehiculo devuelve, por cada
+        # canal, la fila mas reciente de cualquiera. Con un vehiculo capturado
+        # eso era su estado; con cuatro es el del que publico ultimo, canal por
+        # canal. Por eso el panel mostraba las cuatro esquinas identicas y «sin
+        # dano» sobre un coche que termino con los dos alerones rotos.
+        #
+        # El clima y la puesta a punto **no son de un vehiculo**: los publica el
+        # paquete de sesion, que el protocolo entrega solo para el propio. Por
+        # eso la consulta base va siempre acotada al propio, y solo cuando se
+        # pide otro se hace una segunda para sus canales. Mirar a un rival no
+        # tiene por que costar el clima.
+        propio = _vehiculo_propio(cursor, fuente, session_id)
         valores = _ultimos_valores(cursor, fuente, session_id, senales, hasta,
-                                   ventana_alcance=_cv)
+                                   ventana_alcance=_cv, vehiculo=propio)
+        if vehiculo and vehiculo != propio:
+            del_otro = _ultimos_valores(cursor, fuente, session_id,
+                                        _senales_del_vehiculo(), hasta,
+                                        ventana_alcance=_cv, vehiculo=vehiculo)
+            valores = {**valores, **del_otro}
 
     clima = {}
     for clave, canal in CANALES_CLIMA.items():
@@ -2001,7 +2590,7 @@ def contexto(
         "esquinas": esquinas,
         "carroceria": carroceria,
         "vehiculo_motivo": (None if (esquinas or carroceria)
-                            else "Esta fuente no publica estado de neumaticos ni de dano."),
+                            else "Esta fuente no publica estado de neumaticos ni de daño."),
         "puesta_a_punto": puesta,
         "campos": campos,
         "sin_decodificar": [c["clave"] for c in campos if not c["decodificado"]],
@@ -2088,9 +2677,30 @@ REGLAS_DE_AVISO = [
      "que": "Aviso por limites de pista", "unidad": ""},
 ]
 
-#: Tipos de superficie que no son pista. El piano **no** esta: se puede rodar
-#: sobre un piano sin perder agarre, y en la trazada normal se pisa.
-SUPERFICIES_FUERA = {2: "grava", 3: "arena", 4: "tierra", 6: "cesped artificial"}
+#: LA TABLA DE SUPERFICIES SE LEE DEL DECODIFICADOR, NO SE COPIA.
+#:
+#: Aca habia una copia, sin usar en ninguna parte y **corrida**: declaraba 2 como
+#: grava cuando 2 es hormigon, 4 como tierra cuando 4 es grava, 6 como cesped
+#: artificial cuando 6 es arena. Y le faltaba el 7, que es el cesped, o sea la
+#: superficie sobre la que se sale de pista casi siempre: en una sesion de Abu
+#: Dabi son 508 muestras.
+#:
+#: Una segunda tabla del mismo hecho no se mantiene sola, y esta lo demostro. La
+#: unica que vale es `f1_udp.SUPERFICIES`, que es la que ya usa el anotador en
+#: vivo, de modo que las dos lecturas ---la de en vivo y la de despues--- hablan
+#: del mismo mundo.
+
+#: Fuera de pista, segun el articulo 33.3 del reglamento deportivo: ninguna
+#: parte del vehiculo en contacto con la pista, y **el piano no es pista**. Es
+#: la misma regla que aplica `backend/anotador_vivo.py` sobre el flujo en vivo;
+#: estaba solo alli, de modo que una sesion mirada en vivo anotaba salidas que
+#: la misma sesion reproducida no mostraba.
+REGLA_FUERA_DE_PISTA = {
+    "que": "Fuera de pista",
+    "nivel": "alerta",
+    "canal": "surface_type_*",
+    "umbral": "las cuatro ruedas sobre superficie que no es asfalto",
+}
 
 
 #: Los avisos de una sesion guardada no cambian: recorren la sesion entera
@@ -2103,6 +2713,381 @@ SUPERFICIES_FUERA = {2: "grava", 3: "arena", 4: "tierra", 6: "cesped artificial"
 #: las ultimas que se pidieron, que son las que alguien esta mirando.
 _AVISOS_CACHE: OrderedDict = OrderedDict()
 AVISOS_EN_CACHE = 24
+
+
+#: TROMPO: LOS TRES A LA VEZ, Y QUE DURE.
+#:
+#: Calibrado contra un trompo real ---dos, en verdad--- de la sesion de Bahrein
+#: del 2026-09-10, vuelta 7. La firma medida en el metro 2.765: el giro llega a
+#: 3,05 rad/s mientras el volante esta en -1,00, o sea a tope **al reves**, el
+#: eje trasero desliza 8,13 y la velocidad cae de 92 a 29 km/h. El segundo, en
+#: el metro 4.197, cae de 117 a 12 km/h.
+#:
+#: NINGUNA DE LAS TRES CONDICIONES ALCANZA SOLA:
+#:
+#: * el giro alto tambien lo produce una horquilla lenta;
+#: * el deslizamiento trasero solo, con el volante acompanando, es la
+#:   sobreviraje normal que la regla de tren trasero ya anota;
+#: * **el contravolante es lo que distingue**: el coche rota hacia un lado y el
+#:   volante esta hacia el otro. Eso no ocurre trazando.
+#:
+#: Y que dure. Medido sobre las seis sesiones capturadas: con las tres
+#: condiciones, la de Bahrein da 71 muestras y las otras cinco dan cero, salvo
+#: Monaco con **una sola**. Los episodios de Bahrein llegan a veintitres
+#: muestras seguidas; el de Monaco y uno suelto duran una. Un trompo dura, un
+#: tiron no, y tres muestras ---unos 150 ms a 20 Hz--- los separan sin tocar
+#: ninguno de los episodios reales.
+UMBRAL_GIRO_TROMPO = 1.5
+MINIMO_MUESTRAS_TROMPO = 3
+
+#: EL ANOTADOR MIRA LA SENAL CRUDA; ESTAS REGLAS MIRAN LA GUARDADA.
+#:
+#: No estan en la misma escala, y ahi se cometio el error. El adaptador publica
+#: el acelerador y el freno **multiplicados por cien**, porque los declara en
+#: por ciento; el anotador en vivo los evalua antes de eso, sobre la fraccion de
+#: cero a uno que entrega el juego. Importar el umbral del anotador y
+#: compararlo contra la columna guardada ---que es lo que hacia la regla de tren
+#: trasero--- convertia "acelerador sobre el 50 %" en "acelerador sobre el
+#: 0,5 %": el pedal apenas tocado alcanzaba, de modo que la condicion que debia
+#: separar el deslizamiento acelerando del deslizamiento al frenar no separaba
+#: nada. El texto del umbral decia una cosa y la consulta hacia otra.
+#:
+#: Por eso estos dos viven aca con el sufijo de su unidad, y una prueba fija la
+#: conversion contra el factor que declara el adaptador. Los demas
+#: ---deslizamiento, giro, fuerza vertical--- se guardan con factor 1,0 y se
+#: siguen importando del anotador tal cual.
+UMBRAL_ACELERADOR_PCT = 50.0
+UMBRAL_FRENO_SUELTO_PCT = anotador_vivo.UMBRAL_FRENO_SUELTO * 100.0
+
+#: Las reglas fisicas que el anotador en vivo evalua sobre el flujo, escritas
+#: para pedirselas a una sesion guardada.
+#:
+#: LOS UMBRALES SE IMPORTAN, NO SE COPIAN. Estan calibrados en
+#: `backend/anotador_vivo.py` contra vueltas reales, y una segunda copia se
+#: desincroniza sin que nadie lo note ---en este mismo archivo habia una tabla
+#: de superficies duplicada y equivocada en todas sus entradas---. Que las dos
+#: lecturas usen el mismo numero es lo que hace que una sesion mirada en vivo y
+#: la misma reproducida digan lo mismo.
+#:
+#: La medicion que respalda el umbral de deslizamiento: sobre 47.481 muestras,
+#: el deslizamiento trasero tiene mediana 0,02 y percentil 99 entre 0,18 y 0,22.
+#: El umbral de 0,25 queda apenas por encima de lo que ocurre normalmente, que
+#: es lo que se le pide a un umbral.
+REGLAS_FISICAS = [
+    {
+        "que": "Perdida de tren trasero",
+        "nivel": "alerta",
+        "canal": "wheel_slip_ratio_rear_*",
+        "umbral": ("deslizamiento trasero sobre %.2f con el acelerador sobre %.0f %%"
+                   % (anotador_vivo.UMBRAL_DESLIZAMIENTO, UMBRAL_ACELERADOR_PCT)),
+        "unidad": "%",
+    },
+    {
+        "que": "Trompo",
+        "nivel": "critico",
+        "canal": "yaw_rate + steering_normalized + wheel_slip_ratio_rear_*",
+        "umbral": ("giro sobre %.1f rad/s contra el volante, con el tren trasero "
+                   "deslizando, durante al menos %d muestras seguidas"
+                   % (UMBRAL_GIRO_TROMPO, MINIMO_MUESTRAS_TROMPO)),
+        "unidad": "rad/s",
+    },
+    {
+        "que": "Impacto vertical",
+        "nivel": "alerta",
+        "canal": "g_force_vertical",
+        "umbral": "%.1f g" % anotador_vivo.UMBRAL_VERTICAL_G,
+        "unidad": "g",
+    },
+    {
+        "que": "Caida brusca de velocidad",
+        "nivel": "alerta",
+        "canal": "speed + brake_position",
+        "umbral": ("mas de %.0f km/h perdidos en %.1f s con el freno bajo el "
+                   "%.0f %% durante toda la ventana"
+                   % (anotador_vivo.UMBRAL_CAIDA_KMH,
+                      anotador_vivo.VENTANA_CAIDA_S, UMBRAL_FRENO_SUELTO_PCT)),
+        "unidad": "km/h",
+    },
+]
+
+
+def _vehiculo_propio(cursor, fuente: str, session_id: str) -> str | None:
+    """El vehiculo de quien conduce, **declarado** por el flujo y no inferido.
+
+    Se lee de `player_car_index`, que el paquete de cabecera trae en cada
+    mensaje y el adaptador copia al metadato. Se podria adivinar por que
+    vehiculo tiene `yaw_rate` ---`motion_ex` describe solo al propio--- pero eso
+    seria deducir del sintoma lo que la fuente ya dice con todas las letras, y
+    dejaria de funcionar el dia que se publique otro paquete privado.
+
+    Devuelve `None` cuando la sesion no lo declara. Con las capturas viejas, de
+    un solo vehiculo, eso no cambia nada: donde hay uno el promedio de uno es
+    ese uno.
+    """
+
+    cursor.execute("""
+        SELECT metadata->'extra'->>'player_car_index'
+          FROM telemetry_messages
+         WHERE source_type = %s AND session_id = %s
+           AND metadata->'extra'->>'player_car_index' IS NOT NULL
+         LIMIT 1
+    """, (fuente, session_id))
+    fila = cursor.fetchone()
+    if not fila or fila[0] is None:
+        return None
+    try:
+        return FORMA_DEL_VEHICULO % (session_id, int(fila[0]))
+    except (TypeError, ValueError):
+        return None
+
+
+#: UN AVISO ES DE UN VEHICULO, Y CON UNO SOLO NO SE NOTABA.
+#:
+#: Todas las reglas giran la tabla larga a una fila por instante con
+#: `max(value_numeric) FILTER (WHERE signal_name = ...)`. Con **un** vehiculo
+#: capturado ese `max` es el unico valor que hay. Con cuatro toma el mayor de
+#: los cuatro por cada canal por separado: el giro de uno con el volante de otro
+#: y el deslizamiento de un tercero. **Eso no describe a ningun coche**, y el
+#: aviso que sale de ahi afirma algo que no ocurrio.
+#:
+#: Estuvo latente desde el principio y aparecio el 2026-09-10, en la primera
+#: carrera con la parrilla acotada a cuatro. Un defecto que solo se ve con datos
+#: que todavia no existian es un defecto igual.
+def _acotar_al_vehiculo(vehiculo: str | None) -> tuple[str, list]:
+    """La clausula y su parametro, o nada cuando no se sabe a quien acotar.
+
+    Sin saber cual es el propio **no se acota, y no se calla**: con un unico
+    vehiculo la lectura sigue siendo correcta, y devolver cero avisos por no
+    poder acotar seria peor que devolverlos como se venian devolviendo.
+    """
+
+    return ("", []) if vehiculo is None else (" AND vehicle_id = %s", [vehiculo])
+
+
+def _primera_perdida_de_tren_trasero(cursor, fuente: str, session_id: str,
+                                    vehiculo: str | None = None):
+    """El primer instante en que el eje trasero desliza **acelerando**.
+
+    El acelerador esta en la regla y no de adorno: el deslizamiento solo por si
+    mismo aparece tambien al frenar fuerte y en cada cambio de apoyo, y llamar a
+    eso perdida de tren trasero seria anotar la conduccion normal. Es la misma
+    condicion que el anotador evalua sobre el flujo.
+    """
+
+    _clausula, _par = _acotar_al_vehiculo(vehiculo)
+    cursor.execute("""
+        WITH p AS (
+            SELECT timestamp,
+                   max(value_numeric) FILTER (WHERE signal_name = 'wheel_slip_ratio_rear_left')  AS izq,
+                   max(value_numeric) FILTER (WHERE signal_name = 'wheel_slip_ratio_rear_right') AS der,
+                   max(value_numeric) FILTER (WHERE signal_name = 'throttle_position')           AS acelerador,
+                   max(value_numeric) FILTER (WHERE signal_name = 'lap_number')   AS vuelta,
+                   max(value_numeric) FILTER (WHERE signal_name = 'lap_distance') AS metro
+              FROM telemetry_messages
+             WHERE source_type = %s AND session_id = %s
+               AND signal_name = ANY(%s)""" + _clausula + """
+             GROUP BY timestamp)
+        SELECT vuelta, metro, greatest(abs(izq), abs(der)) AS peor, timestamp FROM p
+         WHERE izq IS NOT NULL AND der IS NOT NULL AND acelerador IS NOT NULL
+           AND greatest(abs(izq), abs(der)) > %s AND acelerador > %s
+         ORDER BY timestamp LIMIT 1
+    """, (fuente, session_id,
+          ["wheel_slip_ratio_rear_left", "wheel_slip_ratio_rear_right",
+           "throttle_position", "lap_number", "lap_distance"],
+          *_par,
+          anotador_vivo.UMBRAL_DESLIZAMIENTO, UMBRAL_ACELERADOR_PCT))
+    return cursor.fetchone()
+
+
+def _primer_trompo(cursor, fuente: str, session_id: str,
+                  vehiculo: str | None = None):
+    """El primer trompo: giro contra el volante, tren trasero fuera, y que dure.
+
+    LA DURACION SE MIDE CON EL RELOJ Y NO CONTANDO FILAS. Dos muestras seguidas
+    en el orden no son dos muestras seguidas en el tiempo si entre ellas hubo un
+    hueco de captura ---los hay, de minutos, cuando el juego pasa por el menu---
+    y un trompo partido por ese hueco no es un trompo mas largo. Un corte de mas
+    de tres decimas separa episodios; a veinte muestras por segundo, lo seguido
+    llega cada cinco centesimas.
+    """
+
+    _clausula, _par = _acotar_al_vehiculo(vehiculo)
+    cursor.execute("""
+        WITH p AS (
+            SELECT timestamp,
+                   max(value_numeric) FILTER (WHERE signal_name = 'yaw_rate')            AS giro,
+                   max(value_numeric) FILTER (WHERE signal_name = 'steering_normalized') AS volante,
+                   greatest(
+                     abs(max(value_numeric) FILTER (WHERE signal_name = 'wheel_slip_ratio_rear_left')),
+                     abs(max(value_numeric) FILTER (WHERE signal_name = 'wheel_slip_ratio_rear_right'))
+                   ) AS desliz,
+                   max(value_numeric) FILTER (WHERE signal_name = 'lap_number')   AS vuelta,
+                   max(value_numeric) FILTER (WHERE signal_name = 'lap_distance') AS metro
+              FROM telemetry_messages
+             WHERE source_type = %s AND session_id = %s
+               AND signal_name = ANY(%s)""" + _clausula + """
+             GROUP BY timestamp),
+        q AS (
+            SELECT * FROM p
+             WHERE giro IS NOT NULL AND volante IS NOT NULL AND desliz IS NOT NULL
+               AND giro * volante < 0 AND abs(giro) > %s AND desliz > %s),
+        d AS (
+            SELECT *, CASE WHEN timestamp - lag(timestamp) OVER (ORDER BY timestamp)
+                                > interval '300 milliseconds'
+                           THEN 1 ELSE 0 END AS corte
+              FROM q),
+        i AS (SELECT *, sum(corte) OVER (ORDER BY timestamp) AS isla FROM d),
+        c AS (
+            SELECT isla, count(*) AS muestras, min(timestamp) AS empieza,
+                   max(abs(giro)) AS giro_maximo
+              FROM i GROUP BY isla HAVING count(*) >= %s)
+        SELECT i.vuelta, i.metro, c.giro_maximo, c.empieza, c.muestras
+          FROM c JOIN i ON i.isla = c.isla AND i.timestamp = c.empieza
+         ORDER BY c.empieza LIMIT 1
+    """, (fuente, session_id,
+          ["yaw_rate", "steering_normalized",
+           "wheel_slip_ratio_rear_left", "wheel_slip_ratio_rear_right",
+           "lap_number", "lap_distance"],
+          *_par,
+          UMBRAL_GIRO_TROMPO, anotador_vivo.UMBRAL_DESLIZAMIENTO,
+          MINIMO_MUESTRAS_TROMPO))
+    return cursor.fetchone()
+
+
+def _primer_impacto_vertical(cursor, fuente: str, session_id: str,
+                            vehiculo: str | None = None):
+    """El primer golpe vertical, mirando el valor absoluto.
+
+    **En valor absoluto y no por el maximo**, que es lo que las reglas de canal
+    contra umbral hacen: un golpe hacia abajo llega como negativo y aquellas
+    nunca lo verian.
+    """
+
+    _clausula, _par = _acotar_al_vehiculo(vehiculo)
+    cursor.execute("""
+        WITH p AS (
+            SELECT timestamp,
+                   max(value_numeric) FILTER (WHERE signal_name = 'g_force_vertical') AS g,
+                   max(value_numeric) FILTER (WHERE signal_name = 'lap_number')   AS vuelta,
+                   max(value_numeric) FILTER (WHERE signal_name = 'lap_distance') AS metro
+              FROM telemetry_messages
+             WHERE source_type = %s AND session_id = %s
+               AND signal_name = ANY(%s)""" + _clausula + """
+             GROUP BY timestamp)
+        SELECT vuelta, metro, g, timestamp FROM p
+         WHERE g IS NOT NULL AND abs(g) > %s
+         ORDER BY timestamp LIMIT 1
+    """, (fuente, session_id,
+          ["g_force_vertical", "lap_number", "lap_distance"],
+          *_par,
+          anotador_vivo.UMBRAL_VERTICAL_G))
+    return cursor.fetchone()
+
+
+def _primera_caida_brusca(cursor, fuente: str, session_id: str,
+                         vehiculo: str | None = None):
+    """La primera perdida grande de velocidad **sin frenar**, sobre una ventana.
+
+    Es la tercera regla del anotador en vivo y la unica de las suyas que no cabe
+    en la forma "un canal contra un umbral": no pregunta cuanto vale la
+    velocidad ahora sino **cuanto cayo en medio segundo**. Por eso quedo afuera
+    cuando se trajeron las otras dos, y por eso una sesion mirada en vivo
+    anotaba caidas que la misma sesion reproducida no mostraba.
+
+    EL FRENO TIENE QUE HABER ESTADO SUELTO EN TODA LA VENTANA, NO SOLO AL FINAL.
+    Comprobarlo solo en el instante final convierte cada frenada normal en un
+    incidente: se frena fuerte, se suelta al entrar en la curva, y justo ahi
+    ---con el pedal ya libre--- la caida acumulada es la mayor de todas. Es el
+    mismo error que el anotador ya habia cometido y corregido, y aca se evita
+    con `max(freno)` sobre el marco, no con el valor de la fila.
+
+    LOS HUECOS DE CAPTURA NO NECESITAN TRATO APARTE, y esta es la ventaja de
+    medir la ventana con el reloj y no contando filas. El marco es `RANGE`
+    sobre el tiempo: si entre dos muestras pasaron minutos ---el juego estuvo en
+    el menu--- la fila anterior sencillamente no entra en el marco, la mas
+    antigua de la ventana es ella misma y la caida da cero. Con un marco `ROWS`
+    habria que descartar esos saltos a mano, como hubo que hacerlo en el trompo.
+
+    **Si falta el freno, la regla se abstiene.** El anotador en vivo, con la
+    cola vacia, evalua igual; aca no, porque sin el freno lo que queda es "la
+    velocidad cayo mucho", que es la descripcion de cualquier frenada de fin de
+    recta. Afirmar un incidente sin haber podido mirar el pedal seria inventar
+    el hecho, igual que con las cuatro ruedas de la salida de pista.
+    """
+
+    _clausula, _par = _acotar_al_vehiculo(vehiculo)
+    cursor.execute("""
+        WITH p AS (
+            SELECT timestamp,
+                   max(value_numeric) FILTER (WHERE signal_name = 'speed')          AS velocidad,
+                   max(value_numeric) FILTER (WHERE signal_name = 'brake_position') AS freno,
+                   max(value_numeric) FILTER (WHERE signal_name = 'lap_number')     AS vuelta,
+                   max(value_numeric) FILTER (WHERE signal_name = 'lap_distance')   AS metro
+              FROM telemetry_messages
+             WHERE source_type = %s AND session_id = %s
+               AND signal_name = ANY(%s)""" + _clausula + """
+             GROUP BY timestamp),
+        q AS (
+            SELECT * FROM p WHERE velocidad IS NOT NULL AND freno IS NOT NULL),
+        v AS (
+            SELECT *,
+                   first_value(velocidad) OVER ventana - velocidad AS caida,
+                   max(freno) OVER ventana                         AS freno_maximo
+              FROM q
+            WINDOW ventana AS (ORDER BY timestamp
+                               RANGE BETWEEN interval '{ventana} milliseconds'
+                                     PRECEDING AND CURRENT ROW))
+        SELECT vuelta, metro, caida, timestamp FROM v
+         WHERE caida > %s AND freno_maximo < %s
+         ORDER BY timestamp LIMIT 1
+    """.format(ventana=int(anotador_vivo.VENTANA_CAIDA_S * 1000)),
+        (fuente, session_id,
+         ["speed", "brake_position", "lap_number", "lap_distance"],
+         *_par,
+         anotador_vivo.UMBRAL_CAIDA_KMH, UMBRAL_FRENO_SUELTO_PCT))
+    return cursor.fetchone()
+
+
+def _primera_salida_de_pista(cursor, fuente: str, session_id: str,
+                            vehiculo: str | None = None):
+    """El primer instante con las cuatro ruedas fuera del asfalto, o `None`.
+
+    Se pide en una consulta y no recorriendo la sesion: la condicion es sobre
+    los cuatro canales **del mismo instante**, de modo que hay que juntarlos
+    antes de compararlos.
+
+    **Con un canal ausente la regla se abstiene**, igual que en vivo: podria
+    faltar justamente la rueda que seguia tocando la pista, y afirmar una salida
+    sin haber podido mirar las cuatro seria inventar el hecho.
+    """
+
+    esquinas = ["surface_type_%s" % e for e in ESQUINAS]
+    _clausula, _par = _acotar_al_vehiculo(vehiculo)
+    cursor.execute("""
+        WITH p AS (
+            SELECT timestamp,
+                   max(value_numeric) FILTER (WHERE signal_name = %s) AS a,
+                   max(value_numeric) FILTER (WHERE signal_name = %s) AS b,
+                   max(value_numeric) FILTER (WHERE signal_name = %s) AS c,
+                   max(value_numeric) FILTER (WHERE signal_name = %s) AS d,
+                   max(value_numeric) FILTER (WHERE signal_name = 'lap_number')   AS vuelta,
+                   max(value_numeric) FILTER (WHERE signal_name = 'lap_distance') AS metro
+              FROM telemetry_messages
+             WHERE source_type = %s AND session_id = %s
+               AND signal_name = ANY(%s)""" + _clausula + """
+             GROUP BY timestamp)
+        SELECT vuelta, metro, a, b, c, d, timestamp FROM p
+         WHERE a IS NOT NULL AND b IS NOT NULL AND c IS NOT NULL AND d IS NOT NULL
+           AND a <> %s AND b <> %s AND c <> %s AND d <> %s
+         ORDER BY timestamp LIMIT 1
+    """, tuple(esquinas) + (fuente, session_id,
+                            esquinas + ["lap_number", "lap_distance"])
+         + tuple(_par) + (f1_udp.SUPERFICIE_DE_PISTA,) * 4)
+    fila = cursor.fetchone()
+    if not fila:
+        return None
+    vuelta, metro, a, b, c, d, instante = fila
+    return vuelta, metro, [int(a), int(b), int(c), int(d)], instante
 
 
 @router.get("/sesiones/{session_id}/avisos")
@@ -2142,6 +3127,12 @@ def avisos(session_id: str,
     superficies = ["surface_type_%s" % e for e in ESQUINAS]
 
     with db.obtener_conexion() as conexion, conexion.cursor() as cursor:
+        # DE QUIEN SON ESTOS AVISOS. De quien conduce, y hay que decirlo con un
+        # `vehicle_id` y no darlo por sentado: desde que se puede escuchar a
+        # varios pilotos, la sesion tiene mas de un vehiculo y girar la tabla sin
+        # acotar mezcla los canales de todos.
+        propio = _vehiculo_propio(cursor, fuente, session_id)
+        _cl, _pv = _acotar_al_vehiculo(propio)
         cursor.execute("""
             WITH p AS (
                 SELECT timestamp,
@@ -2150,12 +3141,13 @@ def avisos(session_id: str,
                        signal_name, max(value_numeric) AS valor
                   FROM telemetry_messages
                  WHERE source_type = %s AND session_id = %s
-                   AND signal_name = ANY(%s)
+                   AND signal_name = ANY(%s)""" + _cl + """
                  GROUP BY timestamp, signal_name)
             SELECT signal_name, min(timestamp) FILTER (WHERE valor IS NOT NULL) AS primero,
                    max(valor) AS pico
               FROM p GROUP BY signal_name
-        """, (fuente, session_id, canales + superficies + ["lap_number", "lap_distance"]))
+        """, tuple([fuente, session_id,
+                   canales + superficies + ["lap_number", "lap_distance"]] + _pv))
         picos = {f[0]: {"primero": f[1], "pico": f[2]} for f in cursor.fetchall()}
 
         # El momento exacto de cada condicion: una consulta por regla que se
@@ -2173,11 +3165,12 @@ def avisos(session_id: str,
                            max(value_numeric) FILTER (WHERE signal_name = 'lap_distance') AS metro
                       FROM telemetry_messages
                      WHERE source_type = %s AND session_id = %s
-                       AND signal_name IN (%s, 'lap_number', 'lap_distance')
+                       AND signal_name IN (%s, 'lap_number', 'lap_distance')""" + _cl + """
                      GROUP BY timestamp)
                 SELECT vuelta, metro, v, timestamp FROM p
                  WHERE v >= %s ORDER BY timestamp LIMIT 1
-            """, (regla["canal"], fuente, session_id, regla["canal"], regla["umbral"]))
+            """, tuple([regla["canal"], fuente, session_id, regla["canal"]]
+                       + _pv + [regla["umbral"]]))
             fila = cursor.fetchone()
             if not fila:
                 continue
@@ -2193,12 +3186,78 @@ def avisos(session_id: str,
                 "umbral": regla["umbral"],
             })
 
+        # FUERA DE PISTA, QUE HASTA AHORA SOLO EXISTIA EN VIVO.
+        #
+        # Las catorce reglas de arriba miran **un canal contra un umbral**, y la
+        # salida de pista no es eso: es una condicion sobre los cuatro a la vez
+        # ---ninguna rueda sobre asfalto--- de modo que no entra en esa forma y
+        # por eso no estaba. Medido sobre la sesion de Abu Dabi: veintitres
+        # cuadros con las cuatro ruedas fuera, y la respuesta traia cero avisos.
+        fila = _primera_salida_de_pista(cursor, fuente, session_id, propio)
+        if fila is not None:
+            vuelta, metro, codigos, instante = fila
+            nombres = sorted({f1_udp.SUPERFICIES.get(c, "id-%d" % c) for c in codigos})
+            # Sobre piano se deja la pista **sin perder agarre**, que es la
+            # trazada normal de muchas curvas. Se anota igual ---el reglamento no
+            # distingue--- y se dice, porque no es lo mismo pisar un piano que
+            # irse al cesped.
+            con_agarre = all(c in f1_udp.SUPERFICIES_CON_AGARRE for c in codigos)
+            encontrados.append({
+                "nivel": "info" if con_agarre else REGLA_FUERA_DE_PISTA["nivel"],
+                "que": REGLA_FUERA_DE_PISTA["que"],
+                "valor": None,
+                "unidad": "",
+                "vuelta": int(vuelta) if vuelta is not None else None,
+                "metro": round(metro, 1) if metro is not None else None,
+                "instante": instante.isoformat() if instante else None,
+                "canal": REGLA_FUERA_DE_PISTA["canal"],
+                "umbral": REGLA_FUERA_DE_PISTA["umbral"],
+                "detalle": "las cuatro ruedas sobre %s%s" % (
+                    "/".join(nombres),
+                    "; sobre superficie con agarre" if con_agarre else ""),
+            })
+
+        # Las fisicas, que hasta hoy solo existian sobre el flujo en vivo.
+        for regla, buscar, formato in (
+                (REGLAS_FISICAS[0], _primera_perdida_de_tren_trasero,
+                 lambda v: "%.0f %% de deslizamiento en el eje trasero" % (abs(v) * 100)),
+                (REGLAS_FISICAS[1], _primer_trompo,
+                 lambda v: "%.2f rad/s de giro contra el volante" % abs(v)),
+                (REGLAS_FISICAS[2], _primer_impacto_vertical,
+                 lambda v: "%+.2f g" % v),
+                (REGLAS_FISICAS[3], _primera_caida_brusca,
+                 lambda v: "-%.0f km/h en %.1f s sin frenar"
+                           % (v, anotador_vivo.VENTANA_CAIDA_S))):
+            fila = buscar(cursor, fuente, session_id, propio)
+            if not fila:
+                continue
+            vuelta, metro, valor, instante = fila[:4]
+            encontrados.append({
+                "nivel": regla["nivel"],
+                "que": regla["que"],
+                "valor": round(valor, 2) if valor is not None else None,
+                "unidad": regla["unidad"],
+                "vuelta": int(vuelta) if vuelta is not None else None,
+                "metro": round(metro, 1) if metro is not None else None,
+                "instante": instante.isoformat() if instante else None,
+                "canal": regla["canal"],
+                "umbral": regla["umbral"],
+                "detalle": formato(valor) if valor is not None else None,
+            })
+
     encontrados.sort(key=lambda a: (-(a["vuelta"] or 0), -(a["metro"] or 0)))
     respuesta = {
         "session_id": session_id,
         "fuente": fuente,
+        # De quien son. Con una sola sesion de un vehiculo la pregunta no
+        # existia; desde que se escucha a varios pilotos, un aviso sin dueno es
+        # una afirmacion sin sujeto.
+        "vehiculo": propio,
         "avisos": encontrados[:limite],
-        "reglas_evaluadas": len(REGLAS_DE_AVISO),
+        # Las de canal contra umbral, mas la de superficie y las fisicas, que no
+        # tienen esa forma. Contar solo las primeras seria decir que se
+        # evaluaron catorce cuando se evaluaron diecinueve.
+        "reglas_evaluadas": len(REGLAS_DE_AVISO) + 1 + len(REGLAS_FISICAS),
         "criterio": ("primer instante en que cada condicion se cumple; cada aviso "
                      "declara su canal y su umbral"),
     }

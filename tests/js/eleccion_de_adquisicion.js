@@ -39,13 +39,27 @@ function extraer(nombre) {
 /* `etiquetaDeCorrida` lee `corrida`, que es el estado del modulo. Se lo pone
    en el ambito global, que es lo que ve un cuerpo construido con
    `new Function`. */
+/* La fuente de datos vigente. Ojo con el nombre: el `fuente` de este archivo es
+   el texto del `app.js`, y este es el de las funciones extraidas, que preguntan
+   si esa fuente tiene eje de distancia. */
+globalThis.fuente = "f1";
 globalThis.corrida = { adquisicion: null, fase: null, disponibles: null };
 const NOMBRES = ["nombreDeFase", "etiquetaDeCorrida", "duracionCorta",
                  "queEsLaFase", "numeroMedido",
-                 "alcanceEsAmbiguo", "hayAlcanceQueElegir",
-                 "adquisicionSeSolapa", "alcanceElegidoEsValido", "faseDeLaDireccion",
-                 "filaDeCorrida", "fechaAr", "cifra", "alcancePermitePedir"];
-const sacadas = new Function(NOMBRES.map(extraer).join("\n\n") +
+                  "alcanceEsAmbiguo", "hayAlcanceQueElegir",
+                  "adquisicionSeSolapa", "alcanceElegidoEsValido", "faseDeLaDireccion",
+                  "filaDeCorrida", "fechaAr", "cifra", "hayEjeDeDistancia", "porQueNoHayDistancia",
+                  "alcanceResuelto", "alcancePermitePedir"];
+/* La tabla de que fuentes tienen eje de distancia: la compuerta la mira antes
+   de dejar pedir, y sin ella no se puede ejercer la compuerta de verdad. */
+function constante(nombre) {
+  const i = fuente.indexOf("const " + nombre + " =");
+  if (i === -1) throw new Error("no esta la constante " + nombre);
+  return fuente.slice(i, fuente.indexOf("};", i) + 2);
+}
+
+const sacadas = new Function(constante("EJE_DE_DISTANCIA_POR_FUENTE") + "\n" +
+                             NOMBRES.map(extraer).join("\n\n") +
                              "\nreturn { " + NOMBRES.join(", ") + " };")();
 const nombreDeFase = sacadas.nombreDeFase;
 const etiquetaDeCorrida = sacadas.etiquetaDeCorrida;
@@ -373,11 +387,12 @@ prueba("no se pide historico con el alcance sin resolver", () => {
 });
 
 prueba("la compuerta esta en las dos consultas de historico", () => {
-  ["asegurarVuelta", "asegurarPosiciones"].forEach(nombre => {
+  [["asegurarVuelta", "alcanceResuelto()"],
+   ["asegurarPosiciones", "alcancePermitePedir()"]].forEach(([nombre, compuerta]) => {
     const i = fuente.indexOf("function " + nombre + "(");
     assert.ok(i > 0, "no esta " + nombre);
     const cabeza = fuente.slice(i, i + 420);
-    assert.ok(cabeza.indexOf("alcancePermitePedir()") !== -1,
+    assert.ok(cabeza.indexOf(compuerta) !== -1,
       nombre + " pide sin comprobar que el alcance este resuelto");
   });
 });
@@ -565,9 +580,16 @@ prueba("se recuerda con que volver a preguntar aunque el elector no llegue a abr
      encabezado se quedaría sin nada que reabrir. */
   const i = fuente.indexOf("corrida.mezclada = !!a.mezclada;");
   assert.ok(i > 0, "no está el punto donde llegan las adquisiciones");
-  const bloque = fuente.slice(i, i + 500);
-  assert.ok(bloque.indexOf("_contextoDeCorrida = { ruta: ruta, s: s }") !== -1,
-    "no se recuerda el contexto salvo al abrir el elector");
+  /* SIN UN TOPE FIJO DE CARACTERES. Miraba los primeros quinientos y se rompía
+     en cuanto la continuación crecía ---al agregarle la parrilla, sin ir más
+     lejos---, sin que lo que quiere comprobar hubiera cambiado. Lo que importa
+     es que el contexto se recuerde **al llegar la respuesta** y no recién
+     cuando alguien abre el elector: se comprueba contra dónde se abre. */
+  const abre = fuente.indexOf("abrirElectorDeCorrida(ruta, apertura, s)", i);
+  const recuerda = fuente.indexOf("_contextoDeCorrida = { ruta: ruta, s: s }", i);
+  assert.ok(recuerda !== -1, "no se recuerda el contexto salvo al abrir el elector");
+  assert.ok(abre === -1 || recuerda < abre,
+    "el contexto se recuerda recién al abrir el elector");
 });
 
 if (process.exitCode) {

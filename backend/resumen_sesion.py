@@ -48,7 +48,7 @@ INTERVALOS_MAXIMOS = 7200
 
 
 class ResumenDeSenal:
-    """Minimo y maximo por intervalo de una senal, a lo largo de la sesion."""
+    """Minimo y maximo por intervalo de una señal, a lo largo de la sesion."""
 
     __slots__ = ("intervalos", "_actual", "_inicio", "_min", "_max", "_n")
 
@@ -106,7 +106,7 @@ class ResumenDeSenal:
 
 
 class ResumenDeSesion:
-    """Los resumenes de todas las senales de todos los vehiculos."""
+    """Los resumenes de todas las señales de todos los vehiculos."""
 
     def __init__(self) -> None:
         self._por_vehiculo: dict[str, dict[str, ResumenDeSenal]] = {}

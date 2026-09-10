@@ -47,7 +47,10 @@ class ContratoTests(unittest.TestCase):
         mensaje = f1_25.mensajes_desde_paquete(_telemetria(), INICIO)[0]
         self.assertEqual(mensaje["source_type"], "f1_25_udp_simulation")
         self.assertEqual(mensaje["quality_flag"], "simulated_f1_25")
-        self.assertTrue(mensaje["metadata"]["extra"]["simulated"])
+        # Habia ademas un `simulated: True` en el metadato de cada senal. Decia
+        # lo mismo que estas dos lineas y lo repetia seis mil veces por segundo:
+        # una tercera copia de un hecho no lo hace mas cierto.
+        self.assertNotIn("simulated", mensaje["metadata"]["extra"])
 
     def test_identificadores_derivan_de_la_sesion_del_juego(self):
         mensaje = f1_25.mensajes_desde_paquete(_telemetria(indice_propio=7), INICIO)[0]
@@ -64,6 +67,72 @@ class ContratoTests(unittest.TestCase):
     def test_rechaza_un_inicio_de_captura_no_interpretable(self):
         with self.assertRaises(f1_25.ErrorNormalizacion):
             f1_25.mensajes_desde_paquete(_telemetria(), "el sabado a la tarde")
+
+
+class LoConstanteSeDeclaraUnaVezTests(unittest.TestCase):
+    """Lo que no cambia en toda la sesion no viaja en cada senal.
+
+    Cada mensaje llevaba 554 bytes de metadato y **la mayoria era constante**:
+    la version del adaptador, la del decodificador, el formato del paquete, el
+    identificador de la sesion. Repetido una vez por senal, y una carrera de
+    cuatro coches produce seis mil senales por segundo.
+
+    No es un problema de disco ---el disco sobra--- sino de las tres etapas por
+    las que ese metadato pasa: se serializa en el capturador, se encola en el
+    intermediario y se interpreta en el consumidor. Medido el 2026-09-10: el
+    intermediario descarto 7.873 mensajes de una carrera porque su cola se mide
+    en bytes, y esos bytes eran en un 70 % metadato repetido.
+
+    LO QUE SE SACA SIGUE DECLARADO, EN OTRO LADO Y UNA SOLA VEZ. Lo que es de
+    la senal ---de que campo sale y como se transformo--- pasa al catalogo de
+    senales; lo que es de la captura, a los metadatos del archivo. Una
+    procedencia que se declara una vez no es una procedencia perdida; una que
+    se repite seis mil veces por segundo tampoco es mas cierta.
+    """
+
+    #: Se leen de la fila guardada, en consultas o en Python. Estos se quedan.
+    SE_LEEN = {"paquete", "session_time_s", "frame_identifier",
+               "player_car_index", "desplazamiento_captura_us",
+               "origen_adquisicion", "captura_sha256"}
+    #: Nadie los lee de la fila. Se declaran en el catalogo o en el sidecar.
+    SE_VAN = {"version_adaptador", "version_decodificador", "packet_format",
+              "packet_id", "session_uid", "simulated", "transformation",
+              "campo_origen"}
+
+    def _extra(self):
+        mensajes = f1_25.mensajes_desde_paquete(_telemetria(), INICIO)
+        return mensajes[0]["metadata"]["extra"]
+
+    def test_lo_que_se_lee_de_la_fila_sigue_estando(self) -> None:
+        extra = self._extra()
+        for clave in self.SE_LEEN:
+            with self.subTest(clave=clave):
+                self.assertIn(clave, extra)
+
+    def test_lo_constante_ya_no_viaja_en_cada_senal(self) -> None:
+        extra = self._extra()
+        for clave in self.SE_VAN:
+            with self.subTest(clave=clave):
+                self.assertNotIn(clave, extra)
+
+    def test_el_catalogo_declara_de_donde_sale_cada_senal_y_como_se_convierte(self) -> None:
+        """Es lo de la senal, y es lo mismo para todas sus filas.
+
+        Sin esto, sacar `campo_origen` y `transformation` del mensaje seria
+        perder el dato. Con esto, se pregunta una vez.
+        """
+
+        catalogo = f1_25.catalogo_de_senales()
+        por_nombre = {s["signal_name"]: s for s in catalogo}
+        self.assertEqual(por_nombre["speed"]["campo_origen"], "speed_kmh")
+        self.assertEqual(por_nombre["speed"]["transformation"], "identity")
+        # El acelerador se publica en por ciento: el factor tiene que decirse.
+        self.assertEqual(por_nombre["throttle_position"]["transformation"],
+                         "escala_x100")
+        self.assertEqual(por_nombre["drs_open"]["transformation"], "cast_bool")
+        for s in catalogo:
+            self.assertIn("campo_origen", s)
+            self.assertIn("transformation", s)
 
 
 class SenalesTests(unittest.TestCase):
@@ -112,27 +181,50 @@ class SenalesTests(unittest.TestCase):
         mensaje = senales["drs_open"]
         self.assertIs(mensaje["value"], True)
         self.assertEqual(mensaje["unit"], "bool")
-        self.assertEqual(mensaje["metadata"]["extra"]["campo_origen"], "drs")
+        # De que campo del protocolo sale es una propiedad de la senal, no del
+        # instante: se pregunta una vez al catalogo y no viaja en cada fila.
+        catalogo = {s["signal_name"]: s for s in f1_25.catalogo_de_senales()}
+        self.assertEqual(catalogo["drs_open"]["campo_origen"], "drs")
         TelemetryMessage(**mensaje)
 
 
 class ProcedenciaTests(unittest.TestCase):
     """La procedencia es obligatoria y debe permitir reconstruir el origen."""
 
-    def test_cada_mensaje_transporta_la_procedencia_completa(self):
-        obligatorias = {
-            "origen_adquisicion", "version_adaptador", "version_decodificador",
-            "packet_format", "packet_id", "session_uid", "frame_identifier",
-            "player_car_index", "campo_origen", "transformation",
-        }
+    def test_cada_mensaje_transporta_lo_que_cambia_con_el_instante(self):
+        """La procedencia sigue completa; lo que cambio es donde vive cada parte.
+
+        Antes esta prueba exigia diez campos en cada senal, y ocho de ellos eran
+        constantes: la version del adaptador no cambia entre dos muestras
+        separadas cincuenta milisegundos. Repetirlos costaba 232 de los 554
+        bytes del bloque, y ese costo se paga tres veces ---al serializar, al
+        encolar y al interpretar--- porque la cola del intermediario se mide en
+        bytes. Con cuatro vehiculos se perdio por eso el 40 % de una carrera.
+
+        Lo que queda en la fila es lo que **solo se sabe mirando esa fila**: en
+        que marco y en que segundo de sesion se tomo, de que vehiculo es, de que
+        paquete salio y si se adquirio en vivo o reproducida.
+        """
+
+        del_instante = {"origen_adquisicion", "paquete", "frame_identifier",
+                        "session_time_s", "desplazamiento_captura_us",
+                        "player_car_index", "captura_sha256"}
         for mensaje in f1_25.mensajes_desde_paquete(_telemetria(), INICIO):
-            self.assertTrue(obligatorias <= set(mensaje["metadata"]["extra"]))
+            self.assertTrue(del_instante <= set(mensaje["metadata"]["extra"]))
+
+    def test_el_identificador_de_sesion_no_se_pierde_al_sacarlo_del_metadato(self):
+        """Estaba tres veces en el mismo mensaje y sigue estando dos."""
+
+        mensaje = f1_25.mensajes_desde_paquete(_telemetria(), INICIO)[0]
+        self.assertNotIn("session_uid", mensaje["metadata"]["extra"])
+        self.assertIn("3735928559", mensaje["session_id"])
+        self.assertIn("3735928559", mensaje["metadata"]["reference_id"])
 
     def test_la_transformacion_se_declara_por_senal(self):
         """Declararla uniforme cuando algunas se convierten vuelve inutil el campo."""
 
-        por_senal = {m["signal_name"]: m["metadata"]["extra"]["transformation"]
-                     for m in f1_25.mensajes_desde_paquete(_telemetria(), INICIO)}
+        por_senal = {s["signal_name"]: s["transformation"]
+                     for s in f1_25.catalogo_de_senales()}
         self.assertEqual(por_senal["speed"], "identity")
         self.assertEqual(por_senal["gear_selected"], "identity")
         self.assertEqual(por_senal["throttle_position"], "escala_x100")
@@ -229,13 +321,10 @@ class EnergiaYDanoTests(unittest.TestCase):
     def test_toda_senal_declara_su_transformacion(self):
         """Es la regla que este trabajo le reclama a la fuente deportiva."""
 
-        for packet_id in paquetes_normalizables():
-            for m in f1_25.mensajes_desde_paquete(
-                    f1_udp.decodificar(
-                        __import__("tests.test_f1_udp", fromlist=["x"])
-                        ._datagrama_relleno(packet_id)), INICIO):
-                with self.subTest(senal=m["signal_name"]):
-                    self.assertIn("transformation", m["metadata"]["extra"])
+        for s in f1_25.catalogo_de_senales():
+            with self.subTest(senal=s["signal_name"]):
+                self.assertTrue(s["transformation"])
+                self.assertTrue(s["campo_origen"])
 
 
 class CatalogoDeSenalesTests(unittest.TestCase):

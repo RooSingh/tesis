@@ -36,6 +36,7 @@ import json
 import socket
 import sys
 import time
+import unicodedata
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -47,6 +48,12 @@ from backend import f1_capture, f1_udp
 from backend.config import MQTT_HOST, MQTT_PORT, MQTT_TOPIC
 
 DESTINO_POR_DEFECTO = ROOT / "datasets" / "f1_25" / "capturas"
+
+#: Donde vive la eleccion de pilotos. Junto a las capturas y no en una
+#: carpeta de configuracion: describe que se esta escuchando ahora mismo,
+#: igual que el archivo provisional de la sesion en curso, y se mira en el
+#: mismo lugar donde ya se mira todo lo demas de la escucha.
+SELECCION_POR_DEFECTO = DESTINO_POR_DEFECTO / ".pilotos_elegidos.json"
 
 # El puerto en que el juego emite su telemetria.
 PUERTO_JUEGO = 20777
@@ -396,6 +403,76 @@ def nombre_derivado(procedencia: dict, inicio: datetime) -> str:
     return "_".join(partes)
 
 
+#: Cuantos vehiculos como maximo acepta una eleccion, el propio incluido.
+#:
+#: NO ES UN NUMERO DE GUSTO: ES LO QUE LA MEDICION PERMITE. Sobre la carrera de
+#: Spa con la parrilla entera, cada coche pide 1.511 senales/s y el propio 1.673,
+#: porque suma `motion_ex`. Los veintidos piden 33.250. Cronometrado sobre la
+#: Raspberry, el consumidor tarda 100,8 us por mensaje entre interpretar el JSON,
+#: validarlo, armar los parametros e insertar ---unos 9.900 mensajes/s en serie---
+#: de modo que seis coches, que piden 9.228, entran justos y ocho no entran.
+#:
+#: El tope existe porque el modo en que esto se rompe es el peor posible: no
+#: falla, se pierden muestras **de todos**, tambien del coche propio. Aceptar una
+#: lista de veinte nombres seria prometer algo que ya se sabe que no se cumple.
+MAXIMO_VEHICULOS_ELEGIDOS = 6
+
+
+def _clave_de_nombre(texto: str) -> str:
+    """Un nombre reducido a lo que permite compararlo: sin acentos ni mayusculas."""
+
+    plano = unicodedata.normalize("NFKD", texto)
+    return "".join(c for c in plano if not unicodedata.combining(c)).casefold().strip()
+
+
+def indices_elegidos(nombres: dict[int, str], pedidos: list[str] | None,
+                     propio: int, tope: int = MAXIMO_VEHICULOS_ELEGIDOS
+                     ) -> frozenset[int] | None:
+    """Los indices que hay que publicar para escuchar a los pilotos pedidos.
+
+    POR NOMBRE Y NO POR INDICE. El indice del arreglo de vehiculos no significa
+    nada para quien conduce: no es la posicion en carrera ni el numero del coche,
+    es el lugar que el juego le dio en una lista. Quien mira el tablero elige a
+    Verstappen, no al indice 4.
+
+    EL COCHE PROPIO VA SIEMPRE. No es una cortesia: es de quien conduce, y es el
+    unico del que el protocolo entrega los datos completos ---`motion_ex` describe
+    solo a ese---. Una eleccion que lo dejara afuera dejaria la sesion sin su
+    pieza mas rica.
+
+    UN NOMBRE QUE NO CORRE SE IGNORA. La lista puede venir de una sesion anterior
+    con otra parrilla. Fallar dejaria la captura sin arrancar por un nombre viejo,
+    y publicar el indice igual escribiria filas de un vehiculo que no existio.
+
+    Devuelve `None` cuando no hay eleccion, que **no es lo mismo** que elegir
+    solo el coche propio: sin eleccion sigue decidiendo `parrilla_completa`.
+    """
+
+    if not pedidos:
+        return None
+    por_nombre: dict[str, int] = {}
+    for indice, nombre in nombres.items():
+        clave = _clave_de_nombre(nombre)
+        if not clave:
+            continue
+        por_nombre.setdefault(clave, indice)
+        # El apellido solo alcanza: es como se los nombra en la television y en
+        # el propio juego. Se registra sin pisar un nombre completo que ya este.
+        apellido = clave.rsplit(" ", 1)[-1]
+        por_nombre.setdefault(apellido, indice)
+
+    elegidos = [propio]
+    for pedido in pedidos:
+        indice = por_nombre.get(_clave_de_nombre(pedido))
+        if indice is not None and indice not in elegidos:
+            elegidos.append(indice)
+        # Se recorta respetando el orden pedido, que es el orden de interes de
+        # quien eligio: los primeros nombres son los que mas le importan.
+        if len(elegidos) >= tope:
+            break
+    return frozenset(elegidos)
+
+
 class Publicador:
     """Publica al contrato si el broker esta disponible; si no, no estorba.
 
@@ -413,7 +490,8 @@ class Publicador:
     REINTENTO_S = 30.0
 
     def __init__(self, activo: bool, run_id: str | None = None,
-                 parrilla_completa: bool = False) -> None:
+                 parrilla_completa: bool = False,
+                 archivo_seleccion: Path | None = None) -> None:
         self.cliente = None
         self.mensajes = 0
         #: Mensajes que el cliente **no llego a enviar**, con el motivo que
@@ -454,6 +532,24 @@ class Publicador:
         #: Indices que efectivamente corren, derivados del paquete de
         #: participantes. Sin esto se publicarian los lugares vacios del arreglo.
         self._validos: frozenset[int] | None = None
+        #: Nombre de cada indice, del mismo paquete. Es lo que permite elegir por
+        #: nombre: el indice del arreglo no significa nada para quien conduce.
+        self._nombres: dict[int, str] = {}
+        #: LA ELECCION SE LEE DE UN ARCHIVO Y NO DE UN ARGUMENTO.
+        #:
+        #: Los nombres de la parrilla recien se conocen cuando llega el paquete
+        #: de participantes, unos segundos despues de que la sesion arranca, de
+        #: modo que **no se pueden elegir antes de empezar a escuchar**. Y el
+        #: capturador es un subproceso: no hay forma de decirle nada nuevo sin
+        #: matarlo, y matarlo pierde la sesion que esta grabando.
+        #:
+        #: Un archivo resuelve las dos cosas. Se relee cuando cambia su fecha
+        #: ---un `stat` por paquete, que es gratis al lado de decodificarlo--- de
+        #: modo que quien mira el tablero puede cambiar a quien escucha en mitad
+        #: de la carrera, y lo que eligio sobrevive a que el proceso se reinicie.
+        self._archivo_seleccion = archivo_seleccion
+        self._pilotos: list[str] | None = None
+        self._marca_seleccion: float | None = None
         self._proximo_intento = 0.0
         self._intentos = 0
         if not activo:
@@ -487,6 +583,42 @@ class Publicador:
         print(f"[capturador] publicando en {MQTT_HOST}:{MQTT_PORT}"
               f" (intento {self._intentos})", flush=True)
 
+    def _releer_seleccion(self) -> None:
+        """Vuelve a leer la eleccion si el archivo cambio desde la ultima vez.
+
+        Un `stat` por paquete, que al lado de decodificarlo es gratis. Se compara
+        la fecha y no el contenido para no leer sesenta veces por segundo un
+        archivo que casi nunca cambia.
+
+        **Un archivo ilegible no detiene la captura ni cambia lo que se venia
+        publicando.** Puede estar a medio escribir en el instante en que se lo
+        mira, y descartar la eleccion vigente por eso seria pasar a publicar la
+        parrilla entera en medio de una carrera, que es justo lo que la eleccion
+        existe para evitar.
+        """
+
+        if self._archivo_seleccion is None:
+            return
+        try:
+            marca = self._archivo_seleccion.stat().st_mtime
+        except OSError:
+            # Que el archivo no exista es la ausencia de eleccion, no un error.
+            if self._marca_seleccion is not None:
+                self._pilotos = None
+                self._marca_seleccion = None
+            return
+        if marca == self._marca_seleccion:
+            return
+        try:
+            leido = json.loads(self._archivo_seleccion.read_text(encoding="utf-8"))
+            pilotos = leido.get("pilotos") if isinstance(leido, dict) else leido
+            if not isinstance(pilotos, list):
+                return
+            self._pilotos = [str(p) for p in pilotos]
+            self._marca_seleccion = marca
+        except (OSError, json.JSONDecodeError, AttributeError):
+            return
+
     def _reintentar_si_toca(self) -> None:
         if (self._activo and self.cliente is None
                 and time.monotonic() >= self._proximo_intento):
@@ -512,6 +644,9 @@ class Publicador:
         if decodificado["paquete"] == "participants":
             self._validos = frozenset(
                 i for i, v in enumerate(decodificado["vehiculos"]) if v.get("name"))
+            self._nombres = {i: v["name"]
+                             for i, v in enumerate(decodificado["vehiculos"])
+                             if v.get("name")}
 
         if decodificado["paquete"] not in f1_25.PAQUETES_NORMALIZABLES:
             return
@@ -523,13 +658,28 @@ class Publicador:
         # y **no admiten** normalizarse para todos: pedirselo es un error, no una
         # opcion. Se les pasa siempre el modo propio, aunque la parrilla completa
         # este encendida.
-        solo_propio = (not self._parrilla_completa
-                       or decodificado["paquete"] in f1_25.PAQUETES_DE_BLOQUE_UNICO)
+        self._releer_seleccion()
+        elegidos = None
+        if self._pilotos:
+            # La cabecera se mira **solo si hay eleccion**: sin ella no hace
+            # falta saber cual es el coche propio, y pedirsela a un paquete que
+            # no la trae seria romper por un dato que no se iba a usar.
+            propio = (decodificado.get("cabecera") or {}).get("player_car_index", 0)
+            elegidos = indices_elegidos(self._nombres, self._pilotos, propio=propio)
+        # Con una eleccion no se pide el modo propio: se piden esos vehiculos. Y
+        # se intersecta con quienes corren, porque un nombre resuelto sigue
+        # siendo un indice que puede haber quedado vacio.
+        de_bloque_unico = decodificado["paquete"] in f1_25.PAQUETES_DE_BLOQUE_UNICO
+        solo_propio = de_bloque_unico or (not self._parrilla_completa
+                                          and elegidos is None)
+        validos = self._validos
+        if elegidos is not None and not de_bloque_unico:
+            validos = elegidos if validos is None else frozenset(validos & elegidos)
         lote: list[dict] = []
         for mensaje in f1_25.mensajes_desde_paquete(
                 decodificado, inicio_utc,
                 solo_vehiculo_propio=solo_propio,
-                vehiculos_validos=self._validos,
+                vehiculos_validos=validos,
                 desplazamiento_captura_us=desplazamiento_us):
             if self._run_id is not None:
                 # Va **dentro de `metadata.extra`**, no en el nivel superior del
@@ -589,6 +739,52 @@ def _perfil_declarado(sesion: dict) -> tuple:
                  (*AJUSTES, *AYUDAS, "track_id", "session_type", "total_laps"))
 
 
+def _ruta_de_metadatos(captura: Path) -> Path:
+    """Donde vive el archivo de metadatos de una captura."""
+    return captura.with_name(captura.name + ".meta.json")
+
+
+def _borrar_anotacion_en_curso(provisional: Path) -> None:
+    """Saca la anotacion provisional cuando su captura deja de serlo."""
+    _ruta_de_metadatos(provisional).unlink(missing_ok=True)
+
+
+def _anotar_en_curso(provisional: Path, inicio_utc: str, procedencia: dict) -> None:
+    """Deja la procedencia escrita mientras la captura sigue abierta.
+
+    Lo que se sabe **ya se puede decir**. El circuito y el tipo de sesion los
+    declara el flujo en sus primeros segundos; esperar al cierre para anotarlos
+    hacia que el tablero llamara «sesion sin procedencia declarada» a una
+    captura cuya procedencia estaba a la vista, y que una escucha detenida con
+    el coche en pista dejara el crudo mudo.
+
+    Lleva `en_curso` en verdadero para que nada confunda esto con una captura
+    terminada: la duracion, el recuento por tipo y lo publicado se saben recien
+    al final, y aca no estan.
+    """
+
+    if not procedencia.get("disponible"):
+        return
+    # SE ESCRIBE A MANO Y NO CON `escribir_metadatos`, A PROPOSITO.
+    #
+    # Esa funcion calcula la huella del crudo **y vuelve a recorrer todos sus
+    # datagramas** para contarlos: dos pasadas por un archivo que en una sesion
+    # larga pasa de los treinta megabytes. Hacerlo aca frenaria el bucle que
+    # esta recibiendo por UDP, y lo que se pierde en un socket parado no vuelve.
+    # La huella y el recuento son del archivo terminado; este todavia crece.
+    try:
+        _ruta_de_metadatos(provisional).write_text(
+            json.dumps({
+                "en_curso": True,
+                "archivo": provisional.name,
+                "inicio_utc": inicio_utc,
+                "procedencia": procedencia,
+            }, indent=2, ensure_ascii=False),
+            encoding="utf-8")
+    except Exception:  # noqa: BLE001 - anotar de mas nunca debe cortar la captura
+        pass
+
+
 def capturar_sesion(sock: socket.socket, primer_datagrama: bytes,
                     destino: Path, publicador: Publicador) -> dict:
     """Graba una sesion completa, desde el primer datagrama hasta el silencio."""
@@ -612,6 +808,7 @@ def capturar_sesion(sock: socket.socket, primer_datagrama: bytes,
     estable_desde_s: float | None = None
     ultimo_perfil = None
     descartados = 0
+    anotada_la_parrilla = False
     motivo = "silencio: se dejo de recibir"
 
     with f1_capture.EscritorCaptura(provisional) as escritor:
@@ -651,10 +848,44 @@ def capturar_sesion(sock: socket.socket, primer_datagrama: bytes,
                         if perfil != ultimo_perfil:
                             ultimo_perfil = perfil
                             estable_desde_s = time.perf_counter() - inicio
+                            # LA PROCEDENCIA SE DECLARA APENAS SE SABE, NO AL
+                            # CERRAR.
+                            #
+                            # Se escribia solo al terminar la sesion, y de ahi
+                            # salian dos problemas con la misma raiz: en vivo el
+                            # tablero mostraba «sesion sin procedencia
+                            # declarada» aunque el flujo ya hubiera dicho que
+                            # era Monza, y una escucha detenida con el juego en
+                            # pista dejaba el crudo sin metadatos ---habia que
+                            # rederivarlos a mano---.
+                            #
+                            # Se escribe cada vez que el perfil cambia, que son
+                            # unas pocas veces por sesion, y se reescribe entero
+                            # al cerrar. Un metadato provisional declara que lo
+                            # es: la duracion todavia no se sabe.
+                            _anotar_en_curso(provisional, inicio_utc,
+                                             derivar_procedencia(
+                                                 sesion, ayudas_vistas.estado(),
+                                                 cabecera, participantes,
+                                                 secundarios))
                 elif decodificado["paquete"] == "participants":
                     # El ultimo, como el resto: la parrilla se completa cuando la
                     # sesion arranca, no en el menu.
                     participantes = decodificado
+                    # Y se vuelve a anotar, porque la parrilla llega **despues**
+                    # que el paquete de sesion. Anotando solo al cambiar el
+                    # perfil, el metadato provisional quedaba con circuito y sin
+                    # nombres, y el tablero mostraba «Vehiculo 0» durante toda
+                    # la escucha. Una sola vez: la parrilla no cambia dentro de
+                    # una sesion, y reescribir en cada paquete seria escribir
+                    # sesenta veces por minuto para decir lo mismo.
+                    if sesion is not None and not anotada_la_parrilla:
+                        anotada_la_parrilla = True
+                        _anotar_en_curso(provisional, inicio_utc,
+                                         derivar_procedencia(
+                                             sesion, ayudas_vistas.estado(),
+                                             cabecera, participantes,
+                                             secundarios))
                 ayudas_vistas.ver(decodificado)
                 publicador.publicar(decodificado, inicio_utc, desplazamiento)
 
@@ -668,6 +899,7 @@ def capturar_sesion(sock: socket.socket, primer_datagrama: bytes,
         sesion, ayudas_vistas.estado(), cabecera, participantes, secundarios)
 
     if transcurrido < MINIMO_UTIL_S:
+        _borrar_anotacion_en_curso(provisional)
         provisional.unlink(missing_ok=True)
         return {"conservada": False, "duracion_s": round(transcurrido, 2),
                 "motivo": f"menos de {MINIMO_UTIL_S:.0f} s: no es una sesion"}
@@ -681,6 +913,7 @@ def capturar_sesion(sock: socket.socket, primer_datagrama: bytes,
     # sesion**. Es el mismo principio que rige el resto del capturador: se le
     # pregunta al dato, no al reloj.
     if not procedencia.get("disponible"):
+        _borrar_anotacion_en_curso(provisional)
         provisional.unlink(missing_ok=True)
         return {"conservada": False, "duracion_s": round(transcurrido, 2),
                 "motivo": "el flujo no declaro ninguna sesion: navegacion de menus"}
@@ -690,6 +923,10 @@ def capturar_sesion(sock: socket.socket, primer_datagrama: bytes,
     while ruta.exists():
         sufijo += 1
         ruta = destino / f"{nombre_derivado(procedencia, inicio_dt)}_{sufijo}.f1raw"
+    # El provisional se va con su nombre; su anotacion tambien. Dejarla
+    # convertiria una captura ya cerrada en dos: la de verdad y un fantasma con
+    # el nombre viejo, que el tablero listaria igual porque lee los metadatos.
+    _borrar_anotacion_en_curso(provisional)
     provisional.replace(ruta)
 
     extra = {
@@ -726,6 +963,18 @@ def capturar_sesion(sock: socket.socket, primer_datagrama: bytes,
                         "motivo": publicador.motivo},
         "version_decodificador": f1_udp.VERSION_DECODIFICADOR,
         "formato_udp_admitido": f1_udp.FORMATO_ADMITIDO,
+        # LO QUE ANTES VIAJABA EN CADA SENAL, DECLARADO UNA VEZ.
+        #
+        # La version del adaptador iba en el metadato de cada mensaje, con lo
+        # que una carrera de cuatro coches la repetia unas seis mil veces por
+        # segundo. Es de la captura entera, y aca es donde la captura se
+        # describe: junto a la version del decodificador, que ya vivia aca por
+        # el mismo motivo.
+        #
+        # `simulated` no hace falta declararlo: el `source_type` de cada fila
+        # es `f1_25_udp_simulation` y su `quality_flag` es `simulated_f1_25`.
+        # Ya estaba dicho dos veces.
+        "version_adaptador": f1_25.VERSION_ADAPTADOR,
     }
     f1_capture.escribir_metadatos(ruta, extra)
     extra["conservada"] = True
@@ -804,6 +1053,14 @@ def main() -> None:
                              "carga, no para capturar. Para los rivales, "
                              "republicar_captura.py --parrilla-completa "
                              "al terminar la sesion.")
+    parser.add_argument("--pilotos", default=None,
+                        help="Nombres de los pilotos a escuchar, separados por "
+                             "coma, ademas del coche propio. Se escriben en el "
+                             "archivo de eleccion antes de arrancar; el tablero "
+                             "puede reescribirlo en mitad de la sesion.")
+    parser.add_argument("--archivo-eleccion", type=Path,
+                        default=SELECCION_POR_DEFECTO,
+                        help="De donde se relee a quien escuchar mientras corre.")
     parser.add_argument("--run-id", default=None,
                         help="Identidad de reinyeccion para una corrida que no "
                              "es una sesion real. Sin ella, lo que se reproduzca "
@@ -812,8 +1069,17 @@ def main() -> None:
     args = parser.parse_args()
 
     args.destino.mkdir(parents=True, exist_ok=True)
+    if args.pilotos is not None:
+        # Lo pedido en la linea de comandos se escribe en el archivo, no se
+        # guarda aparte: asi hay **una sola** fuente de a quien se escucha, y lo
+        # que el tablero muestre despues es lo que el capturador esta usando.
+        nombres = [p.strip() for p in args.pilotos.split(",") if p.strip()]
+        args.archivo_eleccion.parent.mkdir(parents=True, exist_ok=True)
+        args.archivo_eleccion.write_text(
+            json.dumps({"pilotos": nombres}, ensure_ascii=False), encoding="utf-8")
     publicador = Publicador(not args.sin_publicar, run_id=args.run_id,
-                            parrilla_completa=args.parrilla_completa)
+                            parrilla_completa=args.parrilla_completa,
+                            archivo_seleccion=args.archivo_eleccion)
 
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.bind(("0.0.0.0", args.puerto))

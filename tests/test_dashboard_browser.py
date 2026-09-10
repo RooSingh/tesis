@@ -19,6 +19,35 @@ RAIZ = Path(__file__).resolve().parents[1]
 DASHBOARD = RAIZ / "dashboard"
 
 
+def chrome_disponible() -> Path | None:
+    candidatos = [
+        shutil.which("chrome"),
+        Path("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"),
+        Path(r"C:\Program Files\Google\Chrome\Application\chrome.exe"),
+    ]
+    return next((Path(ruta) for ruta in candidatos if ruta and Path(ruta).is_file()), None)
+
+
+def volcar_dom(chrome: Path, url: str, perfil: str, presupuesto_ms: int) -> str:
+    comando = [
+        str(chrome), "--headless=new", "--disable-gpu", "--no-first-run",
+        "--disable-background-networking", "--disable-extensions",
+        "--user-data-dir=" + perfil, f"--virtual-time-budget={presupuesto_ms}",
+        "--dump-dom", url,
+    ]
+    try:
+        proceso = subprocess.run(
+            comando, capture_output=True, text=True, timeout=10, check=False)
+    except subprocess.TimeoutExpired as error:
+        # Chrome en macOS vuelca el DOM pero puede conservar procesos auxiliares.
+        if not error.stdout:
+            raise
+        return error.stdout.decode() if isinstance(error.stdout, bytes) else error.stdout
+    if proceso.returncode != 0:
+        raise AssertionError(proceso.stderr)
+    return proceso.stdout
+
+
 class ApiDashboardFalsa(SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=str(DASHBOARD), **kwargs)
@@ -113,11 +142,46 @@ class ApiDashboardFalsa(SimpleHTTPRequestHandler):
         return super().do_GET()
 
 
+class ApiDashboardCanFalsa(ApiDashboardFalsa):
+    """Contrato minimo de una captura temporal sin vueltas ni metros."""
+
+    def do_GET(self):  # noqa: N802 - nombre exigido por BaseHTTPRequestHandler
+        pedido = urlparse(self.path)
+        ruta = pedido.path
+        if ruta == "/sesiones":
+            return self._json({"sesiones": [{
+                "session_id": "can:segmento:sample_01", "fuente": "can_real_replay",
+                "filas": 12, "senales": 3, "vehiculos": 1,
+                "desde": "2026-09-09T12:00:00+00:00",
+                "hasta": "2026-09-09T12:01:00+00:00", "duracion_s": 60,
+            }], "cantidad": 1})
+        if ruta.endswith("/adquisiciones"):
+            return self._json({"adquisiciones": [], "mezclada": False})
+        if ruta.endswith("/vueltas"):
+            return self._json({"vueltas": [], "motivo": "Sin distancia medida."})
+        if ruta.endswith("/series-tiempo"):
+            senales = parse_qs(pedido.query).get("senales", ["speed"])[0].split(",")
+            vehiculo = {
+                "tiempo_s": [0, 60],
+                "timestamp_utc": ["2026-09-09T12:00:00+00:00",
+                                  "2026-09-09T12:01:00+00:00"],
+            }
+            vehiculo.update({senal: [0, 1] if "pressed" in senal else [100, 110]
+                              for senal in senales})
+            return self._json({
+                "vehiculos": {"can:sample_01": vehiculo},
+                "unidades": {senal: ("bool" if "pressed" in senal else "km/h")
+                              for senal in senales},
+                "muestras": 2, "puntos_pedidos": 1200, "submuestreado": False,
+                "duracion_s": 60, "eje": "tiempo desde el inicio del tramo, en segundos",
+            })
+        return super().do_GET()
+
+
 class DashboardBrowserTests(unittest.TestCase):
     def test_abre_el_catalogo_y_dibuja_una_sesion(self) -> None:
-        chrome = shutil.which("chrome") or Path(
-            r"C:\Program Files\Google\Chrome\Application\chrome.exe")
-        if not Path(chrome).is_file():
+        chrome = chrome_disponible()
+        if chrome is None:
             self.skipTest("Chrome no esta instalado")
         servidor = ThreadingHTTPServer(("127.0.0.1", 0), ApiDashboardFalsa)
         servidor.daemon_threads = True
@@ -127,18 +191,12 @@ class DashboardBrowserTests(unittest.TestCase):
         try:
             url = f"http://127.0.0.1:{puerto}/index.html?api=http://127.0.0.1:{puerto}"
             with tempfile.TemporaryDirectory() as perfil:
-                proceso = subprocess.run([
-                    str(chrome), "--headless=new", "--disable-gpu", "--no-first-run",
-                    "--disable-background-networking", "--disable-extensions",
-                    "--user-data-dir=" + perfil, "--virtual-time-budget=3000",
-                    "--dump-dom", url,
-                ], capture_output=True, text=True, timeout=20, check=False)
+                dom = volcar_dom(chrome, url, perfil, 3000)
         finally:
             servidor.shutdown()
             servidor.server_close()
-        self.assertEqual(proceso.returncode, 0, proceso.stderr)
-        self.assertIn("Circuito de prueba", proceso.stdout)
-        self.assertIn('id="aviso-descarga"', proceso.stdout)
+        self.assertIn("Circuito de prueba", dom)
+        self.assertIn('id="aviso-descarga"', dom)
         # QUE EL AVISO **DIGA** LO QUE CORRESPONDE, NO QUE SIGA EN PANTALLA.
         #
         # Antes se exigia `data-visible="si"`, y eso es una carrera contra el
@@ -154,17 +212,42 @@ class DashboardBrowserTests(unittest.TestCase):
         # demuestra igual: solo lo escribe `avisar()`, y sobrevive a que el
         # aviso se esconda. La condicion de error si es estable.
         aviso = re.search(r'id="aviso-descarga"[^>]*data-error="(\w+)"[^>]*>([^<]*)<',
-                          proceso.stdout)
+                          dom)
         self.assertIsNotNone(aviso, "no esta el aviso en el DOM")
         self.assertEqual(aviso.group(1), "no", "la apertura se anuncio como error")
         self.assertIn("Circuito de prueba", aviso.group(2),
                       "la apertura no se anuncio: el aviso quedo vacio")
         comparar = re.search(
             r'<button class="boton secundario" id="btn-comparar"([^>]*)>',
-            proceso.stdout,
+            dom,
         )
         self.assertIsNotNone(comparar)
         self.assertNotIn("disabled", comparar.group(1))
+
+    def test_can_reproduce_el_tramo_por_tiempo_sin_pedir_una_vuelta(self) -> None:
+        chrome = chrome_disponible()
+        if chrome is None:
+            self.skipTest("Chrome no esta instalado")
+        servidor = ThreadingHTTPServer(("127.0.0.1", 0), ApiDashboardCanFalsa)
+        servidor.daemon_threads = True
+        hilo = threading.Thread(target=servidor.serve_forever, daemon=True)
+        hilo.start()
+        puerto = servidor.server_address[1]
+        try:
+            url = (f"http://127.0.0.1:{puerto}/index.html"
+                   f"?api=http://127.0.0.1:{puerto}"
+                   "&sesion=can%3Asegmento%3Asample_01")
+            with tempfile.TemporaryDirectory() as perfil:
+                dom = volcar_dom(chrome, url, perfil, 4000)
+        finally:
+            servidor.shutdown()
+            servidor.server_close()
+
+        self.assertIn("Reproducción temporal de CAN real", dom)
+        self.assertIn("20 s", dom)
+        self.assertRegex(dom, r'<html[^>]+data-fuente="can"')
+        self.assertIn('aria-label="Velocidad a lo largo del tiempo"', dom)
+        self.assertNotIn("La vuelta 1 no se pudo traer", dom)
 
 
 if __name__ == "__main__":

@@ -567,7 +567,7 @@ class Anotador:
                 resolver(f"dano_{canal}", valor > 0,
                          f"Dano en {parte}",
                          f"{valor:.0f} % declarado por el juego",
-                         "el juego declara el porcentaje; cero es sin dano")
+                         "el juego declara el porcentaje; cero es sin daño")
 
         return avisos
 

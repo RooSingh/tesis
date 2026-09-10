@@ -309,6 +309,20 @@ PAQUETES_NORMALIZABLES = frozenset(MAPAS_POR_PAQUETE)
 
 
 
+def _transformacion(unidad: str, factor: float) -> str:
+    """Como se convirtio el campo crudo en la senal publicada.
+
+    Vivia dentro del armado de cada mensaje, y por eso viajaba repetida en cada
+    fila. **Es una propiedad de la senal, no del instante**: `throttle_position`
+    se escala por cien en todas sus filas y en ninguna deja de hacerlo. Escrita
+    aca la usan el catalogo ---que la declara una vez--- y quien quiera saberla.
+    """
+
+    if unidad == "bool":
+        return "cast_bool"
+    return "identity" if factor == 1.0 else f"escala_x{factor:g}"
+
+
 def catalogo_de_senales() -> list[dict[str, str]]:
     """Todas las senales que este adaptador produce, con unidad y paquete.
 
@@ -324,19 +338,24 @@ def catalogo_de_senales() -> list[dict[str, str]]:
 
     catalogo: list[dict[str, str]] = []
     for paquete, mapa in MAPAS_POR_PAQUETE.items():
-        for _, (nombre, unidad, _) in mapa.items():
+        for campo, (nombre, unidad, factor) in mapa.items():
             catalogo.append({"signal_name": nombre, "unit": unidad,
-                             "paquete": paquete})
+                             "paquete": paquete, "campo_origen": campo,
+                             "transformation": _transformacion(unidad, factor)})
     for campo, (base, unidad, paquete) in SENALES_POR_RUEDA.items():
         for sufijo in SUFIJO_RUEDA.values():
             catalogo.append({"signal_name": f"{base}_{sufijo}", "unit": unidad,
-                             "paquete": paquete})
-    for _, (nombre, unidad, _, paquete) in SENALES_ANIDADAS.items():
+                             "paquete": paquete, "campo_origen": campo,
+                             "transformation": _transformacion(unidad, 1.0)})
+    for ruta_anidada, (nombre, unidad, factor, paquete) in SENALES_ANIDADAS.items():
         catalogo.append({"signal_name": nombre, "unit": unidad,
-                         "paquete": paquete})
-    for nombre, (_, _, unidad, paquete) in SENALES_COMPUESTAS.items():
+                         "paquete": paquete, "campo_origen": ruta_anidada,
+                         "transformation": _transformacion(unidad, factor)})
+    for nombre, (campos, _, unidad, paquete) in SENALES_COMPUESTAS.items():
         catalogo.append({"signal_name": nombre, "unit": unidad,
-                         "paquete": paquete})
+                         "paquete": paquete,
+                         "campo_origen": "+".join(campos) if isinstance(campos, (list, tuple)) else str(campos),
+                         "transformation": "compuesta"})
     return sorted(catalogo, key=lambda s: (s["paquete"], s["signal_name"]))
 
 
@@ -500,15 +519,30 @@ def mensajes_desde_paquete(
                     "src": None,
                     "reference_type": "f1_25_udp",
                     "reference_id": f"session:{session_uid}/car:{indice}",
+                    # LO CONSTANTE NO VIAJA EN CADA SENAL.
+                    #
+                    # Aca vivian tambien la version del adaptador y la del
+                    # decodificador, el formato y el identificador del paquete,
+                    # el identificador de la sesion, la marca de simulado, el
+                    # campo del que sale la senal y como se convirtio. Los ocho
+                    # son constantes ---de la captura o de la senal--- y
+                    # sumaban 232 de los 554 bytes de este bloque, el 42 %.
+                    #
+                    # Repetirlos no los hacia mas ciertos, y costaba en las tres
+                    # etapas por las que pasan: se serializan en el capturador,
+                    # se encolan en el intermediario y se interpretan en el
+                    # consumidor. Medido el 2026-09-10: el intermediario
+                    # descarto 7.873 mensajes de una carrera porque su cola se
+                    # mide en bytes.
+                    #
+                    # SIGUEN DECLARADOS, UNA VEZ. Lo de la senal ---de que campo
+                    # sale y como se convirtio--- en `catalogo_de_senales()`; lo
+                    # de la captura, en los metadatos del archivo. El
+                    # identificador de sesion no se pierde: esta en `session_id`
+                    # y en `reference_id` de este mismo mensaje.
                     "extra": {
-                        "simulated": True,
                         "origen_adquisicion": origen,
-                        "version_adaptador": VERSION_ADAPTADOR,
-                        "version_decodificador": decodificado["version_decodificador"],
-                        "packet_format": cabecera["packet_format"],
-                        "packet_id": decodificado["packet_id"],
                         "paquete": paquete,
-                        "session_uid": session_uid,
                         "frame_identifier": cabecera["frame_identifier"],
                         "session_time_s": cabecera["session_time"],
                         # Dos relojes, y ninguno reemplaza al otro.
@@ -526,14 +560,6 @@ def mensajes_desde_paquete(
                         # un punto ciego por el opuesto.
                         "desplazamiento_captura_us": desplazamiento_captura_us,
                         "player_car_index": indice_propio,
-                        "campo_origen": campo,
-                        # Se declara por senal y no por mensaje uniforme: algunas
-                        # se convierten y otras no.
-                        "transformation": (
-                            "cast_bool" if unidad == "bool"
-                            else "identity" if factor == 1.0
-                            else f"escala_x{factor:g}"
-                        ),
                         "captura_sha256": captura_sha256,
                     },
                 },

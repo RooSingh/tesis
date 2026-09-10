@@ -168,12 +168,72 @@
   .capa-ausente strong { font-family: var(--titulo); font-size: 1rem; letter-spacing: .05em; text-transform: uppercase; color: var(--texto-medio); }
   .capa-ausente span { color: var(--texto-tenue); font-size: .8rem; max-width: 42ch; }
 
-  .tira-cronometraje { display: grid; grid-template-columns: repeat(4, minmax(0,1fr)); gap: 1px; background: var(--linea); }
-  .tira-cronometraje div { padding: 12px 14px; background: var(--superficie); }
-  .tira-cronometraje dt { margin: 0 0 3px; font-size: .64rem; letter-spacing: .12em; text-transform: uppercase; color: var(--texto-tenue); }
-  .tira-cronometraje dd { margin: 0; font-family: var(--cifra); font-variant-numeric: tabular-nums; font-size: 1.15rem; font-weight: 600; }
+  /* CINCO CELDAS, Y NO SE MUEVEN CUANDO CAMBIAN LAS CIFRAS.
+     Identidad, puesto, vuelta, cronometro y diferencia son cinco hechos de
+     distinta naturaleza y cada uno tiene su celda: antes «Vehículo» cargaba con
+     la identidad y con la ausencia de parrilla a la vez.
+
+     `auto-fit` con un minimo en `ch` reparte solas las columnas ---cinco en
+     escritorio, dos o tres en un telefono--- sin una consulta de medios que
+     habria que mantener al agregar una celda. Las cifras van en `tabular-nums`
+     y cada celda reserva su alto: un 9 no ocupa mas que un 1, y pasar de «P4» a
+     «—» no corre nada de sitio. */
+  .tira-cronometraje {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(13ch, 1fr));
+    gap: 1px;
+    /* EL FONDO ES LA SUPERFICIE, NO LA LINEA.
+       El separador se dibujaba pintando el contenedor del color de la linea y
+       dejando un hueco de un pixel entre celdas. Con cuatro celdas y un ancho
+       que repartia de a dos o de a cuatro eso nunca se notaba; con cinco, la
+       ultima fila queda incompleta y el sobrante se veia como una celda vacia y
+       de otro color. La linea pasa a ser un contorno de cada celda ---que no
+       ocupa sitio y no depende de cuantas entren por fila--- y lo que sobre
+       queda del color del panel, que es lo que es: nada. */
+    background: var(--superficie);
+  }
+  .tira-cronometraje div {
+    padding: 12px 14px; background: var(--superficie); min-width: 0;
+    outline: 1px solid var(--linea);
+  }
+  /* LA IDENTIDAD OCUPA SU RENGLON, Y ASI NO SOBRA NINGUNA CELDA.
+     Son cinco hechos y las celdas se reparten de a dos: uno arriba a lo ancho y
+     dos por dos abajo dan tres renglones justos, sin el hueco que dejaba una
+     fila incompleta. Y el nombre con su equipo necesitan el ancho: son lo unico
+     de la tira que es texto y no una cifra. */
+  .tira-cronometraje > div:first-child { grid-column: 1 / -1; }
+  /* LOS ROTULOS SE PARTEN, NO SE CORTAN.
+     Con cuatro celdas anchas `nowrap` nunca molestaba; con cinco, «Cronómetro»
+     pasaba el ancho de su celda y el panel lo recortaba con puntos suspensivos.
+     Un rotulo a medio escribir es peor que uno en dos renglones: es la palabra
+     que dice de donde sale el numero. Los rotulos son fijos, asi que partirlos
+     no introduce ningun salto cuando cambian las cifras, que es lo que si hay
+     que evitar. El interletrado baja un punto para que casi nunca haga falta. */
+  .tira-cronometraje dt { margin: 0 0 3px; font-size: .64rem; letter-spacing: .08em; text-transform: uppercase; color: var(--texto-tenue); }
+  .tira-cronometraje dd {
+    margin: 0; font-family: var(--cifra); font-variant-numeric: tabular-nums;
+    font-size: 1.15rem; font-weight: 600; line-height: 1.25;
+  }
   .tira-cronometraje .destacado { color: var(--acento); }
   .tira-cronometraje .negativo { color: var(--ok); }
+  /* El equipo es identidad, pero secundaria: se lee debajo del nombre y no
+     compite con el. */
+  .tira-cronometraje .secundario {
+    display: block; font-family: var(--cuerpo); font-size: .7rem;
+    font-weight: 400; color: var(--texto-tenue); letter-spacing: .01em;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  /* Un tiempo que no es el cronometro medido no puede verse igual que uno que
+     si lo es. */
+  .tira-cronometraje dd[data-medido="no"] { color: var(--texto-medio); font-weight: 500; }
+  .tira-cronometraje .unidad { font-size: .72rem; font-weight: 400; color: var(--texto-tenue); }
+  .pie-instrumento {
+    margin: 0; padding: 8px 14px 10px; font-size: .68rem; color: var(--texto-tenue);
+    border-top: 1px solid var(--linea); background: var(--superficie);
+  }
+  .pie-instrumento:empty { display: none; }
+  .instrumento > .pie-instrumento:last-child { border-radius: 0 0 13px 13px; }
+  /* El dorsal acompana al nombre en la lista de vehiculos. */
+  .auto-fila .nombre .dorsal { margin-left: 5px; font-family: var(--cifra); font-size: .74rem; color: var(--texto-tenue); }
 
   .esquema-auto { display: grid; grid-template-columns: 1fr auto 1fr; gap: 10px; align-items: center; }
   .esquina { padding: 9px 10px; border: 1px solid var(--linea); border-radius: 9px; background: var(--superficie-2); }
@@ -352,10 +412,20 @@
   .ejes-g { grid-template-columns: minmax(0, 200px) 1fr; }
   .ejes-g svg { width: 100%; height: auto; }
   .rotulo-g { font-family: var(--cifra); font-size: 7px; letter-spacing: .1em; fill: var(--texto-tenue); }
+  /* Cuanto vale el borde del diagrama, sobre la diagonal del circulo exterior:
+     ahi no choca con FRENADA ni con IZQ, y se lee junto al anillo que rotula. */
+  .escala-g { font-family: var(--cifra); font-size: 7px; fill: var(--texto-medio); }
   .nota-g { font-size: .74rem; line-height: 1.5; margin-top: 12px; }
   .nota-g b { color: var(--texto-medio); }
-  .estela-g { stroke: url(#trazo-g); stroke-width: 2; opacity: .8; }
-  .halo-g { fill: var(--acento); opacity: .22; }
+  /* LA HUELLA DE LA VUELTA PESA MAS QUE UN INSTANTE DE ELLA.
+     La estela media dos unidades de grosor contra un punto de diez de diametro
+     y un halo de veintidos: la marca de **un** momento pesaba cinco veces mas
+     que el recorrido entero, que es lo que ese dibujo tiene para contar. La
+     estela sube y el halo baja hasta que la proporcion diga lo que el panel
+     significa. El punto no se achica: tiene que encontrarse de un vistazo
+     mientras se mueve. */
+  .estela-g { stroke: url(#trazo-g); stroke-width: 2.6; opacity: .85; }
+  .halo-g { fill: var(--acento); opacity: .16; }
   .punto-g { fill: var(--acento-vivo); stroke: var(--superficie); stroke-width: 1.5; }
   /* EN EL HISTORICO NO HAY TRANSICION; EN VIVO SI.
      Los 90 ms existian para tapar los escalones del indice sobre la estela
@@ -459,6 +529,11 @@
     background: var(--acento); color: var(--sobre-acento); border-color: var(--acento);
   }
   .transporte[data-modo="reproduccion"] #mandos-reproduccion { display: flex; }
+  .sin-reproduccion { display: none; }
+  .transporte[data-sin-distancia="si"] .sin-reproduccion {
+    display: block; flex: 0 1 34ch; margin: 0; padding: 10px 4px;
+    font-size: .72rem; color: var(--texto-medio);
+  }
   .transporte[data-modo="vivo"] #mandos-vivo { display: flex; }
   .transporte[data-modo="vacio"] #mandos-vacio { display: flex; }
 
@@ -593,21 +668,78 @@
     display: flex; flex-direction: column; gap: 12px; height: 100%;
   }
   .panel-motor .barras-medidas { flex: 0 0 auto; }
-  /* DOS POR DOS, NO CUATRO EN FILA.
+  /* EN CUADRO Y NO EN FILA, Y SIN ATARSE A CUANTOS SON.
      En una columna angosta, cuatro medidores en fila salian de sesenta
      pixeles cada uno y dejaban el resto del panel vacio. En cuadro tienen el
-     doble de diametro y llenan el hueco que sobraba. */
+     doble de diametro y llenan el hueco que sobraba.
+
+     La version anterior fijaba **dos por dos**, o sea exactamente cuatro. Al
+     agregar la marcha y la maxima, los cuatro primeros se apretaron dentro de
+     esas dos filas y los dos ultimos cayeron en una fila implicita que se
+     dimensiono sola: cuatro diminutos y dos grandes en el mismo panel. Una
+     rejilla escrita contra un numero se rompe cuando ese numero cambia, y va a
+     volver a cambiar.
+
+     Ahora las columnas se acomodan a lo ancho que haya ---tantas como entren
+     con un minimo digno--- y las filas se reparten el alto en partes iguales,
+     sean dos o tres. Todos miden lo mismo, y ese mismo es el mayor que el
+     espacio permite. */
   /* `.banco-motor .fila-medidores` fija cuatro columnas y esta mas abajo en
      la hoja: con la misma especificidad ganaba por orden. Se nombra el banco
      tambien aca para que este mande. */
+  /* DOS COLUMNAS FIJAS, Y LAS FILAS QUE HAGAN FALTA.
+     Las columnas se fijan porque el ancho del panel no cambia. Las filas NO se
+     fijan, porque la cantidad de medidores si cambia: fueron cuatro, despues
+     seis, y ahora son dos ---regimen y velocidad--- desde que el resto paso a
+     tiras de segmentos. Una rejilla que declara `repeat(2, ...)` en las filas
+     manda los sobrantes a una fila implicita que se dimensiona sola, y eso fue
+     exactamente el defecto que se arrastro: cuatro medidores apretados en dos
+     filas y dos grandes en una tercera. Con las filas implicitas y todas `1fr`,
+     sean una o tres, se reparten el alto en partes iguales.
+
+     Y LA REJILLA NO PUEDE DESBORDAR. Es un `flex: 1` con `min-height: 0` y
+     filas `1fr`: lo que hay de alto es lo que se reparte. Un intento anterior
+     dejo las filas en `auto` para que el arco creciera con el ancho, y la
+     rejilla se salio del panel por arriba y por abajo, encima del encabezado y
+     de las barras. El alto disponible es un limite, no una sugerencia. */
   .panel-motor .banco-motor .fila-medidores {
     flex: 1; min-height: 0;
     grid-template-columns: repeat(2, minmax(0, 1fr));
-    grid-template-rows: repeat(2, minmax(0, 1fr));
-    gap: 6px 14px; align-content: stretch;
+    grid-template-rows: none;
+    grid-auto-rows: minmax(0, 1fr);
+    gap: 8px 10px; align-content: stretch;
   }
-  .panel-motor .medidor { justify-items: center; align-content: center; }
-  .panel-motor .medidor svg { max-width: 132px; width: 100%; max-height: 100%; }
+  /* EL ARCO Y SU ROTULO VIAJAN JUNTOS, Y EL AIRE QUEDA AFUERA.
+     Estaban en dos filas de rejilla, la del arco `1fr`: esa fila se quedaba con
+     todo el alto sobrante, el arco se apoyaba arriba y el rotulo caia al fondo
+     de la celda. En medio, un hueco del alto de un medidor entero, y a la vista
+     el rotulo no parecia de nadie.
+
+     En columna flexible centrada, el sobrante se reparte **por fuera** del par
+     en vez de meterse entre los dos. Y el reparto cuando falta alto tambien
+     queda dicho: el rotulo no se encoge ---es una linea de texto, encogerla es
+     cortarla--- y el arco si, porque un arco mas chico sigue siendo legible.
+     Para que pueda encogerse necesita `min-height: 0`; sin eso su tamano minimo
+     automatico lo impide y el par desborda la celda. */
+  .panel-motor .medidor {
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center; min-height: 0;
+  }
+  .panel-motor .medidor .rotulo { flex: 0 0 auto; }
+  /* EL ARCO CRECE CON LA CELDA Y NUNCA PASA DE SU FILA.
+     Con dos medidores el ancho de la celda es lo que limita, y con seis lo era
+     el alto de la fila: los dos topes tienen que estar puestos, porque cual de
+     los dos manda depende de cuantos medidores haya, y eso cambia. `width` con
+     `max-height` deja que el que aprieta apriete, sea cual sea.
+
+     La proporcion se declara y no se deduce: el `viewBox` con `height: auto`
+     alcanza en Chrome, pero no en todos los navegadores, y donde no alcanza el
+     medidor queda de un tamano que no es el de ninguno de sus hermanos. Con la
+     proporcion escrita, todos miden lo mismo porque su celda mide lo mismo. */
+  .panel-motor .medidor svg {
+    width: 100%; height: auto; max-width: 100%; max-height: 100%;
+    min-height: 0; aspect-ratio: 124 / 112;
+  }
   .panel-motor .medidor .rotulo { font-size: .58rem; letter-spacing: .08em; }
   .panel-motor .medidor { gap: 2px; }
   .panel-motor .barras-medidas { margin-top: 0; gap: 7px; }
@@ -625,6 +757,53 @@
   .col-cabina.centro > .instrumento { flex: 1; }
   .cabina .graficos-cabina { grid-row: 2; }
   .col-cabina { grid-row: 1; }
+
+  /* CAN REAL ES UNA CABINA TEMPORAL, NO UNA CABINA DE CARRERA.
+     Esta captura no publica posicion, clima, danos ni cronometraje. Dejar esos
+     paneles vacios hace parecer que fallo la carga y le quita sitio a lo que si
+     fue medido: quedan fuera de la cabina. El selector de senales y el diagrama
+     de aceleraciones siguen debajo.
+
+     EL TRAZADO SI SE QUEDA. Esta regla escondia la columna entera, y con ella
+     el trazado, porque el bus no publica coordenadas y `/trazado` ---que sale
+     de `world_position_*`--- contestaba vacio. La forma existe igual: se
+     obtiene integrando velocidad y guinada, y desde que el tablero la pide,
+     esconder la columna escondia lo unico que esa columna tenia para dar. */
+  :root[data-fuente="can"] .cabina {
+    grid-template-columns: minmax(0, 300px) minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr);
+  }
+  :root[data-fuente="can"] .cabina .col-cabina { display: none; }
+  :root[data-fuente="can"] .cabina .col-cabina.izquierda {
+    display: flex; grid-column: 1; grid-row: 1;
+  }
+  /* De esa columna, solo el trazado: el clima lo publica la carrera, no el bus. */
+  :root[data-fuente="can"] .cabina .col-cabina.izquierda > .instrumento:not([data-panel="trazado"]) {
+    display: none;
+  }
+  /* Y ABAJO, DOS PANELES QUE EN EL BUS NO TIENEN NADA QUE DAR NUNCA.
+     No es que esta sesion no los trajo ---para eso esta `data-necesita`, que
+     marca la ausencia y escribe el motivo a la vista---: es que un bus de serie
+     no publica configuracion del vehiculo, y una captura de **un** vehiculo no
+     tiene con quien compararse. Un panel que solo puede decir «no» le quita el
+     sitio a lo que si se midio. El hecho no se pierde: sigue escrito en la
+     tabla del pie, que es donde comparar las tres fuentes es el tema. */
+  :root[data-fuente="can"] [data-panel="puesta"],
+  :root[data-fuente="can"] [data-panel="vehiculos"] { display: none; }
+
+  :root[data-fuente="can"] .cabina .graficos-cabina {
+    grid-column: 2; grid-row: 1;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    grid-template-rows: repeat(2, minmax(0, 1fr));
+  }
+  /* Con la cabina partida en dos, cuatro graficos por fila dejan de entrar: a
+     partir de aca van de a dos, en cuatro filas, que es el mismo alto. */
+  @media (max-width: 1500px) {
+    :root[data-fuente="can"] .cabina .graficos-cabina {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      grid-template-rows: repeat(4, minmax(0, 1fr));
+    }
+  }
 
   /* EL TRAZADO SE QUEDA CON EL SITIO DE LA LEYENDA.
      Once nombres de curva ocupaban un tercio del panel y el dibujo quedaba
@@ -792,10 +971,18 @@
     flex-direction: row; align-items: baseline; justify-content: space-between;
     gap: 6px; padding: 6px 10px; overflow: hidden;
   }
-  /* La cifra manda: si no entran las dos cosas, se recorta el rotulo. */
+  /* La cifra manda: si no entran las dos cosas, se recorta el rotulo. Con la
+     identidad en su propio renglon las otras cuatro celdas quedan del ancho de
+     media tira y el rotulo mas largo ---«Cronómetro»--- entra; el recorte sigue
+     como red, para un panel mas angosto todavia. */
   .cabina .vertical .tira-cronometraje dt {
-    font-size: .56rem; letter-spacing: .06em; white-space: nowrap; min-width: 0;
+    font-size: .54rem; letter-spacing: .04em; white-space: nowrap; min-width: 0;
     overflow: hidden; text-overflow: ellipsis;
+  }
+  /* En la celda de identidad el equipo va al lado del nombre y no debajo: en
+     cabina el alto es lo escaso. */
+  .cabina .vertical .tira-cronometraje .secundario {
+    display: inline; margin-left: 7px;
   }
   .cabina .vertical .tira-cronometraje dd { flex: 0 0 auto; white-space: nowrap; }
   .cabina .vertical .tira-cronometraje dd { font-size: clamp(.85rem, 1.9vh, 1.15rem); }
@@ -893,7 +1080,19 @@
      que la propia separacion ya dice. */
   .corte-consulta { height: 1px; margin: 26px 0 18px; background: var(--linea-fuerte); }
 
-  .tablero .lista-autos { max-height: 190px; }
+  /* LA LISTA LLENA SU PANEL EN VEZ DE PARARSE A LOS 190 PIXELES.
+     El panel se estira al alto de su fila ---`align-items: stretch` unas lineas
+     mas abajo--- de modo que con veinte pilotos la lista se desplazaba dentro
+     de una ventana chica mientras debajo quedaba panel vacio. Se desplazaban
+     cuatro nombres teniendo sitio para doce.
+
+     `flex: 1` la deja tomar lo que sobre despues del selector de alcance, y el
+     tope en unidades de ventana la acota **para el caso contrario**: cuando es
+     esta lista la que decide el alto de la fila, sin el crecia hasta los veinte
+     nombres y estiraba los tres paneles de al lado. */
+  .tablero .lista-autos {
+    flex: 1 1 auto; min-height: 0; max-height: min(56vh, 620px);
+  }
   .tablero.principal { align-items: start; }
   .abajo .ejes-g { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; align-items: center; }
   .abajo .ejes-g svg { max-height: 260px; }
@@ -1010,8 +1209,20 @@
     .graficos-cabina .grafico-chico canvas { min-height: 104px; }
     .cabina[data-pantalla="completa"] { position: static; inset: auto; z-index: auto; overflow: visible; }
   }
+  @media (max-width: 1180px) {
+    .transporte[data-sin-distancia="si"] .sin-reproduccion { display: none; }
+    :root[data-fuente="can"] .cabina .graficos-cabina {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      grid-template-rows: none;
+    }
+  }
   @media (max-width: 860px) {
     .cabina { grid-template-columns: minmax(0, 1fr); }
+  }
+  @media (max-width: 640px) {
+    :root[data-fuente="can"] .cabina .graficos-cabina {
+      grid-template-columns: minmax(0, 1fr);
+    }
   }
 
   .tablero {
@@ -1062,6 +1273,46 @@
     font-variant-numeric: tabular-nums; font-size: .68rem; color: var(--texto-tenue);
   }
   .pie-grafico b { color: var(--texto); font-weight: 600; }
+  /* Cuando la señal llego y no se movio, el pie deja de ser tres cifras y pasa
+     a ser una frase: ocupa el ancho y se centra, para que no parezca un mínimo
+     suelto. En cursiva porque es una lectura del tramo, no una medida de él. */
+  .pie-grafico .quieta {
+    flex: 1; text-align: center; font-style: italic; font-family: var(--cuerpo);
+  }
+
+  /* El elector de señal del recorrido y su leyenda. Solo aparecen cuando hay
+     una forma derivada que pintar. */
+  .elige-senal-recorrido { display: none; flex-wrap: wrap; gap: 4px; margin-top: 8px; }
+  .elige-senal-recorrido[data-hay="si"] { display: flex; }
+  .elige-senal-recorrido button {
+    padding: 3px 8px; border-radius: 999px; border: 1px solid var(--linea);
+    background: transparent; color: var(--texto-medio); cursor: pointer;
+    font-family: var(--cuerpo); font-size: .68rem;
+  }
+  .elige-senal-recorrido button[aria-pressed="true"] {
+    background: var(--acento); color: var(--sobre-acento); border-color: var(--acento);
+  }
+  /* La señal que no se movio en este tramo se ofrece igual ---uno puede querer
+     confirmarlo--- pero se ve que no tiene nada que mostrar. */
+  .elige-senal-recorrido button[data-quieta="si"] {
+    opacity: .45; border-style: dashed;
+  }
+  .elige-senal-recorrido button[data-quieta="si"][aria-pressed="true"] { opacity: 1; }
+  /* La comprobacion contra las ruedas. Va sobre el elector de señal porque es
+     una afirmacion sobre el dibujo de arriba, no sobre lo que se elija abajo. */
+  .validacion-forma {
+    margin: 8px 0 0; font-size: .66rem; line-height: 1.35;
+    color: var(--texto-medio); font-family: var(--cifra);
+  }
+  .validacion-forma:empty { display: none; }
+  .validacion-forma[data-alcanza="no"] { color: var(--texto-tenue); font-style: italic; }
+
+  .leyenda-recorrido {
+    margin: 6px 0 0; font-size: .66rem; color: var(--texto-tenue);
+    font-family: var(--cifra);
+  }
+  .leyenda-recorrido:empty { display: none; }
+
 
   @media (max-width: 720px) {
     .celda-2 { grid-column: span 1; }
@@ -1144,7 +1395,12 @@
     grid-template-columns: minmax(0, 1fr) minmax(0, 2fr) minmax(0, 1fr);
     gap: 20px; align-items: center;
   }
-  .banco-motor .fila-medidores { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
+  /* Tantas columnas como entren, por el mismo motivo que en la columna
+     angosta: cuatro fijas dejaban una fila coja en cuanto los medidores
+     dejaron de ser cuatro. */
+  .banco-motor .fila-medidores {
+    grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: 10px;
+  }
   .banco-motor .barras-medidas { margin-top: 0; align-content: center; gap: 16px; }
   @media (max-width: 1180px) { .banco-motor { grid-template-columns: minmax(0, 1fr); } }
 
@@ -1428,6 +1684,53 @@
     background: var(--superficie-2); color: var(--texto-medio);
     font-family: var(--cuerpo); font-size: .72rem; font-weight: 700;
     letter-spacing: .03em; cursor: pointer;
+  }
+  /* A QUIEN ESCUCHAR. Vive debajo del ciclo de vida y solo mientras se
+     escucha, de modo que no compite por sitio con nada el resto del tiempo.
+     Los nombres se envuelven: una parrilla son veinte y no entran en un
+     renglon. */
+  /* UNA TIRA, NO UN PANEL. Veinte pilotos son veinte nombres cortos: ocupan
+     dos renglones si se los deja apretados, y cuatro si se los deja holgados.
+     Esta caja no es lo que se mira mientras se corre ---es lo que se toca una
+     vez al empezar--- de modo que cada pixel que ocupa se lo saca a la cabina,
+     que si se mira todo el tiempo. */
+  .elige-escucha {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 5px 10px;
+    margin: 0 0 8px; padding: 6px 12px;
+    border: 1px solid var(--linea); border-radius: 10px;
+    background: var(--superficie-2);
+  }
+  .elige-escucha .eyebrow { margin: 0; font-size: .55rem; }
+  .pilotos-escucha { display: flex; flex-wrap: wrap; gap: 4px; }
+  .pilotos-escucha button {
+    display: inline-flex; align-items: center; gap: 5px;
+    padding: 3px 9px; border-radius: 999px;
+    border: 1px solid var(--linea-fuerte);
+    background: var(--superficie); color: var(--texto-medio);
+    font-family: var(--cuerpo); font-size: .66rem; font-weight: 700;
+    letter-spacing: .02em; line-height: 1.5; cursor: pointer;
+  }
+  /* El punto del equipo. No se encoge ni se estira: es una referencia, y una
+     referencia que cambia de tamano deja de servir para comparar. */
+  .pilotos-escucha .punto-equipo {
+    flex: 0 0 auto; width: 7px; height: 7px; border-radius: 50%;
+    box-shadow: 0 0 0 1px rgba(0, 0, 0, .35) inset;
+  }
+  /* El fondo dice si esta elegido; el punto, de que equipo es. Son dos
+     preguntas distintas y cada una tiene su canal: pintadas las dos en el
+     fondo, un piloto no elegido de un equipo claro se leia como elegido. */
+  .pilotos-escucha button[aria-pressed="true"] {
+    background: var(--acento); color: var(--sobre-acento); border-color: transparent;
+  }
+  /* El coche propio no se puede destildar, pero no se ve apagado como los que
+     no entran: se escucha siempre, que es lo contrario de estar fuera. */
+  .pilotos-escucha button.propio { opacity: 1; cursor: default; font-weight: 800; }
+  .pilotos-escucha button.propio::after { content: " ·"; }
+  /* Los que no entran se ven apagados y no se sacan de la lista: sacarlos
+     haria creer que ese piloto no esta en la carrera. */
+  .pilotos-escucha button:disabled:not(.propio) { opacity: .38; cursor: not-allowed; }
+  .nota-escucha {
+    margin-left: auto; font-size: .72rem; color: var(--texto-tenue);
   }
   .elige-pilotos button:hover { border-color: var(--acento); color: var(--texto); }
   .elige-pilotos button[aria-pressed="true"] {

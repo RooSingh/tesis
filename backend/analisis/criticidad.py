@@ -152,7 +152,7 @@ CRITERIOS: tuple[Criterio, ...] = (
         nivel_seguridad=ATENCION,
         aviso_perdido="donde y cuanto se frena",
         percepcion_del_conductor="el conductor tiene el pedal bajo el pie: es la "
-                                 "senal que menos necesita que le informen",
+                                 "señal que menos necesita que le informen",
     ),
     Criterio(
         magnitud="Velocidad del vehiculo",
@@ -203,7 +203,7 @@ CRITERIOS: tuple[Criterio, ...] = (
         magnitud="Deslizamiento de rueda",
         nivel_seguridad=ATENCION,
         aviso_perdido="cuanto desliza el eje motriz al aplicar potencia",
-        percepcion_del_conductor="el deslizamiento grande se siente; el pequeno "
+        percepcion_del_conductor="el deslizamiento grande se siente; el pequeño "
                                  "y sostenido, que es el que cuesta tiempo, no",
     ),
     Criterio(
