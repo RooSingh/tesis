@@ -314,7 +314,7 @@ def telemetry_by_signal(signal_name: str, limit: int = 50) -> list[dict]:
 
 @app.get("/telemetry/latest-by-signal")
 def telemetry_latest_by_signal() -> list[dict]:
-    """Devuelve la ultima muestra disponible de cada senal."""
+    """Devuelve la ultima muestra disponible de cada señal."""
 
     return obtener_ultimos_por_senal()
 
@@ -564,7 +564,7 @@ def racing_replay_series(
     signal: str = Query(..., min_length=1),
     limite: int = LIMITE_FILAS_REPLAY,
 ) -> list[dict]:
-    """Expone una serie temporal OpenF1 filtrada por ejecucion, pilotos y senal."""
+    """Expone una serie temporal OpenF1 filtrada por ejecucion, pilotos y señal."""
 
     _validar_limite(limite)
     return obtener_serie_replay_openf1(session_key, replay_run_id, drivers, signal, limite)

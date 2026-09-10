@@ -349,7 +349,7 @@ class DifusorEnVivo:
         del self.sesiones_vistas[:-MAXIMO_SESIONES_ANOTADAS]
 
     def _procesar_cuerpo(self, cuerpo: dict, recibido_utc: str) -> None:
-        """Registra y reparte una senal de un mensaje MQTT simple o agrupado."""
+        """Registra y reparte una señal de un mensaje MQTT simple o agrupado."""
 
         self._anotar_sesion(cuerpo.get("session_id"))
 

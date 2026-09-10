@@ -292,7 +292,7 @@ def _contexto_reciente(cursor, fuente: str) -> tuple[str, str, Any] | None:
 
 def _medir(cursor, fuente: str, senal: str,
            contexto: tuple[str, str, Any] | None) -> dict[str, Any] | None:
-    """Mide la frecuencia de una senal sobre una ventana del final de la sesion."""
+    """Mide la frecuencia de una señal sobre una ventana del final de la sesion."""
 
     if contexto is None:
         return None

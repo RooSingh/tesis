@@ -8228,12 +8228,33 @@ function cargarDatosDeSesion(ruta, apertura, senal, s) {
        conclusion de la linea de tiempo. */
     const rotas = estado.vueltas.filter(v => v.continua === false);
     if (rotas.length) {
+      /* UN HUECO LARGO NO ES UNA PERDIDA, Y NO SE PINTA COMO SI LO FUERA.
+         A veinte hercios, perder muestras deja huecos de decimas. Un hueco de
+         segundos es otra cosa: el coche parado en boxes, el juego en el menu,
+         la sesion en pausa. La fuente no publica telemetria mientras no se
+         conduce, y eso no tiene nada de malo.
+
+         Se decia en rojo en los dos casos. Sobre una captura sin una sola
+         muestra perdida ---cero descartes del intermediario, huecos de
+         cincuenta milisegundos--- el tablero abria con un aviso de error por
+         los veinticinco segundos que el coche estuvo en el garaje.
+
+         Ahora se dice cuanto duro el mayor, que es el dato que permite
+         distinguirlo, y solo se pinta como problema cuando es corto. */
+      const mayor = Math.max.apply(null, rotas.map(v => v.hueco_mayor_s || 0));
+      const esPerdida = mayor > 0 && mayor < 2;
       decirEstadoApi(
         rotas.length + (rotas.length === 1 ? " vuelta tiene" : " vueltas tienen") +
         " un salto entre muestras seguidas ---vuelta " +
-        rotas.map(v => v.numero).join(", ") + "---. La reproducción usa la duración " +
-        "de conducción continua; la diferencia contra el tiempo total está declarada " +
-        "en la respuesta de la API.", true);
+        rotas.map(v => v.numero).join(", ") + ", el mayor de " +
+        (mayor >= 1 ? cifra(mayor, 1) + " s" : Math.round(mayor * 1000) + " ms") + "---. " +
+        (esPerdida
+          ? "Un hueco tan corto son muestras que no llegaron. "
+          : "Un hueco de ese largo es el coche detenido o el juego fuera de pista, " +
+            "no telemetría perdida. ") +
+        "La reproducción usa la duración de conducción continua; la diferencia " +
+        "contra el tiempo total está declarada en la respuesta de la API.",
+        esPerdida);
     }
     poblarVueltas();
     // Clima, vehiculo y puesta los aplica su propia consulta, arriba.

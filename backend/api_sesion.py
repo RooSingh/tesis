@@ -1502,9 +1502,9 @@ def series_por_tiempo(
     fuente = _fuente_de(session_id)
     pedidas = [s.strip() for s in senales.split(",") if s.strip()]
     if not pedidas:
-        raise HTTPException(status_code=422, detail="Hay que pedir al menos una senal.")
+        raise HTTPException(status_code=422, detail="Hay que pedir al menos una señal.")
     if len(pedidas) > 20:
-        raise HTTPException(status_code=422, detail="Hasta veinte senales por consulta temporal.")
+        raise HTTPException(status_code=422, detail="Hasta veinte señales por consulta temporal.")
 
     condiciones = ["source_type = %s", "session_id = %s"]
     parametros: list[Any] = [fuente, session_id]
@@ -1650,9 +1650,9 @@ def series_por_distancia(
 
     pedidas = [s.strip() for s in senales.split(",") if s.strip()]
     if not pedidas:
-        raise HTTPException(status_code=422, detail="Hay que pedir al menos una senal.")
+        raise HTTPException(status_code=422, detail="Hay que pedir al menos una señal.")
     if len(pedidas) > 12:
-        raise HTTPException(status_code=422, detail="Hasta doce senales por consulta.")
+        raise HTTPException(status_code=422, detail="Hasta doce señales por consulta.")
 
     autos = [v.strip() for v in vehiculos.split(",")] if vehiculos else []
 
@@ -2205,11 +2205,18 @@ def _ultimos_valores(cursor, fuente: str, session_id: str, senales: list[str],
     # ventana no encuentra se busca sin acotar, **solo para esas senales**. No
     # se pierde nada; lo unico que cambia es cuanto se recorre en el caso
     # normal.
-    # La cache de ausentes es por sesion **y por alcance**: una senal que no
-    # esta en una adquisicion puede estar en otra, y recordar la ausencia sin el
-    # alcance haria que una prueba de parrilla "confirmara" que a la carrera
-    # original le falta un canal.
-    _clave_ausentes = (fuente, session_id, ventana_alcance)
+    # La cache de ausentes es por sesion, por alcance **y por vehiculo**.
+    #
+    # Por alcance: una senal que no esta en una adquisicion puede estar en otra,
+    # y recordar la ausencia sin el alcance haria que una prueba de parrilla
+    # "confirmara" que a la carrera original le falta un canal.
+    #
+    # Por vehiculo, desde que estas consultas se acotan: de un rival el
+    # protocolo no publica clima ni puesta a punto, de modo que preguntarle a el
+    # y recordar la ausencia sin decir de quien deja al coche propio marcado
+    # como si tampoco los tuviera. Se vio en pantalla: «SIN CLIMA» sobre una
+    # sesion cuya API devolvia veinticuatro grados.
+    _clave_ausentes = (fuente, session_id, ventana_alcance, vehiculo)
     salida: dict[str, Any] = {}
 
     def _consultar_ventana(faltan: list[str], desde: str, hasta: str) -> None:
@@ -2373,7 +2380,7 @@ def estado_del_vehiculo(
         "carroceria": carroceria,
         "ausentes": ausentes,
         "motivo_ausencia": (
-            "Esta fuente no publica estado de neumaticos ni de dano."
+            "Esta fuente no publica estado de neumaticos ni de daño."
             if not esquinas and not carroceria else None
         ),
     }
@@ -2583,7 +2590,7 @@ def contexto(
         "esquinas": esquinas,
         "carroceria": carroceria,
         "vehiculo_motivo": (None if (esquinas or carroceria)
-                            else "Esta fuente no publica estado de neumaticos ni de dano."),
+                            else "Esta fuente no publica estado de neumaticos ni de daño."),
         "puesta_a_punto": puesta,
         "campos": campos,
         "sin_decodificar": [c["clave"] for c in campos if not c["decodificado"]],

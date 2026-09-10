@@ -498,7 +498,7 @@ def _contexto(cursor, fuente: str,
 
 def _medir(cursor, fuente: str, session_id: str, senal: str,
            contexto: tuple[str | None, str | None, str | None]) -> Medicion | None:
-    """Mide una senal sobre una ventana del final, para un vehiculo y una corrida."""
+    """Mide una señal sobre una ventana del final, para un vehiculo y una corrida."""
 
     conductor, vehiculo, corrida = contexto
     cursor.execute(

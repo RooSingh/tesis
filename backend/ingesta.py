@@ -716,7 +716,7 @@ def _exigir_tope(pilotos: list[str]) -> list[str]:
             detail=(f"Se pueden escuchar hasta {MAXIMO_PILOTOS} vehiculos a la "
                     f"vez, el propio incluido, o sea {MAXIMO_PILOTOS - 1} "
                     "pilotos elegidos. Medido sobre la carrera de Spa, cada "
-                    "coche pide 1.511 senales/s y el consumidor sostiene unas "
+                    "coche pide 1.511 señales/s y el consumidor sostiene unas "
                     "9.900 en serie: mas alla de ese tope no falla nada, se "
                     "pierden muestras de todos, tambien del coche propio."))
     return limpios
@@ -809,7 +809,7 @@ def captura_iniciar(peticion: PeticionCaptura) -> dict:
         respuesta["parrilla_limitada_porque"] = (
             "Esta instalacion captura solo el vehiculo propio "
             "(CAPTURA_SOLO_VEHICULO_PROPIO). La parrilla completa multiplica "
-            "por veintidos las senales, y en esta maquina se descartaba el 87 % "
+            "por veintidos las señales, y en esta maquina se descartaba el 87 % "
             "---tambien las del coche propio---.")
     respuesta["destino"] = str(CAPTURAS_F1)
     respuesta["advertencia"] = (

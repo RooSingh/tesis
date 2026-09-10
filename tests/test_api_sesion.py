@@ -771,6 +771,64 @@ class UnAvisoEsDeUnVehiculoTests(unittest.TestCase):
         self.assertNotIn("vehicle_id", consulta)
 
 
+class NingunaConsultaLeeVariosVehiculosSinDecirloTests(unittest.TestCase):
+    """La prueba que existe para que este defecto no vuelva una sexta vez.
+
+    El 2026-09-10, en un solo dia, el mismo error aparecio en cinco lugares:
+    las ocho consultas de avisos y trazado, las marcas sobre la pista, la
+    eleccion del coche propio en el tablero, `/vueltas` y el estado del
+    vehiculo. Todos compartian la misma forma: una lectura **correcta mientras
+    se capturaba un vehiculo** y arbitraria en cuanto hubo cuatro.
+
+    Buscarlos de a uno los encontraba despues de que molestaran. Esta prueba
+    los busca antes: recorre las consultas del modulo y exige que toda la que
+    lea una senal de vehiculo diga de cual.
+
+    LO QUE NO CUENTA COMO SENAL DE VEHICULO. `lap_number` sirve tambien para
+    delimitar adquisiciones y fases, que son hechos de la sesion y no de un
+    coche; el clima y las banderas son de la pista. Esos se leen sin acotar a
+    proposito.
+    """
+
+    #: Prefijos de las senales que describen a **un** coche.
+    DE_VEHICULO = ("tyre_", "wheel_", "brake_", "engine_", "wing_", "floor_",
+                   "diffuser_", "sidepod_", "gearbox_", "surface_type",
+                   "g_force", "yaw_rate", "world_position", "throttle_position",
+                   "brake_position", "steering_normalized", "gear_selected",
+                   "ers_", "fuel_", "drs_")
+
+    def test_toda_consulta_de_senales_de_vehiculo_declara_el_vehiculo(self) -> None:
+        import inspect
+        import re
+
+        fuente = inspect.getsource(api_sesion)
+        cortes = [(m.start(), m.group(1))
+                  for m in re.finditer(r"\ndef ([a-zA-Z_]+)\(", fuente)]
+        cortes.append((len(fuente), None))
+
+        sin_acotar = []
+        for (i, nombre), (j, _) in zip(cortes, cortes[1:]):
+            cuerpo = fuente[i:j]
+            if "FROM telemetry_messages" not in cuerpo:
+                continue
+            if not any(p in cuerpo for p in self.DE_VEHICULO):
+                continue
+            # Acotada si nombra la columna o usa el ayudante que la agrega.
+            if "vehicle_id" in cuerpo or "_acotar_al_vehiculo" in cuerpo:
+                continue
+            # La unica excepcion, y por definicion: es la funcion que **responde**
+            # cual es el vehiculo. No puede acotarse por su propia respuesta.
+            if nombre == "_vehiculo_propio":
+                continue
+            sin_acotar.append(nombre)
+
+        self.assertEqual(
+            sin_acotar, [],
+            "estas funciones leen senales de un vehiculo sin decir de cual, "
+            "que con varios capturados mezcla los canales de todos: %s"
+            % ", ".join(sin_acotar))
+
+
 class ElEstadoDelVehiculoEsDeUnVehiculoTests(unittest.TestCase):
     """El panel pedia el ultimo valor de cada senal sin decir de que coche.
 

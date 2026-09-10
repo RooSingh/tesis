@@ -924,7 +924,7 @@ CAR_DAMAGE_TAMANO = struct.calcsize(CAR_DAMAGE_FMT)
 
 
 def _desempaquetar_car_damage(bruto: tuple) -> dict[str, Any]:
-    """Nombra los campos de dano y desgaste de un vehiculo."""
+    """Nombra los campos de daño y desgaste de un vehiculo."""
 
     return {
         "tyres_wear_pct": _por_rueda(bruto[0:4]),
