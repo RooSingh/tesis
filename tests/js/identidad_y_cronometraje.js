@@ -170,6 +170,7 @@ const CONSTANTES = ["SENAL_DE", "SENAL_CAN", "SENAL_OPENF1",
                     "FUENTES",
                     "CANALES_POR_FUENTE",
                     "PASOS_DE_LA_ESCALA_G",
+                    "PUNTOS_DE_LA_ESTELA",
                     "METRICAS"];
 
 const sacadas = new Function(
@@ -256,6 +257,7 @@ const {
   FUENTES: FUENTES_REALES,
   CANALES_POR_FUENTE,
   PASOS_DE_LA_ESCALA_G,
+  PUNTOS_DE_LA_ESTELA,
 } = sacadas;
 
 globalThis.instante = () => calcularInstante();
@@ -3030,6 +3032,137 @@ prueba("un coche de calle no se dibuja en la escala de uno de carrera", () => {
   assert.strictEqual(escalaDelDiagramaG(0.062), 0.1);
   assert.ok(escalaDelDiagramaG(0.062) < 1,
             "la escala se queda en el piso del simulador y la nube es un punto");
+});
+
+prueba("la estela conserva el extremo de la vuelta, que es lo que el dibujo dice", () => {
+  /* El defecto medido: tomando una muestra de cada tantas, los siete tramos del
+     bus perdian entre el 9 y el 32 % del extremo. En `sample_27` eso bajaba la
+     escala de 0,30 a 0,20 g y el punto del instante quedaba sujeto al borde,
+     mostrando pegado al limite un valor que no estaba en el limite. */
+  reiniciar();
+  globalThis.fuente = "can";
+  globalThis.canalesDeLaFuente = () => CANALES_POR_FUENTE.can;
+  const marcas = [], lat = [], lon = [], dist = [];
+  for (let i = 0; i < 3000; i++) {
+    marcas.push(i * 20); dist.push(i);
+    /* Un pico aislado, en un sitio que un paso fijo se saltea. */
+    const pico = (i === 1501);
+    lat.push((pico ? 4.45 : 0.5) * (i % 2 ? 1 : -1));
+    lon.push(pico ? 1.0 : 0.3);
+  }
+  cargarVuelta(1, marcas,
+               { distancia_m: dist, accel_lateral: lat, accel_longitudinal: lon },
+               { accel_lateral: "m/s^2", accel_longitudinal: "m/s^2" });
+  globalThis.estado.vueltas = [{ numero: 1, duracion_s: 60,
+                                 desde_utc: iso(T0), hasta_utc: iso(T0 + 60000) }];
+  armarAutos([CAR19]);
+
+  const h = _estelaG(1);
+  /* 4,45 m/s2 son 0,454 g: la escala tiene que ser 0,5 y no 0,1. */
+  assert.strictEqual(h.maximo, 0.5,
+                     "la escala se midio sobre lo dibujado y no sobre la vuelta: " + h.maximo);
+  const radios = h.puntos.map(q => Math.hypot(q[0] - 90, q[1] - 90));
+  assert.ok(Math.max.apply(null, radios) > 55,
+            "el pico no llego a la estela: radio maximo " +
+            Math.max.apply(null, radios).toFixed(1) + " de 68");
+});
+
+prueba("el borde lo declara la vuelta entera, no los puntos que se dibujaron", () => {
+  /* El extremo por modulo y el extremo por componente pueden ser dos puntos
+     distintos: de un tramo con (2,06 · 0) y (1,57 · 1,57) sobrevive el segundo,
+     que esta mas lejos del centro, y con el se pierde la lateral mas grande de
+     la vuelta. Midiendo la escala sobre lo dibujado el borde sale 0,2 g cuando
+     la vuelta llego a 0,21: el pico queda **fuera** del dibujo. */
+  reiniciar();
+  globalThis.fuente = "can";
+  globalThis.canalesDeLaFuente = () => CANALES_POR_FUENTE.can;
+  const marcas = [], lat = [], lon = [], dist = [];
+  for (let i = 0; i < 600; i++) {
+    marcas.push(i * 100); dist.push(i);
+    lat.push(i === 0 ? 2.06 : i === 1 ? 1.57 : 0.1);
+    lon.push(i === 1 ? 1.57 : 0.1);
+  }
+  cargarVuelta(1, marcas,
+               { distancia_m: dist, accel_lateral: lat, accel_longitudinal: lon },
+               { accel_lateral: "m/s^2", accel_longitudinal: "m/s^2" });
+  globalThis.estado.vueltas = [{ numero: 1, duracion_s: 60,
+                                 desde_utc: iso(T0), hasta_utc: iso(T0 + 60000) }];
+  armarAutos([CAR19]);
+  const h = _estelaG(1);
+  assert.strictEqual(h.maximo, 0.3,
+                     "el borde se midio sobre lo dibujado: dice " + h.maximo +
+                     " g y la vuelta llego a " + (2.06 / 9.80665).toFixed(3));
+});
+
+prueba("el punto del instante no queda sujeto al borde por una escala corta", () => {
+  /* Con la escala medida sobre la vuelta entera, el valor mas grande cabe
+     dentro del dibujo en vez de aplastarse contra el anillo exterior. */
+  reiniciar();
+  globalThis.fuente = "can";
+  globalThis.canalesDeLaFuente = () => CANALES_POR_FUENTE.can;
+  const marcas = [], lat = [], lon = [], dist = [];
+  for (let i = 0; i < 600; i++) {
+    marcas.push(i * 100); dist.push(i);
+    lat.push(i === 401 ? 2.05 : 0.4);
+    lon.push(0.2);
+  }
+  cargarVuelta(1, marcas,
+               { distancia_m: dist, accel_lateral: lat, accel_longitudinal: lon },
+               { accel_lateral: "m/s^2", accel_longitudinal: "m/s^2" });
+  globalThis.estado.vueltas = [{ numero: 1, duracion_s: 60,
+                                 desde_utc: iso(T0), hasta_utc: iso(T0 + 60000) }];
+  armarAutos([CAR19]);
+  const h = _estelaG(1);
+  const pico = 2.05 / 9.80665;                 // 0,209 g
+  assert.ok(h.maximo >= pico,
+            "el borde vale " + h.maximo + " g y la vuelta llego a " + pico.toFixed(3));
+});
+
+prueba("una vuelta quieta no divide por cero ni se dibuja en escala de carrera", () => {
+  reiniciar();
+  globalThis.fuente = "can";
+  globalThis.canalesDeLaFuente = () => CANALES_POR_FUENTE.can;
+  cargarVuelta(1, [0, 100, 200],
+               { distancia_m: [0, 1, 2], accel_lateral: [0, 0, 0],
+                 accel_longitudinal: [0, 0, 0] },
+               { accel_lateral: "m/s^2", accel_longitudinal: "m/s^2" });
+  globalThis.estado.vueltas = [{ numero: 1, duracion_s: 1,
+                                 desde_utc: iso(T0), hasta_utc: iso(T0 + 200) }];
+  armarAutos([CAR19]);
+  const h = _estelaG(1);
+  assert.ok(h.maximo > 0, "el borde vale cero y todo se divide por el");
+  assert.ok(h.puntos.every(q => Number.isFinite(q[0]) && Number.isFinite(q[1])));
+});
+
+prueba("sin aceleraciones la estela es un punto y no rompe", () => {
+  reiniciar();
+  globalThis.fuente = "can";
+  globalThis.canalesDeLaFuente = () => CANALES_POR_FUENTE.can;
+  cargarVuelta(1, [0, 100], { distancia_m: [0, 1], speed: [10, 11] }, {});
+  globalThis.estado.vueltas = [{ numero: 1, duracion_s: 1,
+                                 desde_utc: iso(T0), hasta_utc: iso(T0 + 100) }];
+  armarAutos([CAR19]);
+  const h = _estelaG(1);
+  assert.deepStrictEqual(h.puntos, [[90, 90]]);
+  assert.ok(h.maximo > 0);
+});
+
+prueba("la estela no dibuja mas puntos de los que se distinguen", () => {
+  reiniciar();
+  globalThis.fuente = "can";
+  globalThis.canalesDeLaFuente = () => CANALES_POR_FUENTE.can;
+  const marcas = [], lat = [], lon = [], dist = [];
+  for (let i = 0; i < 3000; i++) {
+    marcas.push(i * 20); dist.push(i); lat.push(Math.sin(i / 50)); lon.push(Math.cos(i / 70));
+  }
+  cargarVuelta(1, marcas,
+               { distancia_m: dist, accel_lateral: lat, accel_longitudinal: lon },
+               { accel_lateral: "m/s^2", accel_longitudinal: "m/s^2" });
+  globalThis.estado.vueltas = [{ numero: 1, duracion_s: 60,
+                                 desde_utc: iso(T0), hasta_utc: iso(T0 + 60000) }];
+  armarAutos([CAR19]);
+  assert.ok(_estelaG(1).puntos.length <= PUNTOS_DE_LA_ESTELA,
+            "la estela paso de " + PUNTOS_DE_LA_ESTELA + " puntos y se vuelve una mancha");
 });
 
 prueba("la estela del bus se dibuja en la escala del bus", () => {

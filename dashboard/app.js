@@ -2132,15 +2132,52 @@ function pintarG() {
 
 /* El punto recorre la estela. Es la unica animacion por temporizador de la
    vista, y se apaga si la persona declaro preferir movimiento reducido. */
+/* Cuantos puntos dibuja la estela. Ochenta sobre un circulo de ciento treinta y
+   seis unidades de diametro es algo mas de uno cada dos: por debajo se ven los
+   escalones y por encima el trazo se vuelve una mancha. */
+const PUNTOS_DE_LA_ESTELA = 80;
+
+/* LA HUELLA DE LA VUELTA, SIN PERDER SUS EXTREMOS.
+   Un diagrama de aceleraciones **es** su envolvente: lo que dice es cuanto se
+   empujo al vehiculo y en que direcciones. Tomar una muestra de cada tantas
+   tiraba justo los picos, que son lo unico que ese dibujo tiene para contar.
+   Medido sobre los siete tramos del bus, la estela perdia entre el 9 y el 32 %
+   del extremo; en `sample_27` eso bajaba la escala de 0,30 a 0,20 g y el punto
+   del instante quedaba **sujeto al borde**, mostrando pegado al limite un valor
+   que no estaba en el limite.
+
+   De cada tramo se conserva el punto mas lejano del centro. Es una muestra
+   medida, no un promedio ni una interpolacion: se elige por el modulo porque
+   las dos componentes son un solo vector y su extremo es un instante real de la
+   vuelta. La objecion que impide elegir por valor en las series ---que cada
+   fila trae varias señales y el extremo de una no es el de las otras--- no
+   aplica aca, donde las dos son la misma medicion.
+
+   Y LA ESCALA SE MIDE SOBRE TODO, NO SOBRE LO DIBUJADO. Aunque la estela
+   conserve los extremos, el borde del diagrama se declara con la vuelta
+   entera: es lo que ese numero dice que es. */
 function _estelaG(vuelta) {
   const longitudinal = serieDeCanal("glong", vuelta, claveVehiculoPropio()) || [];
   const lateral = serieDeCanal("glat", vuelta, claveVehiculoPropio()) || [];
   const n = Math.min(longitudinal.length, lateral.length);
-  if (!n) return { puntos: [[90, 90]], maximo: 1 };
+  if (!n) return { puntos: [[90, 90]], maximo: PASOS_DE_LA_ESCALA_G[0] };
   const valores = [];
-  const paso = Math.max(1, Math.floor(n / 80));
-  for (let i = 0; i < n; i += paso) valores.push([Number(lateral[i][1]), Number(longitudinal[i][1])]);
-  const maximo = escalaDelDiagramaG(Math.max(...valores.flat().map(Math.abs)));
+  const paso = Math.max(1, Math.ceil(n / PUNTOS_DE_LA_ESTELA));
+  let tope = 0;
+  for (let i = 0; i < n; i += paso) {
+    let extremo = null, lejos = -1;
+    for (let k = i; k < Math.min(i + paso, n); k++) {
+      const x = Number(lateral[k][1]), y = Number(longitudinal[k][1]);
+      if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
+      if (Math.abs(x) > tope) tope = Math.abs(x);
+      if (Math.abs(y) > tope) tope = Math.abs(y);
+      const d = x * x + y * y;
+      if (d > lejos) { lejos = d; extremo = [x, y]; }
+    }
+    if (extremo) valores.push(extremo);
+  }
+  if (!valores.length) return { puntos: [[90, 90]], maximo: PASOS_DE_LA_ESCALA_G[0] };
+  const maximo = escalaDelDiagramaG(tope);
   /* Se devuelve tambien la escala: el punto del instante se coloca con las
      aceleraciones interpoladas y tiene que caer en el mismo dibujo que la
      estela, no en uno normalizado aparte. */
