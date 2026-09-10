@@ -8132,7 +8132,12 @@ function pintarTransporte() {
   const barra = document.getElementById("transporte");
   if (!barra) return;
 
-  const modo = estadoSesion === "vivo" ? "vivo"
+  /* ESCUCHAR NO ES REPRODUCIR, Y POR ESO NO LLEVA REPRODUCTOR.
+     Escuchando cae del lado del vivo: no hay nada que recorrer todavia, y
+     ofrecer un cabezal, una velocidad y un boton de reproducir sobre una sesion
+     que no existe invita a manipular algo que no esta. Lo que se recorre es lo
+     que ya se guardo, y para eso esta «abrir sesion guardada». */
+  const modo = (estadoSesion === "vivo" || estadoSesion === "escuchando") ? "vivo"
              : estadoSesion === "vacio" ? "vacio" : "reproduccion";
   barra.dataset.modo = modo;
   /* EL BARRIDO DE LOS INSTRUMENTOS ES DE UN MODO Y NO DEL OTRO.
@@ -8161,7 +8166,9 @@ function pintarTransporte() {
     }
     if (v.conectado === false) partes.push("difusor desconectado" + (v.motivo ? ": " + v.motivo : ""));
     document.getElementById("detalle-vivo").textContent =
-      partes.length ? partes.join(" · ") : "esperando al difusor…";
+      estadoSesion === "escuchando"
+        ? "sin telemetría todavía · en cuanto el juego emita, el tablero se llena solo"
+        : (partes.length ? partes.join(" · ") : "esperando al difusor…");
     return;
   }
   if (modo === "vacio") { detener(); return; }

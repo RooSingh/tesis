@@ -41,8 +41,18 @@ from typing import Any
 #: Donde viven los metadatos de captura.
 DIRECTORIO = Path(__file__).resolve().parent.parent / "datasets" / "f1_25" / "capturas"
 
-#: Cuanto se conserva el indice antes de releer el directorio. Los archivos
-#: cambian solo cuando se captura, que no ocurre mientras alguien consulta.
+#: Cuanto se conserva el indice antes de releer el directorio.
+#:
+#: La razon original era que los archivos solo cambian al capturar, y que eso no
+#: ocurre mientras alguien consulta. **Dejo de ser cierto**: el capturador ahora
+#: anota la procedencia apenas el flujo la declara, en vez de esperar al cierre,
+#: de modo que los metadatos aparecen y se reescriben justo mientras se mira.
+#: Con cinco minutos de vigencia, una sesion en vivo se seguia llamando «sin
+#: procedencia declarada» hasta bastante despues de que el juego hubiera dicho
+#: que era Monte Carlo.
+#:
+#: El plazo se conserva ---releer el directorio en cada consulta seria caro--- y
+#: se le agrega la comprobacion de abajo, que cuesta un `stat` por archivo.
 VIGENCIA_S = 300.0
 
 #: Cuanto puede separarse el arranque de una adquisicion del de su captura.
@@ -68,7 +78,9 @@ LECTURA_DEL_TIPO = {
     "contrarreloj": ("Contrarreloj", "contrarreloj"),
 }
 
-_CACHE: tuple[float, dict[str, dict], dict[str, list[dict]]] | None = None
+#: (cuando se armo, procedencias, parrillas, mtime mas reciente al armarlo).
+#: El cuarto es lo que permite notar que un metadato cambio sin releerlos.
+_CACHE: tuple[float, dict[str, dict], dict[str, list[dict]], float] | None = None
 
 
 #: Los campos de cada participante que salen de este modulo, y ningun otro.
@@ -215,13 +227,34 @@ def _releer() -> tuple[dict[str, dict], dict[str, list[dict]]]:
     return procedencias, candidatas
 
 
+def _mas_reciente() -> float:
+    """Cuando se toco por ultima vez alguno de los metadatos, o cero.
+
+    Es un `stat` por archivo sobre un directorio que tiene unas pocas capturas.
+    Comparado con releer y parsear cada JSON ---que es lo que evita--- no se
+    mide.
+    """
+    if not DIRECTORIO.is_dir():
+        return 0.0
+    try:
+        return max((r.stat().st_mtime for r in DIRECTORIO.glob("*.meta.json")),
+                   default=0.0)
+    except OSError:
+        return 0.0
+
+
 def _indices(refrescar: bool = False) -> tuple[dict[str, dict], dict[str, list[dict]]]:
     global _CACHE
     ahora = time.monotonic()
-    if _CACHE and not refrescar and ahora - _CACHE[0] < VIGENCIA_S:
+    # Vale mientras no haya vencido **y** ningun metadato se haya tocado desde
+    # que se armo. Lo segundo es lo que deja ver una captura en curso: su
+    # procedencia se reescribe cada vez que el flujo se redeclara.
+    if (_CACHE and not refrescar and ahora - _CACHE[0] < VIGENCIA_S
+            and _mas_reciente() <= _CACHE[3]):
         return _CACHE[1], _CACHE[2]
+    tocado = _mas_reciente()
     procedencias, parrillas = _releer()
-    _CACHE = (ahora, procedencias, parrillas)
+    _CACHE = (ahora, procedencias, parrillas, tocado)
     return procedencias, parrillas
 
 
