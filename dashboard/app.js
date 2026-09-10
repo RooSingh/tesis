@@ -2019,8 +2019,8 @@ function pintarAvisos() {
       // El detalle es el valor medido contra su umbral: es lo que sostiene el
       // aviso, y el canal queda en el titulo para quien quiera discutirlo.
       '<span class="canal" title="Canal: ' + a.canal + ' · umbral ' + a.umbral + '">' +
-        cifra(a.valor, 1) + ' ' + (a.unidad || "") +
-        (a.umbral !== undefined && a.umbral !== null ? ' · umbral ' + a.umbral : '') +
+        (a.detalle || (cifra(a.valor, 1) + ' ' + (a.unidad || "") +
+        (a.umbral !== undefined && a.umbral !== null ? ' · umbral ' + a.umbral : ''))) +
       '</span>' +
     '</div>').join("");
 
@@ -6729,6 +6729,7 @@ const vivo = {
   series: new Map(),
   distancia: new Map(),
   vuelta: new Map(),
+  anotaciones: new Map(),
   //: Reloj de la ultima muestra aplicada, por vehiculo y por señal. Es lo que
   //: permite decir que un canal esta viejo aunque esten llegando otros, y
   //: descartar una muestra atrasada sin descartar la que la sigue.
@@ -6834,6 +6835,7 @@ function prepararEscucha() {
   estado.posiciones = {}; estado.pidiendoPos = {};
   cambiaronLasSeries();
   estado.disponibles = new Set();
+  limpiarContextoDeSesion();
   AUTOS = []; seleccion = new Set(); estado.vehiculoClave = null;
   propioAMano = null; _tintaPorVehiculo = new Map();
   estado.cargando = false;
@@ -6885,6 +6887,7 @@ function vaciarVivo(sesion) {
   vivo.sesion = sesion || null;
   vivo.ultimos.clear(); vivo.series.clear(); vivo.distancia.clear(); vivo.vuelta.clear();
   vivo.reloj.clear(); vivo.vistos.clear(); vivo.ordenVistos.length = 0;
+  vivo.anotaciones.clear();
   /* El recorrido es de la sesion que se deja: reusarlo dibujaria el circuito
      anterior debajo del coche de la nueva. */
   vivo.recorrido.clear();
@@ -6893,6 +6896,12 @@ function vaciarVivo(sesion) {
      vuelta viven en otra cache, con la vuelta y el vehiculo por clave, y esos
      dos se repiten entre una sesion y la siguiente. */
   cambiaronLasSeries();
+}
+
+function limpiarContextoDeSesion() {
+  estado.clima = null; estado.climaMotivo = "";
+  estado.vehiculo = null; estado.vehiculoMotivo = "";
+  estado.puesta = null; estado.avisos = []; estado.avisosMotivo = "";
 }
 
 /* ============================================================
@@ -7171,9 +7180,11 @@ function incorporarTelemetriaViva(m, recuperando) {
        terminar. El capturador la escribe apenas el flujo se declara; lo que
        faltaba era pedirla. */
     pedirProcedenciaViva(m.session_id);
+    recuperarAnotacionesVivas(m.session_id, vivo.conexion);
     estado.series = {}; estado.pidiendo = {}; estado.posiciones = {}; estado.pidiendoPos = {};
     cambiaronLasSeries();
     estado.disponibles = new Set();
+    limpiarContextoDeSesion();
     AUTOS = []; seleccion = new Set(); estado.vehiculoClave = null;
   propioAMano = null; _tintaPorVehiculo = new Map();
     marcar(document.getElementById("sel-fuente"), "fuente", fuente);
@@ -7316,6 +7327,124 @@ function incorporarTelemetriaViva(m, recuperando) {
   pedirPintado(["valores", "trazas"]);
 }
 
+const CAMPOS_PUESTA_VIVA = [
+  ["sesgo_de_freno_pct", "brake_bias_front", "%", true],
+  ["mezcla_de_combustible", "fuel_mix_mode", "codigo", false],
+  ["modo_de_despliegue_ers", "ers_deploy_mode", "codigo", false],
+  ["compuesto", "tyre_compound", "codigo", false],
+  ["edad_del_neumatico_vueltas", "tyre_age", "vueltas", true],
+];
+
+const CAMPOS_CARROCERIA_VIVA = {
+  ala_delantera_izq_pct: "wing_damage_front_left",
+  ala_delantera_der_pct: "wing_damage_front_right",
+  ala_trasera_pct: "wing_damage_rear",
+  piso_pct: "floor_damage",
+  difusor_pct: "diffuser_damage",
+  pontones_pct: "sidepod_damage",
+  caja_pct: "gearbox_damage",
+  motor_pct: "engine_damage",
+};
+
+const CAMPOS_ESQUINA_VIVA = {
+  temperatura_superficie_c: "tyre_temperature_surface_%s",
+  temperatura_interna_c: "tyre_temperature_inner_%s",
+  presion_psi: "tyre_pressure_%s",
+  desgaste_pct: "tyre_wear_%s",
+  dano_pct: "tyre_damage_%s",
+  ampollas_pct: "tyre_blisters_%s",
+  freno_c: "brake_temperature_%s",
+  dano_freno_pct: "brake_damage_%s",
+  deslizamiento: "wheel_slip_ratio_%s",
+  velocidad_rueda_kmh: "wheel_speed_%s",
+  superficie: "surface_type_%s",
+};
+
+function sincronizarContextoVivo() {
+  if (estadoSesion !== "vivo") return;
+  const clave = claveVehiculoPropio();
+  const ultimos = clave && vivo.ultimos.get(clave);
+  if (!ultimos) return;
+  const valor = canal => {
+    const muestra = ultimos.get(canal);
+    return muestra ? numeroMedido(muestra.value) : null;
+  };
+
+  const esquinas = {};
+  ["front_left", "front_right", "rear_left", "rear_right"].forEach(esquina => {
+    const datos = {};
+    Object.entries(CAMPOS_ESQUINA_VIVA).forEach(([nombre, plantilla]) => {
+      const medido = valor(plantilla.replace("%s", esquina));
+      if (medido !== null) datos[nombre] = medido;
+    });
+    if (Object.keys(datos).length) esquinas[esquina] = datos;
+  });
+  const carroceria = {};
+  Object.entries(CAMPOS_CARROCERIA_VIVA).forEach(([nombre, canal]) => {
+    const medido = valor(canal);
+    if (medido !== null) carroceria[nombre] = medido;
+  });
+  estado.vehiculo = Object.keys(esquinas).length
+    ? { esquinas: esquinas, carroceria: carroceria } : null;
+
+  const campos = [];
+  const puesta = {};
+  CAMPOS_PUESTA_VIVA.forEach(([nombre, canal, unidad, decodificado]) => {
+    const medido = valor(canal);
+    if (medido === null) return;
+    puesta[nombre] = medido;
+    campos.push({ clave: nombre, canal: canal, valor: medido,
+                  unidad: unidad, decodificado: decodificado });
+  });
+  estado.puesta = campos.length ? {
+    puesta_a_punto: puesta,
+    campos: campos,
+    sin_decodificar: campos.filter(c => !c.decodificado).map(c => c.clave),
+  } : null;
+  estado.avisos = (vivo.anotaciones.get(clave) || []).slice();
+}
+
+function incorporarAnotacionViva(a) {
+  if (!a || !a.vehiculo || !vivo.sesion ||
+      !a.vehiculo.startsWith(vivo.sesion + ":car:")) return;
+  if (!vivo.anotaciones.has(a.vehiculo)) vivo.anotaciones.set(a.vehiculo, []);
+  const lista = vivo.anotaciones.get(a.vehiculo);
+  const id = a.id === undefined
+    ? [a.nivel, a.titulo, a.reloj_s].join("|")
+    : "id:" + a.id;
+  const aviso = {
+    id: id,
+    nivel: a.nivel === "incidente" ? "alerta" : "info",
+    que: a.titulo || "Anotacion en vivo",
+    detalle: a.detalle || "",
+    vuelta: a.vuelta || null,
+    metro: a.distancia_m || null,
+    canal: a.fundamento || "anotador en vivo",
+    umbral: a.fundamento || null,
+    valor: null,
+    unidad: "",
+    en: 1,
+  };
+  const anterior = lista.findIndex(x => x.id === id);
+  if (anterior >= 0) lista[anterior] = aviso;
+  else lista.push(aviso);
+  _firmaAvisos = "";
+  pedirPintado("valores");
+}
+
+function recuperarAnotacionesVivas(sesion, conexion) {
+  if (!sesion) return;
+  pedir("/live/anotaciones?sesion=" + encodeURIComponent(sesion))
+    .then(d => {
+      if (conexion !== vivo.conexion || sesion !== vivo.sesion) return;
+      Object.entries((d && d.vehiculos) || {}).forEach(([vehiculo, bloque]) => {
+        (bloque.anotaciones || []).forEach(a =>
+          incorporarAnotacionViva(Object.assign({}, a, { vehiculo: vehiculo })));
+      });
+    })
+    .catch(e => { if (!fueAnulada(e) && e instanceof TypeError) console.error(e); });
+}
+
 function datoEvento(e) {
   try { return JSON.parse(e.data); } catch (_error) { return null; }
 }
@@ -7335,7 +7464,16 @@ function conectarFlujoEnVivo() {
   canal.addEventListener("estado", e => { const d = datoEvento(e); if (d) { estado.vivo = d; pintarTransporte(); } });
   canal.addEventListener("telemetria", e => {
     TESTIGO.eventosSSE++;
-    incorporarTelemetriaViva(datoEvento(e));
+    /* El servidor agrupa senales para no pagar una respuesta SSE por cada una.
+       Se conserva la forma individual para conexiones contra una version
+       anterior durante un despliegue. */
+    const recibido = datoEvento(e);
+    const lote = Array.isArray(recibido) ? recibido : [recibido];
+    lote.forEach(m => incorporarTelemetriaViva(m));
+  });
+  canal.addEventListener("anotacion", e => {
+    const d = datoEvento(e);
+    if (d) incorporarAnotacionViva(d);
   });
   canal.addEventListener("latido", e => {
     const d = datoEvento(e);
@@ -7343,6 +7481,7 @@ function conectarFlujoEnVivo() {
     pintarTransporte();
   });
   canal.onopen = () => {
+    recuperarAnotacionesVivas(vivo.sesion, miConexion);
     /* RECUPERAR NO ES VOLVER ATRAS.
        El servidor devuelve su ventana corta en el orden en que la guardo, y
        este navegador puede llevar ya varios segundos de flujo. Se ordena por
@@ -8206,6 +8345,8 @@ function cargarDatosDeSesion(ruta, apertura, senal, s) {
         estado.puesta = (ctx.campos && ctx.campos.length) ? ctx : null;
         if (estado.clima) estado.disponibles.add("air_temperature");
         if (estado.vehiculo) estado.disponibles.add("tyre_temperature_surface_front_left");
+        if (estado.puesta) estado.disponibles.add("brake_bias_front");
+        aplicarDisponibilidad();
         _firmaClima = ""; _firmaEsquinas = ""; _firmaPuesta = "";
         pintarClima(); pintarEsquinas(); pintarPuestaAPunto();
       })
@@ -8441,6 +8582,10 @@ function refrescarContexto() {
           ? { esquinas: d.esquinas, carroceria: d.carroceria } : null;
         estado.vehiculoMotivo = d.vehiculo_motivo || "";
         estado.puesta = (d.campos && d.campos.length) ? d : null;
+        if (estado.clima) estado.disponibles.add("air_temperature");
+        if (estado.vehiculo) estado.disponibles.add("tyre_temperature_surface_front_left");
+        if (estado.puesta) estado.disponibles.add("brake_bias_front");
+        aplicarDisponibilidad();
         _firmaClima = ""; _firmaEsquinas = ""; _firmaPuesta = "";
         pintarClima(); pintarEsquinas(); pintarPuestaAPunto();
       })
@@ -10392,6 +10537,7 @@ function pintarValores() {
     TESTIGO.pendienteDesde = null;
     TESTIGO.pendientes = 0;
   }
+  if (estadoSesion === "vivo") sincronizarContextoVivo();
   if (estadoSesion !== "vacio") vueltaElegida = instante().vuelta;
   pintarEsquinas(); pintarTransporte(); pintarCronometraje();
   pintarMedidores(); pintarClima(); pintarAvisos(); pintarG();

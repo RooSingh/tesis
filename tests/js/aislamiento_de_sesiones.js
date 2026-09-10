@@ -48,6 +48,14 @@ function extraerConstanteNumerica(nombre) {
   return "const " + nombre + " = " + m[1] + ";";
 }
 
+function extraerHasta(marca, cierre) {
+  const desde = fuenteJs.indexOf(marca);
+  if (desde === -1) throw new Error("no esta en app.js: " + marca);
+  const hasta = fuenteJs.indexOf(cierre, desde);
+  if (hasta === -1) throw new Error("no cierra: " + marca);
+  return fuenteJs.slice(desde, hasta + cierre.length);
+}
+
 /* ------------------------------------------------------------------
    El entorno: lo minimo para que el camino vivo corra
    ------------------------------------------------------------------ */
@@ -63,7 +71,9 @@ const preludio = `
   let seleccion = new Set();
   let SESIONES = [];
   const estado = { abierta: null, series: {}, pidiendo: {}, posiciones: {},
-                   pidiendoPos: {}, disponibles: new Set(), vehiculoClave: null };
+                   pidiendoPos: {}, disponibles: new Set(), vehiculoClave: null,
+                   clima: null, climaMotivo: "", vehiculo: null,
+                   vehiculoMotivo: "", puesta: null, avisos: [], avisosMotivo: "" };
   function avisar(texto, esError) { AVISOS.push({ texto, esError }); }
   function pintarTransporte() {}
   function render() {}
@@ -72,6 +82,7 @@ const preludio = `
      camino se ejerce entero y no se inventa una procedencia que el banco no
      tiene con que dar. */
   function pedir() { return new Promise(function () {}); }
+  function recuperarAnotacionesVivas() {}
   function marcar() {}
   function armarAutos(ids) { AUTOS = ids.map(id => ({ id, propio: false, nombre: id })); }
   const document = { getElementById: () => null };
@@ -97,6 +108,7 @@ const PIEZAS = [
   extraerFuncion("anotarLatencia"),
   extraerDesde("const vivo = {", ";"),
   extraerFuncion("vaciarVivo"),
+  extraerFuncion("limpiarContextoDeSesion"),
   extraerFuncion("identidadDeMuestra"),
   extraerFuncion("recordarVista"),
   extraerFuncion("puedeAdoptarVivo"),
@@ -111,6 +123,11 @@ const PIEZAS = [
   extraerFuncion("congelarTrazadoVivo"),
   extraerFuncion("claveVehiculoPropio"),
   extraerFuncion("incorporarTelemetriaViva"),
+  extraerHasta("const CAMPOS_PUESTA_VIVA = [", "];"),
+  extraerDesde("const CAMPOS_CARROCERIA_VIVA = {", ";"),
+  extraerDesde("const CAMPOS_ESQUINA_VIVA = {", ";"),
+  extraerFuncion("sincronizarContextoVivo"),
+  extraerFuncion("incorporarAnotacionViva"),
   // Adoptar una sesion viva le pide su procedencia al backend. Se trae la pieza
   // igual y el preludio da un `pedir` que nunca resuelve, de modo que la
   // adopcion se ejerce entera sin salir a la red.
@@ -127,7 +144,8 @@ function nuevoBanco() {
   const devolver = `return { vivo, estado, TESTIGO, anotarLatencia,
                              armarTrazadoVivo, congelarTrazadoVivo,
                              leerPista: () => PISTA, fijarPista: (p) => { PISTA = p; },
-                             incorporarTelemetriaViva, puedeAdoptarVivo,
+                              incorporarTelemetriaViva, puedeAdoptarVivo,
+                              sincronizarContextoVivo, incorporarAnotacionViva,
                              identidadDeMuestra, vaciarVivo, nuevaSesionEnCurso,
                              aperturaVigente, sigueVigente,
                              leerEstadoSesion: () => estadoSesion,
@@ -168,6 +186,39 @@ prueba("sin nada abierto se adopta la primera, y queda fijada", (b) => {
   assert.strictEqual(b.vivo.objetivo, "S1", "la eleccion tiene que quedar fija");
   assert.strictEqual(b.vivo.aceptaNueva, false,
     "despues de elegir no se puede seguir adoptando cualquiera");
+});
+
+prueba("adoptar una sesion viva limpia el contexto historico", (b) => {
+  b.estado.vehiculo = { carroceria: { piso_pct: 30 } };
+  b.estado.puesta = { campos: [{ clave: "compuesto", valor: 16 }] };
+  b.estado.avisos = [{ que: "Dano anterior" }];
+  b.incorporarTelemetriaViva(muestra("NUEVA", "car:1", "speed", 100, T(1)));
+  assert.strictEqual(b.estado.vehiculo, null);
+  assert.strictEqual(b.estado.puesta, null);
+  assert.deepStrictEqual(b.estado.avisos, []);
+});
+
+prueba("el contexto vivo sale de las senales de la sesion nueva", (b) => {
+  const vehiculo = "NUEVA:car:19";
+  b.incorporarTelemetriaViva(muestra("NUEVA", vehiculo, "brake_bias_front", 58, T(1)));
+  b.incorporarTelemetriaViva(muestra("NUEVA", vehiculo, "tyre_compound", 17, T(1)));
+  b.incorporarTelemetriaViva(muestra("NUEVA", vehiculo, "floor_damage", 12, T(1)));
+  b.incorporarTelemetriaViva(muestra("NUEVA", vehiculo,
+    "tyre_temperature_surface_front_left", 91, T(1)));
+  b.sincronizarContextoVivo();
+  assert.strictEqual(b.estado.puesta.puesta_a_punto.sesgo_de_freno_pct, 58);
+  assert.strictEqual(b.estado.puesta.puesta_a_punto.compuesto, 17);
+  assert.strictEqual(b.estado.vehiculo.carroceria.piso_pct, 12);
+  assert.strictEqual(b.estado.vehiculo.esquinas.front_left.temperatura_superficie_c, 91);
+});
+
+prueba("una anotacion vieja no entra y una de la sesion viva si", (b) => {
+  const vehiculo = "NUEVA:car:19";
+  b.incorporarTelemetriaViva(muestra("NUEVA", vehiculo, "speed", 100, T(1)));
+  b.incorporarAnotacionViva({ vehiculo: "VIEJA:car:19", titulo: "Vieja", reloj_s: 1 });
+  b.incorporarAnotacionViva({ vehiculo: vehiculo, titulo: "Actual", detalle: "medido", reloj_s: 2 });
+  b.sincronizarContextoVivo();
+  assert.deepStrictEqual(b.estado.avisos.map(a => a.que), ["Actual"]);
 });
 
 prueba("mirando una sesion guardada, otra sesion viva NO se apropia", (b) => {

@@ -97,6 +97,14 @@ class AyudantesDeSerieTests(unittest.TestCase):
 
         self._correr("aislamiento_de_sesiones.js")
 
+    def test_el_contexto_historico_habilita_la_puesta_a_punto(self) -> None:
+        codigo = APP.read_text(encoding="utf-8")
+        self.assertGreaterEqual(
+            codigo.count('if (estado.puesta) estado.disponibles.add("brake_bias_front");'),
+            2,
+        )
+        self.assertGreaterEqual(codigo.count("aplicarDisponibilidad();"), 3)
+
     def test_las_continuaciones_asincronas_no_pisan_la_sesion_vigente(self) -> None:
         """El .then que corre cuando la consulta vuelve, con el tablero en otro estado.
 
@@ -401,6 +409,16 @@ class RepresentacionDeDatosVivosTests(unittest.TestCase):
         self.assertIn("function armarTrazadoVivo(", self.codigo)
         self.assertIn("function congelarTrazadoVivo(", self.codigo)
         self.assertIn("recorrido en construcción, medido en vivo", self.codigo)
+
+    def test_el_vivo_acepta_lotes_sse(self) -> None:
+        """Agrupar el transporte no puede convertir el lote en una sola senal."""
+
+        cuerpo = self.codigo[self.codigo.index(
+            'canal.addEventListener("telemetria"'):]
+        cuerpo = cuerpo[:cuerpo.index("});") + 3]
+        self.assertIn("Array.isArray(recibido)", cuerpo)
+        self.assertIn("lote.forEach", cuerpo)
+        self.assertIn("incorporarTelemetriaViva(m)", cuerpo)
 
     def test_el_catalogo_no_pisa_una_sesion_viva(self) -> None:
         """El catalogo llega despues que la primera muestra del flujo.

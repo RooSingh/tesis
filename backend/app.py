@@ -1030,7 +1030,7 @@ def live_persistencia() -> dict:
 
 
 @app.get("/live/anotaciones")
-def live_anotaciones() -> dict:
+def live_anotaciones(sesion: str | None = None) -> dict:
     """Lo que los anotadores declararon durante la sesion en curso.
 
     Hay **un anotador por vehiculo**: uno solo compondria instantes con canales de
@@ -1043,6 +1043,8 @@ def live_anotaciones() -> dict:
     difusor = live_stream.difusor
     por_vehiculo = {}
     for vehiculo, anotador in difusor.anotadores.items():
+        if sesion and not vehiculo.startswith(f"{sesion}:car:"):
+            continue
         por_vehiculo[vehiculo] = {
             "anotaciones": list(anotador.anotaciones),
             "mensajes_observados": anotador.observados,

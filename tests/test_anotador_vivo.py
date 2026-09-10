@@ -64,7 +64,7 @@ def conduccion_normal(desde: float, marcos: int, paso: float = 0.05) -> list[dic
     for i in range(marcos):
         t = desde + i * paso
         salida += asfalto(t)
-        salida += marco(t, speed=200.0, throttle=0.9, brake=0.0,
+        salida += marco(t, speed=200.0, throttle_position=90.0, brake_position=0.0,
                         g_force_vertical=0.06, lap_number=1,
                         lap_distance=100.0 + i * 5,
                         wheel_slip_ratio_rear_left=0.02,
@@ -128,7 +128,7 @@ class ReglasDeIncidente(unittest.TestCase):
             t = 1.0 + i * 0.05
             mensajes += marco(t, **{f"surface_type_{r}": 1
                                     for r in anotador_vivo.RUEDAS})
-            mensajes += marco(t, speed=200.0, throttle=0.9, brake=0.0)
+            mensajes += marco(t, speed=200.0, throttle_position=90.0, brake_position=0.0)
         mensajes += conduccion_normal(3.0, 30)
 
         incidentes = incidentes_de(mensajes, solo_cerradas=True)
@@ -151,7 +151,7 @@ class ReglasDeIncidente(unittest.TestCase):
                               surface_type_rear_right=7,
                               surface_type_front_left=7,
                               surface_type_front_right=0)
-            mensajes += marco(t, speed=90.0, throttle=0.2, brake=0.0)
+            mensajes += marco(t, speed=90.0, throttle_position=20.0, brake_position=0.0)
         mensajes += conduccion_normal(3.0, 30)
 
         salidas = [a for a in incidentes_de(mensajes, solo_cerradas=True)
@@ -164,7 +164,7 @@ class ReglasDeIncidente(unittest.TestCase):
             t = 1.0 + i * 0.05
             mensajes += marco(t, **{f"surface_type_{r}": 7
                                     for r in anotador_vivo.RUEDAS})
-            mensajes += marco(t, speed=90.0, throttle=0.2, brake=0.0)
+            mensajes += marco(t, speed=90.0, throttle_position=20.0, brake_position=0.0)
         mensajes += conduccion_normal(3.0, 30)
 
         incidentes = incidentes_de(mensajes, solo_cerradas=True)
@@ -186,7 +186,7 @@ class ReglasDeIncidente(unittest.TestCase):
                            surface_type_rear_right=7,
                            surface_type_front_left=7):
                 anotador.observar(m)
-            for m in marco(t, speed=90.0, throttle=0.2, brake=0.0):
+            for m in marco(t, speed=90.0, throttle_position=20.0, brake_position=0.0):
                 anotador.observar(m)
         anotador.cerrar_pendiente()
         self.assertEqual(list(anotador.anotaciones), [])
@@ -207,7 +207,7 @@ class ReglasDeIncidente(unittest.TestCase):
         for i in range(8):
             t = 1.0 + (i + 1) * 0.02
             mensajes += asfalto(t)
-            mensajes += marco(t, speed=200.0, throttle=0.9, brake=0.0)
+            mensajes += marco(t, speed=200.0, throttle_position=90.0, brake_position=0.0)
         mensajes += conduccion_normal(3.0, 30)
 
         incidentes = incidentes_de(mensajes, solo_cerradas=True)
@@ -222,7 +222,7 @@ class ReglasDeIncidente(unittest.TestCase):
         for i in range(6):
             t = 1.0 + i * 0.05
             mensajes += asfalto(t)
-            mensajes += marco(t, speed=90.0, throttle=0.0, brake=0.0,
+            mensajes += marco(t, speed=90.0, throttle_position=0.0, brake_position=0.0,
                               wheel_slip_ratio_rear_left=0.6,
                               wheel_slip_ratio_rear_right=0.6)
         self.assertEqual(incidentes_de(mensajes), [])
@@ -243,8 +243,8 @@ class ReglasDeIncidente(unittest.TestCase):
             velocidad -= 12.0
             mensajes += asfalto(t)
             # Se frena en toda la ventana salvo en el ultimo instante.
-            mensajes += marco(t, speed=velocidad, throttle=0.0,
-                              brake=0.0 if i == 9 else 1.0,
+            mensajes += marco(t, speed=velocidad, throttle_position=0.0,
+                              brake_position=0.0 if i == 9 else 100.0,
                               g_force_vertical=0.1)
         self.assertEqual(incidentes_de(mensajes), [])
 
@@ -255,7 +255,7 @@ class ReglasDeIncidente(unittest.TestCase):
             t = 1.0 + i * 0.05
             velocidad -= 12.0
             mensajes += asfalto(t)
-            mensajes += marco(t, speed=velocidad, throttle=0.0, brake=0.0,
+            mensajes += marco(t, speed=velocidad, throttle_position=0.0, brake_position=0.0,
                               g_force_vertical=0.1)
         self.assertTrue(any("caida brusca" in a["titulo"]
                             for a in incidentes_de(mensajes)))
@@ -316,7 +316,7 @@ class Puntualidad(unittest.TestCase):
             t = 1.0 + i * 0.05
             mensajes += marco(t, **{f"surface_type_{r}": 7
                                     for r in anotador_vivo.RUEDAS})
-            mensajes += marco(t, speed=90.0, throttle=0.2, brake=0.0)
+            mensajes += marco(t, speed=90.0, throttle_position=20.0, brake_position=0.0)
         mensajes += conduccion_normal(4.0, 30)
 
         emitidas: list[dict] = []
@@ -365,9 +365,9 @@ class Avisos(unittest.TestCase):
 
     def test_el_dano_se_avisa_cuando_aparece(self):
         anotador = anotador_vivo.Anotador()
-        salidas = anotador.observar(mensaje("front_left_wing_damage", 0.0, 0.0))
+        salidas = anotador.observar(mensaje("wing_damage_front_left", 0.0, 0.0))
         self.assertEqual([a for a in salidas if a["nivel"] == "aviso"], [])
-        salidas = anotador.observar(mensaje("front_left_wing_damage", 12.0, 1.0))
+        salidas = anotador.observar(mensaje("wing_damage_front_left", 12.0, 1.0))
         avisos = [a for a in salidas if a["nivel"] == "aviso"]
         self.assertEqual(len(avisos), 1)
         self.assertIn("aleron delantero izquierdo", avisos[0]["titulo"])
@@ -524,11 +524,11 @@ class Sospecha(unittest.TestCase):
             t = 1.0 + i * 0.05
             mensajes += marco(t, **{f"surface_type_{r}": 1
                                     for r in anotador_vivo.RUEDAS})
-            mensajes += marco(t, speed=200.0, throttle=0.9, brake=0.0,
+            mensajes += marco(t, speed=200.0, throttle_position=90.0, brake_position=0.0,
                               g_force_vertical=1.1, lap_distance=1000.0 + i * 5)
         # Y ahora el golpe.
         mensajes += asfalto(1.6)
-        mensajes += marco(1.6, speed=200.0, throttle=0.9, brake=0.0,
+        mensajes += marco(1.6, speed=200.0, throttle_position=90.0, brake_position=0.0,
                           lap_distance=1055.0)
         mensajes += marco(1.6, g_force_vertical=2.9)
         mensajes += conduccion_normal(3.0, 40)
@@ -556,10 +556,10 @@ class Sospecha(unittest.TestCase):
             mensajes += marco(t, **{f"surface_type_{r}": 1
                                     for r in anotador_vivo.RUEDAS})
             # Piano tomado con suavidad: por debajo del percentil 99.
-            mensajes += marco(t, speed=200.0, throttle=0.9, brake=0.0,
+            mensajes += marco(t, speed=200.0, throttle_position=90.0, brake_position=0.0,
                               g_force_vertical=0.3, lap_distance=1000.0 + i * 5)
         mensajes += asfalto(1.6)
-        mensajes += marco(1.6, speed=200.0, throttle=0.9, brake=0.0,
+        mensajes += marco(1.6, speed=200.0, throttle_position=90.0, brake_position=0.0,
                           lap_distance=1055.0)
         mensajes += marco(1.6, g_force_vertical=2.9)
         mensajes += conduccion_normal(3.0, 40)
@@ -581,7 +581,7 @@ class Sospecha(unittest.TestCase):
         for i in range(8):
             t = 1.0 + i * 0.05
             mensajes += asfalto(t)
-            mensajes += marco(t, speed=160.0, throttle=1.0, brake=0.0,
+            mensajes += marco(t, speed=160.0, throttle_position=100.0, brake_position=0.0,
                               lap_distance=770.0 + i * 5,
                               wheel_slip_ratio_rear_left=0.30,
                               wheel_slip_ratio_rear_right=0.30)
@@ -590,7 +590,7 @@ class Sospecha(unittest.TestCase):
             t = 1.5 + i * 0.05
             mensajes += marco(t, **{f"surface_type_{r}": 7
                                     for r in anotador_vivo.RUEDAS})
-            mensajes += marco(t, speed=110.0, throttle=0.0, brake=0.0,
+            mensajes += marco(t, speed=110.0, throttle_position=0.0, brake_position=0.0,
                               lap_distance=812.0 + i * 3,
                               wheel_slip_ratio_rear_left=0.0,
                               wheel_slip_ratio_rear_right=0.0)
@@ -614,7 +614,7 @@ class Sospecha(unittest.TestCase):
         for i in range(8):
             t = 1.0 + i * 0.05
             mensajes += asfalto(t)
-            mensajes += marco(t, speed=60.0, throttle=0.0, brake=0.0,
+            mensajes += marco(t, speed=60.0, throttle_position=0.0, brake_position=0.0,
                               lap_distance=770.0 + i * 2,
                               wheel_slip_ratio_rear_left=0.9,
                               wheel_slip_ratio_rear_right=0.9)
@@ -622,7 +622,7 @@ class Sospecha(unittest.TestCase):
             t = 1.5 + i * 0.05
             mensajes += marco(t, **{f"surface_type_{r}": 7
                                     for r in anotador_vivo.RUEDAS})
-            mensajes += marco(t, speed=40.0, throttle=0.0, brake=0.0,
+            mensajes += marco(t, speed=40.0, throttle_position=0.0, brake_position=0.0,
                               lap_distance=790.0 + i * 2,
                               wheel_slip_ratio_rear_left=0.0,
                               wheel_slip_ratio_rear_right=0.0)
@@ -667,7 +667,7 @@ class CircuitoAprendido(unittest.TestCase):
                 anotador.observar(m)
             for m in marco(t, lap_number=numero, lap_distance=distancia,
                            lap_invalid=1.0 if invalida else 0.0,
-                           speed=200.0, throttle=0.9, brake=0.0,
+                            speed=200.0, throttle_position=90.0, brake_position=0.0,
                            g_force_vertical=0.06, g_force_lateral=lateral,
                            wheel_slip_ratio_rear_left=0.02,
                            wheel_slip_ratio_rear_right=0.02):

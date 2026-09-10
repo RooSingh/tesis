@@ -58,6 +58,31 @@ MAX_SUSCRIPTORES = 16
 # mas que el atrasado, y acumular introduciria una latencia creciente invisible.
 COLA_POR_SUSCRIPTOR = 500
 
+# Cuantas senales viajan dentro de un evento SSE. El flujo MQTT ya llega
+# agrupado, pero se desarmaba y se enviaba una respuesta HTTP por senal. Con
+# seis vehiculos la sesion de Spa produjo unas 10.600 senales/s y cada
+# suscriptor solo alcanzo a retirar unas 670/s: la cola descartaba alrededor del
+# 94 %, independientemente del camino de persistencia. Agrupar reduce el trabajo
+# de transporte sin cambiar las muestras ni su orden.
+SENALES_POR_EVENTO = 250
+
+# El navegador no consulta procedencia CAN ni el bloque ``metadata`` para
+# pintar el vivo. En la carrera de seis vehiculos, repetirlos en cada senal
+# ocupaba 765 bytes por muestra; este contrato de vista ocupa 336, un 56 %
+# menos. La historia y ``/live/recent`` conservan el mensaje completo: solo se
+# adelgaza la copia que cruza SSE.
+CAMPOS_DE_VISTA = (
+    "timestamp", "vehicle_id", "session_id", "source_type", "signal_name",
+    "value", "unit", "_recibido_utc",
+)
+
+
+def _para_vista(cuerpo: dict) -> dict:
+    """Proyecta una senal al contrato que consume el dashboard en vivo."""
+
+    return {campo: cuerpo[campo] for campo in CAMPOS_DE_VISTA if campo in cuerpo}
+
+
 #: CUANTAS ANOTACIONES ESPERAN POR SUSCRIPTOR.
 #:
 #: Las anotaciones tienen su propia cola, y no por orden sino por supervivencia.
@@ -199,6 +224,15 @@ class Suscriptor:
         if self.datos:
             return self.datos.popleft()
         raise asyncio.QueueEmpty
+
+    def extraer_datos(self, maximo: int) -> list[dict]:
+        """Retira hasta ``maximo`` datos sin consumir eventos prioritarios."""
+
+        lote = []
+        while self.datos and len(lote) < maximo:
+            lote.append(self.datos.popleft())
+        self.entregados += len(lote)
+        return lote
 
     def empty(self) -> bool:
         return not self.eventos and not self.datos
@@ -423,7 +457,7 @@ class DifusorEnVivo:
             return
         # Se entrega a traves del bucle porque este hilo no es el suyo, pero
         # se programa una funcion por lote y no una por señal y suscriptor.
-        self._depositar(self._pendientes, cuerpo, "telemetria")
+        self._depositar(self._pendientes, _para_vista(cuerpo), "telemetria")
 
     def _repartir_anotacion(self, anotacion: dict, vehiculo: str = "") -> None:
         """Envia una anotacion recien emitida por el mismo canal que los datos.
@@ -604,4 +638,15 @@ async def flujo_de_eventos(cola: "Suscriptor", intervalo_latido_s: float = 15.0)
             yield evento_sse({"momento": datetime.now(timezone.utc).isoformat(),
                               "recibidos": difusor.recibidos}, "latido")
             continue
-        yield evento_sse(dato, dato.get("_evento", "telemetria"))
+        evento = dato.get("_evento")
+        if evento:
+            yield evento_sse(dato, evento)
+            continue
+
+        # UNA RESPUESTA POR LOTE, NO UNA POR SENAL. Las senales siguen siendo
+        # objetos independientes dentro del JSON y conservan su orden. Los
+        # eventos no se mezclan: si aparece una anotacion, sale antes del lote
+        # siguiente por la prioridad de ``Suscriptor.obtener``.
+        lote = [dato]
+        lote.extend(cola.extraer_datos(SENALES_POR_EVENTO - 1))
+        yield evento_sse(lote, "telemetria")

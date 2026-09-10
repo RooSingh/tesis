@@ -136,9 +136,9 @@ RUEDAS = ("rear_left", "rear_right", "front_left", "front_right")
 
 #: Canales de dano y como se los nombra al avisar.
 PARTES_DANADAS = (
-    ("front_left_wing_damage", "aleron delantero izquierdo"),
-    ("front_right_wing_damage", "aleron delantero derecho"),
-    ("rear_wing_damage", "aleron trasero"),
+    ("wing_damage_front_left", "aleron delantero izquierdo"),
+    ("wing_damage_front_right", "aleron delantero derecho"),
+    ("wing_damage_rear", "aleron trasero"),
     ("floor_damage", "piso"),
     ("diffuser_damage", "difusor"),
     ("sidepod_damage", "pontones"),
@@ -243,8 +243,8 @@ class Anotador:
         if nombre == "speed":
             self._velocidades.append((t, float(valor)))
             self._podar(self._velocidades, t)
-        elif nombre == "brake":
-            self._frenos.append((t, float(valor)))
+        elif nombre == "brake_position":
+            self._frenos.append((t, float(valor) / 100.0))
             self._podar(self._frenos, t)
         elif nombre == "lap_number":
             self._al_cambiar_de_vuelta(int(valor))
@@ -339,8 +339,8 @@ class Anotador:
             "t": t,
             "distancia": self._fresco("lap_distance", t, tolerancia=5.0),
             "velocidad": self._fresco("speed", t),
-            "acelerador": self._fresco("throttle", t),
-            "freno": self._fresco("brake", t),
+            "acelerador": self._pedal("throttle_position", t),
+            "freno": self._pedal("brake_position", t),
             "vertical": self._fresco("g_force_vertical", t),
             "superficies": [int(s) for s in superficies if s is not None],
             "deslizamiento": max((abs(d) for d in deslizamientos if d is not None),
@@ -466,10 +466,9 @@ class Anotador:
         if vertical is not None and abs(vertical) > UMBRAL_VERTICAL_G:
             motivos.append(("impacto vertical", f"{vertical:+.2f} g"))
 
-        # Perdida de tren trasero. Solo se evalua si el canal existe: el paquete
-        # que lo publica no forma parte del contrato interno todavia, y una regla
-        # que no puede evaluarse debe abstenerse y no dar por buena su ausencia.
-        acelerador = self._fresco("throttle", t)
+        # Perdida de tren trasero. Solo se evalua si estan el deslizamiento y el
+        # acelerador: una regla sin sus dos canales debe abstenerse.
+        acelerador = self._pedal("throttle_position", t)
         crudos = [self._fresco(f"wheel_slip_ratio_{r}", t)
                   for r in ("rear_left", "rear_right")]
         deslizamientos = [abs(d) for d in crudos if d is not None]
@@ -839,6 +838,10 @@ class Anotador:
                 tolerancia: float = TOLERANCIA_VEJEZ_S) -> int | None:
         valor = self._fresco(nombre, t, tolerancia)
         return int(valor) if valor is not None else None
+
+    def _pedal(self, nombre: str, t: float) -> float | None:
+        valor = self._fresco(nombre, t)
+        return valor / 100.0 if valor is not None else None
 
     def _caida(self, t: float) -> float | None:
         if len(self._velocidades) < 2:

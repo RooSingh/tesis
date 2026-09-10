@@ -84,8 +84,30 @@ class DifusorTests(unittest.TestCase):
         self._entregar({"signal_name": "speed"})
         self.assertIn("_recibido_utc", cola.get_nowait())
 
+    def test_el_sse_no_repite_metadata_que_el_dashboard_no_lee(self):
+        """La persistencia conserva el mensaje; la vista recibe solo lo que usa."""
+
+        cola = self.d.suscribir()
+        self._entregar({
+            "timestamp": "2026-09-10T20:00:00+00:00",
+            "vehicle_id": "car:19",
+            "session_id": "session:1",
+            "source_type": "f1_25_udp_simulation",
+            "signal_name": "speed",
+            "value": 300,
+            "unit": "km/h",
+            "metadata": {"extra": {"frame_identifier": 10}},
+        })
+        recibido = cola.get_nowait()
+        self.assertEqual(recibido["signal_name"], "speed")
+        self.assertEqual(recibido["value"], 300)
+        self.assertIn("_recibido_utc", recibido)
+        self.assertNotIn("metadata", recibido)
+        self.assertIn("metadata", self.d.recientes[-1],
+                      "adelgazar SSE no puede adelgazar la recuperacion")
+
     def test_desagrupa_un_lote_mqtt(self):
-        """El capturador publica lotes; SSE debe entregar una senal por evento."""
+        """El capturador publica lotes y cada senal conserva su identidad."""
 
         cola = self.d.suscribir()
         self._entregar([
@@ -431,6 +453,34 @@ class EntregaDeAnotacionesTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn("despiste", segundo)
             tercero = await generador.__anext__()
             self.assertIn("event: telemetria", tercero)
+            await generador.aclose()
+        finally:
+            live_stream.difusor = anterior
+
+    async def test_el_flujo_sse_agrupa_senales_sin_perderlas(self):
+        """El caudal se paga en lotes, no con una respuesta HTTP por senal."""
+
+        d, (sus,) = await self._difusor_con()
+        anterior = live_stream.difusor
+        live_stream.difusor = d
+        try:
+            cantidad = live_stream.SENALES_POR_EVENTO + 17
+            for i in range(cantidad):
+                d._depositar(d._pendientes,
+                             {"n": i, "signal_name": "speed"}, "telemetria")
+            await self._repartir(d)
+
+            generador = live_stream.flujo_de_eventos(sus, intervalo_latido_s=5.0)
+            await generador.__anext__()  # estado inicial
+            primero = await generador.__anext__()
+            segundo = await generador.__anext__()
+            cuerpos = []
+            for evento in (primero, segundo):
+                datos = evento.split("data: ", 1)[1].rsplit("\n\n", 1)[0]
+                cuerpos.extend(json.loads(datos))
+
+            self.assertEqual([m["n"] for m in cuerpos], list(range(cantidad)))
+            self.assertEqual(sus.entregados, cantidad)
             await generador.aclose()
         finally:
             live_stream.difusor = anterior
