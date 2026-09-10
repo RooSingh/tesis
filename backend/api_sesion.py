@@ -2587,6 +2587,25 @@ AVISOS_EN_CACHE = 24
 UMBRAL_GIRO_TROMPO = 1.5
 MINIMO_MUESTRAS_TROMPO = 3
 
+#: EL ANOTADOR MIRA LA SENAL CRUDA; ESTAS REGLAS MIRAN LA GUARDADA.
+#:
+#: No estan en la misma escala, y ahi se cometio el error. El adaptador publica
+#: el acelerador y el freno **multiplicados por cien**, porque los declara en
+#: por ciento; el anotador en vivo los evalua antes de eso, sobre la fraccion de
+#: cero a uno que entrega el juego. Importar el umbral del anotador y
+#: compararlo contra la columna guardada ---que es lo que hacia la regla de tren
+#: trasero--- convertia "acelerador sobre el 50 %" en "acelerador sobre el
+#: 0,5 %": el pedal apenas tocado alcanzaba, de modo que la condicion que debia
+#: separar el deslizamiento acelerando del deslizamiento al frenar no separaba
+#: nada. El texto del umbral decia una cosa y la consulta hacia otra.
+#:
+#: Por eso estos dos viven aca con el sufijo de su unidad, y una prueba fija la
+#: conversion contra el factor que declara el adaptador. Los demas
+#: ---deslizamiento, giro, fuerza vertical--- se guardan con factor 1,0 y se
+#: siguen importando del anotador tal cual.
+UMBRAL_ACELERADOR_PCT = 50.0
+UMBRAL_FRENO_SUELTO_PCT = anotador_vivo.UMBRAL_FRENO_SUELTO * 100.0
+
 #: Las reglas fisicas que el anotador en vivo evalua sobre el flujo, escritas
 #: para pedirselas a una sesion guardada.
 #:
@@ -2607,7 +2626,7 @@ REGLAS_FISICAS = [
         "nivel": "alerta",
         "canal": "wheel_slip_ratio_rear_*",
         "umbral": ("deslizamiento trasero sobre %.2f con el acelerador sobre %.0f %%"
-                   % (anotador_vivo.UMBRAL_DESLIZAMIENTO, 50)),
+                   % (anotador_vivo.UMBRAL_DESLIZAMIENTO, UMBRAL_ACELERADOR_PCT)),
         "unidad": "%",
     },
     {
@@ -2625,6 +2644,16 @@ REGLAS_FISICAS = [
         "canal": "g_force_vertical",
         "umbral": "%.1f g" % anotador_vivo.UMBRAL_VERTICAL_G,
         "unidad": "g",
+    },
+    {
+        "que": "Caida brusca de velocidad",
+        "nivel": "alerta",
+        "canal": "speed + brake_position",
+        "umbral": ("mas de %.0f km/h perdidos en %.1f s con el freno bajo el "
+                   "%.0f %% durante toda la ventana"
+                   % (anotador_vivo.UMBRAL_CAIDA_KMH,
+                      anotador_vivo.VENTANA_CAIDA_S, UMBRAL_FRENO_SUELTO_PCT)),
+        "unidad": "km/h",
     },
 ]
 
@@ -2652,12 +2681,12 @@ def _primera_perdida_de_tren_trasero(cursor, fuente: str, session_id: str):
              GROUP BY timestamp)
         SELECT vuelta, metro, greatest(abs(izq), abs(der)) AS peor, timestamp FROM p
          WHERE izq IS NOT NULL AND der IS NOT NULL AND acelerador IS NOT NULL
-           AND greatest(abs(izq), abs(der)) > %s AND acelerador > 0.5
+           AND greatest(abs(izq), abs(der)) > %s AND acelerador > %s
          ORDER BY timestamp LIMIT 1
     """, (fuente, session_id,
           ["wheel_slip_ratio_rear_left", "wheel_slip_ratio_rear_right",
            "throttle_position", "lap_number", "lap_distance"],
-          anotador_vivo.UMBRAL_DESLIZAMIENTO))
+          anotador_vivo.UMBRAL_DESLIZAMIENTO, UMBRAL_ACELERADOR_PCT))
     return cursor.fetchone()
 
 
@@ -2737,6 +2766,67 @@ def _primer_impacto_vertical(cursor, fuente: str, session_id: str):
     """, (fuente, session_id,
           ["g_force_vertical", "lap_number", "lap_distance"],
           anotador_vivo.UMBRAL_VERTICAL_G))
+    return cursor.fetchone()
+
+
+def _primera_caida_brusca(cursor, fuente: str, session_id: str):
+    """La primera perdida grande de velocidad **sin frenar**, sobre una ventana.
+
+    Es la tercera regla del anotador en vivo y la unica de las suyas que no cabe
+    en la forma "un canal contra un umbral": no pregunta cuanto vale la
+    velocidad ahora sino **cuanto cayo en medio segundo**. Por eso quedo afuera
+    cuando se trajeron las otras dos, y por eso una sesion mirada en vivo
+    anotaba caidas que la misma sesion reproducida no mostraba.
+
+    EL FRENO TIENE QUE HABER ESTADO SUELTO EN TODA LA VENTANA, NO SOLO AL FINAL.
+    Comprobarlo solo en el instante final convierte cada frenada normal en un
+    incidente: se frena fuerte, se suelta al entrar en la curva, y justo ahi
+    ---con el pedal ya libre--- la caida acumulada es la mayor de todas. Es el
+    mismo error que el anotador ya habia cometido y corregido, y aca se evita
+    con `max(freno)` sobre el marco, no con el valor de la fila.
+
+    LOS HUECOS DE CAPTURA NO NECESITAN TRATO APARTE, y esta es la ventaja de
+    medir la ventana con el reloj y no contando filas. El marco es `RANGE`
+    sobre el tiempo: si entre dos muestras pasaron minutos ---el juego estuvo en
+    el menu--- la fila anterior sencillamente no entra en el marco, la mas
+    antigua de la ventana es ella misma y la caida da cero. Con un marco `ROWS`
+    habria que descartar esos saltos a mano, como hubo que hacerlo en el trompo.
+
+    **Si falta el freno, la regla se abstiene.** El anotador en vivo, con la
+    cola vacia, evalua igual; aca no, porque sin el freno lo que queda es "la
+    velocidad cayo mucho", que es la descripcion de cualquier frenada de fin de
+    recta. Afirmar un incidente sin haber podido mirar el pedal seria inventar
+    el hecho, igual que con las cuatro ruedas de la salida de pista.
+    """
+
+    cursor.execute("""
+        WITH p AS (
+            SELECT timestamp,
+                   max(value_numeric) FILTER (WHERE signal_name = 'speed')          AS velocidad,
+                   max(value_numeric) FILTER (WHERE signal_name = 'brake_position') AS freno,
+                   max(value_numeric) FILTER (WHERE signal_name = 'lap_number')     AS vuelta,
+                   max(value_numeric) FILTER (WHERE signal_name = 'lap_distance')   AS metro
+              FROM telemetry_messages
+             WHERE source_type = %s AND session_id = %s
+               AND signal_name = ANY(%s)
+             GROUP BY timestamp),
+        q AS (
+            SELECT * FROM p WHERE velocidad IS NOT NULL AND freno IS NOT NULL),
+        v AS (
+            SELECT *,
+                   first_value(velocidad) OVER ventana - velocidad AS caida,
+                   max(freno) OVER ventana                         AS freno_maximo
+              FROM q
+            WINDOW ventana AS (ORDER BY timestamp
+                               RANGE BETWEEN interval '{ventana} milliseconds'
+                                     PRECEDING AND CURRENT ROW))
+        SELECT vuelta, metro, caida, timestamp FROM v
+         WHERE caida > %s AND freno_maximo < %s
+         ORDER BY timestamp LIMIT 1
+    """.format(ventana=int(anotador_vivo.VENTANA_CAIDA_S * 1000)),
+        (fuente, session_id,
+         ["speed", "brake_position", "lap_number", "lap_distance"],
+         anotador_vivo.UMBRAL_CAIDA_KMH, UMBRAL_FRENO_SUELTO_PCT))
     return cursor.fetchone()
 
 
@@ -2906,7 +2996,10 @@ def avisos(session_id: str,
                 (REGLAS_FISICAS[1], _primer_trompo,
                  lambda v: "%.2f rad/s de giro contra el volante" % abs(v)),
                 (REGLAS_FISICAS[2], _primer_impacto_vertical,
-                 lambda v: "%+.2f g" % v)):
+                 lambda v: "%+.2f g" % v),
+                (REGLAS_FISICAS[3], _primera_caida_brusca,
+                 lambda v: "-%.0f km/h en %.1f s sin frenar"
+                           % (v, anotador_vivo.VENTANA_CAIDA_S))):
             fila = buscar(cursor, fuente, session_id)
             if not fila:
                 continue
@@ -2931,7 +3024,7 @@ def avisos(session_id: str,
         "avisos": encontrados[:limite],
         # Las de canal contra umbral, mas la de superficie y las fisicas, que no
         # tienen esa forma. Contar solo las primeras seria decir que se
-        # evaluaron catorce cuando se evaluaron diecisiete.
+        # evaluaron catorce cuando se evaluaron diecinueve.
         "reglas_evaluadas": len(REGLAS_DE_AVISO) + 1 + len(REGLAS_FISICAS),
         "criterio": ("primer instante en que cada condicion se cumple; cada aviso "
                      "declara su canal y su umbral"),

@@ -14,7 +14,8 @@ from unittest.mock import MagicMock, patch
 
 from fastapi import HTTPException
 
-from backend import api_sesion, catalogo_curvas, f1_udp
+from adapters import f1_25 as adaptador_f1_25
+from backend import anotador_vivo, api_sesion, catalogo_curvas, f1_udp
 
 
 class ConexionFalsa:
@@ -583,6 +584,66 @@ class AvisosTests(unittest.TestCase):
             self.assertTrue(regla["canal"])
             self.assertIsInstance(regla["umbral"], float)
             self.assertIn(regla["nivel"], {"critico", "alerta", "info"})
+
+    def test_los_umbrales_van_en_la_unidad_en_que_la_senal_se_guarda(self) -> None:
+        """El anotador en vivo mira la senal cruda; estas reglas miran la guardada.
+
+        No son la misma escala y esa es toda la trampa. El adaptador publica el
+        acelerador y el freno **multiplicados por cien**, porque los declara en
+        por ciento; el anotador en vivo los evalua antes de eso, en la fraccion
+        de cero a uno que entrega el juego. Importar el umbral del anotador y
+        compararlo contra la columna guardada ---que fue exactamente lo que se
+        hizo--- convierte "acelerador sobre el 50 %" en "acelerador sobre el
+        0,5 %", que no excluye nada: es practicamente "el pedal no esta del todo
+        suelto".
+
+        Por eso los umbrales de estos dos canales viven aca con el sufijo de su
+        unidad, y esta prueba fija la conversion. Los otros ---deslizamiento,
+        giro, fuerza vertical--- se guardan con factor 1,0 y se siguen
+        importando tal cual.
+        """
+
+        factores = adaptador_f1_25.SENALES_TELEMETRIA
+        self.assertEqual(factores["throttle"][2], 100.0)
+        self.assertEqual(factores["brake"][2], 100.0)
+
+        self.assertEqual(api_sesion.UMBRAL_ACELERADOR_PCT,
+                         0.5 * factores["throttle"][2])
+        self.assertEqual(api_sesion.UMBRAL_FRENO_SUELTO_PCT,
+                         anotador_vivo.UMBRAL_FRENO_SUELTO * factores["brake"][2])
+
+    def test_la_caida_brusca_de_velocidad_tambien_existe_sobre_lo_guardado(self) -> None:
+        """La tercera regla del anotador, que solo vivia sobre el flujo.
+
+        Las otras dos ---tren trasero e impacto vertical--- son una condicion
+        sobre un instante. Esta es sobre una ventana: cuanto cayo la velocidad
+        en medio segundo, con el freno suelto en **toda** esa ventana. Por eso
+        quedo afuera cuando se trajeron las demas, y por eso una sesion mirada
+        en vivo anotaba caidas que la misma sesion reproducida no mostraba.
+        """
+
+        nombres = [r["que"] for r in api_sesion.REGLAS_FISICAS]
+        self.assertIn("Caida brusca de velocidad", nombres)
+
+    def test_la_caida_se_mide_con_los_numeros_calibrados_en_el_anotador(self) -> None:
+        """Que la consulta lleve los valores del anotador y no unos propios.
+
+        Se comprueba sobre los parametros que el modulo le pasa a la base, que
+        es lo que este modulo decide. Que PostgreSQL sepa correr una ventana no
+        es lo que puede romperse al editar; que alguien escriba aca un 40
+        distinto del 40 del anotador, si.
+        """
+
+        falsa, parche = _con([])
+        with parche:
+            api_sesion._primera_caida_brusca(
+                falsa.cursor_obj, "f1_25_udp_simulation", "f1_25:session:1")
+
+        consulta, parametros = falsa.consultas[-1]
+        self.assertIn(anotador_vivo.UMBRAL_CAIDA_KMH, parametros)
+        self.assertIn(api_sesion.UMBRAL_FRENO_SUELTO_PCT, parametros)
+        self.assertIn("%d milliseconds" % (anotador_vivo.VENTANA_CAIDA_S * 1000),
+                      consulta)
 
 
 class CurvasTests(unittest.TestCase):
