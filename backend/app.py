@@ -28,6 +28,7 @@ from adapters import f1_25 as f1_25_adapter
 from backend import api_analisis
 from backend import api_sesion
 from backend import catalogo_corridas
+from backend import catalogo_sesiones
 from backend import db
 from backend import ingesta
 from backend import live_stream
@@ -323,10 +324,38 @@ def can_recorrido(session_id: str, limite: int = 80000) -> dict:
 
     trazado = recorrido.reconstruir(series)
     validacion = recorrido.validar_contra_ruedas(series)
+
+    # DE QUE INSTANTE CUELGA EL CERO.
+    #
+    # Las marcas son milisegundos **desde la primera muestra**, y eso no es un
+    # descuido: lo que se integra son diferencias, y la fecha de origen de un
+    # segmento de bus es una asignacion declarada y no un dato del registro
+    # ---ver `db.obtener_series_de_senales`---. Convertirlas a UTC aca les daria
+    # una precision que no tienen.
+    #
+    # Pero sin saber de donde cuelga el cero, la forma no se puede cruzar con
+    # ninguna otra serie. Se declara el origen, con su naturaleza: quien quiera
+    # atar el recorrido a una senal suma, y quien quiera saber de donde salio
+    # ese instante lo tiene escrito al lado.
+    origen = catalogo_sesiones.rango_de(session_id, can_rav4.SOURCE_TYPE)
     return {
         "session_id": session_id,
-        "puntos": [{"x": round(x, 2), "y": round(y, 2)}
-                   for x, y in zip(trazado["x"], trazado["y"])],
+        # CADA PUNTO LLEVA SU INSTANTE.
+        #
+        # `reconstruir` ya calculaba una marca por punto ---integra sobre pares
+        # de muestras y sabe entre que dos instantes avanzo--- y esta respuesta
+        # la descartaba. Sin ella la forma es un dibujo suelto: se la puede
+        # mirar, pero no se la puede cruzar con ninguna senal, porque nada dice
+        # que punto corresponde a que momento. Con la marca, el mismo instante
+        # que ya comparten los instrumentos ubica tambien al vehiculo sobre el
+        # recorrido, y la traza se puede pintar por lo que se estaba midiendo.
+        #
+        # Va en milisegundos UTC, que es la unidad en que la reconstruccion
+        # empareja las series: convertirla aca seria inventar una precision que
+        # el emparejamiento no tiene.
+        "puntos": [{"x": round(x, 2), "y": round(y, 2), "t_ms": t}
+                   for x, y, t in zip(trazado["x"], trazado["y"],
+                                      trazado["marcas_ms"])],
         "recorrido_m": round(trazado["recorrido_m"], 1),
         "extension_x_m": round(trazado["extension_x_m"], 1),
         "extension_y_m": round(trazado["extension_y_m"], 1),
@@ -338,6 +367,15 @@ def can_recorrido(session_id: str, limite: int = 80000) -> dict:
                                if validacion["muestras"] else None),
             "correlacion": (round(validacion["correlacion"], 3)
                             if validacion["muestras"] else None),
+        },
+        "eje_temporal": {
+            "campo": "t_ms",
+            "unidad": "ms",
+            "referencia": "milisegundos desde la primera muestra del segmento",
+            "origen_utc": origen,
+            "naturaleza_del_origen": (
+                "instante declarado al cargar el segmento, no medido por el "
+                "registro: sirve para alinear, no para fechar"),
         },
         # Va en la respuesta y no solo en la documentacion: quien consuma esto
         # tiene que poder saber que no es una posicion medida sin leer nada mas.

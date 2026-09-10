@@ -254,6 +254,30 @@ def listar(fuente: str | None = None, limite: int = 400) -> dict[str, Any]:
     }
 
 
+def rango_de(session_id: str, source_type: str) -> str | None:
+    """Cuando empieza lo guardado de esta sesion, o `None` si no hay nada.
+
+    Lo contesta el catalogo, que ya lo tiene calculado, y solo mira la tabla
+    grande si esa sesion todavia no fue catalogada. La distincion importa:
+    preguntarle a la tabla de mediciones por el minimo de una sesion recorre su
+    particion entera, y el catalogo existe justamente para no tener que hacerlo.
+    """
+    asegurar_tabla()
+    with db.obtener_conexion() as conexion, conexion.cursor() as cursor:
+        cursor.execute(
+            "SELECT desde FROM sesiones_catalogo WHERE session_id = %s",
+            (session_id,))
+        fila = cursor.fetchone()
+        if fila and fila[0]:
+            return fila[0].isoformat()
+        cursor.execute(
+            """SELECT min(timestamp) FROM telemetry_messages
+                WHERE source_type = %s AND session_id = %s""",
+            (source_type, session_id))
+        fila = cursor.fetchone()
+    return fila[0].isoformat() if fila and fila[0] else None
+
+
 def estado() -> dict[str, Any]:
     """Cuantas sesiones tiene el catalogo y cuando se armo."""
     asegurar_tabla()
