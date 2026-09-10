@@ -1676,12 +1676,17 @@
     font-family: var(--cuerpo); font-size: .72rem; font-weight: 700;
     letter-spacing: .03em; cursor: pointer;
   }
-  .pilotos-escucha button[aria-pressed="true"] {
-    background: var(--acento); color: var(--sobre-acento); border-color: transparent;
-  }
+  /* El fondo dice si esta elegido; el borde, de que equipo es. Son dos
+     preguntas distintas y cada una tiene su canal: pintadas las dos en el
+     fondo, un piloto no elegido de un equipo claro se leia como elegido. */
+  .pilotos-escucha button[aria-pressed="true"] { color: #0b0f14; }
+  /* El coche propio no se puede destildar, pero no se ve apagado como los que
+     no entran: se escucha siempre, que es lo contrario de estar fuera. */
+  .pilotos-escucha button.propio { opacity: 1; cursor: default; font-weight: 800; }
+  .pilotos-escucha button.propio::after { content: " ·"; }
   /* Los que no entran se ven apagados y no se sacan de la lista: sacarlos
      haria creer que ese piloto no esta en la carrera. */
-  .pilotos-escucha button:disabled { opacity: .38; cursor: not-allowed; }
+  .pilotos-escucha button:disabled:not(.propio) { opacity: .38; cursor: not-allowed; }
   .nota-escucha {
     margin-left: auto; font-size: .72rem; color: var(--texto-tenue);
   }

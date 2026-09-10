@@ -5619,6 +5619,22 @@ function pintarMetricas() {
    promete una decision que no existe.
    ============================================================ */
 
+/* El color con que cada equipo se reconoce sin leer el nombre.
+   No sale del juego: el protocolo entrega el identificador de equipo y su
+   nombre, no su color. Se declara aca, con los del campeonato 2025, y quien no
+   este ---un equipo personalizado, los genericos--- cae en el color neutro en
+   vez de en uno inventado. */
+const COLORES_DE_EQUIPO = {
+  "Mercedes": "#00d7b6", "Ferrari": "#e8002d", "Red Bull Racing": "#3671c6",
+  "Williams": "#64c4ff", "Aston Martin": "#229971", "Alpine": "#ff87bc",
+  "RB": "#6692ff", "Haas": "#b6babd", "McLaren": "#ff8000",
+  "Sauber": "#52e252",
+};
+
+function colorDeEquipo(equipo) {
+  return COLORES_DE_EQUIPO[equipo] || "var(--linea-fuerte)";
+}
+
 let escuchados = null;      // los nombres elegidos, o `null` mientras no se leyo
 let topeEscucha = 6;
 let pidiendoEscuchados = false;
@@ -5662,16 +5678,30 @@ function pintarEligeEscucha() {
   const propio = (AUTOS.find(a => a.propio) || {}).id;
   const cabenMas = escuchados.length + 1 < topeEscucha;
   parrilla.vehiculos.forEach(v => {
-    if (v.vehicle_id === propio) return;
+    const esPropio = v.vehicle_id === propio;
     const b = document.createElement("button");
     b.type = "button";
     b.textContent = v.nombre;
-    const elegido = escuchados.indexOf(v.nombre) !== -1;
+    /* EL COCHE PROPIO SE MUESTRA, MARCADO Y SIN APAGAR.
+       Antes se lo sacaba de la lista. Escondido, la lista parecia incompleta
+       ---faltaba justo quien conduce--- y no habia forma de ver que si se lo
+       estaba escuchando. Se muestra marcado y deshabilitado: se escucha
+       siempre, y eso no es una decision que se pueda tomar. */
+    const elegido = esPropio || escuchados.indexOf(v.nombre) !== -1;
     b.setAttribute("aria-pressed", String(elegido));
     /* Los que no entran se muestran igual, apagados: sacarlos de la lista
        haria creer que ese piloto no esta en la carrera. */
-    b.disabled = !elegido && !cabenMas;
-    b.addEventListener("click", () => cambiarEscuchado(v.nombre));
+    b.disabled = esPropio || (!elegido && !cabenMas);
+    if (esPropio) {
+      b.classList.add("propio");
+      b.title = "Tu coche: se escucha siempre, es el unico con telemetria completa";
+    }
+    /* El equipo se reconoce por el color antes que por el nombre. Va en el
+       borde y no en el fondo: el fondo dice si esta elegido, y dos cosas
+       distintas no pueden usar el mismo canal sin volverse ilegibles. */
+    b.style.borderColor = colorDeEquipo(v.equipo);
+    if (elegido) b.style.background = colorDeEquipo(v.equipo);
+    if (!esPropio) b.addEventListener("click", () => cambiarEscuchado(v.nombre));
     c.appendChild(b);
   });
 
@@ -10058,10 +10088,15 @@ function render() {
      anunciando la vuelta de la fuente anterior mientras el cronometraje ya
      mostraba la nueva: dos respuestas a la misma pregunta. */
   raiz.dataset.fuente = fuente;
+  /* VA PRIMERO Y NO ULTIMO. Estaba al final, y entonces cualquier error en los
+     graficos ---que se dibujan antes--- dejaba la caja de escucha con el estado
+     anterior: aparecia sobre una sesion guardada, ofreciendo elegir a quien
+     escuchar cuando ya no se escuchaba nada. Mostrar u ocultar un control no
+     puede depender de que un lienzo se haya dibujado bien. */
+  pintarEligeEscucha();
   pintarEstructura();
   pintarValores();
   pintarTrazas();
-  pintarEligeEscucha();
 }
 /* La ayuda se despliega por CSS al pasar el puntero o al recibir el foco:
    no hace falta codigo. */
