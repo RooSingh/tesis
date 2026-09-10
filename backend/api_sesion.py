@@ -2562,6 +2562,31 @@ _AVISOS_CACHE: OrderedDict = OrderedDict()
 AVISOS_EN_CACHE = 24
 
 
+#: TROMPO: LOS TRES A LA VEZ, Y QUE DURE.
+#:
+#: Calibrado contra un trompo real ---dos, en verdad--- de la sesion de Bahrein
+#: del 2026-09-10, vuelta 7. La firma medida en el metro 2.765: el giro llega a
+#: 3,05 rad/s mientras el volante esta en -1,00, o sea a tope **al reves**, el
+#: eje trasero desliza 8,13 y la velocidad cae de 92 a 29 km/h. El segundo, en
+#: el metro 4.197, cae de 117 a 12 km/h.
+#:
+#: NINGUNA DE LAS TRES CONDICIONES ALCANZA SOLA:
+#:
+#: * el giro alto tambien lo produce una horquilla lenta;
+#: * el deslizamiento trasero solo, con el volante acompanando, es la
+#:   sobreviraje normal que la regla de tren trasero ya anota;
+#: * **el contravolante es lo que distingue**: el coche rota hacia un lado y el
+#:   volante esta hacia el otro. Eso no ocurre trazando.
+#:
+#: Y que dure. Medido sobre las seis sesiones capturadas: con las tres
+#: condiciones, la de Bahrein da 71 muestras y las otras cinco dan cero, salvo
+#: Monaco con **una sola**. Los episodios de Bahrein llegan a veintitres
+#: muestras seguidas; el de Monaco y uno suelto duran una. Un trompo dura, un
+#: tiron no, y tres muestras ---unos 150 ms a 20 Hz--- los separan sin tocar
+#: ninguno de los episodios reales.
+UMBRAL_GIRO_TROMPO = 1.5
+MINIMO_MUESTRAS_TROMPO = 3
+
 #: Las reglas fisicas que el anotador en vivo evalua sobre el flujo, escritas
 #: para pedirselas a una sesion guardada.
 #:
@@ -2584,6 +2609,15 @@ REGLAS_FISICAS = [
         "umbral": ("deslizamiento trasero sobre %.2f con el acelerador sobre %.0f %%"
                    % (anotador_vivo.UMBRAL_DESLIZAMIENTO, 50)),
         "unidad": "%",
+    },
+    {
+        "que": "Trompo",
+        "nivel": "critico",
+        "canal": "yaw_rate + steering_normalized + wheel_slip_ratio_rear_*",
+        "umbral": ("giro sobre %.1f rad/s contra el volante, con el tren trasero "
+                   "deslizando, durante al menos %d muestras seguidas"
+                   % (UMBRAL_GIRO_TROMPO, MINIMO_MUESTRAS_TROMPO)),
+        "unidad": "rad/s",
     },
     {
         "que": "Impacto vertical",
@@ -2624,6 +2658,58 @@ def _primera_perdida_de_tren_trasero(cursor, fuente: str, session_id: str):
           ["wheel_slip_ratio_rear_left", "wheel_slip_ratio_rear_right",
            "throttle_position", "lap_number", "lap_distance"],
           anotador_vivo.UMBRAL_DESLIZAMIENTO))
+    return cursor.fetchone()
+
+
+def _primer_trompo(cursor, fuente: str, session_id: str):
+    """El primer trompo: giro contra el volante, tren trasero fuera, y que dure.
+
+    LA DURACION SE MIDE CON EL RELOJ Y NO CONTANDO FILAS. Dos muestras seguidas
+    en el orden no son dos muestras seguidas en el tiempo si entre ellas hubo un
+    hueco de captura ---los hay, de minutos, cuando el juego pasa por el menu---
+    y un trompo partido por ese hueco no es un trompo mas largo. Un corte de mas
+    de tres decimas separa episodios; a veinte muestras por segundo, lo seguido
+    llega cada cinco centesimas.
+    """
+
+    cursor.execute("""
+        WITH p AS (
+            SELECT timestamp,
+                   max(value_numeric) FILTER (WHERE signal_name = 'yaw_rate')            AS giro,
+                   max(value_numeric) FILTER (WHERE signal_name = 'steering_normalized') AS volante,
+                   greatest(
+                     abs(max(value_numeric) FILTER (WHERE signal_name = 'wheel_slip_ratio_rear_left')),
+                     abs(max(value_numeric) FILTER (WHERE signal_name = 'wheel_slip_ratio_rear_right'))
+                   ) AS desliz,
+                   max(value_numeric) FILTER (WHERE signal_name = 'lap_number')   AS vuelta,
+                   max(value_numeric) FILTER (WHERE signal_name = 'lap_distance') AS metro
+              FROM telemetry_messages
+             WHERE source_type = %s AND session_id = %s
+               AND signal_name = ANY(%s)
+             GROUP BY timestamp),
+        q AS (
+            SELECT * FROM p
+             WHERE giro IS NOT NULL AND volante IS NOT NULL AND desliz IS NOT NULL
+               AND giro * volante < 0 AND abs(giro) > %s AND desliz > %s),
+        d AS (
+            SELECT *, CASE WHEN timestamp - lag(timestamp) OVER (ORDER BY timestamp)
+                                > interval '300 milliseconds'
+                           THEN 1 ELSE 0 END AS corte
+              FROM q),
+        i AS (SELECT *, sum(corte) OVER (ORDER BY timestamp) AS isla FROM d),
+        c AS (
+            SELECT isla, count(*) AS muestras, min(timestamp) AS empieza,
+                   max(abs(giro)) AS giro_maximo
+              FROM i GROUP BY isla HAVING count(*) >= %s)
+        SELECT i.vuelta, i.metro, c.giro_maximo, c.empieza, c.muestras
+          FROM c JOIN i ON i.isla = c.isla AND i.timestamp = c.empieza
+         ORDER BY c.empieza LIMIT 1
+    """, (fuente, session_id,
+          ["yaw_rate", "steering_normalized",
+           "wheel_slip_ratio_rear_left", "wheel_slip_ratio_rear_right",
+           "lap_number", "lap_distance"],
+          UMBRAL_GIRO_TROMPO, anotador_vivo.UMBRAL_DESLIZAMIENTO,
+          MINIMO_MUESTRAS_TROMPO))
     return cursor.fetchone()
 
 
@@ -2817,12 +2903,14 @@ def avisos(session_id: str,
         for regla, buscar, formato in (
                 (REGLAS_FISICAS[0], _primera_perdida_de_tren_trasero,
                  lambda v: "%.0f %% de deslizamiento en el eje trasero" % (abs(v) * 100)),
-                (REGLAS_FISICAS[1], _primer_impacto_vertical,
+                (REGLAS_FISICAS[1], _primer_trompo,
+                 lambda v: "%.2f rad/s de giro contra el volante" % abs(v)),
+                (REGLAS_FISICAS[2], _primer_impacto_vertical,
                  lambda v: "%+.2f g" % v)):
             fila = buscar(cursor, fuente, session_id)
             if not fila:
                 continue
-            vuelta, metro, valor, instante = fila
+            vuelta, metro, valor, instante = fila[:4]
             encontrados.append({
                 "nivel": regla["nivel"],
                 "que": regla["que"],
