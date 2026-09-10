@@ -412,6 +412,9 @@
   .ejes-g { grid-template-columns: minmax(0, 200px) 1fr; }
   .ejes-g svg { width: 100%; height: auto; }
   .rotulo-g { font-family: var(--cifra); font-size: 7px; letter-spacing: .1em; fill: var(--texto-tenue); }
+  /* Cuanto vale el borde del diagrama, sobre la diagonal del circulo exterior:
+     ahi no choca con FRENADA ni con IZQ, y se lee junto al anillo que rotula. */
+  .escala-g { font-family: var(--cifra); font-size: 7px; fill: var(--texto-medio); }
   .nota-g { font-size: .74rem; line-height: 1.5; margin-top: 12px; }
   .nota-g b { color: var(--texto-medio); }
   .estela-g { stroke: url(#trazo-g); stroke-width: 2; opacity: .8; }

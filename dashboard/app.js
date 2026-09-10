@@ -892,7 +892,21 @@ function nombreDeSenal(id) {
 const UNIDAD_QUE_MUESTRA_EL_TABLERO = {
   delta_to_race_leader: "s",
   delta_to_car_in_front: "s",
-  current_lap_time: "s"
+  current_lap_time: "s",
+  /* EL BUS MANDA METROS POR SEGUNDO AL CUADRADO Y EL PANEL DECIA «g».
+     El adaptador declara `m/s^2` para `accel_x` y `accel_y` ---es lo que
+     publica el vehiculo---, y el tablero rotulaba esas cifras con la unidad de
+     la tabla, que es la del simulador. Un tramo de autopista se leia con
+     ±0,6 g de aceleracion lateral, que es lo que hace un coche de carrera en
+     una curva rapida.
+
+     Comprobado contra la fisica: en un giro plano `a_lat = velocidad x
+     velocidad de guiñada`, y la guiñada ya esta validada contra las cuatro
+     ruedas. Ajustando lo medido contra lo predicho en seis segmentos con curvas
+     ---ciudad, ruta y detenciones--- la pendiente da 9,1, 10,0, 10,0, 10,3, 8,8
+     y 5,4 con correlaciones de 0,76 a 0,98. Esa pendiente es la gravedad. */
+  accel_longitudinal: "g",
+  accel_lateral: "g"
 };
 
 /* Por cuanto hay que **dividir** para pasar de la unidad de la izquierda a la
@@ -902,7 +916,7 @@ const UNIDAD_QUE_MUESTRA_EL_TABLERO = {
    `2937 * 0.001` da 2,9370000000000003 en coma flotante binaria y `2937 / 1000`
    da 2,937. La cola aparece en pantalla en cuanto alguien muestre el numero sin
    redondear. */
-const DIVISOR_ENTRE_UNIDADES = { "ms|s": 1000 };
+const DIVISOR_ENTRE_UNIDADES = { "ms|s": 1000, "m/s^2|g": 9.80665 };
 
 /* Por cuanto dividir para llevar `senal` de la unidad `declarada` a la que se
    muestra. `1` si ya coinciden o si la señal se muestra como viene; `null` si
@@ -2024,6 +2038,10 @@ function pintarG() {
   // La estela es la huella de la vuelta entera: no cambia al avanzar.
   const huella = _estelaG(t.vuelta);
   const pts = huella.puntos;
+  /* Cuanto vale el borde. Sin esto la escala se estira sola y no se declara:
+     el mismo dibujo para 0,06 g y para 5. */
+  const rotuloEscala = document.getElementById("escala-g");
+  if (rotuloEscala) rotuloEscala.textContent = cifra(huella.maximo, 2) + " g";
   const estela = document.getElementById("estela-g");
   const firmaEstela = pts.length + "|" + pts[pts.length - 1].join(",");
   if (estela.dataset.firma !== firmaEstela) {
@@ -2075,7 +2093,7 @@ function _estelaG(vuelta) {
   const valores = [];
   const paso = Math.max(1, Math.floor(n / 80));
   for (let i = 0; i < n; i += paso) valores.push([Number(lateral[i][1]), Number(longitudinal[i][1])]);
-  const maximo = Math.max(1, ...valores.flat().map(Math.abs));
+  const maximo = escalaDelDiagramaG(Math.max(...valores.flat().map(Math.abs)));
   /* Se devuelve tambien la escala: el punto del instante se coloca con las
      aceleraciones interpoladas y tiene que caer en el mismo dibujo que la
      estela, no en uno normalizado aparte. */
@@ -2083,6 +2101,27 @@ function _estelaG(vuelta) {
     puntos: valores.map(p => [90 + (p[0] / maximo) * 68, 90 - (p[1] / maximo) * 68]),
     maximo: maximo,
   };
+}
+
+/* HASTA DONDE LLEGA EL DIAGRAMA, Y ESCRITO.
+   El borde valia `max(1, lo mas grande de la vuelta)`. Ese piso de 1 g es del
+   simulador ---un coche de carrera pasa de 4--- y sobre un coche de calle deja
+   la nube en un punto: en autopista la lateral no llega a 0,07 g. Y sin piso,
+   una escala que se estira sola miente por omision: el dibujo se ve igual con
+   0,06 g que con 5, porque no dice cuanto vale el borde.
+
+   Dos cosas, entonces. La escala sube por pasos redondos, para que dos vueltas
+   parecidas se dibujen a la misma escala y se puedan comparar de un vistazo. Y
+   el valor del borde se escribe, que es lo que convierte el dibujo en una
+   medicion. */
+const PASOS_DE_LA_ESCALA_G = [0.05, 0.1, 0.2, 0.3, 0.5, 0.75, 1, 1.5, 2, 3, 4, 5, 6];
+
+function escalaDelDiagramaG(maximo) {
+  if (!Number.isFinite(maximo) || maximo <= 0) return PASOS_DE_LA_ESCALA_G[0];
+  for (let i = 0; i < PASOS_DE_LA_ESCALA_G.length; i++) {
+    if (maximo <= PASOS_DE_LA_ESCALA_G[i]) return PASOS_DE_LA_ESCALA_G[i];
+  }
+  return Math.ceil(maximo);
 }
 
 /* Cuanto se deja alrededor del recorrido al encuadrarlo. A los costados y

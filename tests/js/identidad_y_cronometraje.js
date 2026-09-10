@@ -149,6 +149,8 @@ const NOMBRES = [
   "nombreDeSenal",
   "panelEstaPresente",
   "renglonesDelPanelG",
+  "escalaDelDiagramaG",
+  "_estelaG",
   "cifra",
   "hayCoordenadasMedidas", "porQueNoHayCoordenadas", "hayEjeDeDistancia",
   "explicacionDelTrazado",
@@ -165,6 +167,7 @@ const CONSTANTES = ["SENAL_DE", "SENAL_CAN", "SENAL_OPENF1",
                     "COORDENADAS_POR_FUENTE", "EJE_DE_DISTANCIA_POR_FUENTE",
                     "FUENTES",
                     "CANALES_POR_FUENTE",
+                    "PASOS_DE_LA_ESCALA_G",
                     "METRICAS"];
 
 const sacadas = new Function(
@@ -239,6 +242,8 @@ const {
   nombreDeSenal,
   panelEstaPresente,
   renglonesDelPanelG,
+  escalaDelDiagramaG,
+  _estelaG,
   cifra,
   COORDENADAS_POR_FUENTE, EJE_DE_DISTANCIA_POR_FUENTE,
   valoresSobreElRecorrido, tramosDelRecorrido, tintaDelValor,
@@ -246,6 +251,7 @@ const {
   CUERPO_DEL_ROTULO, METRICAS, TRAMOS_DE_LA_TRAZA,
   FUENTES: FUENTES_REALES,
   CANALES_POR_FUENTE,
+  PASOS_DE_LA_ESCALA_G,
 } = sacadas;
 
 globalThis.instante = () => calcularInstante();
@@ -2958,6 +2964,122 @@ prueba("el instante trae la guiñada de la sesion del bus", () => {
                      "la guiñada no llega al instante: el panel la nombra y no la tiene");
   assert.strictEqual(i.gVert, null, "el eje vertical se lleno con algo que el bus no manda");
   globalThis.cabezal = 0;
+});
+
+/* ==================================================================
+   21. EL BUS MANDA METROS POR SEGUNDO AL CUADRADO, NO g
+   ------------------------------------------------------------------
+   El adaptador declara `m/s^2` para `accel_x` y `accel_y`: es lo que publica el
+   vehiculo. El tablero rotulaba esas cifras con la unidad de la tabla, que es
+   la del simulador, y un minuto de autopista se leia con ±0,6 g de aceleracion
+   lateral ---lo que hace un coche de carrera en una curva rapida---.
+
+   COMPROBADO CONTRA LA FISICA, NO SUPUESTO. En un giro plano `a_lat = velocidad
+   x velocidad de guiñada`, y la guiñada ya esta validada contra las cuatro
+   ruedas. Ajustando lo medido contra lo predicho en seis segmentos con curvas
+   ---ciudad, ruta y detenciones--- la pendiente da 9,1 / 10,0 / 10,0 / 10,3 /
+   8,8 / 5,4 con correlaciones de 0,76 a 0,98. Esa pendiente es la gravedad.
+
+   Y AL CONVERTIR, EL TRAMO CIERRA. En `sample_01` la variacion medida pasa de
+   ser doce veces la que la guiñada explica a ser 1,18 veces, y el corrimiento
+   que quedaba ---0,02 g--- es la peraltadura de 1,1 grados que tiene una
+   autopista.
+   ================================================================== */
+
+prueba("las aceleraciones del bus se muestran en g", () => {
+  assert.strictEqual(UNIDAD_QUE_MUESTRA_EL_TABLERO.accel_lateral, "g");
+  assert.strictEqual(UNIDAD_QUE_MUESTRA_EL_TABLERO.accel_longitudinal, "g");
+});
+
+prueba("y se convierten dividiendo por la gravedad", () => {
+  assert.strictEqual(divisorDeUnidad("accel_lateral", "m/s^2"), 9.80665);
+  assert.strictEqual(divisorDeUnidad("accel_longitudinal", "m/s^2"), 9.80665);
+  /* Una lateral de 0,611 en el bus son 0,062 g: un minuto de autopista. */
+  assert.ok(Math.abs(0.611 / 9.80665 - 0.0623) < 1e-4);
+});
+
+prueba("una aceleracion que ya viene en g no se toca", () => {
+  assert.strictEqual(divisorDeUnidad("accel_lateral", "g"), 1);
+  /* Y la del simulador no entra en esta politica: se llama distinto. */
+  assert.strictEqual(divisorDeUnidad("g_force_lateral", "g"), 1);
+  assert.strictEqual(divisorDeUnidad("g_force_lateral", "m/s^2"), 1,
+                     "la señal del simulador entro en la conversion del bus");
+});
+
+prueba("una unidad que no se sabe convertir no se convierte con un numero supuesto", () => {
+  assert.strictEqual(divisorDeUnidad("accel_lateral", "cm/s^2"), null);
+  assert.strictEqual(divisorDeUnidad("accel_lateral", ""), null);
+});
+
+/* ==================================================================
+   22. EL BORDE DEL DIAGRAMA VALE ALGO, Y LO DICE
+   ------------------------------------------------------------------
+   El borde valia `max(1, lo mas grande de la vuelta)`. Ese piso de 1 g es del
+   simulador; sobre un coche de calle deja la nube en un punto. Y una escala que
+   se estira sola sin decir cuanto vale miente por omision: el mismo dibujo para
+   0,06 g y para 5.
+   ================================================================== */
+
+prueba("un coche de calle no se dibuja en la escala de uno de carrera", () => {
+  /* En autopista la lateral no llega a 0,07 g: con el piso de 1 g la vuelta
+     entera cabia en el 6 % del radio. */
+  assert.strictEqual(escalaDelDiagramaG(0.062), 0.1);
+  assert.ok(escalaDelDiagramaG(0.062) < 1,
+            "la escala se queda en el piso del simulador y la nube es un punto");
+});
+
+prueba("la estela del bus se dibuja en la escala del bus", () => {
+  /* De punta a punta: la vuelta entra en m/s2, se convierte a g y el diagrama
+     se ajusta a lo que hubo. Con el piso de 1 g heredado del simulador, la
+     estela entera cabia en el 6 % del radio: un punto en el centro. */
+  reiniciar();
+  globalThis.fuente = "can";
+  globalThis.canalesDeLaFuente = () => CANALES_POR_FUENTE.can;
+  cargarVuelta(1, [0, 100, 200, 300],
+               { distancia_m: [0, 5, 10, 15],
+                 accel_lateral: [0.0, 0.611, -0.215, 0.3],
+                 accel_longitudinal: [0.0, 0.4, -0.18, 0.1] },
+               { accel_lateral: "m/s^2", accel_longitudinal: "m/s^2" });
+  globalThis.estado.vueltas = [{ numero: 1, duracion_s: 0.3,
+                                 desde_utc: iso(T0), hasta_utc: iso(T0 + 300) }];
+  armarAutos([CAR19]);
+  const h = _estelaG(1);
+  assert.strictEqual(h.maximo, 0.1,
+                     "el diagrama se dibujo en la escala de un coche de carrera: " + h.maximo);
+  /* Y los puntos usan el radio del dibujo, no una fraccion diminuta de el. */
+  const radios = h.puntos.map(q => Math.hypot(q[0] - 90, q[1] - 90));
+  assert.ok(Math.max.apply(null, radios) > 40,
+            "la estela entera quedo apretada en el centro: radio maximo " +
+            Math.max.apply(null, radios).toFixed(1) + " de 68");
+  assert.ok(Math.max.apply(null, radios) <= 68.01, "la estela se salio del dibujo");
+});
+
+prueba("la escala sube por pasos redondos, para poder comparar dos vueltas", () => {
+  assert.strictEqual(escalaDelDiagramaG(0.04), 0.05);
+  assert.strictEqual(escalaDelDiagramaG(0.35), 0.5);
+  assert.strictEqual(escalaDelDiagramaG(0.5), 0.5);
+  assert.strictEqual(escalaDelDiagramaG(1.2), 1.5);
+  PASOS_DE_LA_ESCALA_G.forEach(p => assert.strictEqual(escalaDelDiagramaG(p), p,
+    "un valor que es exactamente un paso no salta al siguiente: " + p));
+});
+
+prueba("un coche de carrera no se sale del dibujo", () => {
+  /* La escala tiene que seguir creciendo mas alla del ultimo paso. */
+  assert.ok(escalaDelDiagramaG(5.4) >= 5.4);
+  assert.ok(escalaDelDiagramaG(9.2) >= 9.2);
+});
+
+prueba("una vuelta sin aceleracion no divide por cero", () => {
+  assert.ok(escalaDelDiagramaG(0) > 0);
+  assert.ok(escalaDelDiagramaG(-Infinity) > 0);
+  assert.ok(escalaDelDiagramaG(NaN) > 0);
+});
+
+prueba("los pasos de la escala estan ordenados", () => {
+  for (let i = 1; i < PASOS_DE_LA_ESCALA_G.length; i++) {
+    assert.ok(PASOS_DE_LA_ESCALA_G[i] > PASOS_DE_LA_ESCALA_G[i - 1],
+              "los pasos no suben: la escala elegiria uno mas chico que el valor");
+  }
 });
 
 console.log("identidad_y_cronometraje: " + hechas + " comprobaciones");
