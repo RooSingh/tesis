@@ -10,7 +10,12 @@ import asyncio
 import json
 import unittest
 
+import re
+from pathlib import Path
+
 from backend.app import app
+
+RAIZ = Path(__file__).resolve().parents[1]
 
 
 async def pedir(metodo: str, ruta: str, cuerpo=None):
@@ -98,3 +103,64 @@ class ContratoHttpDashboardTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class LasRutasQueElTableroPideExistenTests(unittest.TestCase):
+    """Un boton que llama a una ruta inexistente falla recien al apretarlo.
+
+    El tablero declaraba ademas, en `FUENTES[...].apiFalta`, que faltaban
+    `POST /captura/iniciar`, `/captura/detener`, `/openf1/importar` y
+    `/can/importar`. Los cuatro existen desde hace tiempo en
+    `backend/ingesta.py`: el campo era una promesa de trabajo pendiente que
+    habia quedado despues de hacerlo, y no lo leia nadie. Se quito, y en su
+    lugar queda lo que si se puede comprobar: que cada ruta que el tablero
+    llama este montada.
+    """
+
+    @staticmethod
+    def _rutas_del_tablero() -> set[str]:
+        fuente = (RAIZ / "dashboard" / "app.js").read_text(encoding="utf-8")
+        return set(re.findall(r'ruta:\s*"([^"]+)"', fuente))
+
+    @staticmethod
+    def _rutas_montadas() -> set[str]:
+        """Las rutas por el esquema publico, no recorriendo `app.routes`.
+
+        Recorrer `app.routes` parece lo directo y no lo es: FastAPI no aplana
+        los sub-routers ahi ---quedan como `_IncludedRouter`, un interno sin
+        `path`--- de modo que las diecisiete rutas de `api_sesion` y las diez
+        de `ingesta` no aparecen. Una prueba escrita sobre eso reprueba rutas
+        que la aplicacion si sirve. El esquema OpenAPI es lo que la aplicacion
+        declara servir, y no depende de como esta version las guarde por
+        dentro.
+        """
+
+        return set(app.openapi()["paths"])
+
+    def test_el_tablero_declara_al_menos_las_rutas_de_accion(self) -> None:
+        """Si el patron deja de encontrar rutas, la prueba pasaria vacia."""
+
+        self.assertGreaterEqual(
+            len(self._rutas_del_tablero()), 4,
+            "no se encontraron las rutas de accion en app.js: la prueba "
+            "estaria pasando sin comprobar nada")
+
+    def test_cada_ruta_que_el_tablero_llama_esta_montada(self) -> None:
+        montadas = self._rutas_montadas()
+        for ruta in sorted(self._rutas_del_tablero()):
+            self.assertIn(
+                ruta, montadas,
+                f"el tablero llama a {ruta} y la aplicacion no la monta: "
+                f"el boton falla recien al apretarlo")
+
+    def test_el_tablero_no_declara_puntos_de_acceso_faltantes(self) -> None:
+        """Declarar que falta algo que existe envejece hacia la mentira.
+
+        Un campo que nadie lee no se corrige solo cuando el trabajo se hace.
+        """
+
+        fuente = (RAIZ / "dashboard" / "app.js").read_text(encoding="utf-8")
+        self.assertNotIn(
+            "apiFalta", fuente,
+            "volvio un campo que declara puntos de acceso faltantes sin que "
+            "nada lo lea ni nada lo verifique")

@@ -535,7 +535,6 @@ const FUENTES = {
     accion: "Empezar a escuchar", accionVivo: "Detener escucha",
     ingreso: "El simulador emite por red y el capturador queda a la espera. No se sube ningún archivo.",
     motivos: { g: "", clima: "", auto: "", motor: "" },
-    apiFalta: "POST /captura/iniciar y POST /captura/detener"
   },
   openf1: {
     nombre: "OpenF1",
@@ -549,7 +548,6 @@ const FUENTES = {
       auto: "OpenF1 no publica temperatura ni presión de neumáticos, ni estado de daño.",
       motor: ""
     },
-    apiFalta: "POST /openf1/importar"
   },
   can: {
     nombre: "CAN real",
@@ -563,7 +561,6 @@ const FUENTES = {
       auto: "El bus entrega velocidad de rueda, no temperatura ni presión de neumático.",
       motor: "La captura no incluye régimen de motor ni marcha seleccionada."
     },
-    apiFalta: "POST /can/importar"
   }
 };
 
