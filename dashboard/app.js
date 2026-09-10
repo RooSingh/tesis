@@ -765,6 +765,45 @@ const LECTURAS = [
   { id: "posicion", fuentes: ["f1"] }
 ];
 
+/* ============================================================
+   LA UNIDAD TAMBIEN CAMBIA CON LA FUENTE
+   ------------------------------------------------------------
+   `METRICAS` declara la unidad del simulador, donde el acelerador y el freno
+   son un porcentaje de recorrido del pedal. En el bus del vehiculo esas dos
+   casillas son `gas_pressed` y `brake_pressed`, que son **pisado o no pisado**:
+   la base los guarda con unidad `bool`. El panel escribia «%» sobre un booleano
+   y ponia «mín 0 · máx 1» debajo, que es un porcentaje imposible.
+
+   El nombre de la senal ya se traducia por fuente ---`nombreDeSenal`--- y la
+   unidad no. Se resuelve igual y en un solo sitio, porque son cinco los que la
+   escriben: el pie del grafico, los dos rotulos de las laminas, la comparacion
+   y su exportacion.
+   ============================================================ */
+const UNIDAD_POR_FUENTE = {
+  can: { throttle: "pisado", brake: "pisado" },
+  /* La dirección del simulador es `steering_normalized`, una razón de -1 a 1.
+     La del bus es `steer_angle`, en grados. La casilla es la misma y las dos
+     unidades no. */
+  f1: { steer: "norm." },
+};
+
+/* Que decir de una señal que llego y no se movio en todo el tramo visible.
+   Un booleano quieto tiene nombre ---el pedal estuvo suelto--- y una magnitud
+   quieta no: de esa solo se puede decir su valor. */
+function sinCambiosEnElTramo(id, valor) {
+  if (unidadDeCanal(id) === "pisado") {
+    return valor ? "pisado todo el tramo" : "sin pisadas en este tramo";
+  }
+  return "sin cambios · " + valor.toFixed(2) + " " + unidadDeCanal(id);
+}
+
+function unidadDeCanal(id) {
+  const porFuente = UNIDAD_POR_FUENTE[fuente];
+  if (porFuente && porFuente[id]) return porFuente[id];
+  const m = METRICAS.find(x => x.id === id);
+  return m ? m.unidad : "";
+}
+
 const SENAL_CAN = {
   throttle: "gas_pressed", brake: "brake_pressed", glong: "accel_longitudinal",
   glat: "accel_lateral", steer: "steer_angle", steerRate: "steer_rate",
@@ -4455,7 +4494,7 @@ function exportarPng(canalId) {
   ctx.save();
   ctx.translate(38, Y0 + alto / 2);
   ctx.rotate(-Math.PI / 2);
-  ctx.fillText((m.rotulo + " · " + m.unidad).toUpperCase(), 0, 0);
+  ctx.fillText((m.rotulo + " · " + unidadDeCanal(m.id)).toUpperCase(), 0, 0);
   ctx.restore();
 
   // --- curvas del circuito ---
@@ -4665,7 +4704,7 @@ function exportarComparacion() {
     ctx.translate(46, (Y0 + Y1) / 2);
     ctx.rotate(-Math.PI / 2);
     ctx.textAlign = "center";
-    ctx.fillText((m.rotulo + " · " + m.unidad).toUpperCase(), 0, 0);
+    ctx.fillText((m.rotulo + " · " + unidadDeCanal(m.id)).toUpperCase(), 0, 0);
     ctx.restore();
 
     ctx.font = "18px 'IBM Plex Mono', monospace";
@@ -5131,10 +5170,25 @@ function dibujarTraza() {
                  canal === "gap" || canal === "slip" || canal === "steer") ? 2 : 0;
     const pie = document.getElementById("pie-" + canal);
     if (pie) {
-      pie.innerHTML =
-        '<span>mín <b>' + escala.minReal.toFixed(dec) + '</b></span>' +
-        '<span>' + m.unidad + '</span>' +
-        '<span>máx <b>' + escala.maxReal.toFixed(dec) + '</b></span>';
+      /* UNA RAYA PLANA NO DICE SI ESTA ROTA O SI NO PASO NADA.
+         Con el simulador daba igual: el acelerador de una vuelta de carrera se
+         mueve siempre. Con el bus del vehiculo no: medio conjunto de datos son
+         tramos de autopista con el crucero puesto, donde el acelerador y el
+         freno estan sueltos el minuto entero y su traza es una recta en cero.
+         Vista sola es indistinguible de un canal muerto, y son dos cosas muy
+         distintas: una es un dato y la otra es una falla.
+
+         Se dice cuando la señal llego y no cambio, que es lo unico que se puede
+         afirmar. Que no haya llegado ya se dice en otro lado ---el lienzo
+         escribe «sin dato»--- y no se pisan. */
+      const quieta = Number.isFinite(escala.minReal) &&
+                     escala.minReal === escala.maxReal;
+      pie.innerHTML = quieta
+        ? '<span class="quieta">' +
+            textoSeguro(sinCambiosEnElTramo(canal, escala.minReal)) + "</span>"
+        : '<span>mín <b>' + escala.minReal.toFixed(dec) + '</b></span>' +
+          '<span>' + textoSeguro(unidadDeCanal(canal)) + '</span>' +
+          '<span>máx <b>' + escala.maxReal.toFixed(dec) + '</b></span>';
     }
   });
   anotarEnPantalla(enPantalla);
@@ -5301,7 +5355,7 @@ function ampliarGrafico(id) {
   zoom = null;
   document.getElementById("velo-comparacion").dataset.abierto = "si";
   document.querySelector("#velo-comparacion .cab-comparacion h3").firstChild.textContent =
-    m.rotulo + " · " + m.unidad;
+    m.rotulo + " · " + unidadDeCanal(m.id);
   pintarMetricas(); pintarPilotosComparacion(); dibujarComparacion();
   document.getElementById("btn-cerrar-comparacion").focus();
 }
@@ -5972,7 +6026,7 @@ function dibujarComparacion() {
     ctx.fillStyle = tinta("--texto-medio");
     ctx.font = "600 10px 'Saira Condensed', sans-serif";
     ctx.save(); ctx.translate(13, (y0 + y1) / 2); ctx.rotate(-Math.PI / 2);
-    ctx.textAlign = "center"; ctx.fillText(m.rotulo.toUpperCase() + " · " + m.unidad, 0, 0);
+    ctx.textAlign = "center"; ctx.fillText(m.rotulo.toUpperCase() + " · " + unidadDeCanal(m.id), 0, 0);
     ctx.restore();
     ctx.font = "9px 'IBM Plex Mono', monospace";
     ctx.fillStyle = tinta("--texto-tenue"); ctx.textAlign = "right";

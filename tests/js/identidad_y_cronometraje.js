@@ -93,6 +93,7 @@ const NOMBRES = [
   "anotarParrillas", "parrillaVigente",
   "secundarioDeVehiculo", "quienConduce",
   "vehiculosConTelemetriaGuardada", "autoPropio",
+  "unidadDeCanal", "sinCambiosEnElTramo",
   "divisorDeUnidad", "unidadDeclaradaDe", "divisorDePresentacion",
   "estaEnLaUnidadQueSeMuestra", "serieCrudaDeCanal", "_armarSerieDeCanal",
   "_enUnidad", "trazarSerie", "tiempoDeVuelta", "diferenciaEnSegundos",
@@ -118,6 +119,7 @@ const NOMBRES = [
 
 const CONSTANTES = ["SENAL_DE", "UNIDAD_QUE_MUESTRA_EL_TABLERO",
                     "DIVISOR_ENTRE_UNIDADES", "SIN_VEHICULO",
+                    "UNIDAD_POR_FUENTE",
                     "MARGEN_DEL_TRAZADO", "ALTURA_DEL_ROTULO", "CUERPO_DEL_ROTULO",
                     "METRICAS"];
 
@@ -162,6 +164,7 @@ const {
   renombrarAutos, armarAutos,
   secundarioDeVehiculo, vehiculosConTelemetriaGuardada, autoPropio,
   camposDeIdentidad, quienConduce,
+  unidadDeCanal, sinCambiosEnElTramo,
   divisorDeUnidad, unidadDeclaradaDe, divisorDePresentacion,
   estaEnLaUnidadQueSeMuestra, serieCrudaDeCanal, trazarSerie,
   serieDeCanal, serieAcumuladaDeCanal,
@@ -2036,6 +2039,79 @@ prueba("no se llama «curva» a lo que el catalogo publica como referencia", () 
   assert.ok(/puntos de referencia del catálogo/.test(nota), nota);
   assert.ok(!/entrada de curva/.test(nota), nota);
   assert.ok(/el ancho de la curva no se declara/.test(nota), nota);
+});
+
+/* ==================================================================
+   16. LA UNIDAD Y LA QUIETUD SON DE LA FUENTE, NO DE LA TABLA
+   ------------------------------------------------------------------
+   `METRICAS` declara la unidad del simulador, donde el acelerador es un
+   porcentaje de recorrido del pedal. En el bus esas dos casillas son
+   `gas_pressed` y `brake_pressed`, que la base guarda con unidad `bool`: el
+   panel escribia «%» con «mín 0 · máx 1» debajo, un porcentaje imposible.
+
+   Y una raya plana en cero no dice si el canal esta roto o si no paso nada. Con
+   el simulador daba igual; con el bus, medio conjunto de datos son tramos de
+   autopista con los pedales sueltos el minuto entero.
+   ================================================================== */
+
+prueba("en el bus los pedales no se miden en por ciento", () => {
+  globalThis.fuente = "can";
+  assert.strictEqual(unidadDeCanal("throttle"), "pisado");
+  assert.strictEqual(unidadDeCanal("brake"), "pisado");
+});
+
+prueba("en la simulacion siguen siendo por ciento", () => {
+  globalThis.fuente = "f1";
+  assert.strictEqual(unidadDeCanal("throttle"), "%");
+  assert.strictEqual(unidadDeCanal("brake"), "%");
+});
+
+prueba("la direccion son grados en el bus y una razon en la simulacion", () => {
+  /* Es la misma casilla y dos señales distintas: `steer_angle` en grados contra
+     `steering_normalized`, que va de -1 a 1. */
+  globalThis.fuente = "can";
+  assert.strictEqual(unidadDeCanal("steer"), "°");
+  globalThis.fuente = "f1";
+  assert.strictEqual(unidadDeCanal("steer"), "norm.");
+});
+
+prueba("un canal sin excepcion usa la unidad de la tabla en las dos fuentes", () => {
+  ["f1", "can"].forEach(f => {
+    globalThis.fuente = f;
+    assert.strictEqual(unidadDeCanal("speed"), "km/h");
+    assert.strictEqual(unidadDeCanal("glong"), "g");
+  });
+});
+
+prueba("un canal que no existe no rompe ni inventa unidad", () => {
+  globalThis.fuente = "f1";
+  assert.strictEqual(unidadDeCanal("no-existe"), "");
+});
+
+prueba("un pedal suelto todo el tramo se dice, no se deja mudo", () => {
+  globalThis.fuente = "can";
+  assert.strictEqual(sinCambiosEnElTramo("brake", 0), "sin pisadas en este tramo");
+  assert.strictEqual(sinCambiosEnElTramo("throttle", 0), "sin pisadas en este tramo");
+});
+
+prueba("y un pedal pisado todo el tramo tambien", () => {
+  globalThis.fuente = "can";
+  assert.strictEqual(sinCambiosEnElTramo("throttle", 1), "pisado todo el tramo");
+});
+
+prueba("de una magnitud quieta solo se puede decir su valor", () => {
+  /* «Sin pisadas» no aplica a una velocidad: de una magnitud constante lo unico
+     que se puede afirmar es cuanto valia. */
+  globalThis.fuente = "can";
+  assert.strictEqual(sinCambiosEnElTramo("speed", 107.5), "sin cambios · 107.50 km/h");
+});
+
+prueba("el pie escribe la quietud solo cuando el minimo iguala al maximo", () => {
+  /* La condicion es del dibujo y se comprueba donde se dibuja; aca se fija que
+     el texto exista para las dos formas. */
+  globalThis.fuente = "can";
+  assert.notStrictEqual(sinCambiosEnElTramo("brake", 0), "");
+  assert.notStrictEqual(sinCambiosEnElTramo("speed", 0), "");
 });
 
 console.log("identidad_y_cronometraje: " + hechas + " comprobaciones");
