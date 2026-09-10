@@ -2154,7 +2154,8 @@ def _restar(instante_iso: str, segundos: int) -> str | None:
 
 def _ultimos_valores(cursor, fuente: str, session_id: str, senales: list[str],
                      hasta_utc: str | None = None,
-                     ventana_alcance: tuple[str, str] | None = None) -> dict[str, float]:
+                     ventana_alcance: tuple[str, str] | None = None,
+                     vehiculo: str | None = None) -> dict[str, float]:
     """Ultimo valor de cada senal **hasta un instante**, o de toda la sesion.
 
     Se resuelve con una sola consulta y `DISTINCT ON`, que sobre las columnas
@@ -2173,6 +2174,17 @@ def _ultimos_valores(cursor, fuente: str, session_id: str, senales: list[str],
     momento**, que es lo unico que se puede afirmar de un tablero que se
     recorre.
     """
+    # EL ESTADO ES DE UN VEHICULO, Y CON UNO SOLO NO SE NOTABA.
+    #
+    # `DISTINCT ON (signal_name)` sobre la sesion entera devuelve, para cada
+    # canal, la fila mas reciente **de cualquier vehiculo**. Con uno solo eso
+    # era su estado. Con cuatro es el del que publico ultimo, canal por canal:
+    # la temperatura de una goma de uno junto al dano de otro.
+    #
+    # Medido el 2026-09-10 en Red Bull Ring: Hamilton termino con los dos
+    # alerones delanteros al 100 % de dano, 2.974 muestras lo declaran, y el
+    # panel decia «sin dano, ninguna pieza lo declara».
+    _cv, _cvp = _acotar_al_vehiculo(vehiculo)
     if not senales:
         return {}
 
@@ -2207,14 +2219,15 @@ def _ultimos_valores(cursor, fuente: str, session_id: str, senales: list[str],
             SELECT DISTINCT ON (signal_name)
                    signal_name, value_numeric, value_boolean, value_text, unit, timestamp
               FROM telemetry_messages
-             WHERE source_type = %s AND session_id = %s AND signal_name = ANY(%s)
+             WHERE source_type = %s AND session_id = %s AND signal_name = ANY(%s)"""
+                   + _cv + """
                AND timestamp >= %s AND timestamp <= %s
                AND (%s::timestamptz IS NULL OR timestamp BETWEEN %s AND %s)
              ORDER BY signal_name, timestamp DESC
-        """, (fuente, session_id, faltan, desde, hasta,
+        """, tuple([fuente, session_id, faltan] + _cvp + [desde, hasta,
               ventana_alcance[0] if ventana_alcance else None,
               ventana_alcance[0] if ventana_alcance else None,
-              ventana_alcance[1] if ventana_alcance else None))
+              ventana_alcance[1] if ventana_alcance else None]))
         for nombre, num, boo, txt, unidad, ts in cursor.fetchall():
             valor = num if num is not None else (boo if boo is not None else txt)
             salida[nombre] = {"valor": valor, "unidad": unidad,
@@ -2222,7 +2235,7 @@ def _ultimos_valores(cursor, fuente: str, session_id: str, senales: list[str],
 
     def _consultar(faltan: list[str], desde: str | None) -> None:
         condicion = ""
-        parametros: list[Any] = [fuente, session_id, faltan]
+        parametros: list[Any] = [fuente, session_id, faltan] + _cvp
         # El alcance acota siempre, incluso en el paso «sin acotar»: ese paso no
         # acota **por tiempo de sesion**, pero no puede salirse de la
         # adquisicion elegida.
@@ -2239,7 +2252,8 @@ def _ultimos_valores(cursor, fuente: str, session_id: str, senales: list[str],
             SELECT DISTINCT ON (signal_name)
                    signal_name, value_numeric, value_boolean, value_text, unit, timestamp
               FROM telemetry_messages
-             WHERE source_type = %s AND session_id = %s AND signal_name = ANY(%s)""" +
+             WHERE source_type = %s AND session_id = %s AND signal_name = ANY(%s)"""
+                   + _cv + """""" +
             condicion + """
              ORDER BY signal_name, timestamp DESC
         """, tuple(parametros))
@@ -2313,6 +2327,8 @@ def estado_del_vehiculo(
         session_id: str,
         hasta: Annotated[str | None, Query(
             description="Instante ISO-8601: estado del vehiculo vigente hasta ahi")] = None,
+        vehiculo: Annotated[str | None, Query(
+            description="De que vehiculo; por omision, el de quien conduce")] = None,
         ) -> dict[str, Any]:
     """Neumaticos, frenos y dano, por esquina y por pieza.
 
@@ -2327,7 +2343,11 @@ def estado_del_vehiculo(
     pedidas += list(CANALES_CARROCERIA.values())
 
     with db.obtener_conexion() as conexion, conexion.cursor() as cursor:
-        valores = _ultimos_valores(cursor, fuente, session_id, pedidas, hasta)
+        # Sin decir cual, el de quien conduce. Mirar a un rival es una pregunta
+        # legitima ---hoy hay datos suyos--- pero hay que pedirla.
+        de_quien = vehiculo or _vehiculo_propio(cursor, fuente, session_id)
+        valores = _ultimos_valores(cursor, fuente, session_id, pedidas, hasta,
+                                   vehiculo=de_quien)
 
     esquinas: dict[str, dict] = {}
     for e in ESQUINAS:
@@ -2448,11 +2468,28 @@ BANDERA_TEXTO = {-1: "sin dato", 0: "ninguna", 1: "verde",
 
 
 @router.get("/sesiones/{session_id}/contexto")
+def _senales_del_vehiculo() -> list[str]:
+    """Los canales que describen al coche y no a la sesion.
+
+    Se derivan de los mismos mapas que arma el panel, no de una lista aparte:
+    una segunda copia se desactualiza el dia que se agregue una esquina.
+    """
+
+    pedidas = []
+    for plantilla in CANALES_POR_ESQUINA.values():
+        pedidas += [plantilla % e for e in ESQUINAS]
+    return pedidas + list(CANALES_CARROCERIA.values())
+
+
 def contexto(
         session_id: str,
         adquisicion: Annotated[str | None, Query()] = None,
         hasta: Annotated[str | None, Query(
             description="Instante ISO-8601: el contexto vigente hasta ahi")] = None,
+        vehiculo: Annotated[str | None, Query(
+            description="De que vehiculo es el estado; por omision, el de quien "
+                        "conduce. El clima y la puesta a punto no cambian: son "
+                        "de la sesion")] = None,
         ) -> dict[str, Any]:
     """Clima, estado del vehiculo y puesta a punto **en una sola consulta**.
 
@@ -2478,8 +2515,27 @@ def contexto(
         # de la carrera original no son los de una prueba de parrilla corrida
         # tres dias despues.
         _cv = _ventana_de_alcance(cursor, fuente, session_id, adquisicion)
+        # DE QUIEN ES CADA PARTE.
+        #
+        # `DISTINCT ON (signal_name)` sin acotar el vehiculo devuelve, por cada
+        # canal, la fila mas reciente de cualquiera. Con un vehiculo capturado
+        # eso era su estado; con cuatro es el del que publico ultimo, canal por
+        # canal. Por eso el panel mostraba las cuatro esquinas identicas y «sin
+        # dano» sobre un coche que termino con los dos alerones rotos.
+        #
+        # El clima y la puesta a punto **no son de un vehiculo**: los publica el
+        # paquete de sesion, que el protocolo entrega solo para el propio. Por
+        # eso la consulta base va siempre acotada al propio, y solo cuando se
+        # pide otro se hace una segunda para sus canales. Mirar a un rival no
+        # tiene por que costar el clima.
+        propio = _vehiculo_propio(cursor, fuente, session_id)
         valores = _ultimos_valores(cursor, fuente, session_id, senales, hasta,
-                                   ventana_alcance=_cv)
+                                   ventana_alcance=_cv, vehiculo=propio)
+        if vehiculo and vehiculo != propio:
+            del_otro = _ultimos_valores(cursor, fuente, session_id,
+                                        _senales_del_vehiculo(), hasta,
+                                        ventana_alcance=_cv, vehiculo=vehiculo)
+            valores = {**valores, **del_otro}
 
     clima = {}
     for clave, canal in CANALES_CLIMA.items():

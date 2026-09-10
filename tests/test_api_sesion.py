@@ -771,6 +771,47 @@ class UnAvisoEsDeUnVehiculoTests(unittest.TestCase):
         self.assertNotIn("vehicle_id", consulta)
 
 
+class ElEstadoDelVehiculoEsDeUnVehiculoTests(unittest.TestCase):
+    """El panel pedia el ultimo valor de cada senal sin decir de que coche.
+
+    `DISTINCT ON (signal_name)` sobre la sesion entera devuelve, para cada
+    canal, la fila mas reciente **de cualquier vehiculo**. Con uno solo eso era
+    su estado. Con cuatro es el del que publico ultimo, canal por canal: la
+    temperatura de una goma de uno junto al dano de otro.
+
+    Medido el 2026-09-10 en Red Bull Ring: Hamilton termino con los dos
+    alerones delanteros al 100 % de dano, 2.974 muestras lo declaran, y el
+    panel decia «sin dano, ninguna pieza lo declara».
+    """
+
+    def test_el_estado_se_pide_de_un_vehiculo(self) -> None:
+        falsa, parche = _con([])
+        with parche, patch.object(api_sesion, "_vehiculo_propio",
+                                  return_value="f1_25:session:1:car:19"):
+            api_sesion.estado_del_vehiculo("f1_25:session:1")
+        for consulta, parametros in falsa.consultas:
+            if "DISTINCT ON (signal_name)" in consulta:
+                self.assertIn("vehicle_id", consulta)
+                self.assertIn("f1_25:session:1:car:19", parametros)
+
+    def test_se_puede_pedir_el_de_otro_piloto(self) -> None:
+        """Mirar a un rival es una pregunta legitima, y hoy hay datos suyos.
+
+        Con otra sesion que la prueba de arriba: la cache de canales ausentes es
+        por sesion, y reusar el identificador haria que esta no consultara nada
+        y pasara sin comprobar lo que dice comprobar.
+        """
+
+        falsa, parche = _con([])
+        with parche:
+            api_sesion.estado_del_vehiculo("f1_25:session:2",
+                                           vehiculo="f1_25:session:2:car:3")
+        pedidos = [p for c, p in falsa.consultas if "DISTINCT ON (signal_name)" in c]
+        self.assertTrue(pedidos)
+        for parametros in pedidos:
+            self.assertIn("f1_25:session:2:car:3", parametros)
+
+
 class LasVueltasSonDeQuienConduceTests(unittest.TestCase):
     """`/vueltas` elegia el vehiculo con mas filas, y el tablero le hacia caso.
 

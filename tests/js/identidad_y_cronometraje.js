@@ -91,6 +91,10 @@ globalThis.cabezal = 0;
 globalThis.vueltaElegida = 1;
 globalThis.corrida = { adquisicion: null, fase: null, disponibles: null, mezclada: false };
 globalThis.AUTOS = [];
+/* A quien se eligio a mano gana a lo que la parrilla declara, y por eso
+   `armarAutos` lo consulta. Sin declararlo aca, la funcion extraida no
+   encuentra la variable y falla en la primera llamada. */
+globalThis.propioAMano = null;
 globalThis.vivo = { series: new Map(), ultimos: new Map(), recorrido: new Map(),
                     distancia: new Map(), vuelta: new Map(), recorridoDibujado: 0 };
 globalThis.document = { getElementById: () => null };

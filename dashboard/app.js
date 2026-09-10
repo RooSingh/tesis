@@ -740,7 +740,8 @@ function armarAutos(claves) {
     : null;
   const conTelemetria = estado.vehiculoClave;
   const anterior = AUTOS.find(a => a.propio);
-  const propio = (declarado && claves.indexOf(declarado) !== -1) ? declarado
+  const propio = (propioAMano && claves.indexOf(propioAMano) !== -1) ? propioAMano
+               : (declarado && claves.indexOf(declarado) !== -1) ? declarado
                : (conTelemetria && claves.indexOf(conTelemetria) !== -1) ? conTelemetria
                : (anterior && claves.indexOf(anterior.id) !== -1) ? anterior.id
                : claves[0];
@@ -1415,8 +1416,21 @@ function autoPropio() {
   return AUTOS.find(a => a.propio) || AUTOS[0] || SIN_VEHICULO;
 }
 
+/* A QUIEN SE ELIGIO A MANO.
+   La parrilla declara quien conduce y eso gana a cualquier deduccion, pero no
+   a una eleccion explicita: mirar los datos de un rival es una pregunta
+   legitima. Sin esto, `armarAutos` volvia a poner al declarado en cuanto la
+   lista se rehacia, y elegir a otro no duraba un cuadro. Se olvida al cambiar
+   de sesion, donde la clave ni siquiera existe. */
+let propioAMano = null;
+
 function elegirPropio(id) {
   const anterior = autoPropio().id;
+  propioAMano = id;
+  /* Y se cambia de quien se leen las señales, no solo quien figura marcado:
+     sin esto el selector decia «Russell» y los instrumentos seguian siendo de
+     Hamilton, que es peor que no dejar elegir. */
+  estado.vehiculoClave = id;
   AUTOS.forEach(a => { a.propio = (a.id === id); });
   /* Si se estaba mirando solo al propio, se pasa a mirar solo al nuevo: elegir
      piloto es cambiar de quien se mira, no agregar uno. Si habia varios
@@ -6785,6 +6799,7 @@ function prepararEscucha() {
   cambiaronLasSeries();
   estado.disponibles = new Set();
   AUTOS = []; seleccion = new Set(); estado.vehiculoClave = null;
+  propioAMano = null;
   estado.cargando = false;
   estado.motivo = "Escuchando. Sin telemetría todavía: en cuanto el juego " +
                   "emita, el tablero se llena solo.";
@@ -7110,6 +7125,7 @@ function incorporarTelemetriaViva(m, recuperando) {
     cambiaronLasSeries();
     estado.disponibles = new Set();
     AUTOS = []; seleccion = new Set(); estado.vehiculoClave = null;
+  propioAMano = null;
     marcar(document.getElementById("sel-fuente"), "fuente", fuente);
   }
 
@@ -8307,7 +8323,9 @@ function refrescarContexto() {
   const ahora = performance.now();
   if (ahora - _contextoUltimo < 3000) return;
   const t = instante();
-  const clave = estado.abierta.session_id + "|" + t.vuelta;
+  /* La clave incluye de quien se mira: cambiar de piloto tiene que volver a
+     pedir el contexto, o se seguiria mostrando el neumatico del anterior. */
+  const clave = estado.abierta.session_id + "|" + t.vuelta + "|" + autoPropio().id;
   if (clave === _contextoDe) return;
   /* El instante se resuelve **antes** de anotar que hay una consulta en curso.
      Al reves ---como estaba--- una sesion sin instante utc dejaba la marca
@@ -8329,7 +8347,8 @@ function refrescarContexto() {
      distintos si uno tarda mas que otro, y el panel mostraria el clima de un
      momento y el neumatico de otro. */
   conCarga(["clima", "vehiculo", "puesta"], () =>
-    pedir(ruta + "/contexto?hasta=" + encodeURIComponent(cuando) + sufijoDeCorrida(true),
+    pedir(ruta + "/contexto?hasta=" + encodeURIComponent(cuando) +
+          "&vehiculo=" + encodeURIComponent(autoPropio().id) + sufijoDeCorrida(true),
           { senal: senalDeSesion() })
       .then(d => {
         if (!sigueVigente(apertura)) return;
