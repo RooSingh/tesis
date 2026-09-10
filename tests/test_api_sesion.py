@@ -720,6 +720,76 @@ class AvisosTests(unittest.TestCase):
                       consulta)
 
 
+class UnAvisoEsDeUnVehiculoTests(unittest.TestCase):
+    """Ninguna regla puede mezclar vehiculos, y con uno solo no se notaba.
+
+    Todas estas consultas giran la tabla larga a una fila por instante con
+    `max(value_numeric) FILTER (WHERE signal_name = ...)`. Con **un** vehiculo
+    capturado ese `max` es el unico valor que hay y la consulta es correcta. Con
+    cuatro, toma el mayor de los cuatro por cada canal por separado: el giro de
+    uno con el volante de otro y el deslizamiento de un tercero. Eso no describe
+    a ningun coche, y el aviso que sale de ahi afirma algo que no ocurrio.
+
+    Estuvo latente desde siempre y aparecio el 2026-09-10, la primera carrera
+    con la parrilla acotada a cuatro. **Un defecto que solo se ve con datos que
+    todavia no existian es un defecto igual.**
+
+    La prueba es de la clase entera y no de cada regla: lo que hay que impedir
+    es que se agregue la proxima consulta sin acotar.
+    """
+
+    REGLAS = ("_primera_perdida_de_tren_trasero", "_primer_trompo",
+              "_primer_impacto_vertical", "_primera_caida_brusca",
+              "_primera_salida_de_pista")
+
+    def test_toda_regla_acota_a_un_vehiculo(self) -> None:
+        for nombre in self.REGLAS:
+            with self.subTest(regla=nombre):
+                falsa, parche = _con([])
+                with parche:
+                    getattr(api_sesion, nombre)(
+                        falsa.cursor_obj, "f1_25_udp_simulation",
+                        "f1_25:session:1", "f1_25:session:1:car:0")
+                consulta, parametros = falsa.consultas[-1]
+                self.assertIn("vehicle_id", consulta,
+                              "%s gira la tabla sin acotar el vehiculo" % nombre)
+                self.assertIn("f1_25:session:1:car:0", parametros)
+
+    def test_sin_saber_cual_es_el_propio_no_se_acota_y_se_dice(self) -> None:
+        """Con una sesion vieja de un solo vehiculo no hay a quien acotar.
+
+        Devolver cero avisos seria peor que devolverlos sin acotar: con un unico
+        vehiculo el `max` no mezcla nada y la lectura sigue siendo correcta. Lo
+        que no puede pasar es que se calle.
+        """
+
+        falsa, parche = _con([])
+        with parche:
+            api_sesion._primer_trompo(
+                falsa.cursor_obj, "f1_25_udp_simulation", "f1_25:session:1", None)
+        consulta, _ = falsa.consultas[-1]
+        self.assertNotIn("vehicle_id", consulta)
+
+
+class VehiculoPropioTests(unittest.TestCase):
+    """De quien son los avisos: de quien conduce, y lo declara el flujo."""
+
+    def test_lo_saca_del_indice_que_declara_el_paquete(self) -> None:
+        """No se infiere de que senales tiene: se lee de lo que el juego dijo."""
+
+        falsa, parche = _con([("3",)])
+        with parche:
+            clave = api_sesion._vehiculo_propio(
+                falsa.cursor_obj, "f1_25_udp_simulation", "f1_25:session:99")
+        self.assertEqual(clave, "f1_25:session:99:car:3")
+
+    def test_sin_declaracion_devuelve_nada_en_vez_de_adivinar(self) -> None:
+        falsa, parche = _con([])
+        with parche:
+            self.assertIsNone(api_sesion._vehiculo_propio(
+                falsa.cursor_obj, "f1_25_udp_simulation", "f1_25:session:99"))
+
+
 class CurvasTests(unittest.TestCase):
     def test_devuelve_el_catalogo_declarando_que_es_anotacion(self) -> None:
         r = api_sesion.curvas_del_circuito("spa-francorchamps")

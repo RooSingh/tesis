@@ -1921,6 +1921,20 @@ def trazado(session_id: str, vuelta: int | None = None,
         # aunque el dibujo cerrara.
         _tf0, _tf1 = _limites_de_fase(cursor, fuente, session_id, adquisicion, fase)
         _tramo, _tramo_par = _clausula_de_tramo(_tf0, _tf1)
+        # EL TRAZADO ES EL DE UN COCHE, NO EL DE LA PARRILLA.
+        #
+        # Esta consulta gira la tabla a una fila por instante con
+        # `max(value_numeric)`. Con un vehiculo eso es su posicion. Con cuatro es
+        # **la mayor x de los cuatro junto a la mayor z de los cuatro**, que no
+        # es donde estuvo ninguno: es una esquina de la caja que los contiene, y
+        # dibuja un circuito que no existe.
+        #
+        # Se vio el 2026-09-10 en Austin, la primera carrera con la parrilla
+        # acotada: el trazado salio como una tira angosta en vez del circuito.
+        # El defecto estaba desde siempre y hacia falta un segundo coche para
+        # que se notara.
+        _propio = _vehiculo_propio(cursor, fuente, session_id)
+        _cv, _cv_par = _acotar_al_vehiculo(_propio)
         cursor.execute("""
             WITH p AS (
                 SELECT timestamp,
@@ -1932,14 +1946,14 @@ def trazado(session_id: str, vuelta: int | None = None,
                   FROM telemetry_messages
                  WHERE source_type = %s AND session_id = %s AND signal_name = ANY(%s)
                    AND (%s::timestamptz IS NULL OR timestamp BETWEEN %s AND %s)""" +
-            _tramo + """
+            _cv + _tramo + """
                  GROUP BY timestamp)
             SELECT x, z, y, distancia, vuelta FROM p
              WHERE x IS NOT NULL AND z IS NOT NULL
              ORDER BY vuelta NULLS LAST, distancia NULLS LAST, timestamp
         """, tuple([eje_x, eje_z, fuente, session_id, interes,
                     _tv[0] if _tv else None, _tv[0] if _tv else None,
-                    _tv[1] if _tv else None] + _tramo_par))
+                    _tv[1] if _tv else None] + _cv_par + _tramo_par))
         filas = cursor.fetchall()
 
     if not filas:
@@ -2700,7 +2714,61 @@ REGLAS_FISICAS = [
 ]
 
 
-def _primera_perdida_de_tren_trasero(cursor, fuente: str, session_id: str):
+def _vehiculo_propio(cursor, fuente: str, session_id: str) -> str | None:
+    """El vehiculo de quien conduce, **declarado** por el flujo y no inferido.
+
+    Se lee de `player_car_index`, que el paquete de cabecera trae en cada
+    mensaje y el adaptador copia al metadato. Se podria adivinar por que
+    vehiculo tiene `yaw_rate` ---`motion_ex` describe solo al propio--- pero eso
+    seria deducir del sintoma lo que la fuente ya dice con todas las letras, y
+    dejaria de funcionar el dia que se publique otro paquete privado.
+
+    Devuelve `None` cuando la sesion no lo declara. Con las capturas viejas, de
+    un solo vehiculo, eso no cambia nada: donde hay uno el promedio de uno es
+    ese uno.
+    """
+
+    cursor.execute("""
+        SELECT metadata->'extra'->>'player_car_index'
+          FROM telemetry_messages
+         WHERE source_type = %s AND session_id = %s
+           AND metadata->'extra'->>'player_car_index' IS NOT NULL
+         LIMIT 1
+    """, (fuente, session_id))
+    fila = cursor.fetchone()
+    if not fila or fila[0] is None:
+        return None
+    try:
+        return FORMA_DEL_VEHICULO % (session_id, int(fila[0]))
+    except (TypeError, ValueError):
+        return None
+
+
+#: UN AVISO ES DE UN VEHICULO, Y CON UNO SOLO NO SE NOTABA.
+#:
+#: Todas las reglas giran la tabla larga a una fila por instante con
+#: `max(value_numeric) FILTER (WHERE signal_name = ...)`. Con **un** vehiculo
+#: capturado ese `max` es el unico valor que hay. Con cuatro toma el mayor de
+#: los cuatro por cada canal por separado: el giro de uno con el volante de otro
+#: y el deslizamiento de un tercero. **Eso no describe a ningun coche**, y el
+#: aviso que sale de ahi afirma algo que no ocurrio.
+#:
+#: Estuvo latente desde el principio y aparecio el 2026-09-10, en la primera
+#: carrera con la parrilla acotada a cuatro. Un defecto que solo se ve con datos
+#: que todavia no existian es un defecto igual.
+def _acotar_al_vehiculo(vehiculo: str | None) -> tuple[str, list]:
+    """La clausula y su parametro, o nada cuando no se sabe a quien acotar.
+
+    Sin saber cual es el propio **no se acota, y no se calla**: con un unico
+    vehiculo la lectura sigue siendo correcta, y devolver cero avisos por no
+    poder acotar seria peor que devolverlos como se venian devolviendo.
+    """
+
+    return ("", []) if vehiculo is None else (" AND vehicle_id = %s", [vehiculo])
+
+
+def _primera_perdida_de_tren_trasero(cursor, fuente: str, session_id: str,
+                                    vehiculo: str | None = None):
     """El primer instante en que el eje trasero desliza **acelerando**.
 
     El acelerador esta en la regla y no de adorno: el deslizamiento solo por si
@@ -2709,6 +2777,7 @@ def _primera_perdida_de_tren_trasero(cursor, fuente: str, session_id: str):
     condicion que el anotador evalua sobre el flujo.
     """
 
+    _clausula, _par = _acotar_al_vehiculo(vehiculo)
     cursor.execute("""
         WITH p AS (
             SELECT timestamp,
@@ -2719,7 +2788,7 @@ def _primera_perdida_de_tren_trasero(cursor, fuente: str, session_id: str):
                    max(value_numeric) FILTER (WHERE signal_name = 'lap_distance') AS metro
               FROM telemetry_messages
              WHERE source_type = %s AND session_id = %s
-               AND signal_name = ANY(%s)
+               AND signal_name = ANY(%s)""" + _clausula + """
              GROUP BY timestamp)
         SELECT vuelta, metro, greatest(abs(izq), abs(der)) AS peor, timestamp FROM p
          WHERE izq IS NOT NULL AND der IS NOT NULL AND acelerador IS NOT NULL
@@ -2728,11 +2797,13 @@ def _primera_perdida_de_tren_trasero(cursor, fuente: str, session_id: str):
     """, (fuente, session_id,
           ["wheel_slip_ratio_rear_left", "wheel_slip_ratio_rear_right",
            "throttle_position", "lap_number", "lap_distance"],
+          *_par,
           anotador_vivo.UMBRAL_DESLIZAMIENTO, UMBRAL_ACELERADOR_PCT))
     return cursor.fetchone()
 
 
-def _primer_trompo(cursor, fuente: str, session_id: str):
+def _primer_trompo(cursor, fuente: str, session_id: str,
+                  vehiculo: str | None = None):
     """El primer trompo: giro contra el volante, tren trasero fuera, y que dure.
 
     LA DURACION SE MIDE CON EL RELOJ Y NO CONTANDO FILAS. Dos muestras seguidas
@@ -2743,6 +2814,7 @@ def _primer_trompo(cursor, fuente: str, session_id: str):
     llega cada cinco centesimas.
     """
 
+    _clausula, _par = _acotar_al_vehiculo(vehiculo)
     cursor.execute("""
         WITH p AS (
             SELECT timestamp,
@@ -2756,7 +2828,7 @@ def _primer_trompo(cursor, fuente: str, session_id: str):
                    max(value_numeric) FILTER (WHERE signal_name = 'lap_distance') AS metro
               FROM telemetry_messages
              WHERE source_type = %s AND session_id = %s
-               AND signal_name = ANY(%s)
+               AND signal_name = ANY(%s)""" + _clausula + """
              GROUP BY timestamp),
         q AS (
             SELECT * FROM p
@@ -2779,12 +2851,14 @@ def _primer_trompo(cursor, fuente: str, session_id: str):
           ["yaw_rate", "steering_normalized",
            "wheel_slip_ratio_rear_left", "wheel_slip_ratio_rear_right",
            "lap_number", "lap_distance"],
+          *_par,
           UMBRAL_GIRO_TROMPO, anotador_vivo.UMBRAL_DESLIZAMIENTO,
           MINIMO_MUESTRAS_TROMPO))
     return cursor.fetchone()
 
 
-def _primer_impacto_vertical(cursor, fuente: str, session_id: str):
+def _primer_impacto_vertical(cursor, fuente: str, session_id: str,
+                            vehiculo: str | None = None):
     """El primer golpe vertical, mirando el valor absoluto.
 
     **En valor absoluto y no por el maximo**, que es lo que las reglas de canal
@@ -2792,6 +2866,7 @@ def _primer_impacto_vertical(cursor, fuente: str, session_id: str):
     nunca lo verian.
     """
 
+    _clausula, _par = _acotar_al_vehiculo(vehiculo)
     cursor.execute("""
         WITH p AS (
             SELECT timestamp,
@@ -2800,18 +2875,20 @@ def _primer_impacto_vertical(cursor, fuente: str, session_id: str):
                    max(value_numeric) FILTER (WHERE signal_name = 'lap_distance') AS metro
               FROM telemetry_messages
              WHERE source_type = %s AND session_id = %s
-               AND signal_name = ANY(%s)
+               AND signal_name = ANY(%s)""" + _clausula + """
              GROUP BY timestamp)
         SELECT vuelta, metro, g, timestamp FROM p
          WHERE g IS NOT NULL AND abs(g) > %s
          ORDER BY timestamp LIMIT 1
     """, (fuente, session_id,
           ["g_force_vertical", "lap_number", "lap_distance"],
+          *_par,
           anotador_vivo.UMBRAL_VERTICAL_G))
     return cursor.fetchone()
 
 
-def _primera_caida_brusca(cursor, fuente: str, session_id: str):
+def _primera_caida_brusca(cursor, fuente: str, session_id: str,
+                         vehiculo: str | None = None):
     """La primera perdida grande de velocidad **sin frenar**, sobre una ventana.
 
     Es la tercera regla del anotador en vivo y la unica de las suyas que no cabe
@@ -2841,6 +2918,7 @@ def _primera_caida_brusca(cursor, fuente: str, session_id: str):
     el hecho, igual que con las cuatro ruedas de la salida de pista.
     """
 
+    _clausula, _par = _acotar_al_vehiculo(vehiculo)
     cursor.execute("""
         WITH p AS (
             SELECT timestamp,
@@ -2850,7 +2928,7 @@ def _primera_caida_brusca(cursor, fuente: str, session_id: str):
                    max(value_numeric) FILTER (WHERE signal_name = 'lap_distance')   AS metro
               FROM telemetry_messages
              WHERE source_type = %s AND session_id = %s
-               AND signal_name = ANY(%s)
+               AND signal_name = ANY(%s)""" + _clausula + """
              GROUP BY timestamp),
         q AS (
             SELECT * FROM p WHERE velocidad IS NOT NULL AND freno IS NOT NULL),
@@ -2868,11 +2946,13 @@ def _primera_caida_brusca(cursor, fuente: str, session_id: str):
     """.format(ventana=int(anotador_vivo.VENTANA_CAIDA_S * 1000)),
         (fuente, session_id,
          ["speed", "brake_position", "lap_number", "lap_distance"],
+         *_par,
          anotador_vivo.UMBRAL_CAIDA_KMH, UMBRAL_FRENO_SUELTO_PCT))
     return cursor.fetchone()
 
 
-def _primera_salida_de_pista(cursor, fuente: str, session_id: str):
+def _primera_salida_de_pista(cursor, fuente: str, session_id: str,
+                            vehiculo: str | None = None):
     """El primer instante con las cuatro ruedas fuera del asfalto, o `None`.
 
     Se pide en una consulta y no recorriendo la sesion: la condicion es sobre
@@ -2885,6 +2965,7 @@ def _primera_salida_de_pista(cursor, fuente: str, session_id: str):
     """
 
     esquinas = ["surface_type_%s" % e for e in ESQUINAS]
+    _clausula, _par = _acotar_al_vehiculo(vehiculo)
     cursor.execute("""
         WITH p AS (
             SELECT timestamp,
@@ -2896,7 +2977,7 @@ def _primera_salida_de_pista(cursor, fuente: str, session_id: str):
                    max(value_numeric) FILTER (WHERE signal_name = 'lap_distance') AS metro
               FROM telemetry_messages
              WHERE source_type = %s AND session_id = %s
-               AND signal_name = ANY(%s)
+               AND signal_name = ANY(%s)""" + _clausula + """
              GROUP BY timestamp)
         SELECT vuelta, metro, a, b, c, d, timestamp FROM p
          WHERE a IS NOT NULL AND b IS NOT NULL AND c IS NOT NULL AND d IS NOT NULL
@@ -2904,7 +2985,7 @@ def _primera_salida_de_pista(cursor, fuente: str, session_id: str):
          ORDER BY timestamp LIMIT 1
     """, tuple(esquinas) + (fuente, session_id,
                             esquinas + ["lap_number", "lap_distance"])
-         + (f1_udp.SUPERFICIE_DE_PISTA,) * 4)
+         + tuple(_par) + (f1_udp.SUPERFICIE_DE_PISTA,) * 4)
     fila = cursor.fetchone()
     if not fila:
         return None
@@ -2949,6 +3030,12 @@ def avisos(session_id: str,
     superficies = ["surface_type_%s" % e for e in ESQUINAS]
 
     with db.obtener_conexion() as conexion, conexion.cursor() as cursor:
+        # DE QUIEN SON ESTOS AVISOS. De quien conduce, y hay que decirlo con un
+        # `vehicle_id` y no darlo por sentado: desde que se puede escuchar a
+        # varios pilotos, la sesion tiene mas de un vehiculo y girar la tabla sin
+        # acotar mezcla los canales de todos.
+        propio = _vehiculo_propio(cursor, fuente, session_id)
+        _cl, _pv = _acotar_al_vehiculo(propio)
         cursor.execute("""
             WITH p AS (
                 SELECT timestamp,
@@ -2957,12 +3044,13 @@ def avisos(session_id: str,
                        signal_name, max(value_numeric) AS valor
                   FROM telemetry_messages
                  WHERE source_type = %s AND session_id = %s
-                   AND signal_name = ANY(%s)
+                   AND signal_name = ANY(%s)""" + _cl + """
                  GROUP BY timestamp, signal_name)
             SELECT signal_name, min(timestamp) FILTER (WHERE valor IS NOT NULL) AS primero,
                    max(valor) AS pico
               FROM p GROUP BY signal_name
-        """, (fuente, session_id, canales + superficies + ["lap_number", "lap_distance"]))
+        """, tuple([fuente, session_id,
+                   canales + superficies + ["lap_number", "lap_distance"]] + _pv))
         picos = {f[0]: {"primero": f[1], "pico": f[2]} for f in cursor.fetchall()}
 
         # El momento exacto de cada condicion: una consulta por regla que se
@@ -2980,11 +3068,12 @@ def avisos(session_id: str,
                            max(value_numeric) FILTER (WHERE signal_name = 'lap_distance') AS metro
                       FROM telemetry_messages
                      WHERE source_type = %s AND session_id = %s
-                       AND signal_name IN (%s, 'lap_number', 'lap_distance')
+                       AND signal_name IN (%s, 'lap_number', 'lap_distance')""" + _cl + """
                      GROUP BY timestamp)
                 SELECT vuelta, metro, v, timestamp FROM p
                  WHERE v >= %s ORDER BY timestamp LIMIT 1
-            """, (regla["canal"], fuente, session_id, regla["canal"], regla["umbral"]))
+            """, tuple([regla["canal"], fuente, session_id, regla["canal"]]
+                       + _pv + [regla["umbral"]]))
             fila = cursor.fetchone()
             if not fila:
                 continue
@@ -3007,7 +3096,7 @@ def avisos(session_id: str,
         # ---ninguna rueda sobre asfalto--- de modo que no entra en esa forma y
         # por eso no estaba. Medido sobre la sesion de Abu Dabi: veintitres
         # cuadros con las cuatro ruedas fuera, y la respuesta traia cero avisos.
-        fila = _primera_salida_de_pista(cursor, fuente, session_id)
+        fila = _primera_salida_de_pista(cursor, fuente, session_id, propio)
         if fila is not None:
             vuelta, metro, codigos, instante = fila
             nombres = sorted({f1_udp.SUPERFICIES.get(c, "id-%d" % c) for c in codigos})
@@ -3042,7 +3131,7 @@ def avisos(session_id: str,
                 (REGLAS_FISICAS[3], _primera_caida_brusca,
                  lambda v: "-%.0f km/h en %.1f s sin frenar"
                            % (v, anotador_vivo.VENTANA_CAIDA_S))):
-            fila = buscar(cursor, fuente, session_id)
+            fila = buscar(cursor, fuente, session_id, propio)
             if not fila:
                 continue
             vuelta, metro, valor, instante = fila[:4]
@@ -3063,6 +3152,10 @@ def avisos(session_id: str,
     respuesta = {
         "session_id": session_id,
         "fuente": fuente,
+        # De quien son. Con una sola sesion de un vehiculo la pregunta no
+        # existia; desde que se escucha a varios pilotos, un aviso sin dueno es
+        # una afirmacion sin sujeto.
+        "vehiculo": propio,
         "avisos": encontrados[:limite],
         # Las de canal contra umbral, mas la de superficie y las fisicas, que no
         # tienen esa forma. Contar solo las primeras seria decir que se

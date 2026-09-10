@@ -216,7 +216,13 @@ class LaFaseLlegaALasFilasTests(unittest.TestCase):
              patch.object(api_sesion, "_fases_de", return_value=self.FASES):
             api_sesion.trazado("f1_25:session:1", puntos=50,
                                adquisicion="original", fase=2)
-        self.assertIn("desplazamiento_captura_us", cursor.consultas[0][0],
+        # Se busca **la consulta que dibuja**, no la primera que se hizo. El
+        # trazado ahora pregunta antes cual es el vehiculo propio ---sin eso
+        # mezclaba a los cuatro en una geometria que no es la de ninguno--- y
+        # fijar el indice cero hacia que esta prueba fallara por el orden y no
+        # por lo que afirma.
+        geometria = next(c for c, _ in cursor.consultas if "world_position_y" in c)
+        self.assertIn("desplazamiento_captura_us", geometria,
                       "el trazado sigue sin aplicar la fase")
 
 
