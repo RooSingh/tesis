@@ -699,14 +699,23 @@
     grid-auto-rows: minmax(0, 1fr);
     gap: 8px 10px; align-content: stretch;
   }
-  /* EL ROTULO PIDE LO SUYO Y EL ARCO SE QUEDA CON EL RESTO.
-     Sin declarar las dos filas, el `100%` del arco se mide contra la celda
-     entera ---rotulo incluido--- y entre los dos piden mas alto del que hay.
-     Declaradas, el arco se mide contra la suya y el rotulo contra la propia. */
+  /* EL ARCO Y SU ROTULO VIAJAN JUNTOS, Y EL AIRE QUEDA AFUERA.
+     Estaban en dos filas de rejilla, la del arco `1fr`: esa fila se quedaba con
+     todo el alto sobrante, el arco se apoyaba arriba y el rotulo caia al fondo
+     de la celda. En medio, un hueco del alto de un medidor entero, y a la vista
+     el rotulo no parecia de nadie.
+
+     En columna flexible centrada, el sobrante se reparte **por fuera** del par
+     en vez de meterse entre los dos. Y el reparto cuando falta alto tambien
+     queda dicho: el rotulo no se encoge ---es una linea de texto, encogerla es
+     cortarla--- y el arco si, porque un arco mas chico sigue siendo legible.
+     Para que pueda encogerse necesita `min-height: 0`; sin eso su tamano minimo
+     automatico lo impide y el par desborda la celda. */
   .panel-motor .medidor {
-    justify-items: center; align-content: stretch;
-    grid-template-rows: minmax(0, 1fr) auto; min-height: 0;
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center; min-height: 0;
   }
+  .panel-motor .medidor .rotulo { flex: 0 0 auto; }
   /* EL ARCO CRECE CON LA CELDA Y NUNCA PASA DE SU FILA.
      Con dos medidores el ancho de la celda es lo que limita, y con seis lo era
      el alto de la fila: los dos topes tienen que estar puestos, porque cual de
@@ -719,7 +728,7 @@
      proporcion escrita, todos miden lo mismo porque su celda mide lo mismo. */
   .panel-motor .medidor svg {
     width: 100%; height: auto; max-width: 100%; max-height: 100%;
-    aspect-ratio: 124 / 112;
+    min-height: 0; aspect-ratio: 124 / 112;
   }
   .panel-motor .medidor .rotulo { font-size: .58rem; letter-spacing: .08em; }
   .panel-motor .medidor { gap: 2px; }
