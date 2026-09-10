@@ -417,8 +417,15 @@
   .escala-g { font-family: var(--cifra); font-size: 7px; fill: var(--texto-medio); }
   .nota-g { font-size: .74rem; line-height: 1.5; margin-top: 12px; }
   .nota-g b { color: var(--texto-medio); }
-  .estela-g { stroke: url(#trazo-g); stroke-width: 2; opacity: .8; }
-  .halo-g { fill: var(--acento); opacity: .22; }
+  /* LA HUELLA DE LA VUELTA PESA MAS QUE UN INSTANTE DE ELLA.
+     La estela media dos unidades de grosor contra un punto de diez de diametro
+     y un halo de veintidos: la marca de **un** momento pesaba cinco veces mas
+     que el recorrido entero, que es lo que ese dibujo tiene para contar. La
+     estela sube y el halo baja hasta que la proporcion diga lo que el panel
+     significa. El punto no se achica: tiene que encontrarse de un vistazo
+     mientras se mueve. */
+  .estela-g { stroke: url(#trazo-g); stroke-width: 2.6; opacity: .85; }
+  .halo-g { fill: var(--acento); opacity: .16; }
   .punto-g { fill: var(--acento-vivo); stroke: var(--superficie); stroke-width: 1.5; }
   /* EN EL HISTORICO NO HAY TRANSICION; EN VIVO SI.
      Los 90 ms existian para tapar los escalones del indice sobre la estela
