@@ -146,6 +146,8 @@ const NOMBRES = [
   "senalesParaElRecorrido",
   "pieDelRecorrido",
   "extremosDeLaTraza", "_rgbDe",
+  "nombreDeSenal",
+  "panelEstaPresente",
   "cifra",
   "hayCoordenadasMedidas", "porQueNoHayCoordenadas", "hayEjeDeDistancia",
   "explicacionDelTrazado",
@@ -153,7 +155,8 @@ const NOMBRES = [
   "tramosDelRecorrido", "tintaDelValor",
 ];
 
-const CONSTANTES = ["SENAL_DE", "UNIDAD_QUE_MUESTRA_EL_TABLERO",
+const CONSTANTES = ["SENAL_DE", "SENAL_CAN", "SENAL_OPENF1",
+                    "UNIDAD_QUE_MUESTRA_EL_TABLERO",
                     "DIVISOR_ENTRE_UNIDADES", "SIN_VEHICULO",
                     "UNIDAD_POR_FUENTE",
                     "MARGEN_DEL_TRAZADO", "ALTURA_DEL_ROTULO", "CUERPO_DEL_ROTULO",
@@ -232,6 +235,8 @@ const {
   senalesParaElRecorrido,
   pieDelRecorrido,
   extremosDeLaTraza, _rgbDe,
+  nombreDeSenal,
+  panelEstaPresente,
   cifra,
   COORDENADAS_POR_FUENTE, EJE_DE_DISTANCIA_POR_FUENTE,
   valoresSobreElRecorrido, tramosDelRecorrido, tintaDelValor,
@@ -2654,6 +2659,120 @@ prueba("la fuente que no publica posicion dice por que", () => {
   assert.ok(porque.length > 20, "el motivo esta vacio");
   assert.strictEqual(porQueNoHayCoordenadas("f1"), "esta fuente no declara posición medida",
                      "una fuente con posicion no tiene motivo que dar");
+});
+
+/* ==================================================================
+   18. LA SEÑAL QUE HABILITA UN PANEL SE LLAMA DISTINTO EN CADA FUENTE
+   ------------------------------------------------------------------
+   El panel de aceleraciones se tapaba con «sin acelerometro» sobre una sesion
+   del bus que trae las dos aceleraciones y la guiñada completas ---cincuenta de
+   cincuenta muestras en las tres---. La razon: `data-necesita` traia
+   `g_force_lateral`, que es como se llama la señal en el simulador. El bus
+   publica `accel_lateral`.
+
+   El propio panel si sabia leer el bus: su encabezado escribia «2 ejes +
+   guiñada» al lado del cartel que decia que no habia acelerometro, y sus tres
+   renglones nombran `accel_longitudinal`, `accel_lateral` y `yaw_rate`. Lo
+   unico que no sabia era la compuerta que decide si se muestra.
+   ================================================================== */
+
+const HTML = fs.readFileSync(
+  path.join(__dirname, "..", "..", "dashboard", "index.html"), "utf8");
+
+/* Lo que cada panel del HTML publicado declara necesitar. Se lee del archivo:
+   escribirlo aca dejaria pasar el dia en que alguien agregue un panel. */
+function loQuePidenLosPaneles() {
+  const pide = {};
+  const re = /data-panel="([^"]+)"[^>]*data-necesita="([^"]+)"/g;
+  let m;
+  while ((m = re.exec(HTML))) pide[m[1]] = m[2];
+  return pide;
+}
+
+prueba("el bus habilita las aceleraciones con el nombre que el bus publica", () => {
+  const pide = loQuePidenLosPaneles();
+  assert.ok(pide.aceleraciones, "el panel de aceleraciones dejo de declarar que necesita");
+  globalThis.fuente = "can";
+  assert.strictEqual(nombreDeSenal(pide.aceleraciones), "accel_lateral",
+                     "el panel pide una señal que el bus no publica: se tapa con «sin acelerometro»");
+  globalThis.fuente = "f1";
+  assert.strictEqual(nombreDeSenal(pide.aceleraciones), "g_force_lateral",
+                     "la simulacion perdio su acelerometro");
+});
+
+prueba("el bus con acelerometro enciende el panel de aceleraciones", () => {
+  /* La comprobacion de punta a punta: lo que el HTML declara, contra lo que la
+     API devolvio. Sobre sample_01 son 50 de 50 muestras en las tres señales. */
+  const pide = loQuePidenLosPaneles();
+  globalThis.estadoSesion = "cargado";
+  globalThis.fuente = "can";
+  globalThis.estado.disponibles = new Set(
+    ["speed", "accel_lateral", "accel_longitudinal", "yaw_rate", "gas_pressed"]);
+  assert.strictEqual(panelEstaPresente(pide.aceleraciones), true,
+                     "el panel se tapa con «sin acelerometro» sobre una sesion que lo trae");
+});
+
+prueba("y no lo enciende sobre lo que el bus no publica", () => {
+  const pide = loQuePidenLosPaneles();
+  globalThis.estadoSesion = "cargado";
+  globalThis.fuente = "can";
+  globalThis.estado.disponibles = new Set(["speed", "accel_lateral", "yaw_rate"]);
+  assert.strictEqual(panelEstaPresente(pide.puesta), false,
+                     "se prometio una puesta a punto que el bus no manda");
+  assert.strictEqual(panelEstaPresente(pide.motor), false);
+  assert.strictEqual(panelEstaPresente(pide.clima), false);
+});
+
+prueba("la simulacion enciende el mismo panel con su propio nombre", () => {
+  const pide = loQuePidenLosPaneles();
+  globalThis.estadoSesion = "cargado";
+  globalThis.fuente = "f1";
+  globalThis.estado.disponibles = new Set(["g_force_lateral", "brake_bias_front"]);
+  assert.strictEqual(panelEstaPresente(pide.aceleraciones), true);
+  assert.strictEqual(panelEstaPresente(pide.puesta), true);
+});
+
+prueba("sin sesion abierta no hay panel presente, aunque quede algo colgado", () => {
+  const pide = loQuePidenLosPaneles();
+  globalThis.estadoSesion = "vacio";
+  globalThis.fuente = "can";
+  globalThis.estado.disponibles = new Set(["accel_lateral"]);
+  assert.strictEqual(panelEstaPresente(pide.aceleraciones), false);
+  globalThis.estadoSesion = "cargado";
+});
+
+prueba("lo que pide cada panel se resuelve en las tres fuentes", () => {
+  /* Ninguna tiene que quedar como `undefined`: un panel que pide una señal
+     inexistente se apaga en silencio y parece que la carga fallo. */
+  const pide = loQuePidenLosPaneles();
+  ["f1", "openf1", "can"].forEach(f => {
+    globalThis.fuente = f;
+    Object.keys(pide).forEach(panel => {
+      const n = nombreDeSenal(pide[panel]);
+      assert.ok(typeof n === "string" && n.length,
+                "el panel " + panel + " no resuelve su señal en " + f);
+    });
+  });
+});
+
+prueba("una señal cruda que no es un canal atraviesa la traduccion intacta", () => {
+  /* Los paneles que ya nombraban la señal de la base ---clima, motor, puesta---
+     no se pueden romper por traducir los que si son canales. */
+  ["f1", "openf1", "can"].forEach(f => {
+    globalThis.fuente = f;
+    ["air_temperature", "brake_bias_front",
+     "tyre_temperature_surface_front_left", "engine_speed"].forEach(n => {
+      assert.strictEqual(nombreDeSenal(n), n, n + " se tradujo en " + f);
+    });
+  });
+});
+
+prueba("el bus no publica puesta a punto, y eso no cambio", () => {
+  /* La comprobacion complementaria: lo que si esta ausente de verdad tiene que
+     seguir ausente. `brake_bias_front` no viaja en un bus de serie. */
+  const pide = loQuePidenLosPaneles();
+  globalThis.fuente = "can";
+  assert.strictEqual(nombreDeSenal(pide.puesta), "brake_bias_front");
 });
 
 console.log("identidad_y_cronometraje: " + hechas + " comprobaciones");

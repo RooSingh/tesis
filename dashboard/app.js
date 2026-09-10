@@ -1415,13 +1415,21 @@ function pintarAutos() {
 }
 
 /* ---------------- disponibilidad ---------------- */
+
+/* SI LA SESION ABIERTA TRAJO CON QUE LLENAR ESTE PANEL.
+   No lo decide una tabla escrita aca: lo decide lo que devolvio la API. Lo que
+   el panel declara necesitar se traduce al nombre de **esta** fuente antes de
+   buscarlo, porque la misma magnitud se llama distinto en cada una y
+   `nombreDeSenal` deja intacto lo que no es un canal del tablero. */
+function panelEstaPresente(necesita) {
+  return estadoSesion !== "vacio" &&
+         estado.disponibles.has(nombreDeSenal(necesita));
+}
+
 function aplicarDisponibilidad() {
   const f = FUENTES[fuente];
-  /* Un panel esta presente si la sesion abierta trajo con que llenarlo. No
-     lo decide una tabla escrita aca: lo decide lo que devolvio la API. */
   document.querySelectorAll("[data-necesita]").forEach(el => {
-    el.dataset.estado = (estadoSesion !== "vacio" &&
-                         estado.disponibles.has(el.dataset.necesita)) ? "presente" : "ausente";
+    el.dataset.estado = panelEstaPresente(el.dataset.necesita) ? "presente" : "ausente";
   });
   /* El motivo de cada ausencia lo escribe la API: es la fuente la que sabe
      por que no publica un dato, y repetirlo aca seria copiarlo mal tarde o
@@ -1734,25 +1742,27 @@ function pintarMedidores() {
   const c = document.getElementById("fila-medidores");
   const t0f = instante();
   const frio = tinta("--acento");
-  /* Que medidores hay lo decide la fuente; el HTML se arma una sola vez por
-     conjunto y despues solo se actualizan los valores. */
-  const cuales = fuente === "openf1"
-    ? [["Régimen", t0f.rpm, 13000, "rpm", frio, tinta("--critico")],
-       ["Marcha", t0f.marcha, 8, "de 8", tinta("--auto-3"), tinta("--auto-3")],
-       ["Velocidad", t0f.velocidad, 360, "km/h", frio, tinta("--alerta")]]
-    : [["Régimen", t0f.rpm, 13000, "rpm", frio, tinta("--critico")],
-       ["Marcha", t0f.marcha, 8, "de 8", tinta("--auto-3"), tinta("--auto-3")],
-       ["Velocidad", t0f.velocidad, 360, "km/h", frio, tinta("--alerta")],
-       /* La maxima comparte escala con la velocidad a proposito: puestas al
-          lado, dos arcos con la misma referencia dejan ver de un vistazo cuanto
-          falta para la punta, y con escalas distintas no se podrian comparar. */
-       ["Máxima", registrarMaxima(sesionAbierta, t0f.velocidad), 360, "km/h",
-        tinta("--acento"), tinta("--alerta")],
-       ["Temp. motor", t0f.tempMotor, 140, "°C", frio, tinta("--critico")],
-       /* `ers_stored_energy` viene en julios y el deposito son cuatro
-          megajulios: mostrarlo como porcentaje sobre cien daba «4.000.000 %».
-          Se muestra en MJ, que es como se lee en el vehiculo. */
-       ["Energía ERS", t0f.ersMJ, 4, "MJ", tinta("--ok"), tinta("--ok")]];
+
+  /* LA MAXIMA SE REGISTRA EN CADA CUADRO, AUNQUE SE DIBUJE MAS ABAJO.
+     Es el mayor valor que la velocidad tomo en la sesion, y para saber cual es
+     hay que mirar **todos** los cuadros. Va antes de cualquier salida temprana:
+     el dibujo de las tiras se saltea cuando nada cambio, y si el registro
+     viviera ahi dentro la maxima se perderia justo en los cuadros en que el
+     resto del panel no se mueve. */
+  const maxima = registrarMaxima(sesionAbierta, t0f.velocidad);
+
+  /* DOS RELOJES, Y EL RESTO EN TIRAS.
+     El panel llego a mostrar diez senales, seis de ellas como arcos, y en una
+     columna angosta eso deja seis arcos chicos donde no se lee ninguno. Un arco
+     sirve para lo que se mira **de reojo mientras se conduce** ---cuanto falta
+     para el corte, a que velocidad se va--- porque la posicion de la aguja se
+     entiende sin leer. Para todo lo demas lo que se mira es la cifra, y una
+     tira de segmentos la da con un cuarto del alto.
+
+     Quedan dos arcos, y por eso son grandes: la rejilla les reparte a dos lo
+     que antes repartia a seis. */
+  const cuales = [["Régimen", t0f.rpm, 13000, "rpm", frio, tinta("--critico")],
+                  ["Velocidad", t0f.velocidad, 360, "km/h", frio, tinta("--alerta")]];
 
   const firmaSet = [fuente, estadoSesion, tinta("--acento"),
                     cuales.map(m => m[0]).join(",")].join("|");
@@ -1765,34 +1775,40 @@ function pintarMedidores() {
 
   /* Las barras son segmentos: no tienen nada que barrer, y rehacerlas cuando
      ninguno cambia de estado es trabajo sin efecto. */
+  const marcha = textoDeMedidor("Marcha", t0f.marcha);
   const firmaBarras = [fuente, estadoSesion, cifra(t0f.combustibleKg, 1),
-                       t0f.vueltasRestantes, t0f.tempFrenoDel, t0f.sesgoFreno,
+                       marcha, cifra(maxima, 0), cifra(t0f.tempMotor, 0),
+                       cifra(t0f.ersMJ, 1), t0f.tempFrenoDel,
                        tinta("--acento")].join("|");
   if (firmaBarras === _firmaMedidores) return;
   _firmaMedidores = firmaBarras;
 
-  if (fuente === "openf1") {
-    // OpenF1 no publica combustible ni frenos: las bandas laterales quedan
-    // vacias en lugar de mostrar barras de un dato que no existe.
-    const izq2 = document.getElementById("barras-izq");
-    const der2 = document.getElementById("barras-der");
-    if (izq2) izq2.innerHTML = "";
-    if (der2) der2.innerHTML = "";
-    document.getElementById("canal-motor").textContent = "";
-  } else {
-    const t = t0f;
-    const izq = document.getElementById("barras-izq");
-    const der = document.getElementById("barras-der");
-    if (izq) izq.innerHTML =
-      // Rotulos cortos: la columna de motor tiene un cuarto del ancho que
-      // tenia la franja, y un rotulo que se corta no dice nada.
-      barraMedida("Combustible", cifra(t.combustibleKg, 1), 110, "kg", 10) +
-      barraMedida("Vueltas restantes", cifra(t.vueltasRestantes, 0), t.vueltas, "vueltas", 10);
-    if (der) der.innerHTML =
-      barraMedida("Freno delantero", cifra(t.tempFrenoDel, 0), 1000, "°C", 10) +
-      barraMedida("Sesgo de freno", cifra(t.sesgoFreno, 0), 100, "%", 10);
-    document.getElementById("canal-motor").textContent = "";
+  /* Rotulos cortos: la columna de motor tiene un cuarto del ancho que tenia la
+     franja, y un rotulo que se corta no dice nada.
+
+     La marcha lleva ocho segmentos y no diez porque las marchas son ocho: un
+     segmento por marcha se lee como una posicion, no como una proporcion. Su
+     cifra llega ya escrita ---"R" y "N" no son numeros--- y `barraMedida` no
+     encuentra que llenar, que es lo correcto: la marcha atras no es una octava
+     parte de nada. */
+  const arriba = [barraMedida("Marcha", marcha, 8, "de 8", 8),
+                  barraMedida("Máxima", cifra(maxima, 0), 360, "km/h", 10)];
+  const abajo = [];
+  /* OpenF1 no publica combustible, temperatura de motor, energia ni frenos: esas
+     tiras no se dibujan en lugar de mostrar un dato que no existe. El regimen,
+     la velocidad y la marcha si los publica, y esos se quedan. */
+  if (fuente !== "openf1") {
+    arriba.unshift(barraMedida("Combustible", cifra(t0f.combustibleKg, 1), 110, "kg", 10));
+    abajo.push(barraMedida("Temp. motor", cifra(t0f.tempMotor, 0), 140, "°C", 10),
+               barraMedida("Energía ERS", cifra(t0f.ersMJ, 1), 4, "MJ", 10),
+               barraMedida("Freno delantero", cifra(t0f.tempFrenoDel, 0), 1000, "°C", 10));
   }
+  const izq = document.getElementById("barras-izq");
+  const der = document.getElementById("barras-der");
+  if (izq) izq.innerHTML = arriba.join("");
+  if (der) der.innerHTML = abajo.join("");
+  const canal = document.getElementById("canal-motor");
+  if (canal) canal.textContent = "";
 }
 
 /* ---------------- avisos ----------------
