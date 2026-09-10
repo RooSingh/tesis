@@ -240,6 +240,7 @@ const PIEZAS = [
   fn("adquisicionSeSolapa"),
   fn("alcanceEsAmbiguo"),
   fn("alcanceElegidoEsValido"),
+  fn("alcanceResuelto"),
   fn("alcancePermitePedir"),
   fn("vueltaSiguienteDeclarada"),
   fn("anotarEnPantalla"),
@@ -251,6 +252,7 @@ const PIEZAS = [
   fn("duracionSesionS"),
   fn("iniciosDeVuelta"),
   fn("duracionDeVuelta"),
+  fn("hayVueltas"),
   /* El reloj, entero, para poder leerlo despues de cada continuacion. */
   constanteNumerica("HUECO_DE_CAPTURA_MS"),
   'const EJE_DISTANCIA = " distancia";',
@@ -1352,14 +1354,12 @@ prueba("con la vuelta ya cargada, moverse a mano no pide de nuevo", async (b) =>
 /* ------------------------------------------------------------------ */
 (async () => {
 /* ------------------------------------------------------------------
-   UNA FUENTE SIN EJE DE DISTANCIA NO PIDE HISTORICO
+   UNA FUENTE SIN EJE DE DISTANCIA PIDE HISTORICO TEMPORAL
    ------------------------------------------------------------------
    La reproduccion historica va contra distancia recorrida. El bus del vehiculo
    publica velocidad de rueda y no publica odometro ni distancia de vuelta, de
-   modo que ese eje no existe para el; el transporte no lo miraba y pedia la
-   vuelta bajo el cabezal igual que con cualquier otra fuente. La API contestaba
-   422 ---correctamente--- y el tablero mostraba «La vuelta 1 no se pudo traer»
-   con un consejo de reintentar que no podia funcionar.
+   modo que ese eje no existe para el. Eso no impide reproducir el reloj de la
+   captura: el historico sale por `/series-tiempo`, sin fabricar metros.
    ------------------------------------------------------------------ */
 
 prueba("el bus no tiene eje de distancia, y se sabe por que", async (b) => {
@@ -1373,14 +1373,15 @@ prueba("el bus no tiene eje de distancia, y se sabe por que", async (b) => {
   assert.strictEqual(b.hayEjeDeDistancia(), true);
 });
 
-prueba("con el bus abierto no sale una sola consulta de historico", async (b) => {
+prueba("con el bus abierto el historico sale por tiempo", async (b) => {
   conAlcance(b); dosVueltasDeclaradas(b);
   b.fijarFuente("can");
-  await b.asegurarVuelta(1);
+  b.asegurarVuelta(1);
   b.asegurarPosiciones(1);
   await asentar();
-  assert.deepStrictEqual(PEDIDOS, [],
-    "se pidió histórico a una fuente sin eje de distancia");
+  assert.strictEqual(PEDIDOS.length, 1);
+  assert.ok(PEDIDOS[0].ruta.indexOf("/series-tiempo?") !== -1, PEDIDOS[0].ruta);
+  assert.ok(PEDIDOS[0].ruta.indexOf("/series?vuelta=") === -1, PEDIDOS[0].ruta);
   assert.strictEqual(b.alcancePermitePedir(), false);
 });
 
@@ -1392,14 +1393,12 @@ prueba("la misma sesion en una fuente con eje si pide", async (b) => {
   assert.ok(PEDIDOS.length, "no pidió nada con una fuente que sí tiene el eje");
 });
 
-prueba("sin eje de distancia no se espera una vuelta que nadie va a pedir", async (b) => {
-  /* Sin esto el reproductor se quedaba en «Preparando la vuelta 1…» para
-     siempre: esperando algo que no esta en camino. */
+prueba("el reproductor espera el tramo temporal mientras esta en camino", async (b) => {
   conAlcance(b); dosVueltasDeclaradas(b);
   b.fijarFuente("f1");
   assert.strictEqual(b.faltaLoImprescindible(0), true);
   b.fijarFuente("can");
-  assert.strictEqual(b.faltaLoImprescindible(0), false);
+  assert.strictEqual(b.faltaLoImprescindible(0), true);
 });
 
 prueba("un 422 no invita a reintentar", async (b) => {

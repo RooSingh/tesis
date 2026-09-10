@@ -1339,6 +1339,132 @@ def adquisiciones(session_id: str) -> dict:
     }
 
 
+@router.get("/sesiones/{session_id}/series-tiempo")
+def series_por_tiempo(
+    session_id: str,
+    senales: Annotated[str, Query(description="Nombres de senal separados por coma")],
+    vehiculos: Annotated[str | None, Query(description="Identificadores separados por coma")] = None,
+    puntos: Annotated[int, Query(ge=50, le=5000)] = 600,
+    adquisicion: Annotated[str | None, Query(
+        description="Que adquisicion mirar: `original`, un `replay_run_id`, o `todas`")] = None,
+    fase: Annotated[int | None, Query(ge=1)] = None,
+) -> dict[str, Any]:
+    """Series contra el reloj de sesion para fuentes sin distancia medida."""
+
+    fuente = _fuente_de(session_id)
+    pedidas = [s.strip() for s in senales.split(",") if s.strip()]
+    if not pedidas:
+        raise HTTPException(status_code=422, detail="Hay que pedir al menos una senal.")
+    if len(pedidas) > 20:
+        raise HTTPException(status_code=422, detail="Hasta veinte senales por consulta temporal.")
+
+    condiciones = ["source_type = %s", "session_id = %s"]
+    parametros: list[Any] = [fuente, session_id]
+    with db.obtener_conexion() as conexion, conexion.cursor() as cursor:
+        ventana = _ventana_de_alcance(cursor, fuente, session_id, adquisicion)
+        fase_desde, fase_hasta = _limites_de_fase(
+            cursor, fuente, session_id, adquisicion, fase)
+    if ventana:
+        condiciones.append("timestamp BETWEEN %s AND %s")
+        parametros.extend([ventana[0], ventana[1]])
+    predicados_fase, parametros_fase = _predicados_de_tramo(
+        fase_desde, fase_hasta)
+    condiciones.extend(predicados_fase)
+    parametros.extend(parametros_fase)
+
+    autos = [v.strip() for v in vehiculos.split(",") if v.strip()] if vehiculos else []
+    if autos:
+        condiciones.append("vehicle_id = ANY(%s)")
+        parametros.append(autos)
+    condiciones.append("signal_name = ANY(%s)")
+    parametros.append(pedidas)
+
+    # Los canales binarios CAN viven en value_boolean. Llevarlos a 0/1 en esta
+    # vista permite graficarlos sin alterar el valor persistido ni su unidad.
+    columnas = []
+    columnas_par: list[Any] = []
+    for indice, senal in enumerate(pedidas):
+        columnas.append(
+            'max(COALESCE(value_numeric, CASE WHEN value_boolean THEN 1.0 '
+            'WHEN value_boolean IS FALSE THEN 0.0 END)) '
+            'FILTER (WHERE signal_name = %s) AS senal_%d' % ("%s", indice))
+        columnas_par.append(senal)
+    for indice, senal in enumerate(pedidas):
+        columnas.append(
+            'max(unit) FILTER (WHERE signal_name = %s) AS unidad_%d'
+            % ("%s", indice))
+        columnas_par.append(senal)
+
+    consulta = """
+        SELECT timestamp, vehicle_id,
+               {columnas}
+          FROM telemetry_messages
+         WHERE {donde}
+         GROUP BY timestamp, vehicle_id
+         ORDER BY vehicle_id, timestamp
+    """.format(columnas=",\n               ".join(columnas),
+               donde=" AND ".join(condiciones))
+
+    with db.obtener_conexion() as conexion, conexion.cursor() as cursor:
+        cursor.execute(consulta, tuple(columnas_par + parametros))
+        filas = cursor.fetchall()
+
+    if not filas:
+        return {"session_id": session_id, "fuente": fuente, "senales": pedidas,
+                "vehiculos": {}, "muestras": 0, "unidades": {},
+                "motivo": "La sesion no tiene esas senales en el rango pedido."}
+
+    origen = min(f[0] for f in filas)
+    idx_unidades = 2 + len(pedidas)
+    unidades: dict[str, str] = {}
+    for fila in filas:
+        for i, senal in enumerate(pedidas):
+            if senal not in unidades and fila[idx_unidades + i] is not None:
+                unidades[senal] = fila[idx_unidades + i]
+
+    por_vehiculo: dict[str, list[tuple]] = {}
+    for fila in filas:
+        por_vehiculo.setdefault(fila[1], []).append(fila)
+
+    salida: dict[str, Any] = {}
+    submuestreado = False
+    originales = 0
+    for vehiculo, suyas in por_vehiculo.items():
+        originales = max(originales, len(suyas))
+        recorte, reducida = _reducir(suyas, puntos)
+        submuestreado = submuestreado or reducida
+        serie: dict[str, list] = {
+            "tiempo_s": [round((f[0] - origen).total_seconds(), 6) for f in recorte],
+            "timestamp_utc": [f[0].isoformat() for f in recorte],
+        }
+        for i, senal in enumerate(pedidas):
+            serie[senal] = [
+                round(f[2 + i], 4) if f[2 + i] is not None else None
+                for f in recorte
+            ]
+        salida[vehiculo] = serie
+
+    return {
+        "session_id": session_id,
+        "fuente": fuente,
+        "senales": pedidas,
+        "vehiculos": salida,
+        "unidades": unidades,
+        "muestras": sum(len(v["tiempo_s"]) for v in salida.values()),
+        "submuestreado": submuestreado,
+        "muestras_originales": originales,
+        "reduccion": ("una de cada %d" % -(-originales // puntos)) if submuestreado else None,
+        "puntos_pedidos": puntos,
+        "desde_utc": origen.isoformat(),
+        "hasta_utc": max(f[0] for f in filas).isoformat(),
+        "duracion_s": round((max(f[0] for f in filas) - origen).total_seconds(), 6),
+        "eje": "tiempo desde el inicio del tramo, en segundos",
+        "ejes_disponibles": {
+            "tiempo": {"campo": "tiempo_s", "unidad": "s", "reloj": "reloj de sesion"},
+        },
+    }
+
+
 @router.get("/sesiones/{session_id}/series")
 def series_por_distancia(
     session_id: str,

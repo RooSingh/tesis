@@ -46,9 +46,10 @@ globalThis.fuente = "f1";
 globalThis.corrida = { adquisicion: null, fase: null, disponibles: null };
 const NOMBRES = ["nombreDeFase", "etiquetaDeCorrida", "duracionCorta",
                  "queEsLaFase", "numeroMedido",
-                 "alcanceEsAmbiguo", "hayAlcanceQueElegir",
-                 "adquisicionSeSolapa", "alcanceElegidoEsValido", "faseDeLaDireccion",
-                 "filaDeCorrida", "fechaAr", "cifra", "hayEjeDeDistancia", "porQueNoHayDistancia", "alcancePermitePedir"];
+                  "alcanceEsAmbiguo", "hayAlcanceQueElegir",
+                  "adquisicionSeSolapa", "alcanceElegidoEsValido", "faseDeLaDireccion",
+                  "filaDeCorrida", "fechaAr", "cifra", "hayEjeDeDistancia", "porQueNoHayDistancia",
+                  "alcanceResuelto", "alcancePermitePedir"];
 /* La tabla de que fuentes tienen eje de distancia: la compuerta la mira antes
    de dejar pedir, y sin ella no se puede ejercer la compuerta de verdad. */
 function constante(nombre) {
@@ -386,11 +387,12 @@ prueba("no se pide historico con el alcance sin resolver", () => {
 });
 
 prueba("la compuerta esta en las dos consultas de historico", () => {
-  ["asegurarVuelta", "asegurarPosiciones"].forEach(nombre => {
+  [["asegurarVuelta", "alcanceResuelto()"],
+   ["asegurarPosiciones", "alcancePermitePedir()"]].forEach(([nombre, compuerta]) => {
     const i = fuente.indexOf("function " + nombre + "(");
     assert.ok(i > 0, "no esta " + nombre);
     const cabeza = fuente.slice(i, i + 420);
-    assert.ok(cabeza.indexOf("alcancePermitePedir()") !== -1,
+    assert.ok(cabeza.indexOf(compuerta) !== -1,
       nombre + " pide sin comprobar que el alcance este resuelto");
   });
 });

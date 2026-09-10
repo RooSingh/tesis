@@ -1019,6 +1019,7 @@ function cambiarFuente(nueva) {
   if (nueva !== "f1") cerrarFlujoEnVivo();
   olvidarCaches();
   fuente = nueva;
+  configurarVentanaDeGraficos();
   marcar(document.getElementById("sel-fuente"), "fuente", fuente);
   estadoSesion = "cargado";
   if (fuente === "can") { alcance = "1"; seleccion = new Set(); marcar(document.getElementById("sel-alcance"), "alcance", "1"); }
@@ -2643,7 +2644,10 @@ function _armarSerieDeCanal(canal, vuelta, clave, divisor) {
   if (hecha) return hecha;
 
   const ys = veh[senal];
-  const xs = veh.distancia_m;
+  /* Cada bloque declara su eje. CAN y OpenF1 historico usan segundos desde el
+     inicio del tramo; F1 25 conserva metros. No se guarda tiempo bajo un nombre
+     de distancia para reutilizar el dibujante. */
+  const xs = veh.distancia_m || veh.tiempo_s;
   if (!ys || !xs) return [];
   const salida = [];
   const n = Math.min(xs.length, ys.length);
@@ -3540,10 +3544,12 @@ function senalDeSesion() {
 
 /* Pide una vuelta si no esta y no se esta pidiendo ya. */
 function asegurarVuelta(numero, puntos, deFondo) {
-  if (!estado.abierta || numero < 1 || !alcancePermitePedir()) {
+  const temporal = !hayEjeDeDistancia();
+  if (!estado.abierta || numero < 1 || (temporal && numero !== 1) ||
+      !alcanceResuelto()) {
     return Promise.resolve(null);
   }
-  const quiere = puntos || PUNTOS_POR_VUELTA;
+  const quiere = puntos || (temporal ? 1200 : PUNTOS_POR_VUELTA);
   const bloque = estado.series[numero];
   const conocidos = bloque && bloque.vehiculos || {};
   const pedidos = [...seleccion].filter(x => typeof x === "string");
@@ -3557,13 +3563,15 @@ function asegurarVuelta(numero, puntos, deFondo) {
     return Promise.resolve(bloque);
   }
   if (estado.pidiendo[numero]) return estado.pidiendo[numero];
-  /* La API admite doce señales por consulta ---un limite razonable, porque
-     cada una es una pasada sobre la tabla---. La simulacion publica mas: se
-     piden en tandas de doce y se juntan, que es mas barato que pedir de a una
-     y mas honesto que quedarse con doce y no decirlo. */
+  /* La API espacial admite doce señales por consulta. La temporal admite las
+     veinte necesarias para mantener en una sola respuesta el eje comun de
+     canales CAN que se publican con frecuencias distintas. */
   const todas = senalesCandidatas();
+  const maximoPorTanda = temporal ? 20 : 12;
   const tandas = [];
-  for (let i = 0; i < todas.length; i += 12) tandas.push(todas.slice(i, i + 12));
+  for (let i = 0; i < todas.length; i += maximoPorTanda) {
+    tandas.push(todas.slice(i, i + maximoPorTanda));
+  }
 
   /* EL VEHICULO DEL QUE HAY TELEMETRIA VA SIEMPRE.
      `seleccion` dice a quien dibujar sobre el trazado, y ahi entran vehiculos
@@ -3581,7 +3589,7 @@ function asegurarVuelta(numero, puntos, deFondo) {
   const autos = propio ? conPropio : [];
   const apertura = aperturaVigente();
   const base = "/sesiones/" + encodeURIComponent(estado.abierta.session_id) +
-               "/series?vuelta=" + numero +
+               (temporal ? "/series-tiempo?" : "/series?vuelta=" + numero + "&") +
                (autos.length ? "&vehiculos=" + encodeURIComponent(autos.join(",")) : "") +
                "&puntos=" + quiere + sufijoDeCorrida(true) + "&senales=";
 
@@ -3604,7 +3612,9 @@ function asegurarVuelta(numero, puntos, deFondo) {
         Object.keys(p.vehiculos || {}).forEach(k => {
           if (!d.vehiculos[k]) { d.vehiculos[k] = p.vehiculos[k]; return; }
           Object.keys(p.vehiculos[k]).forEach(c => {
-            if (c !== "distancia_m") d.vehiculos[k][c] = p.vehiculos[k][c];
+            if (["distancia_m", "distancia_sesion_m", "tiempo_s", "timestamp_utc"].indexOf(c) === -1) {
+              d.vehiculos[k][c] = p.vehiculos[k][c];
+            }
           });
         });
       });
@@ -3831,10 +3841,6 @@ function vueltaEnFraccion(f) {
    pantalla mientras se espera. */
 function faltaLoImprescindible(fraccion) {
   if (estadoSesion !== "cargado") return false;
-  /* Esperar es esperar **algo que esta en camino**. Sin eje de distancia no se
-     pidio nada y no se va a pedir: quedarse en «Preparando la vuelta 1…» para
-     siempre seria una espera sin nada que esperar. */
-  if (!hayEjeDeDistancia()) return false;
   const v = fraccion === undefined ? instante().vuelta : vueltaEnFraccion(fraccion);
   if (estado.series[v]) return false;          // ya esta
   if (estado.fallo && estado.fallo[v]) return false;  // fallo: no se espera mas
@@ -3854,7 +3860,8 @@ let _esperandoVuelta = null;
 function anotarEspera(v) {
   if (_esperandoVuelta === v) return false;
   _esperandoVuelta = v;
-  decirEstadoApi("Preparando la vuelta " + v + "…", false);
+  decirEstadoApi(hayVueltas() ? "Preparando la vuelta " + v + "…"
+                              : "Preparando el tramo temporal…", false);
   return true;
 }
 
@@ -3999,7 +4006,7 @@ function anotarDisponibles(d) {
   const veh = d.vehiculos[Object.keys(d.vehiculos)[0]];
   if (!veh) return;
   Object.keys(veh).forEach(nombre => {
-    if (["distancia_m", "distancia_sesion_m", "timestamp_utc"].indexOf(nombre) !== -1) return;
+    if (["distancia_m", "distancia_sesion_m", "tiempo_s", "timestamp_utc"].indexOf(nombre) !== -1) return;
     if (veh[nombre].some(x => x !== null && x !== undefined)) estado.disponibles.add(nombre);
   });
 }
@@ -4835,7 +4842,8 @@ function asegurarGraficosChicos(ids) {
         // traza entera ---dos mil seiscientos puntos por grafico--- en cada
         // cuadro de la reproduccion.
         '<div class="lienzo-envoltura">' +
-          '<canvas id="lienzo-' + id + '" role="img" aria-label="' + m.rotulo + ' a lo largo de la vuelta"></canvas>' +
+          '<canvas id="lienzo-' + id + '" role="img" aria-label="' + m.rotulo +
+            (hayEjeDeDistancia() ? ' a lo largo de la vuelta' : ' a lo largo del tiempo') + '"></canvas>' +
           '<i class="cabezal-grafico" id="cabezal-' + id + '" aria-hidden="true"></i>' +
         '</div>' +
         '<div class="pie-grafico" id="pie-' + id + '"></div>' +
@@ -4921,7 +4929,7 @@ function dibujarTraza() {
     let datos = crudas.map(d => recortarPorDominio(d, ampIni, ampFin));
     const binario = bin && (canal === "throttle" || canal === "brake");
     if (binario) {
-      datos = datos.map(d => d.map(p => [p[0], p[1] > 40 ? 1 : 0]));
+      datos = datos.map(d => d.map(p => [p[0], p[1] > 0 ? 1 : 0]));
     }
     /* LOS DOS EXTREMOS DE LO QUE SE VE, ANTES QUE LA ESCALA.
        Con ventana, los ultimos N metros de sesion; sin ventana, la vuelta
@@ -4934,7 +4942,7 @@ function dibujarTraza() {
       vIni = vFin - ventanaTraza;
       tramos = ids.map(id => {
         const t = trazaContinua(canal, id, vIni, vFin);
-        return binario ? t.map(x => x.map(p => [p[0], p[1] > 40 ? 1 : 0])) : t;
+        return binario ? t.map(x => x.map(p => [p[0], p[1] > 0 ? 1 : 0])) : t;
       });
       /* Lo que aporto a esta ventana no se poda: se la sigue viendo. */
       vueltasEnTramoAcumulado(vIni, vFin, ids[0]).forEach(v => {
@@ -4963,7 +4971,7 @@ function dibujarTraza() {
             const s = serieAcumuladaDeCanal(canal, v, id) || [];
             for (let i = 0; i < s.length; i++) junto.push(s[i]);
           });
-          return binario ? junto.map(p => [p[0], p[1] > 40 ? 1 : 0]) : junto;
+          return binario ? junto.map(p => [p[0], p[1] > 0 ? 1 : 0]) : junto;
         })
       : datos;
     const escala = escalaDe(paraEscala, 0.1);
@@ -4983,7 +4991,7 @@ function dibujarTraza() {
        mirando, y por eso puede aparecer mas de una vez en una ventana que cruza
        la meta. Ponerla directamente en 405 sobre metros de sesion la dejaria en
        la primera vuelta de la carrera para siempre. */
-    if (CURVAS.length) {
+    if (hayEjeDeDistancia() && CURVAS.length) {
       const enX0 = m => ((m - vIni) / anchoV) * w;
       const bases = conAcumulada
         ? vueltasEnTramoAcumulado(vIni, vFin, ids[0])
@@ -5016,7 +5024,10 @@ function dibujarTraza() {
        ventana, el de la vuelta sin ella. Antes se lo ponia en la fraccion
        temporal de la vuelta sobre un eje de metros, que son dos magnitudes
        distintas. */
-    _ejeTraza[canal] = { ini: vIni, fin: vFin, acumulado: conAcumulada };
+    _ejeTraza[canal] = {
+      ini: vIni, fin: vFin, acumulado: conAcumulada,
+      unidad: hayEjeDeDistancia() ? "m" : "s",
+    };
 
     /* CUANDO EL PRIMER GRAFICO SIRVE PARA ALGO.
        Es una medida distinta de «cuanto tardaron las consultas»: entre que la
@@ -5127,8 +5138,8 @@ function pintarEsperando() {
     ctx.clearRect(0, 0, w, h);
     ctx.fillStyle = tinta("--texto-tenue");
     ctx.font = "11px 'IBM Plex Sans', sans-serif";
-    ctx.fillText(!hayEjeDeDistancia() ? "sin eje de distancia en esta fuente"
-                 : estado.cargando ? "cargando…" : "sin dato en esta vuelta",
+    ctx.fillText(estado.cargando ? "cargando…"
+                 : hayEjeDeDistancia() ? "sin dato en esta vuelta" : "sin dato en este tramo",
                  10, h / 2);
     const pie = document.getElementById("pie-" + id);
     if (pie) pie.innerHTML = "<span>—</span><span></span><span>—</span>";
@@ -5193,7 +5204,7 @@ function pintarLeyendaTraza() {
   const bin = fuente === "can";
   const notaT = document.getElementById("nota-traza");
   if (notaT) notaT.textContent = bin
-    ? "En esta fuente el acelerador y el freno son binarios: gas_pressed y brake_pressed declaran pisado o no pisado, no cuánto."
+    ? "El eje horizontal es tiempo desde el inicio de la captura. El acelerador y el freno son binarios: gas_pressed y brake_pressed declaran pisado o no pisado, no cuánto."
     : "Cada señal encendida abre su propio gráfico, y cada gráfico se escribe a medida que avanza la vuelta: lo dibujado es lo que ya ocurrió. La escala vertical es la de la vuelta completa, para que un mismo alto signifique lo mismo al principio y al final. Todos van contra la distancia de la vuelta y comparten la marca del cabezal y las líneas de puntos de las curvas, de modo que un mismo metro se busca en cualquiera de ellos. Cuántas se pueden encender lo decide la fuente: la simulación publica diecinueve graficables, el bus del vehículo diez.";
   contarCanales();
 }
@@ -6879,7 +6890,11 @@ function abrirSesionGuardada(id) {
 
   TESTIGO.aperturas++;
   const corta = FUENTE_CORTA[s.fuente] || "can";
-  if (corta !== fuente) { fuente = corta; marcar(document.getElementById("sel-fuente"), "fuente", fuente); }
+  if (corta !== fuente) {
+    fuente = corta;
+    configurarVentanaDeGraficos();
+    marcar(document.getElementById("sel-fuente"), "fuente", fuente);
+  }
   estadoSesion = "cargado";
   document.getElementById("velo-sesiones").dataset.abierto = "no";
   render();
@@ -7267,6 +7282,13 @@ function alcancePermitePedir() {
      va contra metro. Se corta aca, que es por donde pasa todo el historico, y
      no en cada sitio que pide. */
   if (!hayEjeDeDistancia()) return false;
+  return alcanceResuelto();
+}
+
+/* Resolver adquisicion y fase es necesario para cualquier eje. La distancia
+   agrega otra restriccion, pero una fuente temporal no tiene que quedar afuera
+   del historico solo por no publicar metros. */
+function alcanceResuelto() {
   if (!corrida.disponibles) return false;
   if (!alcanceEsAmbiguo()) return true;
   return alcanceElegidoEsValido(corrida.adquisicion, corrida.fase);
@@ -7474,6 +7496,23 @@ function cargarDatosDeSesion(ruta, apertura, senal, s) {
     }
 
     estado.vueltas = vueltas.vueltas || [];
+    /* Las funciones de reloj trabajan con tramos temporales. Para una fuente
+       sin vueltas, el catalogo ya declara los dos extremos de la captura: se
+       representa como un unico tramo interno, aunque la interfaz nunca lo llame
+       vuelta. Esto permite compartir interpolacion, pausas y cabezal sin
+       inventar una distancia. */
+    if (!hayEjeDeDistancia() && !estado.vueltas.length && s.desde && s.hasta) {
+      estado.vueltas = [{
+        numero: 1,
+        duracion_s: numeroMedido(s.duracion_s) ||
+          Math.max(0, (Date.parse(s.hasta) - Date.parse(s.desde)) / 1000),
+        desde_utc: s.desde,
+        hasta_utc: s.hasta,
+        huecos: [],
+        continua: true,
+        tramo_temporal: true,
+      }];
+    }
 
     /* QUIEN ES EL VEHICULO PROPIO SE DECIDE UNA VEZ Y ACA.
        Lo venian decidiendo dos consultas distintas ---la de series y la de
@@ -7871,7 +7910,7 @@ function duracionDeVuelta(numero) {
 
 /* En el bus no hay vueltas: hay un tramo de grabacion. Decirle «vuelta 1 de
    1» seria forzar el vocabulario del circuito sobre un dato de calle. */
-function hayVueltas() { return estado.vueltas.length > 0 && fuente !== "can"; }
+function hayVueltas() { return estado.vueltas.length > 0 && hayEjeDeDistancia(); }
 
 function duracionSesionS() {
   const suma = estado.vueltas.reduce((a, v) => a + (v.duracion_s || 0), 0);
@@ -8173,26 +8212,21 @@ function pintarTransporte() {
   }
   if (modo === "vacio") { detener(); return; }
 
-  /* SIN EJE DE DISTANCIA NO HAY REPRODUCCION QUE OFRECER, Y SE DICE ACA.
-     El reproductor va contra distancia recorrida: la barra reparte la sesion
-     por metro, las vueltas se delimitan por metro y los graficos van contra
-     metro. Con una fuente que no la declara, el reproductor quedaba entero
-     ---botones, barra, velocidades--- ofreciendo algo que al primer paso daba
-     un fallo. Se apaga y se dice por que, que es lo que ya hacen la comparacion
-     y el trazado con lo que su fuente no tiene. */
+  /* Sin distancia, el transporte recorre el reloj de la captura. Los botones y
+     el cabezal siguen siendo validos; lo que cambia es el eje horizontal de los
+     graficos y el vocabulario, que habla de tramo y segundos, nunca de vuelta o
+     metros. */
   if (!hayEjeDeDistancia()) {
-    detener();
     barra.dataset.sinDistancia = "si";
     const nota = document.getElementById("nota-transporte");
     if (nota) {
-      /* Sin dos puntos seguidos: el motivo ya trae los suyos. */
-      nota.textContent = "En " + FUENTES[fuente].nombre +
-        " no hay reproducción por distancia, porque " + porQueNoHayDistancia() +
-        ". Las señales de esta captura se leen contra el tiempo.";
+      nota.textContent = "Reproducción temporal de " + FUENTES[fuente].nombre +
+        ": las señales avanzan contra el reloj de la captura. No se inventan " +
+        "vueltas ni distancia.";
     }
-    return;
+  } else {
+    barra.dataset.sinDistancia = "no";
   }
-  barra.dataset.sinDistancia = "no";
 
   const t = instante();
   const s = serieDelPropio(t.vuelta);
@@ -8206,7 +8240,7 @@ function pintarTransporte() {
     : relojDeSesion(t.segundos);
   document.getElementById("tr-total").textContent = hayVueltas()
     ? textoDeVuelta(t.metro) + " · " + relojDeSesion(t.segundos) + " de " + relojDeSesion(dur)
-    : "de " + relojDeSesion(dur) + " grabados";
+    : relojDeSesion(t.segundos) + " de " + relojDeSesion(dur) + " grabados";
   document.getElementById("tr-cabezal").value = String(Math.round(cabezal * 10000));
 
   /* QUE SE MARCA SOBRE LA LINEA DE TIEMPO.
@@ -8383,11 +8417,26 @@ let _ultimaTraza = 0;
 let _relojSiguiente = null;
 let _relojPedidos = null;
 
-/* Cuantos metros de vuelta entran en cada grafico. Cero es la vuelta entera.
-   Es el mando que decide si se mira una frenada o la vuelta completa: con
-   trescientos metros se ve el pedal punto por punto; con la vuelta entera se
-   ve la forma general y se pierde el detalle. */
+/* Cuanto eje entra en cada grafico. En F1 25 son metros; en las fuentes sin
+   distancia son segundos. Cero siempre significa el tramo completo. */
 let ventanaTraza = 1200;
+
+function configurarVentanaDeGraficos() {
+  const temporal = !hayEjeDeDistancia();
+  const opciones = temporal
+    ? [[5, "5 s"], [20, "20 s"], [60, "60 s"], [0, "tramo"]]
+    : [[300, "300 m"], [1200, "1,2 km"], [3000, "3 km"], [0, "vuelta"]];
+  const mando = document.getElementById("tr-ventana");
+  if (!mando) return;
+  const botones = mando.querySelectorAll("[data-ventana]");
+  botones.forEach((boton, i) => {
+    boton.dataset.ventana = String(opciones[i][0]);
+    boton.textContent = opciones[i][1];
+  });
+  const permitidas = opciones.map(x => x[0]);
+  if (permitidas.indexOf(ventanaTraza) === -1) ventanaTraza = temporal ? 20 : 1200;
+  marcar(mando, "ventana", String(ventanaTraza));
+}
 
 function detener() {
   reproduciendo = false;
@@ -8447,12 +8496,13 @@ function reproducir() {
       detener();
       const f = estado.fallo[v];
       const motivo = (f && f.motivo) || f;
-      decirEstadoApi("La vuelta " + v + " no se pudo traer: " + motivo +
+      decirEstadoApi((hayVueltas() ? "La vuelta " + v : "El tramo temporal") +
+                     " no se pudo traer: " + motivo +
                      (f && f.permanente
                        ? " La reproducción se detuvo acá y no se reintenta: " +
-                         "volver a pedirla daría lo mismo."
-                       : " La reproducción se detuvo acá; mové el cabezal a esa " +
-                         "vuelta para volver a pedirla."), true);
+                          "volver a pedirlo daría lo mismo."
+                       : " La reproducción se detuvo acá; mové el cabezal para " +
+                          "volver a pedirlo."), true);
       return;
     }
     if (propuesto < 1 && faltaLoImprescindible(propuesto)) {
@@ -8747,7 +8797,9 @@ function pintarCronometraje() {
   }
 
   const cab = document.getElementById("canal-traza");
-  if (cab) cab.title = "Cabezal en " + Math.round(t.metro) + " m";
+  if (cab) cab.title = hayEjeDeDistancia()
+    ? "Cabezal en " + Math.round(t.metro) + " m"
+    : "Cabezal en " + relojDeSesion(t.segundos);
 }
 
 /* ============================================================

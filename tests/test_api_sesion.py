@@ -126,6 +126,68 @@ class SeriesPorDistanciaTests(unittest.TestCase):
         self.assertLessEqual(len(r["vehiculos"]["car1"]["distancia_m"]), 60)
 
 
+class SeriesPorTiempoTests(unittest.TestCase):
+    """La ruta historica de las fuentes que no publican distancia."""
+
+    def test_can_devuelve_segundos_sin_inventar_metros(self) -> None:
+        from datetime import datetime, timedelta, timezone
+
+        inicio = datetime(2026, 9, 9, 12, 0, tzinfo=timezone.utc)
+        # timestamp, vehicle_id, speed, brake_pressed, unit speed, unit brake
+        filas = [
+            (inicio, "can:sample_01", 100.0, 0.0, "km/h", "boolean"),
+            (inicio + timedelta(seconds=2), "can:sample_01", 110.0, 1.0,
+             "km/h", "boolean"),
+        ]
+        falsa, parche = _con(filas)
+        with parche:
+            r = api_sesion.series_por_tiempo(
+                "can:segmento:sample_01",
+                senales="speed,brake_pressed",
+                puntos=50,
+            )
+
+        serie = r["vehiculos"]["can:sample_01"]
+        self.assertEqual(serie["tiempo_s"], [0.0, 2.0])
+        self.assertEqual(serie["speed"], [100.0, 110.0])
+        self.assertEqual(serie["brake_pressed"], [0.0, 1.0])
+        self.assertNotIn("distancia_m", serie)
+        self.assertEqual(r["duracion_s"], 2.0)
+        self.assertEqual(r["unidades"]["speed"], "km/h")
+
+    def test_consulta_booleanos_y_acota_fuente_sesion(self) -> None:
+        falsa, parche = _con([])
+        with parche:
+            api_sesion.series_por_tiempo(
+                "can:segmento:sample_01", senales="brake_pressed")
+        consulta, parametros = falsa.consultas[-1]
+        self.assertIn("value_boolean", consulta)
+        self.assertIn("source_type = %s", consulta)
+        self.assertIn("session_id = %s", consulta)
+        self.assertIn("can_real_replay", parametros)
+
+    def test_el_nombre_de_senal_no_se_interpola_como_identificador_sql(self) -> None:
+        falsa, parche = _con([])
+        nombre = 'speed"; DROP TABLE telemetry_messages; --'
+        with parche:
+            api_sesion.series_por_tiempo(
+                "can:segmento:sample_01", senales=nombre)
+        consulta, parametros = falsa.consultas[-1]
+        self.assertNotIn(nombre, consulta)
+        self.assertIn(nombre, parametros)
+
+    def test_exige_senales_y_respeta_el_tope_temporal(self) -> None:
+        with self.assertRaises(HTTPException) as vacia:
+            api_sesion.series_por_tiempo("can:segmento:sample_01", senales=" , ")
+        self.assertEqual(vacia.exception.status_code, 422)
+        with self.assertRaises(HTTPException) as muchas:
+            api_sesion.series_por_tiempo(
+                "can:segmento:sample_01",
+                senales=",".join("s%d" % i for i in range(21)),
+            )
+        self.assertEqual(muchas.exception.status_code, 422)
+
+
 class SinEjeDeDistanciaTests(unittest.TestCase):
     """Cada fuente sin eje espacial explica **su** motivo, no el de otra.
 
