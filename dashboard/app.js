@@ -457,6 +457,53 @@ function porQueNoHayCoordenadas(cual) {
   return (d && d.porque) || "esta fuente no declara posición medida";
 }
 
+/* CON QUE EJE SE ABRE LA VISTA AMPLIADA.
+   Se abria siempre en distancia, que es el eje del simulador. Sobre el bus eso
+   dejaba la pantalla en un cartel ---«esta vista espacial requiere distancia
+   medida»--- con el boton que si funciona al lado y sin decir que estaba ahi.
+   Un tablero que ofrece de entrada lo unico que no puede hacer se lee como si
+   no pudiera hacer nada. */
+function ejeQueLaFuenteSostiene(cual) {
+  return hayEjeDeDistancia(cual) ? "distancia" : "tiempo";
+}
+
+/* EL EJE CON EL QUE SE DIBUJA, DEDUCIDO Y NO REPARTIDO.
+   `ejeComparacion` es lo que la persona eligio, y sobrevive a cambiar de
+   sesion: elegir distancia en el simulador y abrir despues un tramo del bus
+   dejaba la vista pidiendo un metro que esa fuente no mide. Fijarlo al abrir
+   habria sido acordarse en los tres sitios que abren la vista y olvidarse en el
+   cuarto. Se deduce en un solo lugar: manda lo elegido cuando la fuente lo
+   sostiene, y si no, el eje que si tiene. */
+function ejeVigente() {
+  return hayEjeDeDistancia() ? ejeComparacion : ejeQueLaFuenteSostiene();
+}
+
+/* QUE TRAMO ABARCA LA VISTA, EN UNA FRASE.
+   EN EL BUS NO HAY VUELTAS: HAY UN TRAMO DE GRABACION. Decir «vuelta 1» sobre
+   un minuto de ruta es forzar el vocabulario del circuito sobre un dato de
+   calle, y ademas prometer que hay una vuelta 2. `hayVueltas` ya distingue las
+   dos cosas en el resto del tablero. */
+function coberturaDeLaVista(vuelta) {
+  if (!hayVueltas()) {
+    return (vuelta && vuelta.duracion_s)
+      ? "tramo de " + cifra(vuelta.duracion_s, 1) + " s"
+      : "tramo completo";
+  }
+  if (alcanceComparacion === "una") {
+    return "vuelta " + vueltaElegida +
+      (vuelta && vuelta.largo_m ? " · " + cifra(vuelta.largo_m, 1) + " m observados" : "");
+  }
+  return estado.vueltas.length + " vueltas observadas";
+}
+
+/* Que impide dibujar la vista ampliada, o cadena vacia si nada lo impide. */
+function motivoDelEjeEspacial() {
+  if (ejeVigente() !== "distancia") return "";
+  if (hayEjeDeDistancia()) return "";
+  return "Sin distancia medida: " + porQueNoHayDistancia() +
+         ". Contra el reloj sí se puede: elegí «Tiempo» arriba.";
+}
+
 function hayEjeDeDistancia(cual) {
   const d = EJE_DE_DISTANCIA_POR_FUENTE[cual === undefined ? fuente : cual];
   return !d || d.hay;
@@ -5473,7 +5520,7 @@ function abrirComparacion() {
   }
   document.getElementById("velo-comparacion").dataset.abierto = "si";
   document.querySelector("#velo-comparacion .cab-comparacion h3").firstChild.textContent = "Comparación por distancia";
-  pintarMetricas(); pintarPilotosComparacion(); dibujarComparacion();
+  pintarElectorDelEje(); pintarMetricas(); pintarPilotosComparacion(); dibujarComparacion();
   document.getElementById("btn-cerrar-comparacion").focus();
 }
 
@@ -5493,7 +5540,7 @@ function ampliarGrafico(id) {
   document.getElementById("velo-comparacion").dataset.abierto = "si";
   document.querySelector("#velo-comparacion .cab-comparacion h3").firstChild.textContent =
     m.rotulo + " · " + unidadDeCanal(m.id);
-  pintarMetricas(); pintarPilotosComparacion(); dibujarComparacion();
+  pintarElectorDelEje(); pintarMetricas(); pintarPilotosComparacion(); dibujarComparacion();
   document.getElementById("btn-cerrar-comparacion").focus();
 }
 
@@ -5506,7 +5553,7 @@ function abrirDetalle() {
   METRICAS.forEach(m => { m.activa = m.fuentes.indexOf(fuente) !== -1; });
   document.getElementById("velo-comparacion").dataset.abierto = "si";
   document.querySelector("#velo-comparacion .cab-comparacion h3").firstChild.textContent = "Todas las señales";
-  pintarMetricas(); pintarPilotosComparacion(); dibujarComparacion();
+  pintarElectorDelEje(); pintarMetricas(); pintarPilotosComparacion(); dibujarComparacion();
   document.getElementById("btn-cerrar-comparacion").focus();
 }
 document.getElementById("btn-cerrar-comparacion").addEventListener("click", () => {
@@ -5522,7 +5569,7 @@ document.addEventListener("keydown", e => {
 });
 document.getElementById("sel-eje").addEventListener("click", e => {
   const b = e.target.closest("button"); if (!b) return;
-  ejeComparacion = b.dataset.eje; marcar(e.currentTarget, "eje", ejeComparacion); dibujarComparacion();
+  ejeComparacion = b.dataset.eje; marcar(e.currentTarget, "eje", ejeVigente()); dibujarComparacion();
 });
 /* Las vueltas que ofrece el selector son las que la sesion tiene: ofrecer
    cincuenta y ocho sobre una sesion de cinco era prometer datos que no
@@ -5568,6 +5615,23 @@ document.getElementById("sel-vuelta").addEventListener("click", e => {
 });
 document.getElementById("btn-reset-zoom").addEventListener("click", () => { zoom = null; dibujarComparacion(); });
 document.getElementById("btn-exportar-detalle").addEventListener("click", exportarComparacion);
+
+/* EL EJE QUE LA FUENTE NO TIENE SE OFRECE DECLARADO, NO MUDO.
+   El boton de distancia seguia ahi, encendido, sobre una fuente sin metro
+   medido: se lo apagaba al apretarlo, con un cartel. Ahora se ve apagado de
+   entrada y el motivo esta en su titulo, que es donde el resto del tablero
+   pone los porques. */
+function pintarElectorDelEje() {
+  const c = document.getElementById("sel-eje");
+  if (!c) return;
+  const hay = hayEjeDeDistancia();
+  const b = c.querySelector('[data-eje="distancia"]');
+  if (b) {
+    b.disabled = !hay;
+    b.title = hay ? "" : "Sin distancia medida: " + porQueNoHayDistancia();
+  }
+  marcar(c, "eje", ejeVigente());
+}
 
 function pintarMetricas() {
   const c = document.getElementById("metricas-comparacion");
@@ -5804,9 +5868,7 @@ function pintarPilotosComparacion() {
   const s = estado.abierta || {};
   const pista = nombreDeSesion(s);
   const vuelta = estado.vueltas.find(v => v.numero === vueltaElegida);
-  const cobertura = alcanceComparacion === "una"
-    ? "vuelta " + vueltaElegida + (vuelta && vuelta.largo_m ? " · " + cifra(vuelta.largo_m, 1) + " m observados" : "")
-    : estado.vueltas.length + " vueltas observadas";
+  const cobertura = coberturaDeLaVista(vuelta);
   document.getElementById("sub-comparacion").textContent =
     pista + " · " + cobertura + " · " + cuantas +
     (modoDetalle ? (cuantas === 1 ? " señal" : " señales") : " métricas comparadas");
@@ -5845,7 +5907,7 @@ function segmentosComparacion(metrica, vehiculo) {
     if (!datos || !datos[nombre]) return;
     const ys = datos[nombre];
     let xs;
-    if (ejeComparacion === "distancia") {
+    if (ejeVigente() === "distancia") {
       xs = alcanceComparacion === "carrera" ? datos.distancia_sesion_m : datos.distancia_m;
     } else {
       const marcas = datos.timestamp_utc || [];
@@ -5974,11 +6036,11 @@ function vistaDeComparacion() {
     xMin = xMin + amplitud * zoom[0];
   }
 
-  const enDistancia = ejeComparacion === "distancia";
+  const enDistancia = ejeVigente() === "distancia";
   const deLaCarrera = alcanceComparacion === "carrera";
   return {
     ids: ids, activas: activas, paneles: paneles,
-    eje: ejeComparacion, alcance: alcanceComparacion,
+    eje: ejeVigente(), alcance: alcanceComparacion,
     xMin: xMin, xMax: xMax, completo: completo, conZoom: !!zoom,
     unidad: enDistancia ? "m" : "s",
     rotuloDelEje: enDistancia
@@ -6203,11 +6265,13 @@ function dibujarComparacion() {
     if (pieVacio) pieVacio.textContent = "";
     return;
   }
-  if (fuente !== "f1") {
-    avisoDeComparacion(cv, ctx,
-      "Esta vista espacial requiere distancia medida y solo está disponible para F1 25.");
-    return;
-  }
+  /* LO QUE NO SE PUEDE ES EL EJE ESPACIAL, NO LA VISTA.
+     Esto cortaba por fuente y dejaba fuera al bus entero. Lo que el bus no
+     tiene es **metro medido**; contra el reloj tiene las trece señales y las
+     marcas de tiempo con las que dibujarlas, que es lo que el boton de al lado
+     hace. Se dice que falta y por que, y que el otro eje sirve. */
+  const impedimento = motivoDelEjeEspacial();
+  if (impedimento) { avisoDeComparacion(cv, ctx, impedimento); return; }
 
   /* LA COMPARACION TRABAJA SOBRE VUELTAS GUARDADAS, Y HAY QUE DECIRLO.
      Compara **vueltas cerradas** entre si: lee `estado.series`, que en vivo
@@ -6321,7 +6385,7 @@ function dibujarComparacion() {
      que es lo que permite leer el valor exacto de cada piloto. */
   if (estadoSesion !== "vacio" && alcanceComparacion === "una") {
     const t = instante();
-    const valorCabezal = ejeComparacion === "distancia"
+    const valorCabezal = ejeVigente() === "distancia"
       ? t.metro : t.fraccion * (duracionDeVuelta(t.vuelta) || 0);
     if (valorCabezal >= xMin && valorCabezal <= xMax) {
       const xc = margenIzq + ((valorCabezal - xMin) / Math.max(1e-9, xMax - xMin)) * ancho;
@@ -6363,7 +6427,7 @@ function dibujarComparacion() {
     const x = margenIzq + (ancho * i) / 6;
     const v = d0 + ((d1 - d0) * i) / 6;
     ctx.textAlign = i === 0 ? "left" : i === 6 ? "right" : "center";
-    ctx.fillText(ejeComparacion === "distancia" ? Math.round(v) + " m" : v.toFixed(1) + " s", x, yEje + 10);
+    ctx.fillText(ejeVigente() === "distancia" ? Math.round(v) + " m" : v.toFixed(1) + " s", x, yEje + 10);
   }
   ctx.textAlign = "left";
 
@@ -6375,14 +6439,14 @@ function dibujarComparacion() {
     ctx.globalAlpha = 1;
   }
 
-  const unidadDelEje = ejeComparacion === "distancia" ? " m" : " s";
+  const unidadDelEje = ejeVigente() === "distancia" ? " m" : " s";
   const dice = [];
   if (zoom) {
     dice.push("Zoom activo entre " + cifra(d0, 1) + unidadDelEje + " y " +
               cifra(d1, 1) + unidadDelEje + ".");
   } else {
     if (alcanceComparacion === "carrera") dice.push("Carrera completa con segmentos separados por vuelta.");
-    dice.push(ejeComparacion === "distancia"
+    dice.push(ejeVigente() === "distancia"
       ? "Eje medido por la fuente."
       : "Tiempo transcurrido desde el inicio observado " +
         (alcanceComparacion === "carrera" ? "de la sesión." : "de cada vuelta."));

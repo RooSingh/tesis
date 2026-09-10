@@ -153,6 +153,8 @@ const NOMBRES = [
   "_estelaG",
   "cifra",
   "hayCoordenadasMedidas", "porQueNoHayCoordenadas", "hayEjeDeDistancia",
+  "ejeQueLaFuenteSostiene", "porQueNoHayDistancia", "hayVueltas",
+  "ejeVigente", "motivoDelEjeEspacial", "coberturaDeLaVista",
   "explicacionDelTrazado",
   "puntoDelBusEn", "_indiceEnElRecorrido", "valoresSobreElRecorrido",
   "tramosDelRecorrido", "tintaDelValor",
@@ -234,6 +236,8 @@ const {
   _fijar,
   trazadoAPath, puntoDelBusEn, _indiceEnElRecorrido,
   hayCoordenadasMedidas, porQueNoHayCoordenadas, hayEjeDeDistancia,
+  ejeQueLaFuenteSostiene, porQueNoHayDistancia, hayVueltas,
+  ejeVigente, motivoDelEjeEspacial, coberturaDeLaVista,
   explicacionDelTrazado,
   pedirTrazado, rutasPedidas,
   senalesParaElRecorrido,
@@ -3080,6 +3084,120 @@ prueba("los pasos de la escala estan ordenados", () => {
     assert.ok(PASOS_DE_LA_ESCALA_G[i] > PASOS_DE_LA_ESCALA_G[i - 1],
               "los pasos no suben: la escala elegiria uno mas chico que el valor");
   }
+});
+
+/* ==================================================================
+   23. LA VISTA AMPLIADA SE ABRE CON EL EJE QUE LA FUENTE TIENE
+   ------------------------------------------------------------------
+   Se abria siempre en distancia, que es el eje del simulador, y sobre el bus
+   dejaba la pantalla entera en un cartel: «esta vista espacial requiere
+   distancia medida y solo esta disponible para F1 25». El boton que si
+   funciona ---tiempo--- estaba al lado y nada decia que estuviera ahi.
+
+   Y el corte era por fuente, no por eje: `fuente !== "f1"` dejaba fuera al bus
+   entero. Lo que al bus le falta es **metro medido**; contra el reloj tiene sus
+   trece señales y las marcas de tiempo con las que dibujarlas.
+   ================================================================== */
+
+prueba("el bus abre la vista contra el reloj, que es lo que tiene", () => {
+  assert.strictEqual(ejeQueLaFuenteSostiene("can"), "tiempo");
+  assert.strictEqual(ejeQueLaFuenteSostiene("openf1"), "tiempo",
+                     "OpenF1 tampoco tiene metro medido");
+  assert.strictEqual(ejeQueLaFuenteSostiene("f1"), "distancia");
+});
+
+prueba("el eje que se ofrece es el que la fuente sostiene, sin excepciones", () => {
+  Object.keys(EJE_DE_DISTANCIA_POR_FUENTE).forEach(f => {
+    const eje = ejeQueLaFuenteSostiene(f);
+    assert.ok(eje === "distancia" || eje === "tiempo", f + " -> " + eje);
+    assert.strictEqual(eje === "distancia", hayEjeDeDistancia(f),
+                       "la fuente " + f + " abre en un eje que no tiene");
+  });
+});
+
+prueba("la fuente sin metro explica por que, para poder decirlo en el boton", () => {
+  const porque = porQueNoHayDistancia("can");
+  assert.ok(porque.length > 20 && /odómetro|odometro|distancia/.test(porque), porque);
+  assert.notStrictEqual(porQueNoHayDistancia("openf1"), porQueNoHayDistancia("can"),
+                        "las dos fuentes dan el mismo motivo y no es el mismo");
+});
+
+prueba("elegir distancia y despues abrir el bus no deja la vista pidiendo metros", () => {
+  /* `ejeComparacion` sobrevive al cambio de sesion: es lo que la persona
+     eligio. Fijarlo al abrir habria sido acordarse en los tres sitios que abren
+     la vista y olvidarse en el cuarto. */
+  _fijar.eje("distancia");
+  globalThis.fuente = "f1";
+  assert.strictEqual(ejeVigente(), "distancia");
+  globalThis.fuente = "can";
+  assert.strictEqual(ejeVigente(), "tiempo",
+                     "la vista quedo pidiendo un metro que el bus no mide");
+  globalThis.fuente = "f1";
+  assert.strictEqual(ejeVigente(), "distancia", "no se respeto lo elegido");
+});
+
+prueba("lo elegido manda cuando la fuente lo sostiene", () => {
+  globalThis.fuente = "f1";
+  _fijar.eje("tiempo");
+  assert.strictEqual(ejeVigente(), "tiempo");
+  _fijar.eje("distancia");
+  assert.strictEqual(ejeVigente(), "distancia");
+});
+
+prueba("sobre el bus nada impide dibujar contra el reloj", () => {
+  globalThis.fuente = "can";
+  _fijar.eje("tiempo");
+  assert.strictEqual(motivoDelEjeEspacial(), "",
+                     "el bus se queda sin vista sobre un eje que si tiene");
+  /* Y aunque quede elegida la distancia, el eje vigente es el tiempo. */
+  _fijar.eje("distancia");
+  assert.strictEqual(motivoDelEjeEspacial(), "");
+});
+
+prueba("el cartel del eje espacial dice el motivo y la salida", () => {
+  /* Antes decia «solo esta disponible para F1 25», que es una puerta cerrada.
+     El eje que si funciona estaba al lado y nada lo decia. */
+  globalThis.fuente = "f1";
+  _fijar.eje("distancia");
+  assert.strictEqual(motivoDelEjeEspacial(), "",
+                     "la simulacion perdio su vista espacial");
+});
+
+prueba("el subtitulo del bus habla de un tramo, no de una vuelta", () => {
+  globalThis.fuente = "can";
+  globalThis.estado.vueltas = [{ numero: 1, duracion_s: 61.6, tramo_temporal: true }];
+  globalThis.vueltaElegida = 1;
+  const texto = coberturaDeLaVista(globalThis.estado.vueltas[0]);
+  assert.ok(/tramo/.test(texto), texto);
+  assert.ok(!/vuelta/.test(texto), "se le dijo «vuelta» a un minuto de ruta: " + texto);
+});
+
+prueba("y la carrera sigue contando vueltas y metros", () => {
+  globalThis.fuente = "f1";
+  globalThis.estado.vueltas = [{ numero: 3, duracion_s: 105.2, largo_m: 7004.0 }];
+  globalThis.vueltaElegida = 3;
+  _fijar.alcance("una");
+  assert.strictEqual(coberturaDeLaVista(globalThis.estado.vueltas[0]),
+                     "vuelta 3 · 7.004,0 m observados");
+  _fijar.alcance("carrera");
+  assert.strictEqual(coberturaDeLaVista(globalThis.estado.vueltas[0]), "1 vueltas observadas");
+  _fijar.alcance("una");
+});
+
+prueba("un tramo de bus no se cuenta en vueltas", () => {
+  /* «Vuelta 1» sobre un minuto de ruta fuerza el vocabulario del circuito sobre
+     un dato de calle, y ademas promete que hay una vuelta 2. */
+  globalThis.fuente = "can";
+  globalThis.estado.vueltas = [{ numero: 1, duracion_s: 61.6, tramo_temporal: true }];
+  assert.strictEqual(hayVueltas(), false);
+  globalThis.fuente = "f1";
+  assert.strictEqual(hayVueltas(), true);
+});
+
+prueba("sin ninguna vuelta declarada tampoco hay vueltas", () => {
+  globalThis.fuente = "f1";
+  globalThis.estado.vueltas = [];
+  assert.strictEqual(hayVueltas(), false);
 });
 
 console.log("identidad_y_cronometraje: " + hechas + " comprobaciones");
