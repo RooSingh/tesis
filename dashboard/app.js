@@ -1505,6 +1505,47 @@ function pintarEsquinas() {
    redibuje: asi `prefers-reduced-motion` lo desactiva desde la hoja de
    estilos, sin ramas en el codigo. */
 
+/* La velocidad mas alta vista **en lo que se lleva mirado**, por sesion.
+
+   No es el maximo de la sesion entera: es el de lo que ya se mostro, que es lo
+   que hace que el numero suba mientras se mira y no que aparezca hecho. Por eso
+   se registra al pintar y no se pide a la base.
+
+   Se ata a la sesion para no arrastrar la maxima de una a la siguiente: una
+   punta de Monza colgada de una vuelta de Monaco seria una afirmacion falsa
+   sobre este coche en esta pista. */
+let _maximaVista = { sesion: null, valor: null };
+
+function registrarMaxima(sesion, velocidad) {
+  if (_maximaVista.sesion !== (sesion || null)) {
+    _maximaVista = { sesion: sesion || null, valor: null };
+  }
+  if (typeof velocidad === "number" && Number.isFinite(velocidad)
+      && (_maximaVista.valor === null || velocidad > _maximaVista.valor)) {
+    _maximaVista.valor = velocidad;
+  }
+  return _maximaVista.valor;
+}
+
+/* Como se escribe el valor de un medidor.
+
+   Los continuos llevan una decimal por debajo de diez y entero por encima, que
+   es lo que habia. **La marcha no es continua**: es la que el vehiculo tiene
+   puesta, y escribir «3,0» sugiere una precision que no existe ---el propio
+   tablero razona en otro lado que una marcha no pasa por la 4,5---. El punto
+   muerto y la marcha atras tampoco son numeros que quepa promediar, de modo que
+   se dicen con su nombre. */
+function textoDeMedidor(rotulo, valor) {
+  if (valor === null || valor === undefined) return "—";
+  if (rotulo === "Marcha") {
+    const g = Math.round(valor);
+    return g < 0 ? "R" : g === 0 ? "N" : String(g);
+  }
+  return Math.abs(valor) < 10
+    ? Number(valor).toFixed(1).replace(".", ",")
+    : String(Math.round(valor));
+}
+
 let secuenciaMedidor = 0;
 
 function medidor(rotulo, valor, maximo, unidad, colorFrio, colorCaliente) {
@@ -1528,8 +1569,7 @@ function medidor(rotulo, valor, maximo, unidad, colorFrio, colorCaliente) {
       '" stroke="var(--linea)" stroke-width="1.5" stroke-linecap="round"></line>';
   }
 
-  const escrito = (valor === null || valor === undefined) ? "—"
-    : (Math.abs(valor) < 10 ? Number(valor).toFixed(1).replace(".", ",") : Math.round(valor));
+  const escrito = textoDeMedidor(rotulo, valor);
   return '<div class="medidor" data-medidor="' + rotulo +
     '"><svg viewBox="0 0 124 112" role="img" aria-label="' +
     rotulo + ': ' + escrito + ' ' + unidad + '">' +
@@ -1590,8 +1630,7 @@ function actualizarMedidor(rotulo, valor, maximo, unidad) {
   const arco = el.querySelector(".arco-valor");
   if (arco) arco.setAttribute("stroke-dashoffset", (_CIRC_MEDIDOR * (1 - frac)).toFixed(1));
   const txt = el.querySelector(".valor-medidor");
-  const escrito = valor === null || valor === undefined ? "—"
-    : (Math.abs(valor) < 10 ? Number(valor).toFixed(1).replace(".", ",") : String(Math.round(valor)));
+  const escrito = textoDeMedidor(rotulo, valor);
   if (txt && txt.textContent !== escrito) txt.textContent = escrito;
   const svg = el.querySelector("svg");
   /* Se anuncia lo mismo que se escribe. Con el valor sin medir, `valor` es
@@ -1612,7 +1651,13 @@ function pintarMedidores() {
        ["Marcha", t0f.marcha, 8, "de 8", tinta("--auto-3"), tinta("--auto-3")],
        ["Velocidad", t0f.velocidad, 360, "km/h", frio, tinta("--alerta")]]
     : [["Régimen", t0f.rpm, 13000, "rpm", frio, tinta("--critico")],
+       ["Marcha", t0f.marcha, 8, "de 8", tinta("--auto-3"), tinta("--auto-3")],
        ["Velocidad", t0f.velocidad, 360, "km/h", frio, tinta("--alerta")],
+       /* La maxima comparte escala con la velocidad a proposito: puestas al
+          lado, dos arcos con la misma referencia dejan ver de un vistazo cuanto
+          falta para la punta, y con escalas distintas no se podrian comparar. */
+       ["Máxima", registrarMaxima(sesionAbierta, t0f.velocidad), 360, "km/h",
+        tinta("--acento"), tinta("--alerta")],
        ["Temp. motor", t0f.tempMotor, 140, "°C", frio, tinta("--critico")],
        /* `ers_stored_energy` viene en julios y el deposito son cuatro
           megajulios: mostrarlo como porcentaje sobre cien daba «4.000.000 %».
@@ -6211,6 +6256,34 @@ function prepararEscucha() {
   conectarFlujoEnVivo();
 }
 
+/* Pide la procedencia de una sesion que se esta capturando y la incorpora.
+
+   Se pide una sola vez por sesion: la procedencia cambia dentro de una captura
+   solo si el flujo se redeclara, y para eso ya esta el reintento de abajo, que
+   corre unas pocas veces y para. Insistir seria consultar sesenta veces por
+   minuto para recibir lo mismo. */
+function pedirProcedenciaViva(sesion, intentos) {
+  const quedan = intentos === undefined ? 5 : intentos;
+  pedir("/sesiones/" + encodeURIComponent(sesion) + "/procedencia")
+    .then(d => {
+      if (!estado.abierta || estado.abierta.session_id !== sesion) return;
+      if (d && d.procedencia) {
+        estado.abierta.procedencia = d.procedencia;
+        if (d.procedencia.circuito) estado.abierta.circuito = d.procedencia.circuito;
+        render();
+        return;
+      }
+      /* Todavia no hay: el flujo puede no haber declarado su tipo de sesion.
+         Se vuelve a preguntar unas pocas veces, cada vez mas espaciado, y se
+         deja de insistir. Sin procedencia el tablero ya sabe que decir. */
+      if (quedan > 1) {
+        setTimeout(() => pedirProcedenciaViva(sesion, quedan - 1),
+                   (6 - quedan) * 2000 + 2000);
+      }
+    })
+    .catch(() => {});
+}
+
 function vaciarVivo(sesion) {
   vivo.sesion = sesion || null;
   vivo.ultimos.clear(); vivo.series.clear(); vivo.distancia.clear(); vivo.vuelta.clear();
@@ -6479,6 +6552,14 @@ function incorporarTelemetriaViva(m, recuperando) {
       session_id: m.session_id, fuente: m.source_type, senales: null, vehiculos: 0,
       filas: 0, procedencia: {},
     };
+    /* Y se le pregunta su procedencia, porque la de arriba viene vacia.
+       El catalogo se recuenta por detras y **no incluye la sesion que se esta
+       capturando ahora**, de modo que aca no se la encuentra y se arma una
+       entrada propia sin circuito ni parrilla: el tablero decia «sesion sin
+       procedencia declarada» mientras se corria, y le ponia el nombre recien al
+       terminar. El capturador la escribe apenas el flujo se declara; lo que
+       faltaba era pedirla. */
+    pedirProcedenciaViva(m.session_id);
     estado.series = {}; estado.pidiendo = {}; estado.posiciones = {}; estado.pidiendoPos = {};
     cambiaronLasSeries();
     estado.disponibles = new Set();

@@ -67,6 +67,11 @@ const preludio = `
   function avisar(texto, esError) { AVISOS.push({ texto, esError }); }
   function pintarTransporte() {}
   function render() {}
+  /* La adopcion de una sesion viva le pide su procedencia al backend. Aca no
+     hay backend: se devuelve una promesa que nunca resuelve, de modo que el
+     camino se ejerce entero y no se inventa una procedencia que el banco no
+     tiene con que dar. */
+  function pedir() { return new Promise(function () {}); }
   function marcar() {}
   function armarAutos(ids) { AUTOS = ids.map(id => ({ id, propio: false, nombre: id })); }
   const document = { getElementById: () => null };
@@ -106,6 +111,10 @@ const PIEZAS = [
   extraerFuncion("congelarTrazadoVivo"),
   extraerFuncion("claveVehiculoPropio"),
   extraerFuncion("incorporarTelemetriaViva"),
+  // Adoptar una sesion viva le pide su procedencia al backend. Se trae la pieza
+  // igual y el preludio da un `pedir` que nunca resuelve, de modo que la
+  // adopcion se ejerce entera sin salir a la red.
+  extraerFuncion("pedirProcedenciaViva"),
   extraerFuncion("nuevaSesionEnCurso"),
   extraerFuncion("aperturaVigente"),
   extraerFuncion("sigueVigente"),

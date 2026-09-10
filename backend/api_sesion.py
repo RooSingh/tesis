@@ -169,6 +169,34 @@ def reconstruir_catalogo() -> dict[str, Any]:
 # 3. Vueltas de una sesion
 # --------------------------------------------------------------------------
 
+@router.get("/sesiones/{session_id}/procedencia")
+def procedencia_de_sesion(session_id: str) -> dict[str, Any]:
+    """Circuito, tipo de sesion y parrilla de una sesion, sin pasar por el catalogo.
+
+    POR QUE NO ALCANZABA CON `/sesiones`. Esa lista sale de `sesiones_catalogo`,
+    que se recuenta por detras y **no incluye una sesion que se esta capturando
+    ahora**. Mientras se escucha, el tablero no la encuentra ahi y arma una
+    entrada propia sin procedencia, de modo que llamaba «sesion sin procedencia
+    declarada» a una captura cuyo circuito el flujo ya habia declarado, y solo
+    le ponia el nombre al terminar.
+
+    Esto la lee de los metadatos de captura, que el capturador escribe apenas el
+    flujo se declara. No toca la base: es el mismo indice que enriquece el
+    catalogo.
+    """
+
+    proc = procedencia_sesiones.de(session_id)
+    return {
+        "session_id": session_id,
+        "procedencia": proc,
+        # Que no haya no es un fallo: una captura que todavia no vio un paquete
+        # de sesion con tipo declarado no tiene procedencia que dar.
+        "motivo_ausencia": None if proc else (
+            "Todavia no hay metadatos de captura para esta sesion: el flujo no "
+            "declaro su tipo de sesion, o la captura no la hizo esta maquina."),
+    }
+
+
 @router.get("/sesiones/{session_id}/vueltas")
 def listar_vueltas(
         session_id: str,
