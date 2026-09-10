@@ -663,6 +663,89 @@ class ParrillaCompletaTests(unittest.TestCase):
         self.assertIsNone(kw[0]["vehiculos_validos"])
 
 
+class EleccionDePilotosTests(unittest.TestCase):
+    """Elegir a quien escuchar, por nombre, sin pedir la parrilla entera.
+
+    POR QUE POR NOMBRE Y NO POR INDICE. El indice del arreglo de vehiculos no
+    significa nada para quien conduce: no es la posicion en la carrera ni el
+    numero del coche, es el lugar que el juego le dio en una lista. Quien mira
+    el tablero elige a Verstappen, no al indice 4.
+
+    POR QUE ES UNA ELECCION Y NO LA PARRILLA COMPLETA. Medido sobre la carrera
+    de Spa: cada coche pide 1.511 senales/s y el propio 1.673. Los veintidos
+    piden 33.250, y la cadena sobre la Raspberry no los sostiene. Seis piden
+    9.228, que si entra. La eleccion es lo que convierte un objetivo imposible
+    en uno medido.
+    """
+
+    PARRILLA = {0: "Mauricio", 1: "Max Verstappen", 2: "Lando Norris",
+                3: "Charles Leclerc", 4: "George Russell"}
+
+    def test_el_coche_propio_va_siempre_aunque_no_se_lo_nombre(self):
+        """No es una cortesia: es de quien conduce, y es el que tiene `motion_ex`.
+
+        Una eleccion que lo dejara afuera dejaria la sesion sin el unico
+        vehiculo del que el protocolo entrega los datos completos.
+        """
+
+        elegidos = capturar_f1_25.indices_elegidos(
+            self.PARRILLA, ["Lando Norris"], propio=0)
+        self.assertIn(0, elegidos)
+        self.assertEqual(elegidos, frozenset({0, 2}))
+
+    def test_no_distingue_mayusculas_ni_acentos_ni_espacios(self):
+        """El nombre se escribe a mano o se copia de una lista; las dos formas valen."""
+
+        elegidos = capturar_f1_25.indices_elegidos(
+            self.PARRILLA, ["  max VERSTAPPEN ", "charles leclerc"], propio=0)
+        self.assertEqual(elegidos, frozenset({0, 1, 3}))
+
+    def test_el_apellido_solo_alcanza(self):
+        """Es como se los nombra en la television y en el propio juego."""
+
+        elegidos = capturar_f1_25.indices_elegidos(
+            self.PARRILLA, ["Norris", "Russell"], propio=0)
+        self.assertEqual(elegidos, frozenset({0, 2, 4}))
+
+    def test_un_nombre_que_no_corre_se_ignora_sin_romper(self):
+        """La lista puede venir de una sesion anterior con otra parrilla.
+
+        Fallar dejaria la captura sin arrancar por un nombre viejo; publicar un
+        indice inventado escribiria filas de un vehiculo que no existio.
+        """
+
+        elegidos = capturar_f1_25.indices_elegidos(
+            self.PARRILLA, ["Fernando Alonso", "Norris"], propio=0)
+        self.assertEqual(elegidos, frozenset({0, 2}))
+
+    def test_se_acota_a_lo_que_la_cadena_sostiene(self):
+        """El tope no es un numero de gusto: es lo que la medicion permite.
+
+        Cada coche pide 1.511 senales/s y el consumidor sostiene alrededor de
+        9.900 en serie. Aceptar una lista de veinte nombres seria prometer algo
+        que se sabe que no se cumple, y el modo en que no se cumple es el peor
+        posible: no falla, se pierden muestras de todos, tambien del propio.
+
+        Se recorta respetando el orden pedido, que es el orden de interes de
+        quien eligio.
+        """
+
+        elegidos = capturar_f1_25.indices_elegidos(
+            self.PARRILLA, ["Russell", "Leclerc", "Norris", "Verstappen"],
+            propio=0, tope=3)
+        self.assertEqual(elegidos, frozenset({0, 4, 3}))
+
+    def test_sin_eleccion_no_se_filtra_nada(self):
+        """`None` y una lista vacia no son lo mismo que una lista con nombres.
+
+        Sin eleccion, quien decide sigue siendo `parrilla_completa`: esta
+        funcion no debe convertir «no elegi» en «solo mi coche».
+        """
+
+        self.assertIsNone(capturar_f1_25.indices_elegidos(self.PARRILLA, [], propio=0))
+        self.assertIsNone(capturar_f1_25.indices_elegidos(self.PARRILLA, None, propio=0))
+
+
 class DescartesDelPublicadorTests(unittest.TestCase):
     """Lo que el cliente no llega a enviar se cuenta aparte, no como enviado.
 
