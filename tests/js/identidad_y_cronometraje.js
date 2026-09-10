@@ -167,6 +167,7 @@ const NOMBRES = [
   "ejeVigente", "motivoDelEjeEspacial", "coberturaDeLaVista",
   "explicacionDelTrazado",
   "textoDeLaValidacion",
+  "claveDeSesionOpenF1", "parrillaDesdePilotos",
   "puntoDelBusEn", "_indiceEnElRecorrido", "valoresSobreElRecorrido",
   "tramosDelRecorrido", "tintaDelValor",
 ];
@@ -254,6 +255,7 @@ const {
   ejeVigente, motivoDelEjeEspacial, coberturaDeLaVista,
   explicacionDelTrazado,
   textoDeLaValidacion,
+  claveDeSesionOpenF1, parrillaDesdePilotos,
   pedirTrazado, rutasPedidas,
   senalesParaElRecorrido,
   pieDelRecorrido,
@@ -3446,6 +3448,133 @@ prueba("y sin comprobacion el titulo no promete una", () => {
   _fijar.pista({ derivado: true, advertencia: "Forma reconstruida por integracion.",
                  validacion: null });
   assert.strictEqual(explicacionDelTrazado(), "Forma reconstruida por integracion.");
+});
+
+/* ==================================================================
+   25. LA PARRILLA DE OPENF1 EXISTIA Y NADIE LA PEDIA
+   ------------------------------------------------------------------
+   El tablero rotulaba «Vehículo 1, índice interno del protocolo» sobre una
+   sesion donde la API contesta «Max VERSTAPPEN · VER · Red Bull Racing» con el
+   color del equipo. El dato estaba entero en el contexto deportivo desde que se
+   importo; lo que faltaba era la consulta.
+
+   La identidad de una sesion guardada venia de `/adquisiciones`, que la declara
+   por captura. Esa ruta es del simulador: para OpenF1 contesta la lista vacia,
+   **correctamente**, porque esta fuente no se capturo, se importo. Su parrilla
+   vive en otro sitio.
+   ================================================================== */
+
+/* Los tres pilotos de la sesion 9947, tal como los devuelve la API. */
+const PILOTOS_9947 = [
+  { driver_number: 1, full_name: "Max VERSTAPPEN", name_acronym: "VER",
+    team_name: "Red Bull Racing", team_colour: "4781D7" },
+  { driver_number: 4, full_name: "Lando NORRIS", name_acronym: "NOR",
+    team_name: "McLaren", team_colour: "F47600" },
+  { driver_number: 81, full_name: "Oscar PIASTRI", name_acronym: "PIA",
+    team_name: "McLaren", team_colour: "F47600" },
+];
+
+prueba("la clave de sesion sale del identificador y no se pide aparte", () => {
+  assert.strictEqual(claveDeSesionOpenF1("openf1:session:9947"), "9947");
+  /* Y no se inventa una para lo que no la tiene. */
+  assert.strictEqual(claveDeSesionOpenF1("can:segmento:sample_28"), null);
+  assert.strictEqual(claveDeSesionOpenF1("f1_25:session:3731090176871608020"), "3731090176871608020");
+  assert.strictEqual(claveDeSesionOpenF1(""), null);
+  assert.strictEqual(claveDeSesionOpenF1(null), null);
+});
+
+prueba("cada piloto queda atado al vehiculo que la telemetria nombra", () => {
+  /* Si la clave no coincide con `vehicle_id`, la parrilla nombra a gente que
+     no esta y nadie queda identificado. */
+  const p = parrillaDesdePilotos("openf1:session:9947", PILOTOS_9947);
+  assert.strictEqual(p.disponible, true);
+  assert.deepStrictEqual(p.vehiculos.map(v => v.vehicle_id), [
+    "openf1:session:9947:driver:1",
+    "openf1:session:9947:driver:4",
+    "openf1:session:9947:driver:81",
+  ]);
+});
+
+prueba("el nombre, el numero y el equipo llegan tal como la fuente los da", () => {
+  const v = parrillaDesdePilotos("openf1:session:9947", PILOTOS_9947).vehiculos[0];
+  assert.strictEqual(v.nombre, "Max VERSTAPPEN");
+  assert.strictEqual(v.numero, 1);
+  assert.strictEqual(v.equipo, "Red Bull Racing");
+});
+
+prueba("son personas, y eso es un no y no una casilla vacia", () => {
+  /* `esIA` tiene tres estados: si, no, y no se sabe. Un piloto de OpenF1 es un
+     no declarado, no un desconocido. */
+  const v = parrillaDesdePilotos("openf1:session:9947", PILOTOS_9947).vehiculos[0];
+  assert.strictEqual(v.es_ia, false);
+  assert.notStrictEqual(v.es_ia, null);
+});
+
+prueba("la sigla es la que publica la fuente, no tres letras del nombre", () => {
+  /* De «Max VERSTAPPEN» recortando salen «MAX», que no es como se lo rotula en
+     ningun cronometraje. OpenF1 publica `name_acronym`. */
+  reiniciar();
+  globalThis.fuente = "openf1";
+  globalThis.estado.abierta = { session_id: "openf1:session:9947" };
+  /* Una sesion importada no declara adquisiciones ---`/adquisiciones` contesta
+     la lista vacia--- y entonces `corrida.adquisicion` queda en `null` y manda
+     la parrilla unica. Es la situacion real de esta fuente. */
+  globalThis.corrida.adquisicion = null;
+  /* La parrilla se ata a **esta** sesion: `parrillaVigente` descarta la que
+     quedo de otra, y ese cuidado no se puede saltear en la prueba. */
+  anotarParrillas("openf1:session:9947",
+                  [{ clave: "contexto",
+                     parrilla: parrillaDesdePilotos("openf1:session:9947", PILOTOS_9947) }]);
+  const i = identidadDeVehiculo("openf1:session:9947:driver:1");
+  assert.strictEqual(i.etiqueta, "VER",
+                     "la marca del trazado dice «" + i.etiqueta + "» en vez de VER");
+  assert.strictEqual(i.nombre, "Max VERSTAPPEN");
+  assert.strictEqual(i.declarada, true);
+  assert.ok(/Red Bull/.test(i.completa), i.completa);
+});
+
+prueba("con una sola parrilla y sin adquisicion elegida, manda esa", () => {
+  /* Es lo que permite que la parrilla del contexto sirva sin inventar una
+     adquisicion: una sesion importada no tiene dos capturas que puedan nombrar
+     gente distinta en el mismo indice, que es la ambiguedad que este cuidado
+     existe para atajar. */
+  reiniciar();
+  globalThis.fuente = "openf1";
+  globalThis.estado.abierta = { session_id: "openf1:session:9947" };
+  globalThis.corrida.adquisicion = null;
+  anotarParrillas("openf1:session:9947",
+                  [{ clave: "contexto",
+                     parrilla: parrillaDesdePilotos("openf1:session:9947", PILOTOS_9947) }]);
+  assert.ok(parrillaVigente(), "la parrilla del contexto no llego a aplicarse");
+  /* Y con una adquisicion elegida que no es la suya, no se la fuerza. */
+  globalThis.corrida.adquisicion = "otra";
+  assert.strictEqual(parrillaVigente(), null);
+  globalThis.corrida.adquisicion = null;
+});
+
+prueba("sin sigla declarada se sigue recortando el nombre", () => {
+  /* El simulador no publica siglas: ese camino no se puede romper. */
+  reiniciar();
+  globalThis.fuente = "f1";
+  ponerParrilla({ disponible: true, vehiculos: [
+    { vehicle_id: CAR19, nombre: "NORRIS", numero: 4, equipo: "McLaren" }] });
+  assert.strictEqual(identidadDeVehiculo(CAR19).etiqueta, "NOR");
+});
+
+prueba("un piloto sin nombre no entra a la parrilla", () => {
+  /* Nombrar a medias es peor que no nombrar: `identidadDeVehiculo` ya tiene su
+     respaldo explicito para el que no se conoce. */
+  const p = parrillaDesdePilotos("openf1:session:9947", [
+    { driver_number: 7, full_name: null, name_acronym: "XXX" },
+    { driver_number: 1, full_name: "Max VERSTAPPEN", name_acronym: "VER" },
+  ]);
+  assert.strictEqual(p.vehiculos.length, 1);
+  assert.strictEqual(p.vehiculos[0].numero, 1);
+});
+
+prueba("una parrilla vacia se declara no disponible", () => {
+  assert.strictEqual(parrillaDesdePilotos("openf1:session:9947", []).disponible, false);
+  assert.strictEqual(parrillaDesdePilotos("openf1:session:9947", null).disponible, false);
 });
 
 console.log("identidad_y_cronometraje: " + hechas + " comprobaciones");

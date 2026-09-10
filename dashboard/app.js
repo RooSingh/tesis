@@ -702,13 +702,71 @@ function identidadDeVehiculo(clave) {
     numero: numero,
     equipo: declarado.equipo || null,
     esIA: typeof declarado.es_ia === "boolean" ? declarado.es_ia : null,
-    /* Tres letras, en mayusculas, como los cronometrajes de television. Si el
-       nombre es mas corto, va entero: recortar a lo que no hay no es un
-       criterio. */
-    etiqueta: declarado.nombre.slice(0, 3).toUpperCase(),
+    /* Tres letras, en mayusculas, como los cronometrajes de television.
+
+       LA SIGLA LA DECLARA LA FUENTE CUANDO LA TIENE. Recortar el nombre a tres
+       letras es un respaldo, no un criterio: de «Max VERSTAPPEN» sale «MAX»,
+       que no es como se lo rotula en ningun cronometraje. OpenF1 publica
+       `name_acronym` ---«VER»--- y esa es la sigla de verdad. Si el nombre es
+       mas corto que tres letras, va entero: recortar a lo que no hay tampoco
+       es un criterio. */
+    etiqueta: (declarado.etiqueta || declarado.nombre.slice(0, 3)).toUpperCase(),
     completa: conNumero + (declarado.equipo ? " · " + declarado.equipo : ""),
     declarada: true, indice: indice,
   };
+}
+
+/* LA PARRILLA DE OPENF1 EXISTIA Y NADIE LA PEDIA.
+   ============================================================
+   El tablero rotulaba «Vehículo 1, índice interno del protocolo» sobre una
+   sesion donde la API contesta «Max VERSTAPPEN · VER · Red Bull Racing» con el
+   color del equipo. El dato estaba entero en `racing_*` desde que se importo el
+   contexto; lo que faltaba era la consulta.
+
+   POR QUE NO LLEGABA POR EL CAMINO DE SIEMPRE. La identidad de una sesion
+   guardada viene de `/adquisiciones`, que la declara por captura. Esa ruta es
+   del simulador: para OpenF1 contesta la lista vacia, correctamente, porque
+   esta fuente no se capturo ---se importo---. Su parrilla vive en el contexto
+   deportivo, que es otro sitio y otra consulta.
+
+   Se arma una adquisicion sola, con la clave del contexto, porque una sesion
+   importada no tiene dos capturas que puedan nombrar gente distinta en el mismo
+   indice: es la ambiguedad que `parrillaVigente` cuida, y aca no existe. */
+function claveDeSesionOpenF1(sessionId) {
+  const partes = String(sessionId || "").split(":");
+  const ultima = partes[partes.length - 1];
+  return /^\d+$/.test(ultima) ? ultima : null;
+}
+
+function parrillaDesdePilotos(sessionId, pilotos) {
+  const vehiculos = (pilotos || []).map(d => ({
+    vehicle_id: sessionId + ":driver:" + d.driver_number,
+    nombre: d.full_name || null,
+    numero: Number.isFinite(d.driver_number) ? d.driver_number : null,
+    equipo: d.team_name || null,
+    /* La sigla de television, declarada por la fuente. */
+    etiqueta: d.name_acronym || null,
+    /* Son personas: no es una casilla sin llenar, es un no. */
+    es_ia: false,
+  })).filter(v => v.nombre);
+  return { disponible: vehiculos.length > 0, vehiculos: vehiculos };
+}
+
+function pedirParrillaDeOpenF1(sessionId) {
+  const clave = claveDeSesionOpenF1(sessionId);
+  if (!clave) return;
+  const apertura = aperturaVigente();
+  pedir("/racing/sessions/" + encodeURIComponent(clave) + "/drivers",
+        { senal: senalDeSesion() })
+    .then(pilotos => {
+      if (!sigueVigente(apertura)) return;
+      const parrilla = parrillaDesdePilotos(sessionId, pilotos);
+      if (!parrilla.disponible) return;
+      anotarParrillas(sessionId, [{ clave: "contexto", parrilla: parrilla }]);
+      renombrarAutos();
+      render();
+    })
+    .catch(e => { if (e instanceof TypeError) console.error(e); });
 }
 
 /* EL PROPIO NO ES EL PRIMERO DE LA LISTA.
@@ -4227,6 +4285,39 @@ function vueltaSiguienteDeclarada(numero) {
   return lista[i + 1].numero;
 }
 
+/* La precarga se decide por tiempo de pared, que es el plazo real antes de que
+   el reproductor necesite la vuelta. A 10x, dos vueltas de cien segundos estan
+   a diez y veinte segundos; esperar a entrar en cada una deja muy poco margen
+   ante una consulta lenta. Siempre se trae la siguiente y, dentro del horizonte,
+   las adicionales se encadenan para no ocupar todas las conexiones juntas. */
+const HORIZONTE_PRECARGA_S = 20;
+function vueltasParaPrecargar(numero) {
+  const lista = estado.vueltas || [];
+  const indice = lista.findIndex(v => v.numero === numero);
+  if (indice === -1 || indice + 1 >= lista.length) return [];
+  const rapidez = Math.max(1, velocidadRep || 1);
+  let hastaElInicio = duracionDeVuelta(numero) / rapidez;
+  const resultado = [];
+  for (let i = indice + 1; i < lista.length; i++) {
+    if (resultado.length && hastaElInicio > HORIZONTE_PRECARGA_S) break;
+    resultado.push(lista[i].numero);
+    hastaElInicio += duracionDeVuelta(lista[i].numero) / rapidez;
+  }
+  return resultado;
+}
+
+function precargarVueltas(numero, apertura) {
+  let cola = Promise.resolve();
+  vueltasParaPrecargar(numero).forEach(siguiente => {
+    cola = cola.then(() => {
+      if (!sigueVigente(apertura)) return null;
+      const series = asegurarVuelta(siguiente, undefined, true);
+      asegurarPosiciones(siguiente, true);
+      return series || null;
+    });
+  });
+}
+
 /* Que vueltas aportaron muestras al ultimo dibujo. Lo escribe `dibujarTraza` y
    lo lee la poda: mientras una vuelta este en la ventana, soltarla vaciaria
    media pantalla. */
@@ -6789,7 +6880,11 @@ const vivo = {
 function terminarEscucha() {
   const recien = vivo.sesion;
   vivo.objetivo = null; vivo.aceptaNueva = false; vivo.pedida = false; vivo.otra = null;
-  if (vivo.silencio) { clearTimeout(vivo.silencio); vivo.silencio = null; }
+  /* El flujo se cierra antes de cambiar de modo. Un lote SSE que ya estaba en
+     cola podia llegar despues del clic y volver a poner el tablero en `vivo`,
+     aunque la persona acabara de pedir exactamente lo contrario. */
+  cerrarFlujoEnVivo();
+  vaciarVivo(null);
   estadoSesion = estado.abierta ? "cargado" : "vacio";
   if (!recien) { render(); return; }
   estado.motivo = "Escucha detenida. Abriendo lo que se acaba de grabar…";
@@ -6988,6 +7083,10 @@ const MAX_PUNTOS_DE_RECORRIDO = 4000;
 const PUNTOS_ENTRE_REDIBUJOS = 25;
 
 function anotarPosicionViva(vehiculo, marca) {
+  /* Congelado significa una vuelta cerrada, no una ventana movil de vueltas.
+     Si se siguen agregando posiciones, el `Z` del SVG une la punta de la vuelta
+     actual con un punto antiguo y dibuja una cuerda que nunca se recorrio. */
+  if (PISTA.medidoEnVivo === true && PISTA.enConstruccion === false) return;
   const ultimos = vivo.ultimos.get(vehiculo);
   if (!ultimos) return;
   const mx = ultimos.get("world_position_x");
@@ -7024,16 +7123,10 @@ function anotarPosicionViva(vehiculo, marca) {
 /* Rehace el dibujo del recorrido si crecio lo suficiente. Devuelve si cambio. */
 function armarTrazadoVivo() {
   if (estadoSesion !== "vivo") return false;
-  /* Un trazado guardado manda sobre este. Uno medido en vivo, no: sigue
-     mejorando mientras la sesion siga emitiendo.
-
-     Antes se dejaba de rehacer al cerrar la primera vuelta, y el circuito
-     quedaba con la forma que hubiera alcanzado a medir esa vuelta ---con sus
-     huecos y sus tramos toscos--- para el resto de la sesion. Las vueltas
-     siguientes vuelven a pasar por los mismos metros y son justamente las que
-     lo rectifican. Se sigue cerrando el camino, que es lo que permite ver al
-     coche dar vueltas en vez de alargar una linea. */
-  if (PISTA.path && !PISTA.enConstruccion && !PISTA.medidoEnVivo) return false;
+  /* Un circuito ya cerrado manda sobre los puntos que lleguen despues. Mezclar
+     varias vueltas en una polilinea cerrada inventa un tramo desde la punta
+     actual hasta el comienzo de la primera. */
+  if (PISTA.path && !PISTA.enConstruccion) return false;
   const clave = claveVehiculoPropio();
   const puntos = clave ? vivo.recorrido.get(clave) : null;
   if (!puntos || puntos.length < 3) return false;
@@ -7047,10 +7140,7 @@ function armarTrazadoVivo() {
   }
   vivo.recorridoDibujado = revision;
 
-  // Una vez cerrado sigue cerrado: reabrirlo cada vez que se rectifica lo
-  // haria parpadear entre un circuito y una linea.
-  const yaCerrado = PISTA.medidoEnVivo === true && PISTA.enConstruccion === false;
-  const armado = trazadoAPath(puntos, false, yaCerrado);
+  const armado = trazadoAPath(puntos, false, false);
   if (!armado.path) return false;
   PISTA = {
     path: armado.path,
@@ -7059,8 +7149,8 @@ function armarTrazadoVivo() {
     muestras: puntos.length,
     vuelta: vivo.vuelta.get(clave) || null,
     curvas: CURVAS,
-    enConstruccion: !yaCerrado,
-    medidoEnVivo: yaCerrado || undefined,
+    enConstruccion: true,
+    medidoEnVivo: undefined,
     // Con esto la marca del vehiculo se ubica por su ultima posicion medida,
     // sin esperar a que el camino se vuelva a dibujar.
     proyectarMundo: armado.proyectarMundo,
@@ -7713,6 +7803,13 @@ function olvidarLaCorrida() {
    etapa dentro de la misma. Lo que queda afuera es la identidad ---cual sesion
    esta abierta, que fuente es--- porque eso no cambia al cambiar de etapa. */
 function olvidarLoDeLaCorrida() {
+  /* Algunos consumidores reutilizan esta limpieza sin cargar el transporte.
+     `typeof` conserva ese contrato y, en el tablero, invalida el callback que
+     una apertura anterior hubiera dejado pendiente. */
+  if (typeof _relojPedidos !== "undefined") {
+    clearTimeout(_relojPedidos);
+    _relojPedidos = null;
+  }
   estado.vueltas = []; estado.series = {}; estado.pidiendo = {};
   estado.posiciones = {}; estado.pidiendoPos = {};
   /* LO DERIVADO SE SUELTA CON LO ORIGINAL.
@@ -7782,6 +7879,12 @@ function abrirSesionGuardada(id) {
 
   const ruta = "/sesiones/" + encodeURIComponent(id);
   const conMotivo = (p, guardar) => p.then(guardar).catch(e => guardar({ error: e.message }));
+
+  /* La parrilla de OpenF1 no viene por `/adquisiciones` ---esa ruta es del
+     simulador y para esta fuente contesta vacio---: vive en el contexto
+     deportivo. Se pide aparte y sin que nadie la espere: llega, renombra y se
+     vuelve a dibujar. Ver `pedirParrillaDeOpenF1`. */
+  if (fuente === "openf1") pedirParrillaDeOpenF1(id);
 
   // Lo que quedo pidiendo la sesion anterior ya no le sirve a nadie.
   const apertura = nuevaSesionEnCurso();
@@ -9643,31 +9746,14 @@ function moverCabezal(fraccion, porMano) {
        alcanzan para distinguir un arrastre de una parada, y son invisibles
        reproduciendo, donde entre vuelta y vuelta pasan segundos. */
     clearTimeout(_relojPedidos);
+    const apertura = aperturaVigente();
     _relojPedidos = setTimeout(() => {
+      if (!sigueVigente(apertura)) return;
       const v = instante().vuelta;
       asegurarVuelta(v);
       asegurarPosiciones(v);
       refrescarContexto();
-      /* Lo de la vuelta siguiente sale cuando lo de esta ya esta en camino:
-         pedir las dos juntas ponia ocho consultas en vuelo y el navegador
-         abre seis, de modo que la que hacia falta para dibujar quedaba
-         haciendo cola detras de una que todavia no se mira. */
-      clearTimeout(_relojSiguiente);
-      _relojSiguiente = setTimeout(() => {
-        /* LA SIGUIENTE DECLARADA, NO `v + 1`. Los numeros de vuelta no tienen
-           por que ser seguidos ---una vuelta sin muestras no figura--- y pedir
-           `v + 1` a ciegas gasta una consulta que la API solo puede contestar
-           con una lista vacia. Se pregunta cual viene despues en la lista que
-           `/vueltas` declaro; en la ultima no hay ninguna y no se pide nada.
-
-           Y va **de fondo**: los paneles que estan en pantalla tienen dato
-           valido, y encenderles el velo mientras se precarga lo que todavia no
-           se mira dice que no lo tienen. */
-        const siguiente = vueltaSiguienteDeclarada(v);
-        if (siguiente === null) return;
-        asegurarVuelta(siguiente, undefined, true);
-        asegurarPosiciones(siguiente, true);
-      }, 1200);
+      precargarVueltas(v, apertura);
     }, 200);
   }
   /* La traza crece con el cabezal, asi que hay que volver a trazarla; treinta
@@ -9696,7 +9782,6 @@ function moverCabezal(fraccion, porMano) {
 let _ultimaComparacion = 0;
 let _ultimaVueltaDibujada = -1;
 let _ultimaTraza = 0;
-let _relojSiguiente = null;
 let _relojPedidos = null;
 
 /* Cuanto eje entra en cada grafico. En F1 25 son metros; en las fuentes sin
