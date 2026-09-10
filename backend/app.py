@@ -23,6 +23,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse
 from fastapi.responses import StreamingResponse
+from fastapi.staticfiles import StaticFiles
 
 from adapters import f1_25 as f1_25_adapter
 from backend import api_analisis
@@ -235,6 +236,38 @@ def _validar_limite(limite: int) -> None:
         )
 
 
+# QUE UN DESPLIEGUE SE VEA SIN VACIAR EL CACHE A MANO.
+#
+# `StaticFiles` manda `ETag` y `Last-Modified`, pero no manda `Cache-Control`, y
+# sin esa cabecera el navegador **no pregunta**: aplica una frescura heuristica
+# ---una fraccion del tiempo transcurrido desde la ultima modificacion--- y
+# sirve lo que tiene guardado. Delante hay ademas una red de distribucion que
+# trata a un `.css` como un archivo estatico cualquiera.
+#
+# El resultado es que copiar el tablero a la Raspberry no alcanza para verlo.
+# Paso: la hoja de estilos ya era la nueva en el disco de la Raspberry y en la
+# respuesta de la API, y el navegador seguia dibujando la vieja. El tablero pide
+# sus archivos por nombre pelado ---`styles.css`, sin version--- de modo que no
+# hay nada en la direccion que le avise al cache que el contenido cambio.
+#
+# `no-cache` no significa no guardar, que es `no-store`: significa preguntar
+# antes de usar lo guardado. Con el `ETag` que ya se manda, esa pregunta se
+# contesta casi siempre con un 304 sin cuerpo, asi que no cuesta el archivo.
+class TableroQueSeRevalida(StaticFiles):
+    """Los archivos del tablero, con la obligacion de preguntar antes de usarse."""
+
+    def file_response(self, *args, **kwargs):
+        respuesta = super().file_response(*args, **kwargs)
+        respuesta.headers["Cache-Control"] = "no-cache"
+        return respuesta
+
+
+def _tablero_revalidado(ruta: Path) -> FileResponse:
+    """La misma obligacion, para lo que no pasa por el montaje."""
+
+    return FileResponse(ruta, headers={"Cache-Control": "no-cache"})
+
+
 @app.get("/")
 def root():
     """El estado del backend, o el tablero cuando esta aplicacion lo sirve.
@@ -246,7 +279,7 @@ def root():
     """
 
     if SERVIR_TABLERO:
-        return FileResponse(Path(DIRECTORIO_TABLERO) / "index.html")
+        return _tablero_revalidado(Path(DIRECTORIO_TABLERO) / "index.html")
     return {"message": "Backend de telemetria activo"}
 
 
@@ -1166,7 +1199,5 @@ async def live_stream_endpoint() -> StreamingResponse:
 # Apagado por omision: en desarrollo siguen siendo dos servidores. El por que de
 # encenderlo hacia afuera esta en `backend/config.py`.
 if SERVIR_TABLERO:
-    from fastapi.staticfiles import StaticFiles
-
-    app.mount("/", StaticFiles(directory=DIRECTORIO_TABLERO, html=True),
+    app.mount("/", TableroQueSeRevalida(directory=DIRECTORIO_TABLERO, html=True),
               name="tablero")
