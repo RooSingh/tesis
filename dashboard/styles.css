@@ -1073,7 +1073,19 @@
      que la propia separacion ya dice. */
   .corte-consulta { height: 1px; margin: 26px 0 18px; background: var(--linea-fuerte); }
 
-  .tablero .lista-autos { max-height: 190px; }
+  /* LA LISTA LLENA SU PANEL EN VEZ DE PARARSE A LOS 190 PIXELES.
+     El panel se estira al alto de su fila ---`align-items: stretch` unas lineas
+     mas abajo--- de modo que con veinte pilotos la lista se desplazaba dentro
+     de una ventana chica mientras debajo quedaba panel vacio. Se desplazaban
+     cuatro nombres teniendo sitio para doce.
+
+     `flex: 1` la deja tomar lo que sobre despues del selector de alcance, y el
+     tope en unidades de ventana la acota **para el caso contrario**: cuando es
+     esta lista la que decide el alto de la fila, sin el crecia hasta los veinte
+     nombres y estiraba los tres paneles de al lado. */
+  .tablero .lista-autos {
+    flex: 1 1 auto; min-height: 0; max-height: min(56vh, 620px);
+  }
   .tablero.principal { align-items: start; }
   .abajo .ejes-g { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; align-items: center; }
   .abajo .ejes-g svg { max-height: 260px; }

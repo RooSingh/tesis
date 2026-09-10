@@ -2404,11 +2404,24 @@ function pintarPista() {
   }
 
   const NSV = "http://www.w3.org/2000/svg";
-  /* Sobre el trazado se dibujan **todos** los vehiculos de los que la fuente
-     publica posicion, no solo los seleccionados: la seleccion decide de quien
-     se grafican las señales, no a quien se ve en la pista. */
+  /* SOBRE LA PISTA VA QUIEN ESTA ELEGIDO, Y NO TODO EL QUE PUBLIQUE POSICION.
+     Antes se dibujaban todos: la seleccion decidia de quien se grafican las
+     señales y la pista mostraba el resto igual. Con un solo vehiculo capturado
+     las dos listas eran la misma y la diferencia no existia. Desde que se
+     escucha a varios pilotos si existe, y entonces el trazado contradice al
+     resto del tablero: cuatro marcas moviendose mientras los graficos, el
+     cronometraje y el vehiculo hablan de uno.
+
+     El coche propio se dibuja aunque no este elegido, porque es de quien se
+     estan mirando las señales y una pista sin el no ubica nada. */
   const enPista = posicionesAhora();
-  const claves = enPista ? Object.keys(enPista) : [...seleccion];
+  const todosEnPista = enPista ? Object.keys(enPista) : [...seleccion];
+  const propioEnPista = claveVehiculoPropio();
+  let claves = todosEnPista.filter(
+    id => seleccion.has(id) || id === propioEnPista);
+  /* Sin nada que mostrar se cae a lo que haya, que es preferible a una pista
+     vacia: puede no haberse elegido todavia. */
+  if (!claves.length) claves = todosEnPista;
   if (rehacer) {
     claves.forEach(id => {
       const a = AUTOS.find(x => x.id === id) || autoPropio();
