@@ -709,18 +709,39 @@
 
   /* CAN REAL ES UNA CABINA TEMPORAL, NO UNA CABINA DE CARRERA.
      Esta captura no publica posicion, clima, danos ni cronometraje. Dejar esos
-     cinco paneles vacios hace parecer que fallo la carga y le quita sitio a lo
-     que si fue medido. Los graficos ocupan la cabina completa; el selector de
-     senales y el diagrama de aceleraciones siguen debajo. */
+     paneles vacios hace parecer que fallo la carga y le quita sitio a lo que si
+     fue medido: quedan fuera de la cabina. El selector de senales y el diagrama
+     de aceleraciones siguen debajo.
+
+     EL TRAZADO SI SE QUEDA. Esta regla escondia la columna entera, y con ella
+     el trazado, porque el bus no publica coordenadas y `/trazado` ---que sale
+     de `world_position_*`--- contestaba vacio. La forma existe igual: se
+     obtiene integrando velocidad y guinada, y desde que el tablero la pide,
+     esconder la columna escondia lo unico que esa columna tenia para dar. */
   :root[data-fuente="can"] .cabina {
-    grid-template-columns: minmax(0, 1fr);
+    grid-template-columns: minmax(0, 300px) minmax(0, 1fr);
     grid-template-rows: minmax(0, 1fr);
   }
   :root[data-fuente="can"] .cabina .col-cabina { display: none; }
+  :root[data-fuente="can"] .cabina .col-cabina.izquierda {
+    display: flex; grid-column: 1; grid-row: 1;
+  }
+  /* De esa columna, solo el trazado: el clima lo publica la carrera, no el bus. */
+  :root[data-fuente="can"] .cabina .col-cabina.izquierda > .instrumento:not([data-panel="trazado"]) {
+    display: none;
+  }
   :root[data-fuente="can"] .cabina .graficos-cabina {
-    grid-row: 1;
+    grid-column: 2; grid-row: 1;
     grid-template-columns: repeat(4, minmax(0, 1fr));
     grid-template-rows: repeat(2, minmax(0, 1fr));
+  }
+  /* Con la cabina partida en dos, cuatro graficos por fila dejan de entrar: a
+     partir de aca van de a dos, en cuatro filas, que es el mismo alto. */
+  @media (max-width: 1500px) {
+    :root[data-fuente="can"] .cabina .graficos-cabina {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      grid-template-rows: repeat(4, minmax(0, 1fr));
+    }
   }
 
   /* EL TRAZADO SE QUEDA CON EL SITIO DE LA LEYENDA.

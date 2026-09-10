@@ -44,18 +44,44 @@ function extraer(nombre) {
 
 /* Las tablas de unidades tambien se sacan del archivo: escribirlas aca de nuevo
    dejaria pasar el dia en que alguien agregue un canal en milisegundos al
-   `app.js` y no a la prueba. */
+   `app.js` y no a la prueba.
+
+   EL PUNTO Y COMA QUE CIERRA, NO EL PRIMERO QUE APARECE. Esto cortaba en el
+   primer `;` del archivo despues del nombre, y un `;` dentro de un comentario o
+   de una cadena ---«lo contesta la API sesion por sesion;»--- partia la
+   declaracion al medio. El resultado no era un error legible: era la constante
+   siguiente pegada a media declaracion. Se cuenta la profundidad de llaves,
+   corchetes y parentesis, y se saltean comentarios y cadenas. */
 function constante(nombre) {
   const i = fuenteApp.indexOf("const " + nombre + " =");
   if (i === -1) throw new Error("no esta la constante " + nombre);
-  const fin = fuenteApp.indexOf(";", i);
-  return fuenteApp.slice(i, fin + 1);
+  return fuenteApp.slice(i, finDeDeclaracion(i) + 1);
+}
+
+function finDeDeclaracion(desde) {
+  let hondo = 0;
+  for (let i = desde; i < fuenteApp.length; i++) {
+    const c = fuenteApp[i], dos = fuenteApp.slice(i, i + 2);
+    if (dos === "//") { i = fuenteApp.indexOf("\n", i); if (i === -1) break; continue; }
+    if (dos === "/*") { i = fuenteApp.indexOf("*/", i + 2) + 1; continue; }
+    if (c === '"' || c === "'" || c === "`") {
+      for (i++; i < fuenteApp.length; i++) {
+        if (fuenteApp[i] === "\\") i++;
+        else if (fuenteApp[i] === c) break;
+      }
+      continue;
+    }
+    if (c === "{" || c === "[" || c === "(") hondo++;
+    else if (c === "}" || c === "]" || c === ")") hondo--;
+    else if (c === ";" && hondo === 0) return i;
+  }
+  throw new Error("no cierra la declaracion que empieza en " + desde);
 }
 
 function variable(nombre) {
   const i = fuenteApp.indexOf("let " + nombre + " =");
   if (i === -1) throw new Error("no esta la variable " + nombre);
-  return fuenteApp.slice(i, fuenteApp.indexOf(";", i) + 1);
+  return fuenteApp.slice(i, finDeDeclaracion(i) + 1);
 }
 
 /* El estado del modulo que estas funciones leen. */
@@ -116,6 +142,9 @@ const NOMBRES = [
   "vueltasEnTramoAcumulado", "claveVehiculoPropio", "duracionDeVuelta", "duracionSesionS",
   "vueltasDeLaSesion", "iniciosDeVuelta", "calcularInstante",
   "vueltaEnFraccion", "trazadoAPath",
+  "pedirTrazado",
+  "hayCoordenadasMedidas", "porQueNoHayCoordenadas", "hayEjeDeDistancia",
+  "explicacionDelTrazado",
   "puntoDelBusEn", "_indiceEnElRecorrido", "valoresSobreElRecorrido",
   "tramosDelRecorrido", "tintaDelValor",
 ];
@@ -125,6 +154,8 @@ const CONSTANTES = ["SENAL_DE", "UNIDAD_QUE_MUESTRA_EL_TABLERO",
                     "UNIDAD_POR_FUENTE",
                     "MARGEN_DEL_TRAZADO", "ALTURA_DEL_ROTULO", "CUERPO_DEL_ROTULO",
                     "TRAMOS_DE_LA_TRAZA",
+                    "COORDENADAS_POR_FUENTE", "EJE_DE_DISTANCIA_POR_FUENTE",
+                    "FUENTES",
                     "METRICAS"];
 
 const sacadas = new Function(
@@ -140,6 +171,13 @@ const sacadas = new Function(
   "let _esencialResuelta = false;\n" +
   "let _vueltasEnPantalla = [];\n" +
   "let _instanteClave = null;\n" +
+  "let _rutas = [];\n" +
+  "function pedirRecorridoDelBus() { _rutas.push('/can/recorrido'); }\n" +
+  "function conCarga(cual, fn) { return fn(); }\n" +
+  "function pedir(u) { _rutas.push(u); return Promise.resolve(null); }\n" +
+  "function sufijoDeCorrida() { return ''; }\n" +
+  "function senalDeSesion() { return null; }\n" +
+  "const TESTIGO = { trazadosPedidos: 0, trazadosDescartados: 0, trazadosAplicados: 0 };\n" +
   "let _selloDeIdentidad = 0;\n" +
   "const _vistasVivas = new Map();\n" +
   'let ejeComparacion = "distancia";\n' +
@@ -158,6 +196,7 @@ const sacadas = new Function(
   /* Dos ganchos sobre el estado de modulo. Las variables del preludio son
      `let` dentro del ambito de la funcion construida: escribirlas desde afuera
      con `globalThis` no las toca, y leerlas asi devuelve otra cosa. */
+  "  rutasPedidas: () => { const r = _rutas; _rutas = []; return r; }," +
   "  fijarContextoDeCorrida: v => { _contextoDeCorrida = v; }," +
   "  selloDeIdentidad: () => _selloDeIdentidad," +
   "  _fijar," +
@@ -182,9 +221,14 @@ const {
   elegirCorrida, nuevaSesionEnCurso, fijarContextoDeCorrida, selloDeIdentidad,
   _fijar,
   trazadoAPath, puntoDelBusEn, _indiceEnElRecorrido,
+  hayCoordenadasMedidas, porQueNoHayCoordenadas, hayEjeDeDistancia,
+  explicacionDelTrazado,
+  pedirTrazado, rutasPedidas,
+  COORDENADAS_POR_FUENTE, EJE_DE_DISTANCIA_POR_FUENTE,
   valoresSobreElRecorrido, tramosDelRecorrido, tintaDelValor,
   UNIDAD_QUE_MUESTRA_EL_TABLERO, MARGEN_DEL_TRAZADO, ALTURA_DEL_ROTULO,
   CUERPO_DEL_ROTULO, METRICAS, TRAMOS_DE_LA_TRAZA,
+  FUENTES: FUENTES_REALES,
 } = sacadas;
 
 globalThis.instante = () => calcularInstante();
@@ -2360,6 +2404,90 @@ prueba("una señal quieta no pinta el recorrido de un extremo", () => {
   /* Con minimo igual a maximo la razon seria 0/0. Se pinta a medio camino: la
      señal existe y no se movio, que no es lo mismo que estar en el minimo. */
   assert.ok(/ 50%/.test(tintaDelValor(7, 7, 7)), tintaDelValor(7, 7, 7));
+});
+
+prueba("tener posicion medida y tener metro medido son dos preguntas", () => {
+  /* El defecto: pedir el recorrido reconstruido cuando falta el **eje de
+     distancia**. OpenF1 no tiene metro medido y si publica `track_position_*`,
+     de modo que esa condicion le habria quitado el trazado que si tiene. */
+  globalThis.fuente = "openf1";
+  assert.strictEqual(hayEjeDeDistancia(), false, "OpenF1 no declara distancia");
+  assert.strictEqual(hayCoordenadasMedidas(), true,
+                     "a OpenF1 se le quito el trazado que si publica");
+});
+
+prueba("una forma derivada la explica quien la calculo", () => {
+  /* El texto viajaba en la respuesta, se guardaba en `PISTA.advertencia` y no
+     se mostraba en ningun lado: la explicacion existia y no se daba. */
+  globalThis.fuente = "can";
+  _fijar.pista({ derivado: true, advertencia: "reconstruido por integracion de velocidad y guiñada" });
+  assert.strictEqual(explicacionDelTrazado(),
+                     "reconstruido por integracion de velocidad y guiñada");
+});
+
+prueba("si el punto de acceso no explico nada, lo explica la fuente", () => {
+  globalThis.fuente = "can";
+  _fijar.pista({ derivado: true, advertencia: "" });
+  assert.strictEqual(explicacionDelTrazado(), porQueNoHayCoordenadas("can"));
+});
+
+prueba("un circuito medido sigue explicandose por su fuente", () => {
+  globalThis.fuente = "f1";
+  _fijar.pista({ derivado: false });
+  /* `FUENTES_REALES` y no `FUENTES`: una prueba de mas arriba deja un doble en
+     `globalThis` y la funcion extraida lee el del archivo. */
+  assert.strictEqual(explicacionDelTrazado(), FUENTES_REALES.f1.pista);
+  assert.ok(/world_position/.test(explicacionDelTrazado()),
+            "un trazado medido dejo de nombrar la señal que lo declara");
+});
+
+prueba("a OpenF1 se le sigue pidiendo su trazado declarado", () => {
+  /* La consulta que sale es la comprobacion: `/trazado` para las fuentes con
+     posicion medida, `/can/recorrido` solo para el bus. */
+  globalThis.estado.vueltas = [];
+  rutasPedidas();
+  globalThis.fuente = "openf1";
+  pedirTrazado("/sesiones/x");
+  const r = rutasPedidas();
+  assert.strictEqual(r.length, 1);
+  assert.ok(r[0].startsWith("/sesiones/x/trazado"),
+            "OpenF1 termino pidiendo el recorrido reconstruido: " + r[0]);
+});
+
+prueba("al bus se le pide la forma reconstruida y no un trazado vacio", () => {
+  globalThis.estado.vueltas = [];
+  rutasPedidas();
+  globalThis.fuente = "can";
+  pedirTrazado("/sesiones/x");
+  assert.deepStrictEqual(rutasPedidas(), ["/can/recorrido"]);
+});
+
+prueba("la simulacion no cambio de camino", () => {
+  globalThis.estado.vueltas = [];
+  rutasPedidas();
+  globalThis.fuente = "f1";
+  pedirTrazado("/sesiones/x");
+  assert.ok(rutasPedidas()[0].startsWith("/sesiones/x/trazado"));
+});
+
+prueba("solo el bus necesita que la forma se reconstruya", () => {
+  assert.strictEqual(hayCoordenadasMedidas("f1"), true);
+  assert.strictEqual(hayCoordenadasMedidas("openf1"), true);
+  assert.strictEqual(hayCoordenadasMedidas("can"), false);
+});
+
+prueba("las dos tablas cubren las mismas fuentes", () => {
+  /* Una fuente nueva sin fila en una de las dos se leeria como «tiene de todo»,
+     que es el fallo silencioso. */
+  assert.deepStrictEqual(Object.keys(COORDENADAS_POR_FUENTE).sort(),
+                         Object.keys(EJE_DE_DISTANCIA_POR_FUENTE).sort());
+});
+
+prueba("la fuente que no publica posicion dice por que", () => {
+  const porque = porQueNoHayCoordenadas("can");
+  assert.ok(porque.length > 20, "el motivo esta vacio");
+  assert.strictEqual(porQueNoHayCoordenadas("f1"), "esta fuente no declara posición medida",
+                     "una fuente con posicion no tiene motivo que dar");
 });
 
 console.log("identidad_y_cronometraje: " + hechas + " comprobaciones");

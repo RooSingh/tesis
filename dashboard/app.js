@@ -420,6 +420,43 @@ const EJE_DE_DISTANCIA_POR_FUENTE = {
     "no hay metro medido con el que ubicar una muestra en el circuito" },
 };
 
+/* QUE FUENTE PUBLICA POSICION MEDIDA, Y CUAL NO.
+   Se parece a la pregunta de arriba y no es la misma. Una fuente puede no tener
+   metro medido y si tener posicion: OpenF1 es exactamente eso ---sin distancia
+   de vuelta, con `track_position_x/y` declarados---. Y `/trazado` sale de la
+   posicion, no de la distancia. Decidirlo por el eje de distancia le habria
+   quitado el trazado a OpenF1, que lo tiene. */
+const COORDENADAS_POR_FUENTE = {
+  f1: { hay: true, porque: "" },
+  openf1: { hay: true, porque: "" },
+  can: { hay: false, porque:
+    "un bus vehicular de serie no publica posición: la forma del recorrido se " +
+    "obtiene integrando velocidad y velocidad de guiñada, de modo que el trazo " +
+    "es fiel y el sitio del mundo donde ocurrió no es recuperable" },
+};
+
+/* DE DONDE SALE EL DIBUJO DEL TRAZADO, EN UNA FRASE.
+   Cuando la forma es derivada manda el texto que trae el punto de acceso: es el
+   que hizo la reconstruccion y el unico que sabe con que la hizo. Se guardaba y
+   no se mostraba nunca ---tener la explicacion y no darla---. Si no vino, se
+   cae en el motivo declarado para la fuente, y recien despues en la descripcion
+   general de la fuente, que es la que describe una posicion medida. */
+function explicacionDelTrazado() {
+  if (PISTA.derivado) return PISTA.advertencia || porQueNoHayCoordenadas();
+  const f = FUENTES[fuente];
+  return (f && f.pista) || "";
+}
+
+function hayCoordenadasMedidas(cual) {
+  const d = COORDENADAS_POR_FUENTE[cual === undefined ? fuente : cual];
+  return !d || d.hay;
+}
+
+function porQueNoHayCoordenadas(cual) {
+  const d = COORDENADAS_POR_FUENTE[cual === undefined ? fuente : cual];
+  return (d && d.porque) || "esta fuente no declara posición medida";
+}
+
 function hayEjeDeDistancia(cual) {
   const d = EJE_DE_DISTANCIA_POR_FUENTE[cual === undefined ? fuente : cual];
   return !d || d.hay;
@@ -1433,7 +1470,7 @@ function aplicarDisponibilidad() {
     cabPista.textContent = fuente === "can" ? "recorrido reconstruido" : "sin trazado";
   }
   const panelPista = cabPista.closest(".instrumento");
-  if (panelPista) panelPista.title = f.pista;
+  if (panelPista) panelPista.title = explicacionDelTrazado();
 }
 
 /* ---------------- esquinas y daño ---------------- */
@@ -8238,8 +8275,12 @@ function pedirTrazado(ruta) {
      no: para una sesion del bus contesta vacio y el panel se quedaba con el
      rotulo «recorrido reconstruido» y nada debajo ---una etiqueta sin nada
      detras---. La forma existe: se obtiene integrando velocidad y guinada, y
-     `/can/recorrido` la calcula desde hace tiempo. Nadie se la pedia. */
-  if (!hayEjeDeDistancia()) { pedirRecorridoDelBus(); return; }
+     `/can/recorrido` la calcula desde hace tiempo. Nadie se la pedia.
+
+     SE PREGUNTA POR LA POSICION Y NO POR LA DISTANCIA. Son dos carencias
+     distintas: OpenF1 no tiene metro medido y si tiene `track_position_*`, de
+     modo que su trazado sale de `/trazado` como siempre. */
+  if (!hayCoordenadasMedidas()) { pedirRecorridoDelBus(); return; }
   const buena = estado.vueltas.find(v => v.continua !== false && v.completa);
   const cual = buena ? "&vuelta=" + buena.numero : "";
   TESTIGO.trazadosPedidos++;
