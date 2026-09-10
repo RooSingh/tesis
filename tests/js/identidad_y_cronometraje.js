@@ -148,6 +148,7 @@ const NOMBRES = [
   "extremosDeLaTraza", "_rgbDe",
   "nombreDeSenal",
   "panelEstaPresente",
+  "renglonesDelPanelG",
   "cifra",
   "hayCoordenadasMedidas", "porQueNoHayCoordenadas", "hayEjeDeDistancia",
   "explicacionDelTrazado",
@@ -237,6 +238,7 @@ const {
   extremosDeLaTraza, _rgbDe,
   nombreDeSenal,
   panelEstaPresente,
+  renglonesDelPanelG,
   cifra,
   COORDENADAS_POR_FUENTE, EJE_DE_DISTANCIA_POR_FUENTE,
   valoresSobreElRecorrido, tramosDelRecorrido, tintaDelValor,
@@ -2849,6 +2851,113 @@ prueba("la tabla dice que el bus no sostiene ninguno de los dos", () => {
     assert.ok(/class="no"/.test(celdas[3]),
               "la tabla declara que el bus sostiene «" + m[1] + "», y el tablero lo esconde");
   }
+});
+
+/* ==================================================================
+   20. EL TERCER EJE DEL BUS ES LA GUIÑADA, Y SE LEE DE LA GUIÑADA
+   ------------------------------------------------------------------
+   El panel de aceleraciones tiene tres renglones. En el simulador son las tres
+   aceleraciones; en el bus, que no tiene acelerometro vertical, el tercero es
+   la velocidad de guiñada, y el propio renglon la nombra: `yaw_rate`.
+
+   Leia `gVert`, que sale de `g_force_vertical` ---una señal que solo publica el
+   simulador---. En el bus la casilla nunca se llenaba, asi que el renglon
+   mostraba una raya sobre una sesion que trae la guiñada completa: 600 de 600
+   muestras en `sample_01`. Decia el nombre correcto y traia el valor de otra
+   cosa, que es la unica combinacion que no se nota mirando.
+   ================================================================== */
+
+prueba("la guiñada del bus llega al instante con su propio nombre", () => {
+  globalThis.fuente = "can";
+  assert.strictEqual(nombreDeSenal("yaw"), "yaw_rate");
+  /* Y no es la casilla del acelerometro vertical, que el bus no tiene. */
+  assert.strictEqual(nombreDeSenal("gvert"), "g_force_vertical");
+  assert.notStrictEqual(nombreDeSenal("yaw"), nombreDeSenal("gvert"));
+});
+
+prueba("el bus ofrece guiñada y no ofrece acelerometro vertical", () => {
+  assert.ok(CANALES_POR_FUENTE.can.indexOf("yaw") !== -1,
+            "el bus dejo de ofrecer la guiñada");
+  assert.strictEqual(CANALES_POR_FUENTE.can.indexOf("gvert"), -1,
+                     "el bus dice tener un acelerometro vertical que no publica");
+  assert.ok(CANALES_POR_FUENTE.f1.indexOf("gvert") !== -1,
+            "la simulacion perdio su tercer eje");
+});
+
+prueba("en vivo la guiñada tambien llega al instante", () => {
+  /* El instante se arma por dos caminos ---sesion guardada y flujo en vivo--- y
+     el panel lee el mismo campo en los dos. Arreglar uno solo dejaba la raya
+     puesta en el otro. */
+  vivoCon({ yaw_rate: { value: -0.32, unit: "deg/s" },
+            accel_lateral: { value: -0.13, unit: "g" } });
+  globalThis.fuente = "can";      // `vivoCon` reinicia, y el reinicio vuelve a f1
+  const i = calcularInstante();
+  assert.strictEqual(i.yaw, -0.32, "en vivo la guiñada no llega al instante");
+  assert.strictEqual(renglonesDelPanelG(i)[2][1], "-0,3 °/s");
+  globalThis.estadoSesion = "cargado";
+});
+
+prueba("el tercer renglon del bus trae la guiñada y no una raya", () => {
+  /* El defecto exacto: el renglon decia `yaw_rate` y el valor salia de la
+     casilla del acelerometro vertical, que en el bus esta siempre vacia. */
+  globalThis.fuente = "can";
+  const r = renglonesDelPanelG({ gLong: -0.004, gLat: -0.13, gVert: null, yaw: -0.32 });
+  assert.strictEqual(r[2][0], "yaw_rate");
+  assert.strictEqual(r[2][1], "-0,3 °/s",
+                     "el tercer eje muestra una raya sobre una sesion que trae la guiñada");
+});
+
+prueba("el bus nombra sus dos aceleraciones como las publica", () => {
+  globalThis.fuente = "can";
+  const r = renglonesDelPanelG({ gLong: 0.4, gLat: -0.13, gVert: null, yaw: 0 });
+  assert.deepStrictEqual(r.map(x => x[0]),
+                         ["accel_longitudinal", "accel_lateral", "yaw_rate"]);
+  assert.strictEqual(r[0][1], "+0,40 g");
+  assert.strictEqual(r[1][1], "-0,13 g");
+});
+
+prueba("la simulacion sigue mostrando sus tres aceleraciones", () => {
+  globalThis.fuente = "f1";
+  const r = renglonesDelPanelG({ gLong: 1.2, gLat: -2.5, gVert: 0.8, yaw: 99 });
+  assert.deepStrictEqual(r.map(x => x[0]),
+                         ["g_force_longitudinal", "g_force_lateral", "g_force_vertical"]);
+  assert.strictEqual(r[2][1], "+0,80 g",
+                     "el tercer eje de la simulacion dejo de ser el acelerometro vertical");
+});
+
+prueba("una guiñada que no llego es una raya y no un cero", () => {
+  globalThis.fuente = "can";
+  assert.strictEqual(renglonesDelPanelG({ gLong: 0, gLat: 0, yaw: null })[2][1], "—");
+  assert.strictEqual(renglonesDelPanelG({ gLong: 0, gLat: 0 })[2][1], "—");
+  /* Y una guiñada de cero es cero: el vehiculo iba derecho. */
+  assert.strictEqual(renglonesDelPanelG({ gLong: 0, gLat: 0, yaw: 0 })[2][1], "0,0 °/s");
+});
+
+prueba("el instante trae la guiñada de la sesion del bus", () => {
+  reiniciar();
+  globalThis.fuente = "can";
+  globalThis.canalesDeLaFuente = () => CANALES_POR_FUENTE.can;
+  cargarVuelta(1, [0, 100, 200],
+               { distancia_m: [0, 5, 10], speed: [107, 108, 109],
+                 yaw_rate: [-0.8, 0.0, 0.66] }, {});
+  globalThis.estado.vueltas = [{ numero: 1, duracion_s: 0.2,
+                                 desde_utc: iso(T0), hasta_utc: iso(T0 + 200) }];
+  armarAutos([CAR19]);
+  const st = serieTemporal("yaw", 1, CAR19);
+  assert.ok(st && st.t.length === 3, "la guiñada no llego como serie");
+  assert.strictEqual(valorContinuoEn(st, T0 + 200), 0.66);
+  /* Y la casilla del eje vertical sigue vacia: no se rellena con la guiñada. */
+  assert.strictEqual(serieTemporal("gvert", 1, CAR19), null);
+
+  /* Y llega hasta el instante, que es de donde lo lee el panel. Sin esto la
+     serie existe, el panel la nombra, y el renglon muestra una raya. */
+  globalThis.vueltaElegida = 1;
+  globalThis.cabezal = 1;
+  const i = calcularInstante();
+  assert.strictEqual(i.yaw, 0.66,
+                     "la guiñada no llega al instante: el panel la nombra y no la tiene");
+  assert.strictEqual(i.gVert, null, "el eje vertical se lleno con algo que el bus no manda");
+  globalThis.cabezal = 0;
 });
 
 console.log("identidad_y_cronometraje: " + hechas + " comprobaciones");

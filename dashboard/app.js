@@ -1970,17 +1970,36 @@ function pintarClima() {
     '</dl>';
 }
 
+/* LOS TRES RENGLONES DEL PANEL DE ACELERACIONES, CON EL NOMBRE DE LA SEÑAL QUE
+   LLENA CADA UNO EN ESTA FUENTE.
+
+   En el simulador son las tres aceleraciones. En el bus, que no tiene
+   acelerometro vertical, el tercero es la velocidad de guiñada ---y se nombra
+   `yaw_rate`, que es como la publica---.
+
+   EL DEFECTO QUE ESTO CUIDA. Ese tercer renglon decia `yaw_rate` y leia
+   `gVert`, que sale de `g_force_vertical`: una señal que solo publica el
+   simulador. En el bus la casilla nunca se llenaba, de modo que el renglon
+   mostraba una raya sobre una sesion que trae la guiñada completa. Decia el
+   nombre correcto y traia el valor de otra cosa, que es la unica combinacion
+   que no se nota mirando. */
+function renglonesDelPanelG(t) {
+  const g = v => (v === null || v === undefined) ? "—"
+    : (v >= 0 ? "+" : "") + Number(v).toFixed(2).replace(".", ",") + " g";
+  if (fuente === "f1") {
+    return [["g_force_longitudinal", g(t.gLong)], ["g_force_lateral", g(t.gLat)],
+            ["g_force_vertical", g(t.gVert)]];
+  }
+  const guinada = (t.yaw === null || t.yaw === undefined) ? "—"
+    : Number(t.yaw).toFixed(1).replace(".", ",") + " °/s";
+  return [["accel_longitudinal", g(t.gLong)], ["accel_lateral", g(t.gLat)],
+          ["yaw_rate", guinada]];
+}
+
 function pintarG() {
   const tres = fuente === "f1";
   const t = instante();
-  const g = v => (v === null || v === undefined) ? "—"
-    : (v >= 0 ? "+" : "") + Number(v).toFixed(2).replace(".", ",") + " g";
-  // Los nombres son los de la señal que llena cada renglon en esta fuente.
-  const cs = tres
-    ? [["g_force_longitudinal", g(t.gLong)], ["g_force_lateral", g(t.gLat)],
-       ["g_force_vertical", g(t.gVert)]]
-    : [["accel_longitudinal", g(t.gLong)], ["accel_lateral", g(t.gLat)],
-       ["yaw_rate", t.gVert === null ? "—" : Number(t.gVert).toFixed(1).replace(".", ",") + " °/s"]];
+  const cs = renglonesDelPanelG(t);
   /* El HTML de los tres canales se rehacia sesenta veces por segundo para
      mostrar los mismos tres numeros. El nombre del canal se recorta cuando la
      columna es angosta: queda entero en el titulo. */
@@ -8634,7 +8653,8 @@ function calcularInstante() {
       velocidad: velocidad,
       acelerador: leer("throttle"), freno: leer("brake"), rpm: leer("rpm"),
       marcha: leer("gear"), gLong: leer("glong"), gLat: leer("glat"),
-      gVert: leer("gvert"), tempMotor: leer("engineTemp"), ers: leer("ers"),
+      gVert: leer("gvert"), yaw: leer("yaw"),
+      tempMotor: leer("engineTemp"), ers: leer("ers"),
       ersMJ: leer("ers") === null ? null : Number(leer("ers")) / 1e6,
       combustibleKg: leer("fuel"), tempFrenoDel: leer("brakeTemp"),
       tempNeumatico: leer("tyre"), deslizamiento: leer("slip"),
@@ -8750,6 +8770,7 @@ function calcularInstante() {
     gLong: leer("glong"),
     gLat: leer("glat"),
     gVert: leer("gvert"),
+    yaw: leer("yaw"),
     tempMotor: leer("engineTemp"),
     ers: leer("ers"),
     ersMJ: (function () { const v = leer("ers"); return v === null ? null : v / 1e6; })(),
