@@ -771,6 +771,42 @@ class UnAvisoEsDeUnVehiculoTests(unittest.TestCase):
         self.assertNotIn("vehicle_id", consulta)
 
 
+class LaParrillaDiceQuienConduceTests(unittest.TestCase):
+    """El tablero adivinaba quien es el coche propio. Con cuatro, adivinaba mal.
+
+    Lo tomaba del vehiculo cuya serie devolvia primero la consulta. Con **un**
+    vehiculo capturado eso acertaba por construccion: habia uno solo. Con
+    cuatro es arbitrario, y el 2026-09-10 la sesion de Red Bull Ring, corrida
+    con Hamilton, abrio mostrando a Russell ---y el panel de vehiculo en ceros,
+    porque de un rival el protocolo no publica ni temperaturas ni presiones---.
+
+    Es el mismo defecto que se corrigio en las reglas de aviso el mismo dia:
+    **deducir del sintoma lo que la fuente declara**. `player_car_index` viene
+    en la cabecera de cada paquete y dice quien conduce.
+    """
+
+    def test_la_parrilla_marca_cual_es_el_propio(self) -> None:
+        declarada = {"vehiculos": [
+            {"indice": 3, "nombre": "Russell", "numero": 63,
+             "equipo": "Mercedes", "es_ia": True},
+            {"indice": 19, "nombre": "Hamilton", "numero": 44,
+             "equipo": "Ferrari", "es_ia": False}]}
+        salida = api_sesion._vehiculos_nombrados(
+            "f1_25:session:1", declarada, propio="f1_25:session:1:car:19")
+        por_nombre = {v["nombre"]: v for v in salida}
+        self.assertTrue(por_nombre["Hamilton"]["es_propio"])
+        self.assertFalse(por_nombre["Russell"]["es_propio"])
+
+    def test_sin_declaracion_no_se_marca_a_ninguno(self) -> None:
+        """Marcar al primero seria volver a adivinar, con otra excusa."""
+
+        declarada = {"vehiculos": [
+            {"indice": 0, "nombre": "Verstappen", "numero": 33,
+             "equipo": "Red Bull Racing", "es_ia": False}]}
+        salida = api_sesion._vehiculos_nombrados("f1_25:session:1", declarada)
+        self.assertFalse(salida[0]["es_propio"])
+
+
 class VehiculoPropioTests(unittest.TestCase):
     """De quien son los avisos: de quien conduce, y lo declara el flujo."""
 

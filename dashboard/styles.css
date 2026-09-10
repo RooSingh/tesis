@@ -1689,25 +1689,39 @@
      escucha, de modo que no compite por sitio con nada el resto del tiempo.
      Los nombres se envuelven: una parrilla son veinte y no entran en un
      renglon. */
+  /* UNA TIRA, NO UN PANEL. Veinte pilotos son veinte nombres cortos: ocupan
+     dos renglones si se los deja apretados, y cuatro si se los deja holgados.
+     Esta caja no es lo que se mira mientras se corre ---es lo que se toca una
+     vez al empezar--- de modo que cada pixel que ocupa se lo saca a la cabina,
+     que si se mira todo el tiempo. */
   .elige-escucha {
-    display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px;
-    margin: 0 0 12px; padding: 10px 14px;
-    border: 1px solid var(--linea); border-radius: 12px;
+    display: flex; flex-wrap: wrap; align-items: center; gap: 5px 10px;
+    margin: 0 0 8px; padding: 6px 12px;
+    border: 1px solid var(--linea); border-radius: 10px;
     background: var(--superficie-2);
   }
-  .elige-escucha .eyebrow { margin: 0; }
-  .pilotos-escucha { display: flex; flex-wrap: wrap; gap: 6px; }
+  .elige-escucha .eyebrow { margin: 0; font-size: .55rem; }
+  .pilotos-escucha { display: flex; flex-wrap: wrap; gap: 4px; }
   .pilotos-escucha button {
-    padding: 5px 11px; border-radius: 999px;
+    display: inline-flex; align-items: center; gap: 5px;
+    padding: 3px 9px; border-radius: 999px;
     border: 1px solid var(--linea-fuerte);
     background: var(--superficie); color: var(--texto-medio);
-    font-family: var(--cuerpo); font-size: .72rem; font-weight: 700;
-    letter-spacing: .03em; cursor: pointer;
+    font-family: var(--cuerpo); font-size: .66rem; font-weight: 700;
+    letter-spacing: .02em; line-height: 1.5; cursor: pointer;
   }
-  /* El fondo dice si esta elegido; el borde, de que equipo es. Son dos
+  /* El punto del equipo. No se encoge ni se estira: es una referencia, y una
+     referencia que cambia de tamano deja de servir para comparar. */
+  .pilotos-escucha .punto-equipo {
+    flex: 0 0 auto; width: 7px; height: 7px; border-radius: 50%;
+    box-shadow: 0 0 0 1px rgba(0, 0, 0, .35) inset;
+  }
+  /* El fondo dice si esta elegido; el punto, de que equipo es. Son dos
      preguntas distintas y cada una tiene su canal: pintadas las dos en el
      fondo, un piloto no elegido de un equipo claro se leia como elegido. */
-  .pilotos-escucha button[aria-pressed="true"] { color: #0b0f14; }
+  .pilotos-escucha button[aria-pressed="true"] {
+    background: var(--acento); color: var(--sobre-acento); border-color: transparent;
+  }
   /* El coche propio no se puede destildar, pero no se ve apagado como los que
      no entran: se escucha siempre, que es lo contrario de estar fuera. */
   .pilotos-escucha button.propio { opacity: 1; cursor: default; font-weight: 800; }

@@ -202,9 +202,13 @@ def procedencia_de_sesion(session_id: str) -> dict[str, Any]:
                 "motivo": ("ninguna captura de esta sesion declara una parrilla, "
                            "o hay mas de una y declaran participantes distintos")}
     if declarada and declarada.get("vehiculos"):
+        # Quien conduce sale del flujo, no de que vehiculo tenga mas senales.
+        with db.obtener_conexion() as _c, _c.cursor() as _cur:
+            _propio = _vehiculo_propio(_cur, _fuente_de(session_id), session_id)
         parrilla = {
             "disponible": True,
-            "vehiculos": _vehiculos_nombrados(session_id, declarada),
+            "vehiculos": _vehiculos_nombrados(session_id, declarada,
+                                              propio=_propio),
             "vehiculos_en_carrera": declarada.get("vehiculos_en_carrera"),
             "origen": declarada.get("origen"),
             "captura": (declarada.get("captura") or {}).get("archivo"),
@@ -1265,7 +1269,8 @@ FORMA_DEL_VEHICULO = "%s:car:%d"
 
 
 def _vehiculos_nombrados(session_id: str, declarada: dict,
-                         con_telemetria: set[str] | None = None) -> list[dict]:
+                         con_telemetria: set[str] | None = None,
+                         propio: str | None = None) -> list[dict]:
     """Los participantes de una parrilla, unidos a la clave tecnica del vehiculo.
 
     LA UNION SE DECLARA, NO SE ADIVINA. `vehicle_id` se compone en el adaptador
@@ -1289,6 +1294,17 @@ def _vehiculos_nombrados(session_id: str, declarada: dict,
             "numero": v["numero"],
             "equipo": v["equipo"],
             "es_ia": v["es_ia"],
+            # QUIEN CONDUCE, DECLARADO Y NO ADIVINADO.
+            #
+            # El tablero lo tomaba del vehiculo cuya serie devolvia primero la
+            # consulta. Con un vehiculo capturado eso acertaba por construccion;
+            # con cuatro es arbitrario, y una sesion corrida con Hamilton abria
+            # mostrando a Russell ---y el panel de vehiculo en ceros, porque de
+            # un rival el protocolo no publica ni temperaturas ni presiones---.
+            #
+            # Sin declaracion no se marca a ninguno: marcar al primero seria
+            # volver a adivinar con otra excusa.
+            "es_propio": propio is not None and clave == propio,
         }
         if con_telemetria is not None:
             fila["con_telemetria"] = clave in con_telemetria
@@ -1297,7 +1313,8 @@ def _vehiculos_nombrados(session_id: str, declarada: dict,
 
 
 def _parrilla_de_la_adquisicion(session_id: str, fuente: str, desde, hasta,
-                                shas: list, con_telemetria: set[str]) -> dict:
+                                shas: list, con_telemetria: set[str],
+                                propio: str | None = None) -> dict:
     """La parrilla de **esta adquisicion**, unida a las claves tecnicas.
 
     LA UNION SE DECLARA, NO SE ADIVINA. `vehicle_id` se compone en el adaptador
@@ -1337,7 +1354,7 @@ def _parrilla_de_la_adquisicion(session_id: str, fuente: str, desde, hasta,
                            % len(candidatas)),
                 "con_telemetria": len(con_telemetria)}
 
-    vehiculos = _vehiculos_nombrados(session_id, declarada, con_telemetria)
+    vehiculos = _vehiculos_nombrados(session_id, declarada, con_telemetria, propio)
 
     return {
         "disponible": True,
@@ -1428,7 +1445,8 @@ def adquisiciones(session_id: str) -> dict:
                 # la raiz porque dos capturas de la misma sesion pueden declarar
                 # gente distinta en el mismo indice.
                 "parrilla": _parrilla_de_la_adquisicion(
-                    session_id, fuente, desde, hasta, shas, set(suyos)),
+                    session_id, fuente, desde, hasta, shas, set(suyos),
+                    _vehiculo_propio(cursor, fuente, session_id)),
                 "fases": _fases_de(cursor, fuente, session_id, clave),
             })
 

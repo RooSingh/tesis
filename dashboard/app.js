@@ -723,9 +723,25 @@ function identidadDeVehiculo(clave) {
    lista. */
 function armarAutos(claves) {
   const tintas = ["--auto-1", "--auto-2", "--auto-3", "--auto-4"];
+  /* LO QUE LA PARRILLA DECLARA GANA A LO QUE SE PUEDA DEDUCIR.
+     La parrilla dice cual es el coche propio ---sale de `player_car_index`, que
+     el juego pone en la cabecera de cada paquete--- y esa es la respuesta. Las
+     dos lineas de abajo son el respaldo para cuando no lo declara: una captura
+     vieja, o la parrilla todavia en viaje.
+
+     Antes eran la unica via, y acertaban por construccion mientras se capturaba
+     un vehiculo: el que tenia serie era el unico que habia. Con cuatro pasan a
+     ser una eleccion arbitraria, y el 2026-09-10 una sesion corrida con
+     Hamilton abrio mostrando a Russell, con el panel de vehiculo en ceros
+     porque de un rival el protocolo no publica temperaturas ni presiones. */
+  const parrilla = parrillaVigente();
+  const declarado = parrilla
+    ? (parrilla.vehiculos.find(v => v.es_propio) || {}).vehicle_id
+    : null;
   const conTelemetria = estado.vehiculoClave;
   const anterior = AUTOS.find(a => a.propio);
-  const propio = (conTelemetria && claves.indexOf(conTelemetria) !== -1) ? conTelemetria
+  const propio = (declarado && claves.indexOf(declarado) !== -1) ? declarado
+               : (conTelemetria && claves.indexOf(conTelemetria) !== -1) ? conTelemetria
                : (anterior && claves.indexOf(anterior.id) !== -1) ? anterior.id
                : claves[0];
   AUTOS = claves.map((c, i) => Object.assign({
@@ -5871,11 +5887,16 @@ function pintarEligeEscucha() {
       b.classList.add("propio");
       b.title = "Tu coche: se escucha siempre, es el unico con telemetria completa";
     }
-    /* El equipo se reconoce por el color antes que por el nombre. Va en el
-       borde y no en el fondo: el fondo dice si esta elegido, y dos cosas
-       distintas no pueden usar el mismo canal sin volverse ilegibles. */
-    b.style.borderColor = colorDeEquipo(v.equipo);
-    if (elegido) b.style.background = colorDeEquipo(v.equipo);
+    /* EL EQUIPO, EN UN PUNTO. NO EN EL BORDE NI EN EL FONDO.
+       Con veinte pilotos, veinte bordes de colores distintos son veinte marcos
+       compitiendo por la atencion, y lo que hay que ver de un vistazo es cuales
+       estan elegidos. Un punto ocupa poco, dice el equipo igual, y deja el
+       fondo y el borde libres para lo unico que cambia al pulsar. */
+    const punto = document.createElement("i");
+    punto.className = "punto-equipo";
+    punto.style.background = colorDeEquipo(v.equipo);
+    punto.title = v.equipo || "";
+    b.insertBefore(punto, b.firstChild);
     if (!esPropio) b.addEventListener("click", () => cambiarEscuchado(v.nombre));
     c.appendChild(b);
   });
