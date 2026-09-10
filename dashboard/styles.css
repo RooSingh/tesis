@@ -677,18 +677,40 @@
   /* `.banco-motor .fila-medidores` fija cuatro columnas y esta mas abajo en
      la hoja: con la misma especificidad ganaba por orden. Se nombra el banco
      tambien aca para que este mande. */
+  /* EL MINIMO BAJA DE 96 A 84 PARA QUE ENTRE UNA COLUMNA MAS.
+     No es un capricho de pixeles: con seis medidores, tres columnas son dos
+     filas y dos columnas son tres. El alto del panel es el que es, y repartirlo
+     entre dos filas en vez de tres le da a cada medidor la mitad mas de
+     diametro. Se gana tamano quitando una fila, no estirando el arco. */
   .panel-motor .banco-motor .fila-medidores {
     flex: 1; min-height: 0;
-    grid-template-columns: repeat(auto-fit, minmax(96px, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(84px, 1fr));
     grid-template-rows: none;
-    grid-auto-rows: minmax(0, 1fr);
-    gap: 6px 12px; align-content: stretch;
+    grid-auto-rows: auto;
+    gap: 6px 10px; align-content: center;
   }
+  /* EL TAMANO SALE DEL ANCHO DE LA CELDA Y NO DEL ALTO QUE SOBRE.
+     Antes el arco llevaba `max-height: 100%` y las filas eran `1fr`: el
+     medidor media lo que quedara de alto dividido por la cantidad de filas.
+     Con el panel apretado eso da arcos de veinte pixeles ---medido en un
+     navegador sin cabeza: seis medidores de 84x20 en una columna de 247 de
+     alto---, y con el panel holgado da seis tamanos distintos segun donde caiga
+     cada uno. El alto no es una medida estable de nada. Ahora manda el ancho de
+     la celda, que la rejilla reparte en partes iguales, y el alto sale de la
+     proporcion. Los seis miden lo mismo porque no pueden medir otra cosa. */
   .panel-motor .medidor { justify-items: center; align-content: center; }
   /* El tope sube de 132 a 168: con la rejilla acomodandose sola, la celda ya
      no es siempre la mitad del panel, y un tope pensado para aquel caso dejaba
      al medidor mas chico que su sitio. Quien manda ahora es la celda. */
-  .panel-motor .medidor svg { max-width: 168px; width: 100%; max-height: 100%; }
+  /* LA PROPORCION SE DECLARA Y NO SE DEDUCE.
+     El arco es un `svg` con `viewBox` y `height: auto`: en Chrome eso basta
+     para que el alto salga de la proporcion del `viewBox`, pero no en todos los
+     navegadores, y donde no sale el medidor queda de un tamano que no es el de
+     ninguno de sus hermanos. Declarar `aspect-ratio` hace que los seis midan lo
+     mismo por construccion, mande el ancho de la celda o el alto de la fila. */
+  .panel-motor .medidor svg {
+    max-width: 168px; width: 100%; height: auto; aspect-ratio: 124 / 112;
+  }
   .panel-motor .medidor .rotulo { font-size: .58rem; letter-spacing: .08em; }
   .panel-motor .medidor { gap: 2px; }
   .panel-motor .barras-medidas { margin-top: 0; gap: 7px; }
