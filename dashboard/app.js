@@ -5621,14 +5621,22 @@ function pintarMetricas() {
 
 let escuchados = null;      // los nombres elegidos, o `null` mientras no se leyo
 let topeEscucha = 6;
+let pidiendoEscuchados = false;
 
+/* SE PIDE UNA VEZ, NO UNA POR DIBUJO.
+   `pintarEligeEscucha` la llama cuando todavia no se leyo la eleccion, y a
+   `render` lo llama el flujo en vivo varias veces por segundo: sin este
+   candado, cada cuadro lanzaba otra peticion mientras la anterior seguia en
+   vuelo. Decenas de GET por segundo para leer un archivo que no cambia. */
 function leerEscuchados() {
+  if (pidiendoEscuchados) return;
+  pidiendoEscuchados = true;
   pedir("/captura/pilotos").then(d => {
-    if (!d) return;
-    escuchados = Array.isArray(d.pilotos) ? d.pilotos : [];
-    if (typeof d.maximo === "number") topeEscucha = d.maximo;
+    escuchados = (d && Array.isArray(d.pilotos)) ? d.pilotos : [];
+    if (d && typeof d.maximo === "number") topeEscucha = d.maximo;
     pintarEligeEscucha();
-  }).catch(() => { escuchados = []; });
+  }).catch(() => { escuchados = []; })
+    .then(() => { pidiendoEscuchados = false; });
 }
 
 function pintarEligeEscucha() {
