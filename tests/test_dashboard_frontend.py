@@ -9,6 +9,7 @@ from pathlib import Path
 
 RAIZ = Path(__file__).resolve().parents[1]
 APP = RAIZ / "dashboard" / "app.js"
+ESTILOS = RAIZ / "dashboard" / "styles.css"
 
 
 class DashboardFrontendTests(unittest.TestCase):
@@ -34,6 +35,40 @@ class DashboardFrontendTests(unittest.TestCase):
         self.assertNotIn("bloque.vehiculos[claveVehiculoPropio()]", codigo)
         self.assertNotIn("bloque.vehiculos[Object.keys(bloque.vehiculos)[0]]", codigo)
         self.assertNotIn("(v / 62)", codigo)
+
+    def test_can_muestra_el_reproductor_y_reserva_la_cabina_para_sus_graficos(self) -> None:
+        estilos = ESTILOS.read_text(encoding="utf-8")
+        self.assertNotIn(
+            '.transporte[data-sin-distancia="si"] #mandos-reproduccion { display: none; }',
+            estilos,
+        )
+        self.assertIn(
+            ':root[data-fuente="can"] .cabina .col-cabina { display: none; }',
+            estilos,
+        )
+        self.assertIn(
+            ':root[data-fuente="can"] .cabina .graficos-cabina {',
+            estilos,
+        )
+        self.assertIn("grid-template-columns: repeat(4, minmax(0, 1fr));", estilos)
+
+    def test_can_mapea_las_trece_senales_reales(self) -> None:
+        codigo = APP.read_text(encoding="utf-8")
+        for senal in (
+            'steerRate: "steer_rate"',
+            'steerFraction: "steer_angle_fraction"',
+            'wheelFL: "wheel_speed_front_left"',
+            'wheelFR: "wheel_speed_front_right"',
+            'wheelRL: "wheel_speed_rear_left"',
+            'wheelRR: "wheel_speed_rear_right"',
+        ):
+            self.assertIn(senal, codigo)
+
+        inicio = codigo.index("const PRINCIPALES_POR_FUENTE")
+        bloque = codigo[inicio:codigo.index("};", inicio)]
+        for metrica in ("speed", "throttle", "glong", "steer",
+                        "brake", "glat", "steerRate", "yaw"):
+            self.assertIn('"' + metrica + '"', bloque)
 
 
 class AyudantesDeSerieTests(unittest.TestCase):

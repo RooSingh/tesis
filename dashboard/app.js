@@ -716,7 +716,7 @@ const METRICAS = [
   { id: "gear", rotulo: "Marcha", unidad: "de 8", activa: false, fuentes: ["f1", "openf1"] },
   { id: "glong", rotulo: "G longitudinal", unidad: "g", activa: true, fuentes: ["f1", "can"] },
   { id: "glat", rotulo: "G lateral", unidad: "g", activa: false, fuentes: ["f1", "can"] },
-  { id: "steer", rotulo: "Dirección", unidad: "norm.", activa: false, fuentes: ["f1", "can"] },
+  { id: "steer", rotulo: "Ángulo de dirección", unidad: "°", activa: false, fuentes: ["f1", "can"] },
   { id: "drs", rotulo: "DRS", unidad: "abierto", activa: false, fuentes: ["f1", "openf1"] },
   { id: "ers", rotulo: "Energía ERS", unidad: "%", activa: false, fuentes: ["f1"] },
   { id: "fuel", rotulo: "Combustible", unidad: "kg", activa: false, fuentes: ["f1"] },
@@ -730,9 +730,12 @@ const METRICAS = [
   { id: "gap", rotulo: "Diferencia al líder", unidad: "s", activa: true, fuentes: ["f1", "openf1"] },
   { id: "gvert", rotulo: "G vertical", unidad: "g", activa: false, fuentes: ["f1"] },
   { id: "steerRate", rotulo: "Giro del volante", unidad: "°/s", activa: false, fuentes: ["can"] },
+  { id: "steerFraction", rotulo: "Dirección normalizada", unidad: "°", activa: false, fuentes: ["can"] },
   { id: "yaw", rotulo: "Guiñada", unidad: "°/s", activa: false, fuentes: ["f1", "can"] },
   { id: "engineTemp", rotulo: "Temp. motor", unidad: "°C", activa: false, fuentes: ["f1"] },
   { id: "wheelFL", rotulo: "Rueda del. izq.", unidad: "km/h", activa: false, fuentes: ["f1", "can"] },
+  { id: "wheelFR", rotulo: "Rueda del. der.", unidad: "km/h", activa: false, fuentes: ["can"] },
+  { id: "wheelRL", rotulo: "Rueda tras. izq.", unidad: "km/h", activa: false, fuentes: ["can"] },
   { id: "wheelRR", rotulo: "Rueda tras. der.", unidad: "km/h", activa: false, fuentes: ["f1", "can"] }
 ];
 
@@ -764,7 +767,10 @@ const LECTURAS = [
 
 const SENAL_CAN = {
   throttle: "gas_pressed", brake: "brake_pressed", glong: "accel_longitudinal",
-  glat: "accel_lateral", steer: "steer_angle", steerRate: "steer_rate", yaw: "yaw_rate"
+  glat: "accel_lateral", steer: "steer_angle", steerRate: "steer_rate",
+  steerFraction: "steer_angle_fraction", yaw: "yaw_rate",
+  wheelFL: "wheel_speed_front_left", wheelFR: "wheel_speed_front_right",
+  wheelRL: "wheel_speed_rear_left", wheelRR: "wheel_speed_rear_right"
 };
 
 const SENAL_OPENF1 = { brake: "brake_applied", drs: "drs_state_code" };
@@ -4090,13 +4096,13 @@ const CANALES_POR_FUENTE = {
        "slip", "wheelFL", "wheelRR", "gap"],
   openf1: ["speed", "throttle", "brake", "rpm", "gear", "drs", "gap"],
   can: ["speed", "throttle", "brake", "glong", "glat", "steer", "steerRate",
-        "yaw", "wheelFL", "wheelRR"]
+        "steerFraction", "yaw", "wheelFL", "wheelFR", "wheelRL", "wheelRR"]
 };
 
 /* QUE VIENE ENCENDIDO Y QUE NO.
    El panel ofrece **todas** las señales graficables que la fuente tenga
-   ---diecinueve en la simulacion, diez en el bus--- y arranca con las cuatro
-   que se miran siempre. Encender una mas agrega su grafico a la cabina;
+   ---diecinueve en la simulacion, trece en el bus--- y arranca con las señales
+   que mejor resumen cada fuente. Encender una mas agrega su grafico a la cabina;
    apagarla lo saca. Antes el panel ofrecia solo esas cuatro y las quince
    restantes vivian nada mas que en la vista de detalle, que es esconder lo
    que la fuente entrega detras de un boton.
@@ -4106,7 +4112,7 @@ const CANALES_POR_FUENTE = {
    lo que estuviera encendido alla: como `speed` y `brake` existen en las dos,
    el bus abria con esas dos y sin las suyas propias ---aceleracion
    longitudinal y direccion---, que son justamente las que lo distinguen. Cada
-   fuente recuerda lo suyo y arranca con sus cuatro. */
+   fuente recuerda su propia seleccion inicial. */
 const CANALES_ELEGIDOS = {};
 
 function elegidos() {
@@ -4134,16 +4140,16 @@ function encenderPrincipales() {
    ---------------------------------------------------------------------
    Poner las diecinueve senales en la pantalla principal las volvia a todas
    igual de importantes, que es lo mismo que no jerarquizar ninguna. La
-   principal muestra **las cuatro que se miran siempre** al leer una vuelta,
-   y llenan exactamente una fila de la grilla. El resto vive en la vista de
-   detalle, a un boton de distancia.
+   principal de carrera muestra las cuatro que se miran siempre y llena una fila.
+   CAN aprovecha la cabina temporal completa con ocho señales en dos filas. El
+   resto vive en la vista de detalle, a un boton de distancia.
 
-   Cuatro y no cinco ni seis: con cuatro columnas, cualquier otro numero
-   deja la fila abierta. */
+   Se usan filas completas de cuatro para mantener la jerarquia visual. */
 const PRINCIPALES_POR_FUENTE = {
   f1: ["speed", "throttle", "brake", "rpm"],
   openf1: ["speed", "throttle", "brake", "rpm"],
-  can: ["speed", "throttle", "glong", "steer"]
+  can: ["speed", "throttle", "glong", "steer",
+        "brake", "glat", "steerRate", "yaw"]
 };
 
 function canalesPrincipales() {
@@ -9408,6 +9414,7 @@ function render() {
      cambia cuantas vueltas tiene la sesion, y sin esto el encabezado seguia
      anunciando la vuelta de la fuente anterior mientras el cronometraje ya
      mostraba la nueva: dos respuestas a la misma pregunta. */
+  raiz.dataset.fuente = fuente;
   pintarEstructura();
   pintarValores();
   pintarTrazas();

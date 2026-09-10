@@ -519,16 +519,10 @@
     background: var(--acento); color: var(--sobre-acento); border-color: var(--acento);
   }
   .transporte[data-modo="reproduccion"] #mandos-reproduccion { display: flex; }
-  /* SIN EJE DE DISTANCIA NO HAY MANDOS, Y EN SU LUGAR VA EL MOTIVO.
-     Va junto a la regla de arriba y con la misma forma a proposito: aquella
-     usa un selector de identificador y gana a cualquier regla escrita en otro
-     sitio con clases, por mucho que este mas abajo. Dos reglas que se pelean
-     por lo mismo tienen que estar a la vista una de la otra. */
-  .transporte[data-sin-distancia="si"] #mandos-reproduccion { display: none; }
   .sin-reproduccion { display: none; }
   .transporte[data-sin-distancia="si"] .sin-reproduccion {
-    display: block; margin: 0; padding: 10px 4px;
-    font-size: .78rem; color: var(--texto-medio); max-width: 96ch;
+    display: block; flex: 0 1 34ch; margin: 0; padding: 10px 4px;
+    font-size: .72rem; color: var(--texto-medio);
   }
   .transporte[data-modo="vivo"] #mandos-vivo { display: flex; }
   .transporte[data-modo="vacio"] #mandos-vacio { display: flex; }
@@ -696,6 +690,22 @@
   .col-cabina.centro > .instrumento { flex: 1; }
   .cabina .graficos-cabina { grid-row: 2; }
   .col-cabina { grid-row: 1; }
+
+  /* CAN REAL ES UNA CABINA TEMPORAL, NO UNA CABINA DE CARRERA.
+     Esta captura no publica posicion, clima, danos ni cronometraje. Dejar esos
+     cinco paneles vacios hace parecer que fallo la carga y le quita sitio a lo
+     que si fue medido. Los graficos ocupan la cabina completa; el selector de
+     senales y el diagrama de aceleraciones siguen debajo. */
+  :root[data-fuente="can"] .cabina {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr);
+  }
+  :root[data-fuente="can"] .cabina .col-cabina { display: none; }
+  :root[data-fuente="can"] .cabina .graficos-cabina {
+    grid-row: 1;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    grid-template-rows: repeat(2, minmax(0, 1fr));
+  }
 
   /* EL TRAZADO SE QUEDA CON EL SITIO DE LA LEYENDA.
      Once nombres de curva ocupaban un tercio del panel y el dibujo quedaba
@@ -1089,8 +1099,20 @@
     .graficos-cabina .grafico-chico canvas { min-height: 104px; }
     .cabina[data-pantalla="completa"] { position: static; inset: auto; z-index: auto; overflow: visible; }
   }
+  @media (max-width: 1180px) {
+    .transporte[data-sin-distancia="si"] .sin-reproduccion { display: none; }
+    :root[data-fuente="can"] .cabina .graficos-cabina {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      grid-template-rows: none;
+    }
+  }
   @media (max-width: 860px) {
     .cabina { grid-template-columns: minmax(0, 1fr); }
+  }
+  @media (max-width: 640px) {
+    :root[data-fuente="can"] .cabina .graficos-cabina {
+      grid-template-columns: minmax(0, 1fr);
+    }
   }
 
   .tablero {

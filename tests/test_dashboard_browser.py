@@ -245,6 +245,7 @@ class DashboardBrowserTests(unittest.TestCase):
 
         self.assertIn("Reproducción temporal de CAN real", dom)
         self.assertIn("20 s", dom)
+        self.assertRegex(dom, r'<html[^>]+data-fuente="can"')
         self.assertIn('aria-label="Velocidad a lo largo del tiempo"', dom)
         self.assertNotIn("La vuelta 1 no se pudo traer", dom)
 
