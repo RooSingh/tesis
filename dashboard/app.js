@@ -1039,7 +1039,7 @@ function cambiarFuente(nueva) {
 function accionDeLaFuente() {
   if (fuente === "f1") {
     return (estadoSesion === "vivo" || estadoSesion === "escuchando")
-      ? { ruta: "/captura/detener", metodo: "POST", cuerpo: undefined,
+      ? { ruta: "/captura/detener", metodo: "POST", cuerpo: undefined, dejaDeSeguir: true,
           hecho: d => "Captura detenida. " + (d.capturas_cerradas !== undefined
             ? d.capturas_cerradas + " sesiones cerradas" : "Sin sesiones nuevas") }
       // Encender el capturador es el acto explicito que pone a este tablero a
@@ -1083,6 +1083,7 @@ document.getElementById("btn-accion").addEventListener("click", () => {
         vivo.objetivo = null; vivo.aceptaNueva = true; vivo.pedida = true; vivo.otra = null;
         prepararEscucha();
       }
+      if (a.dejaDeSeguir) terminarEscucha();
       avisar(a.hecho(d) + (a.sigueVivo ? " · " + esperaDeTelemetria() : ""), false);
       /* EL CATALOGO NO ESTA LISTO CUANDO LA RESPUESTA VUELVE.
          Detener una captura refresca la sesion recien grabada **por detras**:
@@ -6143,6 +6144,42 @@ const vivo = {
   mandoFlujo: null,
   silencio: null,
 };
+
+/* Cierra la escucha y deja el tablero en algo que se pueda usar.
+
+   Detener dejaba el boton diciendo «detener» ---porque el estado seguia siendo
+   `escuchando` y nada lo sacaba de ahi--- de modo que no habia como volver a
+   empezar. Y lo recien grabado no se podia mirar: estaba en la base, pero el
+   tablero seguia esperando telemetria que ya no iba a llegar.
+
+   Lo que se acaba de escuchar es justamente lo que se quiere ver, asi que se
+   abre. El catalogo tarda unos segundos en incorporarlo ---la sesion se recuenta
+   por detras--- y por eso se abre despues de refrescarlo, no antes. */
+function terminarEscucha() {
+  const recien = vivo.sesion;
+  vivo.objetivo = null; vivo.aceptaNueva = false; vivo.pedida = false; vivo.otra = null;
+  if (vivo.silencio) { clearTimeout(vivo.silencio); vivo.silencio = null; }
+  estadoSesion = estado.abierta ? "cargado" : "vacio";
+  if (!recien) { render(); return; }
+  estado.motivo = "Escucha detenida. Abriendo lo que se acaba de grabar…";
+  render();
+  const abrirCuandoEste = (quedan) => {
+    if (SESIONES.some(x => x.session_id === recien)) { abrirSesionGuardada(recien); return; }
+    if (quedan <= 1) {
+      estado.motivo = "Escucha detenida. La sesión está en la base; si no aparece " +
+                      "en la lista, abrila desde «Abrir sesión guardada».";
+      render();
+      return;
+    }
+    setTimeout(() => {
+      pedir("/sesiones?limite=400")
+        .then(c => { SESIONES = (c.sesiones || []).filter(x => x.filas > 0); })
+        .catch(() => {})
+        .then(() => abrirCuandoEste(quedan - 1));
+    }, 1200);
+  };
+  abrirCuandoEste(8);
+}
 
 /* Deja el tablero listo para una sesion que todavia no llego.
 

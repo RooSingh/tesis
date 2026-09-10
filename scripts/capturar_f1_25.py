@@ -658,6 +658,7 @@ def capturar_sesion(sock: socket.socket, primer_datagrama: bytes,
     estable_desde_s: float | None = None
     ultimo_perfil = None
     descartados = 0
+    anotada_la_parrilla = False
     motivo = "silencio: se dejo de recibir"
 
     with f1_capture.EscritorCaptura(provisional) as escritor:
@@ -721,6 +722,20 @@ def capturar_sesion(sock: socket.socket, primer_datagrama: bytes,
                     # El ultimo, como el resto: la parrilla se completa cuando la
                     # sesion arranca, no en el menu.
                     participantes = decodificado
+                    # Y se vuelve a anotar, porque la parrilla llega **despues**
+                    # que el paquete de sesion. Anotando solo al cambiar el
+                    # perfil, el metadato provisional quedaba con circuito y sin
+                    # nombres, y el tablero mostraba «Vehiculo 0» durante toda
+                    # la escucha. Una sola vez: la parrilla no cambia dentro de
+                    # una sesion, y reescribir en cada paquete seria escribir
+                    # sesenta veces por minuto para decir lo mismo.
+                    if sesion is not None and not anotada_la_parrilla:
+                        anotada_la_parrilla = True
+                        _anotar_en_curso(provisional, inicio_utc,
+                                         derivar_procedencia(
+                                             sesion, ayudas_vistas.estado(),
+                                             cabecera, participantes,
+                                             secundarios))
                 ayudas_vistas.ver(decodificado)
                 publicador.publicar(decodificado, inicio_utc, desplazamiento)
 
