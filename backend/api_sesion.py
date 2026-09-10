@@ -657,7 +657,8 @@ def posiciones_en_pista(
 # 1 y 4. Series contra distancia, para uno o varios vehiculos
 # --------------------------------------------------------------------------
 
-def _reducir(filas: list, puntos: int) -> tuple[list, bool]:
+def _reducir(filas: list, puntos: int,
+             plegables: tuple[int, int] | None = None) -> tuple[list, bool]:
     """Deja como mucho `puntos` filas, conservando los dos extremos.
 
     `max(1, len // puntos)` no acota. Con 599 filas y `puntos=300` la division
@@ -680,12 +681,52 @@ def _reducir(filas: list, puntos: int) -> tuple[list, bool]:
     fila trae varias señales sobre una misma distancia: el extremo de una no es
     el de las otras, y elegir la fila por una de ellas falsearia a todas las
     demas.
+
+    UNA FILA POR INSTANTE EXACTO ES UNA FILA POR SEÑAL, Y ENTONCES SALTEAR
+    FILAS ES BORRAR CANALES.
+
+    Lo de arriba supone que cada fila trae varias señales. En el simulador es
+    cierto: un paquete de movimiento publica todas sus magnitudes con el mismo
+    sello. En un bus vehicular no: cada trama lleva lo suyo y llega cuando le
+    toca, de modo que agrupando por instante exacto **cada fila tiene una sola
+    señal** y las demas en nulo.
+
+    Sobre eso, `filas[::paso]` no adelgaza: elimina. Medido sobre `sample_28`,
+    6.158 filas de las cuales 3.079 traen `speed`, y estan **exactamente en los
+    indices pares**, porque el bus las intercala con regularidad. Con `paso`
+    par sobreviven todas y se borran las de al lado; con `paso` impar sobrevive
+    la mitad; y pidiendo las trece señales del bus el patron cambia y `speed`
+    desaparece entera: cero muestras de tres mil. El tablero mostraba «sin dato
+    en esta vuelta» sobre una sesion completa, y como el eje temporal se apoya
+    en esa señal, los otros doce graficos se quedaban sin ventana y tampoco
+    dibujaban.
+
+    `plegables` dice que columnas son señales. Cuando se da, el tramo no se
+    saltea: se **pliega**. Las `paso` filas contiguas se funden en una y cada
+    columna se queda con su primera muestra del tramo, de modo que ninguna señal
+    puede desaparecer por como el bus intercala sus tramas. El instante de la
+    fila es el de la primera del tramo; una muestra plegada puede quedar
+    atribuida hasta el ancho del tramo antes de cuando se midio, y esa es la
+    aproximacion que este submuestreo declara con `submuestreado`.
     """
 
     total = len(filas)
     if total <= puntos:
         return filas, False
     paso = -(-total // puntos)              # division hacia arriba
+    if plegables is not None:
+        desde, hasta = plegables
+        recorte = []
+        for i in range(0, total, paso):
+            tramo = filas[i:i + paso]
+            fundida = list(tramo[0])
+            for fila in tramo[1:]:
+                for c in range(desde, hasta):
+                    if fundida[c] is None and fila[c] is not None:
+                        fundida[c] = fila[c]
+            recorte.append(tuple(fundida))
+        # El ultimo tramo contiene la ultima fila: no hace falta reponerla.
+        return recorte, True
     recorte = list(filas[::paso])
     if recorte[-1] is not filas[-1]:
         if len(recorte) >= puntos:
@@ -1504,7 +1545,8 @@ def series_por_tiempo(
     originales = 0
     for vehiculo, suyas in por_vehiculo.items():
         originales = max(originales, len(suyas))
-        recorte, reducida = _reducir(suyas, puntos)
+        # Las columnas 2..2+n son las señales; despues vienen sus unidades.
+        recorte, reducida = _reducir(suyas, puntos, (2, 2 + len(pedidas)))
         submuestreado = submuestreado or reducida
         serie: dict[str, list] = {
             "tiempo_s": [round((f[0] - origen).total_seconds(), 6) for f in recorte],

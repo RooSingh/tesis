@@ -156,6 +156,80 @@ class SeriesPorTiempoTests(unittest.TestCase):
         self.assertEqual(r["duracion_s"], 2.0)
         self.assertEqual(r["unidades"]["speed"], "km/h")
 
+    def test_ninguna_senal_del_bus_desaparece_al_submuestrear(self) -> None:
+        """El defecto que dejaba el tablero en blanco sobre una sesion entera.
+
+        Un bus intercala sus tramas: agrupando por instante exacto, cada fila
+        trae **una** señal. Salteando una de cada N, una señal cuyas filas caen
+        en un patron que comparte factor con el paso desaparece entera.
+
+        Medido sobre `sample_28`: 6.158 filas, 3.079 con `speed`, todas en los
+        indices pares. Pidiendo las trece señales del bus, `speed` volvia con
+        cero muestras de tres mil. El grafico de velocidad decia «sin dato en
+        esta vuelta» y, como el eje temporal se apoya en esa señal, los otros
+        doce se quedaban sin ventana y tampoco dibujaban.
+        """
+
+        from datetime import datetime, timedelta, timezone
+
+        inicio = datetime(2026, 9, 9, 12, 0, tzinfo=timezone.utc)
+        senales = ["speed", "yaw_rate", "accel_lateral"]
+        filas = []
+        for i in range(3000):
+            valores = [None] * len(senales)
+            valores[i % len(senales)] = float(i)
+            filas.append((inicio + timedelta(milliseconds=10 * i), "can:rav4:sample_28",
+                          *valores, "km/h", "deg/s", "m/s^2"))
+
+        falsa, parche = _con(filas)
+        with parche:
+            r = api_sesion.series_por_tiempo(
+                "can:segmento:sample_28",
+                senales=",".join(senales),
+                puntos=600,
+            )
+
+        serie = r["vehiculos"]["can:rav4:sample_28"]
+        self.assertTrue(r["submuestreado"])
+        for senal in senales:
+            con = sum(1 for x in serie[senal] if x is not None)
+            self.assertGreater(
+                con, 0,
+                "la señal %s volvio con cero muestras de mil: el grafico dice "
+                "«sin dato» sobre una sesion completa" % senal)
+        # Y no una sobreviviendo a costa de las otras.
+        cuantas = [sum(1 for x in serie[s] if x is not None) for s in senales]
+        self.assertEqual(min(cuantas), max(cuantas),
+                         "unas señales sobrevivieron mas que otras: %s" % cuantas)
+
+    def test_la_muestra_que_vuelve_es_la_que_se_midio(self) -> None:
+        """Plegar no es promediar: cada valor sigue siendo una medicion."""
+
+        from datetime import datetime, timedelta, timezone
+
+        inicio = datetime(2026, 9, 9, 12, 0, tzinfo=timezone.utc)
+        filas = []
+        for i in range(200):
+            valores = [float(i) if i % 2 == 0 else None,
+                       float(i) if i % 2 == 1 else None]
+            filas.append((inicio + timedelta(milliseconds=10 * i), "veh",
+                          *valores, "km/h", "deg/s"))
+        falsa, parche = _con(filas)
+        with parche:
+            r = api_sesion.series_por_tiempo(
+                "can:segmento:sample_28", senales="speed,yaw_rate", puntos=50)
+
+        serie = r["vehiculos"]["veh"]
+        # Paso 4: el primer tramo son las filas 0..3, con `speed` en 0 y 2.
+        self.assertEqual(serie["speed"][0], 0.0)
+        self.assertEqual(serie["yaw_rate"][0], 1.0)
+        self.assertEqual(serie["tiempo_s"][0], 0.0)
+        self.assertEqual(serie["speed"][1], 4.0)
+        # Los valores son los medidos, no promedios ni interpolaciones.
+        for x in serie["speed"]:
+            if x is not None:
+                self.assertEqual(x % 2, 0.0, "aparecio un valor que nadie midio")
+
     def test_consulta_booleanos_y_acota_fuente_sesion(self) -> None:
         falsa, parche = _con([])
         with parche:
@@ -1014,6 +1088,126 @@ class SubmuestreoAcotadoTests(unittest.TestCase):
         filas = list(range(1000))
         recorte, _ = api_sesion._reducir(filas, 300)
         self.assertEqual(recorte, sorted(recorte))
+
+
+class ReducirNoPuedeBorrarUnCanalTests(unittest.TestCase):
+    """Saltear filas es borrar señales cuando cada fila trae una sola.
+
+    En el simulador un paquete publica todas sus magnitudes con el mismo sello y
+    cada fila trae todas las columnas: saltear filas adelgaza. En un bus
+    vehicular cada trama lleva lo suyo y llega cuando le toca, de modo que
+    agrupando por instante exacto **cada fila tiene una sola señal**.
+
+    Medido sobre `sample_28`: 6.158 filas, de las cuales 3.079 traen `speed` y
+    estan exactamente en los indices pares. Con `paso` par sobrevivian todas y
+    se borraban las de al lado; con `paso` impar sobrevivia la mitad; pidiendo
+    las trece señales del bus, `speed` desaparecia entera. El tablero decia «sin
+    dato en esta vuelta» sobre una sesion completa, y como el eje temporal se
+    apoya en esa señal, los otros doce graficos se quedaban sin ventana.
+    """
+
+    @staticmethod
+    def _bus(total: int, cuantas: int = 2) -> list:
+        """Filas como las arma la consulta temporal: una señal por instante.
+
+        `cuantas` señales intercaladas con regularidad, que es como publica un
+        bus. La columna 0 es el instante y la 1 el vehiculo.
+        """
+
+        filas = []
+        for i in range(total):
+            valores = [None] * cuantas
+            valores[i % cuantas] = float(i)
+            filas.append((i, "veh", *valores))
+        return filas
+
+    def test_ninguna_senal_desaparece_sea_cual_sea_el_paso(self) -> None:
+        for cuantas in (2, 3, 5, 13):
+            filas = self._bus(6158, cuantas)
+            for puntos in (300, 600, 800, 1000, 1200, 2000):
+                recorte, _ = api_sesion._reducir(filas, puntos, (2, 2 + cuantas))
+                for c in range(cuantas):
+                    con = sum(1 for f in recorte if f[2 + c] is not None)
+                    self.assertGreater(
+                        con, 0,
+                        "con %d señales y puntos=%d, la señal %d quedo en cero "
+                        "muestras de %d filas" % (cuantas, puntos, c, len(filas)))
+
+    def test_no_se_pierde_ninguna_muestra_cuando_el_tramo_es_corto(self) -> None:
+        """Trece señales, 6.158 filas y 1.200 puntos: no se tira nada.
+
+        El tramo son seis filas y cada señal aporta una de cada trece, de modo
+        que ninguna aparece en todos los tramos. Pero cada señal tiene 474
+        muestras en total y las 474 salen: reducir de 6.158 filas a 1.027 no le
+        costo una sola muestra a ninguna. Es la diferencia entre plegar y
+        saltear.
+        """
+
+        cuantas = 13
+        filas = self._bus(6158, cuantas)
+        recorte, _ = api_sesion._reducir(filas, 1200, (2, 2 + cuantas))
+        self.assertLessEqual(len(recorte), 1200)
+        for c in range(cuantas):
+            tenia = sum(1 for f in filas if f[2 + c] is not None)
+            quedan = sum(1 for f in recorte if f[2 + c] is not None)
+            self.assertEqual(quedan, tenia,
+                             "la señal %d tenia %d muestras y quedaron %d"
+                             % (c, tenia, quedan))
+
+    def test_con_tramos_largos_cada_senal_pierde_lo_mismo(self) -> None:
+        """Cuando hay que tirar, se tira parejo y no una señal entera."""
+
+        cuantas = 13
+        filas = self._bus(6158, cuantas)
+        recorte, _ = api_sesion._reducir(filas, 200, (2, 2 + cuantas))
+        quedan = [sum(1 for f in recorte if f[2 + c] is not None)
+                  for c in range(cuantas)]
+        self.assertEqual(min(quedan), max(quedan),
+                         "unas señales sobrevivieron mas que otras: %s" % quedan)
+
+    def test_el_valor_plegado_es_el_primero_del_tramo(self) -> None:
+        """Se pliega, no se promedia: lo que queda es una muestra medida."""
+
+        filas = self._bus(600, 2)
+        recorte, _ = api_sesion._reducir(filas, 100, (2, 4))
+        # paso = 6: el primer tramo son las filas 0..5, con `speed` en 0, 2 y 4.
+        self.assertEqual(recorte[0][2], 0.0)
+        self.assertEqual(recorte[0][3], 1.0)
+        self.assertEqual(recorte[1][2], 6.0)
+
+    def test_el_instante_es_el_de_la_fila_que_abre_el_tramo(self) -> None:
+        filas = self._bus(600, 2)
+        recorte, _ = api_sesion._reducir(filas, 100, (2, 4))
+        self.assertEqual(recorte[0][0], 0)
+        self.assertEqual(recorte[1][0], 6)
+        self.assertEqual([f[0] for f in recorte], sorted(f[0] for f in recorte))
+
+    def test_el_ultimo_tramo_entra_entero(self) -> None:
+        """La ultima muestra medida no se puede perder por el redondeo."""
+
+        for total in (601, 999, 1201, 6158):
+            filas = self._bus(total, 3)
+            recorte, _ = api_sesion._reducir(filas, 300, (2, 5))
+            self.assertLessEqual(len(recorte), 300, "total=%d" % total)
+            ultimo = max(v for f in recorte for v in f[2:] if v is not None)
+            self.assertGreaterEqual(
+                ultimo, float(total - 3),
+                "se perdio el final del tramo: total=%d" % total)
+
+    def test_sin_plegables_no_cambia_lo_que_hacia(self) -> None:
+        """El camino espacial no se toca: ahi cada fila trae todas sus columnas."""
+
+        filas = list(range(1000))
+        # Uno de cada cuatro, y la ultima fila repuesta: la regla de siempre.
+        esperado = list(range(1000))[::4]
+        esperado.append(999)
+        self.assertEqual(api_sesion._reducir(filas, 300)[0], esperado)
+
+    def test_por_debajo_del_limite_tampoco_pliega(self) -> None:
+        filas = self._bus(120, 3)
+        recorte, reducida = api_sesion._reducir(filas, 300, (2, 5))
+        self.assertEqual(recorte, filas)
+        self.assertFalse(reducida)
 
 
 class SenalesAusentesRecordadasTests(unittest.TestCase):
