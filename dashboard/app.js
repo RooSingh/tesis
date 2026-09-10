@@ -8101,9 +8101,17 @@ function pintarTrazaPorSenal(linea) {
   /* El camino gris queda debajo y se atenua: sigue diciendo por donde se fue en
      los tramos donde la señal no llego. */
   linea.style.opacity = "0.35";
+  /* Los dos extremos se leen una vez y no doscientas: `getComputedStyle` sobre
+     la raiz por cada tramo es medir la hoja de estilos entera doscientas veces
+     para obtener siempre lo mismo. */
+  const extremos = extremosDeLaTraza();
+/* Mas gruesa que el camino gris de abajo ---que mide 3--- por dos motivos: lo
+     tapa en vez de dejar un halo, y un color necesita superficie para leerse.
+     En un tramo casi recto la caja sobra de alto, asi que no cuesta nada. */
+  const GRUESO_DE_LA_TRAZA = 5.5;
   capa.innerHTML = tramos.map(t =>
-    '<path d="' + t.d + '" fill="none" stroke-width="3.2" stroke-linecap="round" ' +
-    'stroke="' + tintaDelValor(t.valor, mn, mx) + '"></path>').join("");
+    '<path d="' + t.d + '" fill="none" stroke-width="' + GRUESO_DE_LA_TRAZA + '" stroke-linecap="round" ' +
+    'stroke="' + tintaDelValor(t.valor, mn, mx, extremos) + '"></path>').join("");
   const pie = document.getElementById("leyenda-recorrido");
   if (pie) {
     pie.textContent = pieDelRecorrido(canal, mn, mx);
@@ -8198,14 +8206,50 @@ function pieDelRecorrido(canal, mn, mx) {
          " " + unidadDeCanal(canal);
 }
 
-/* De un valor a una tinta, entre los extremos de lo que se ve. Una escala de
-   dos colores y no de arcoiris: un arcoiris ordena mal ---nadie sabe si el
-   verde es mas que el naranja--- y este tablero ya usa el acento para «mas». */
-function tintaDelValor(v, mn, mx) {
+/* De un valor a una tinta, entre los extremos de lo que se ve.
+
+   UNA ESCALA DE DOS COLORES Y NO UN ARCOIRIS: un arcoiris ordena mal ---nadie
+   sabe si el verde es mas que el naranja--- y una rampa de un extremo apagado a
+   uno vivo se lee sola.
+
+   POR OPACIDAD NO SE DISTINGUE NADA. Esto iba de `--linea-fuerte` a `--acento`,
+   y en el tema oscuro `--linea-fuerte` **es** el acento al 34 % de opacidad: la
+   escala entera era un mismo violeta cambiando de transparencia sobre un fondo
+   oscuro, en una linea de tres pixeles. No habia dos colores; habia uno.
+   Ahora va de `--texto-tenue` ---un gris azulado apagado--- a `--acento-vivo`,
+   los dos opacos: cambia el tono, la saturacion y la claridad a la vez.
+
+   Y SE RESUELVE EN JAVASCRIPT. Un `color-mix(... var(--acento) ...)` metido en
+   un atributo de presentacion depende de que el navegador resuelva variables
+   ahi, cosa que no todos hacen; si no la resuelve, el valor es invalido y el
+   trazo no se dibuja. Mezclando aca sale un `rgb()` concreto que no depende de
+   nada. */
+function extremosDeLaTraza() {
+  return { baja: _rgbDe(tinta("--texto-tenue")), alta: _rgbDe(tinta("--acento-vivo")) };
+}
+
+function tintaDelValor(v, mn, mx, extremos) {
+  const e = extremos || extremosDeLaTraza();
   if (v === null || v === undefined || !Number.isFinite(v)) return tinta("--linea");
   const u = mx > mn ? Math.max(0, Math.min(1, (v - mn) / (mx - mn))) : 0.5;
-  return "color-mix(in oklab, var(--acento) " + Math.round(u * 100) +
-         "%, var(--linea-fuerte))";
+  const c = [0, 1, 2].map(i => Math.round(e.baja[i] + (e.alta[i] - e.baja[i]) * u));
+  return "rgb(" + c[0] + ", " + c[1] + ", " + c[2] + ")";
+}
+
+/* Un color de la hoja de estilos a sus tres componentes. Acepta lo que
+   `getComputedStyle` devuelve ---`#rgb`, `#rrggbb`, `rgb(...)`, `rgba(...)`,
+   y la forma con espacios que usan los navegadores nuevos---. La opacidad se
+   descarta a proposito: la rampa se hace con color, no con transparencia. */
+function _rgbDe(texto) {
+  const s = String(texto || "").trim();
+  if (s[0] === "#") {
+    const h = s.length === 4
+      ? s[1] + s[1] + s[2] + s[2] + s[3] + s[3]
+      : s.slice(1, 7);
+    return [0, 2, 4].map(i => parseInt(h.slice(i, i + 2), 16) || 0);
+  }
+  const n = s.match(/-?[\d.]+/g);
+  return n && n.length >= 3 ? n.slice(0, 3).map(x => Math.round(parseFloat(x))) : [128, 128, 128];
 }
 
 /* DONDE ESTABA EL VEHICULO EN ESTE INSTANTE, SOBRE EL RECORRIDO DERIVADO.

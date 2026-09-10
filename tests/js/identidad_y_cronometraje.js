@@ -145,6 +145,7 @@ const NOMBRES = [
   "pedirTrazado",
   "senalesParaElRecorrido",
   "pieDelRecorrido",
+  "extremosDeLaTraza", "_rgbDe",
   "cifra",
   "hayCoordenadasMedidas", "porQueNoHayCoordenadas", "hayEjeDeDistancia",
   "explicacionDelTrazado",
@@ -230,6 +231,7 @@ const {
   pedirTrazado, rutasPedidas,
   senalesParaElRecorrido,
   pieDelRecorrido,
+  extremosDeLaTraza, _rgbDe,
   cifra,
   COORDENADAS_POR_FUENTE, EJE_DE_DISTANCIA_POR_FUENTE,
   valoresSobreElRecorrido, tramosDelRecorrido, tintaDelValor,
@@ -2391,27 +2393,90 @@ prueba("un recorrido de menos de dos puntos no da tramos", () => {
   assert.deepStrictEqual(tramosDelRecorrido(null), []);
 });
 
+/* Los dos extremos del tema oscuro, escritos aca solo para no depender de un
+   `getComputedStyle` que en node no existe. Lo que se comprueba es la mezcla. */
+const EXTREMOS = { baja: [109, 139, 161], alta: [216, 180, 254] };
+
 prueba("un tramo sin valor se pinta con la tinta de lo que no se sabe", () => {
-  const nada = tintaDelValor(null, 0, 10);
-  assert.strictEqual(nada, tintaDelValor(undefined, 0, 10));
-  assert.strictEqual(nada, tintaDelValor(NaN, 0, 10));
-  assert.ok(!/color-mix/.test(nada),
+  const nada = tintaDelValor(null, 0, 10, EXTREMOS);
+  assert.strictEqual(nada, tintaDelValor(undefined, 0, 10, EXTREMOS));
+  assert.strictEqual(nada, tintaDelValor(NaN, 0, 10, EXTREMOS));
+  assert.ok(!/^rgb\(/.test(nada),
             "un tramo sin dato entro en la escala de color como si tuviera uno");
 });
 
-prueba("la escala va del minimo al maximo de lo que se ve, y se satura", () => {
-  assert.ok(/ 0%/.test(tintaDelValor(0, 0, 10)), tintaDelValor(0, 0, 10));
-  assert.ok(/ 100%/.test(tintaDelValor(10, 0, 10)));
-  assert.ok(/ 50%/.test(tintaDelValor(5, 0, 10)));
+prueba("la escala llega a sus dos extremos, y se satura", () => {
+  assert.strictEqual(tintaDelValor(0, 0, 10, EXTREMOS), "rgb(109, 139, 161)");
+  assert.strictEqual(tintaDelValor(10, 0, 10, EXTREMOS), "rgb(216, 180, 254)");
   /* Fuera de los extremos no se sale de la escala ni se envuelve. */
-  assert.ok(/ 0%/.test(tintaDelValor(-5, 0, 10)));
-  assert.ok(/ 100%/.test(tintaDelValor(99, 0, 10)));
+  assert.strictEqual(tintaDelValor(-5, 0, 10, EXTREMOS), "rgb(109, 139, 161)");
+  assert.strictEqual(tintaDelValor(99, 0, 10, EXTREMOS), "rgb(216, 180, 254)");
+});
+
+prueba("la escala se resuelve en color y no en un color-mix con variables", () => {
+  /* Un `color-mix(... var(--acento) ...)` dentro de un atributo de presentacion
+     depende de que el navegador resuelva variables ahi. Si no lo hace, el valor
+     es invalido y el trazo no se dibuja: se ve exactamente igual que si el
+     tablero no hubiera hecho nada. */
+  const c = tintaDelValor(5, 0, 10, EXTREMOS);
+  assert.ok(/^rgb\(\d+, \d+, \d+\)$/.test(c), c);
+  assert.ok(!/var\(|color-mix/.test(c));
+});
+
+prueba("los extremos que elige la escala se separan en el tema real", () => {
+  /* Esto corre `extremosDeLaTraza` contra la paleta que la hoja de estilos
+     declara: si alguien vuelve a elegir dos fichas que son el mismo color con
+     distinta opacidad, la escala deja de ordenar nada y esto lo dice. */
+  const PALETA = {
+    "--texto-tenue": "#6d8ba1", "--acento-vivo": "#d8b4fe",
+    "--acento": "#b794f6", "--linea-fuerte": "rgba(183,148,246,.34)",
+    "--linea": "rgba(183,148,246,.18)",
+  };
+  const antes = globalThis.tinta;
+  globalThis.tinta = n => PALETA[n];
+  try {
+    const e = extremosDeLaTraza();
+    const separacion = Math.round(Math.hypot(
+      e.baja[0] - e.alta[0], e.baja[1] - e.alta[1], e.baja[2] - e.alta[2]));
+    assert.ok(separacion > 100,
+              "los dos extremos de la escala son casi el mismo color: " + separacion);
+    assert.notDeepStrictEqual(e.baja, e.alta);
+  } finally { globalThis.tinta = antes; }
+});
+
+prueba("los dos extremos de la escala son colores distintos de verdad", () => {
+  /* El defecto: la escala iba de `--linea-fuerte` a `--acento`, y en el tema
+     oscuro `--linea-fuerte` **es** el acento al 34 % de opacidad. Era un solo
+     color cambiando de transparencia sobre un fondo oscuro, en una linea de
+     tres pixeles: no se distinguia nada. */
+  const baja = _rgbDe("rgba(183,148,246,.34)"), alta = _rgbDe("#b794f6");
+  assert.deepStrictEqual(baja, alta,
+                         "esta prueba dejo de describir el defecto que cuida");
+  const distancia = [0, 1, 2].reduce(
+    (s, i) => s + Math.abs(EXTREMOS.baja[i] - EXTREMOS.alta[i]), 0);
+  assert.ok(distancia > 150, "los extremos de la escala casi no se diferencian: " + distancia);
 });
 
 prueba("una señal quieta no pinta el recorrido de un extremo", () => {
   /* Con minimo igual a maximo la razon seria 0/0. Se pinta a medio camino: la
      señal existe y no se movio, que no es lo mismo que estar en el minimo. */
-  assert.ok(/ 50%/.test(tintaDelValor(7, 7, 7)), tintaDelValor(7, 7, 7));
+  const medio = tintaDelValor(7, 7, 7, EXTREMOS);
+  assert.strictEqual(medio, tintaDelValor(5, 0, 10, EXTREMOS));
+  assert.notStrictEqual(medio, tintaDelValor(0, 0, 10, EXTREMOS));
+});
+
+prueba("un color de la hoja de estilos se lee en cualquiera de sus formas", () => {
+  assert.deepStrictEqual(_rgbDe("#b794f6"), [183, 148, 246]);
+  assert.deepStrictEqual(_rgbDe("#fff"), [255, 255, 255]);
+  assert.deepStrictEqual(_rgbDe("rgb(109, 139, 161)"), [109, 139, 161]);
+  /* La opacidad se descarta: la rampa se hace con color, no con transparencia. */
+  assert.deepStrictEqual(_rgbDe("rgba(183, 148, 246, .34)"), [183, 148, 246]);
+  assert.deepStrictEqual(_rgbDe("rgb(183 148 246 / 34%)"), [183, 148, 246]);
+});
+
+prueba("un color ilegible no rompe el dibujo", () => {
+  assert.deepStrictEqual(_rgbDe(""), [128, 128, 128]);
+  assert.deepStrictEqual(_rgbDe(null), [128, 128, 128]);
 });
 
 prueba("tener posicion medida y tener metro medido son dos preguntas", () => {
