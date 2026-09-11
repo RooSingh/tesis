@@ -1707,6 +1707,20 @@ function elegirPropio(id) {
      el panel mostrando los neumaticos del anterior. Se pide ya, sin esperar el
      plazo, que existe para no repetir consultas y no para postergar esta. */
   if (id !== anterior) { _contextoUltimo = 0; refrescarContexto(); }
+  /* Y SUS SERIES, QUE SON DE DONDE LEE EL CRONOMETRAJE.
+     Puesto, cronometro y diferencia al lider salen de la serie del piloto que
+     se mira. Una vez aprendidos los vehiculos, las series se piden solo del
+     elegido, de modo que las del otro no estan: al elegir a Piastri con la
+     reproduccion en pausa el panel quedaba en rayas hasta mover el cabezal. Se
+     pide ya la vuelta que se esta mirando. Si habia una consulta de esa vuelta
+     en camino ---de antes de elegir--- se vuelve a preguntar cuando termine,
+     porque la que viajaba no traia a este piloto. */
+  if (id !== anterior && estado.abierta && estadoSesion === "cargado") {
+    const vuelta = instante().vuelta || 1;
+    Promise.resolve(asegurarVuelta(vuelta))
+      .then(() => asegurarVuelta(vuelta))
+      .catch(() => {});
+  }
   render();
 }
 
@@ -2654,7 +2668,12 @@ function pintarClima() {
   const c = document.getElementById("clima");
   if (!c) return;
   const d = climaQueSeMuestra();
-  if (!d) { c.innerHTML = ""; return; }
+  if (!d) { c.innerHTML = ""; c.removeAttribute("title"); return; }
+  /* Si las temperaturas o el cielo salieron de la procedencia de la captura y
+     no de la telemetria, se dice en el titulo del panel: es un valor para toda
+     la sesion y no cambia con el cabezal. */
+  if (d.procedencia_nota) c.title = d.procedencia_nota;
+  else c.removeAttribute("title");
 
   const iconos = {
     "despejado": "sol", "nubes ligeras": "nube", "cubierto": "nube",

@@ -3092,6 +3092,32 @@ def contexto(
     if "bandera" in clima:
         clima["bandera_texto"] = BANDERA_TEXTO.get(int(clima["bandera"]), "desconocida")
 
+    # EL CLIMA QUE LA BASE NO TIENE, DE LA PROCEDENCIA, Y DICHO.
+    #
+    # Las temperaturas y el cielo entraron al contrato como senales el
+    # 2026-09-02. Las sesiones guardadas antes no los tienen en la base, y el
+    # panel mostraba «—°C sin declarar» sobre una carrera cuya captura si los
+    # declara: Red Bull Ring con Alpine contra McLaren, despejado, pista 31 °C y
+    # aire 22 °C, leidos del ultimo paquete de sesion de esa sesion.
+    #
+    # Se completa **solo lo que falta**, y la respuesta dice que salio de ahi: es
+    # un valor para toda la sesion y no una medicion del instante. Lo que la base
+    # tiene no se pisa, porque esa si es la muestra del momento.
+    if fuente == "f1_25_udp_simulation" and not all(
+            c in clima for c in ("temperatura_aire_c", "temperatura_pista_c", "clima")):
+        proc = procedencia_sesiones.de(session_id) or {}
+        tomados = []
+        for clave in ("temperatura_aire_c", "temperatura_pista_c", "clima"):
+            if clave not in clima and proc.get(clave) is not None:
+                clima[clave] = proc[clave]
+                tomados.append(clave)
+        if tomados:
+            clima["de_la_procedencia"] = tomados
+            clima["procedencia_nota"] = (
+                "Un valor para toda la sesion, leido del ultimo paquete de sesion "
+                "de la captura: esta sesion se guardo antes de que el clima se "
+                "publicara como senal, de modo que no cambia con el cabezal.")
+
     esquinas: dict[str, dict] = {}
     for e in ESQUINAS:
         datos = {}
