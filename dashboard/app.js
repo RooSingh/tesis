@@ -10540,6 +10540,9 @@ function moverCochesDelTrazadoGrande() {
     /* Se declara despues de colocarlo: hasta aca no se sabia si la coordenada
        medida estaba disponible para este instante. */
     grupo.dataset.estimada = medido ? "no" : "si";
+    /* La sigla esta en la capa de arriba y no dentro del grupo, asi que no
+       hereda el estado: lo lleva ella tambien. */
+    if (rot) rot.dataset.estimada = medido ? "no" : "si";
     grupo.setAttribute("aria-label",
       medido ? "" : "posición estimada por tiempo, no medida");
   });

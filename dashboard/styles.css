@@ -521,17 +521,19 @@
     text-anchor: middle; pointer-events: none; paint-order: stroke;
     stroke: var(--superficie); stroke-width: 1.3px; stroke-linejoin: round;
   }
-  /* Una posicion que sale de la fraccion de tiempo y no de una coordenada
-     medida se dibuja hueca: es la misma distincion que el panel chico hace,
-     y sin ella el trazado grande afirmaria que midio algo que estimo.
+  /* UNA POSICION ESTIMADA SE DICE COMO YA SE DECIA EN LA CABINA: con menos
+     opacidad y la sigla en bastardilla. El punto se queda **lleno**.
 
-     EL BORDE PASA A SER EL COLOR DEL PILOTO, no el del fondo. Relleno, ese
-     borde es un halo que lo despega del trazo; hueco, era lo unico que
-     quedaba dibujado, y del color del fondo eso es nada: el coche desaparecia
-     justo cuando mas hacia falta saber que su posicion era estimada. */
-  .auto-grande[data-estimada="si"] .coche-grande {
-    fill: none; stroke: var(--tinta-auto, var(--acento)); stroke-width: 1.3;
-  }
+     Lo habia dibujado hueco, y eran dos errores en uno. El primero, que hueco
+     se ve peor: el borde queda fino y el coche compite en presencia con las
+     curvas, que son justamente lo que no hay que confundir con un coche. El
+     segundo, mas de fondo: el tablero ya tenia una convencion para decir «esto
+     no se midio, se estimo» ---`.auto-en-pista[data-estimada]` la usa desde
+     antes--- e inventar una segunda obliga a aprender dos idiomas para leer la
+     misma distincion en dos paneles del mismo tablero. */
+  .auto-grande[data-estimada="si"] .coche-grande { opacity: .45; }
+  .auto-grande[data-estimada="si"] + .sigla-auto-grande,
+  .sigla-auto-grande[data-estimada="si"] { opacity: .6; font-style: italic; }
   /* El globo se coloca con coordenadas de pantalla relativas a su contenedor,
      asi que ese contenedor tiene que ser el origen. Sin esto el globo se va
      al rincon de la pagina. */

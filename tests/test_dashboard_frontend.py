@@ -393,18 +393,30 @@ class AyudantesDeSerieTests(unittest.TestCase):
         self.assertNotIn("grupo.appendChild(rot)", cuerpo,
                          "la sigla volvio adentro del grupo del coche")
 
-    def test_el_coche_estimado_no_se_dibuja_con_la_tinta_del_fondo(self) -> None:
-        """Una posicion estimada se dibuja hueca, y hueca el borde es lo unico
-        que queda: del color del fondo, eso es nada. El coche desaparecia justo
-        cuando mas hacia falta saber que su posicion no estaba medida."""
+    def test_una_posicion_estimada_se_declara_como_en_el_resto_del_tablero(self) -> None:
+        """UNA SOLA CONVENCION PARA LA MISMA DISTINCION.
+
+        El tablero ya tenia una forma de decir «esto no se midio, se estimo»:
+        `.auto-en-pista[data-estimada]` baja la opacidad de la marca y pone la
+        sigla en bastardilla. La vista grande la dibujaba hueca, que era una
+        segunda convencion para lo mismo ---y encima peor de ver: el borde fino
+        hacia que el coche compitiera en presencia con las curvas, que es
+        justamente lo que no hay que confundir con un coche---.
+
+        Dos idiomas para leer la misma distincion en dos paneles del mismo
+        tablero es una carga que no compra nada.
+        """
 
         estilos = ESTILOS.read_text(encoding="utf-8")
         i = estilos.index('.auto-grande[data-estimada="si"] .coche-grande')
         regla = estilos[i:estilos.index("}", i)]
-        self.assertIn("fill: none", regla)
-        self.assertIn("--tinta-auto", regla,
-                      "el borde no toma el color del piloto: hueco queda invisible")
-        self.assertNotIn("--superficie", regla)
+        self.assertNotIn("fill: none", regla,
+                         "el punto volvio a dibujarse hueco")
+        self.assertIn("opacity", regla,
+                      "no se declara la estimacion como lo hace el resto del tablero")
+        # Y la de la cabina, que es de donde sale la convencion, sigue igual.
+        j = estilos.index('.auto-en-pista[data-estimada="si"] .marca-auto')
+        self.assertIn("opacity", estilos[j:estilos.index("}", j)])
 
     def test_el_filtro_de_pilotos_no_puede_dejar_el_trazado_sin_nadie(self) -> None:
         """Un trazado sin ningun coche no dice donde esta nadie, y el boton que
