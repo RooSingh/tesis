@@ -33,6 +33,7 @@ from typing import Annotated, Any
 
 from fastapi import APIRouter, HTTPException, Query
 
+from adapters import f1_25 as adaptador_f1_25
 from backend import (anotador_vivo, catalogo_curvas, catalogo_sesiones, db,
                      f1_udp, procedencia_sesiones)
 
@@ -2155,7 +2156,9 @@ def _restar(instante_iso: str, segundos: int) -> str | None:
 def _ultimos_valores(cursor, fuente: str, session_id: str, senales: list[str],
                      hasta_utc: str | None = None,
                      ventana_alcance: tuple[str, str] | None = None,
-                     vehiculo: str | None = None) -> dict[str, float]:
+                     vehiculo: str | None = None,
+                     limites_fase: tuple[int | None, int | None] = (None, None),
+                     ) -> dict[str, float]:
     """Ultimo valor de cada senal **hasta un instante**, o de toda la sesion.
 
     Se resuelve con una sola consulta y `DISTINCT ON`, que sobre las columnas
@@ -2185,6 +2188,7 @@ def _ultimos_valores(cursor, fuente: str, session_id: str, senales: list[str],
     # alerones delanteros al 100 % de dano, 2.974 muestras lo declaran, y el
     # panel decia «sin dano, ninguna pieza lo declara».
     _cv, _cvp = _acotar_al_vehiculo(vehiculo)
+    _cf, _cfp = _clausula_de_tramo(*limites_fase)
     if not senales:
         return {}
 
@@ -2216,7 +2220,7 @@ def _ultimos_valores(cursor, fuente: str, session_id: str, senales: list[str],
     # y recordar la ausencia sin decir de quien deja al coche propio marcado
     # como si tampoco los tuviera. Se vio en pantalla: «SIN CLIMA» sobre una
     # sesion cuya API devolvia veinticuatro grados.
-    _clave_ausentes = (fuente, session_id, ventana_alcance, vehiculo)
+    _clave_ausentes = (fuente, session_id, ventana_alcance, vehiculo, limites_fase)
     salida: dict[str, Any] = {}
 
     def _consultar_ventana(faltan: list[str], desde: str, hasta: str) -> None:
@@ -2227,11 +2231,13 @@ def _ultimos_valores(cursor, fuente: str, session_id: str, senales: list[str],
                    signal_name, value_numeric, value_boolean, value_text, unit, timestamp
               FROM telemetry_messages
              WHERE source_type = %s AND session_id = %s AND signal_name = ANY(%s)"""
-                   + _cv + """
+                   + _cv + _cf + """
                AND timestamp >= %s AND timestamp <= %s
+               AND (%s::timestamptz IS NULL OR timestamp <= %s)
                AND (%s::timestamptz IS NULL OR timestamp BETWEEN %s AND %s)
              ORDER BY signal_name, timestamp DESC
-        """, tuple([fuente, session_id, faltan] + _cvp + [desde, hasta,
+        """, tuple([fuente, session_id, faltan] + _cvp + _cfp + [desde, hasta,
+              hasta_utc, hasta_utc,
               ventana_alcance[0] if ventana_alcance else None,
               ventana_alcance[0] if ventana_alcance else None,
               ventana_alcance[1] if ventana_alcance else None]))
@@ -2242,7 +2248,7 @@ def _ultimos_valores(cursor, fuente: str, session_id: str, senales: list[str],
 
     def _consultar(faltan: list[str], desde: str | None) -> None:
         condicion = ""
-        parametros: list[Any] = [fuente, session_id, faltan] + _cvp
+        parametros: list[Any] = [fuente, session_id, faltan] + _cvp + _cfp
         # El alcance acota siempre, incluso en el paso «sin acotar»: ese paso no
         # acota **por tiempo de sesion**, pero no puede salirse de la
         # adquisicion elegida.
@@ -2260,7 +2266,7 @@ def _ultimos_valores(cursor, fuente: str, session_id: str, senales: list[str],
                    signal_name, value_numeric, value_boolean, value_text, unit, timestamp
               FROM telemetry_messages
              WHERE source_type = %s AND session_id = %s AND signal_name = ANY(%s)"""
-                   + _cv + """""" +
+                   + _cv + _cf + """""" +
             condicion + """
              ORDER BY signal_name, timestamp DESC
         """, tuple(parametros))
@@ -2278,17 +2284,35 @@ def _ultimos_valores(cursor, fuente: str, session_id: str, senales: list[str],
     # El controlador devuelve `datetime`; un banco de pruebas puede devolver la
     # marca ya escrita. Si no se la puede leer, las ventanas no se aplican y se
     # cae en la consulta sin acotar: se pierde velocidad, nunca el dato.
-    cursor.execute("""
-        SELECT min(timestamp), max(timestamp) FROM telemetry_messages
-         WHERE source_type = %s AND session_id = %s
-           AND (%s::timestamptz IS NULL OR timestamp BETWEEN %s AND %s)
-    """, (fuente, session_id,
-          ventana_alcance[0] if ventana_alcance else None,
-          ventana_alcance[0] if ventana_alcance else None,
-          ventana_alcance[1] if ventana_alcance else None))
-    fila = cursor.fetchone()
-    piso = _iso(fila[0]) if fila else None
-    tope = hasta_utc if hasta_utc is not None else (_iso(fila[1]) if fila else None)
+    # LOS DOS EXTREMOS LOS SABE EL CATALOGO, Y PREGUNTARSELOS A LA TABLA GRANDE
+    # ERA LO UNICO LENTO DE ESTE PUNTO DE ACCESO.
+    #
+    # `min/max(timestamp)` acotado por sesion recorre su particion entera.
+    # Medido sobre `openf1:session:9947` ---932.625 filas, dos horas y media---:
+    # **26,3 s**, mientras las consultas que de verdad buscan los valores tardan
+    # treinta milisegundos. El navegador corta a los treinta segundos, asi que
+    # esa sesion no terminaba de abrirse y el clima quedaba en «la consulta no
+    # contesto».
+    #
+    # Con alcance elegido no sirve el catalogo ---sus extremos son los de la
+    # sesion entera y no los de esa adquisicion--- pero entonces la consulta va
+    # acotada por tiempo, que es la dimension de particion, y es barata.
+    if ventana_alcance or _cf:
+        condicion_ventana = ""
+        parametros_extremos: list[Any] = [fuente, session_id] + _cfp
+        if ventana_alcance:
+            condicion_ventana = " AND timestamp BETWEEN %s AND %s"
+            parametros_extremos.extend(ventana_alcance)
+        cursor.execute("""
+            SELECT min(timestamp), max(timestamp) FROM telemetry_messages
+             WHERE source_type = %s AND session_id = %s""" + _cf + condicion_ventana,
+            tuple(parametros_extremos))
+        fila = cursor.fetchone()
+        piso = _iso(fila[0]) if fila else None
+        fin = _iso(fila[1]) if fila else None
+    else:
+        piso, fin = catalogo_sesiones.extremos_de(session_id, fuente, cursor)
+    tope = hasta_utc if hasta_utc is not None else fin
 
     if tope is not None:
         _consultar(senales, _restar(tope, VENTANA_DE_CONTEXTO_S))
@@ -2491,6 +2515,7 @@ def _senales_del_vehiculo() -> list[str]:
 def contexto(
         session_id: str,
         adquisicion: Annotated[str | None, Query()] = None,
+        fase: Annotated[int | None, Query(ge=1)] = None,
         hasta: Annotated[str | None, Query(
             description="Instante ISO-8601: el contexto vigente hasta ahi")] = None,
         vehiculo: Annotated[str | None, Query(
@@ -2522,6 +2547,7 @@ def contexto(
         # de la carrera original no son los de una prueba de parrilla corrida
         # tres dias despues.
         _cv = _ventana_de_alcance(cursor, fuente, session_id, adquisicion)
+        _lf = _limites_de_fase(cursor, fuente, session_id, adquisicion, fase)
         # DE QUIEN ES CADA PARTE.
         #
         # `DISTINCT ON (signal_name)` sin acotar el vehiculo devuelve, por cada
@@ -2537,11 +2563,13 @@ def contexto(
         # tiene por que costar el clima.
         propio = _vehiculo_propio(cursor, fuente, session_id)
         valores = _ultimos_valores(cursor, fuente, session_id, senales, hasta,
-                                   ventana_alcance=_cv, vehiculo=propio)
+                                   ventana_alcance=_cv, vehiculo=propio,
+                                   limites_fase=_lf)
         if vehiculo and vehiculo != propio:
             del_otro = _ultimos_valores(cursor, fuente, session_id,
                                         _senales_del_vehiculo(), hasta,
-                                        ventana_alcance=_cv, vehiculo=vehiculo)
+                                        ventana_alcance=_cv, vehiculo=vehiculo,
+                                        limites_fase=_lf)
             valores = {**valores, **del_otro}
 
     clima = {}
@@ -2865,7 +2893,8 @@ def _acotar_al_vehiculo(vehiculo: str | None) -> tuple[str, list]:
 
 
 def _primera_perdida_de_tren_trasero(cursor, fuente: str, session_id: str,
-                                    vehiculo: str | None = None):
+                                    vehiculo: str | None = None,
+                                    alcance: tuple[str, tuple] = ("", ())):
     """El primer instante en que el eje trasero desliza **acelerando**.
 
     El acelerador esta en la regla y no de adorno: el deslizamiento solo por si
@@ -2875,6 +2904,7 @@ def _primera_perdida_de_tren_trasero(cursor, fuente: str, session_id: str,
     """
 
     _clausula, _par = _acotar_al_vehiculo(vehiculo)
+    _ca, _pa = alcance
     cursor.execute("""
         WITH p AS (
             SELECT timestamp,
@@ -2885,7 +2915,7 @@ def _primera_perdida_de_tren_trasero(cursor, fuente: str, session_id: str,
                    max(value_numeric) FILTER (WHERE signal_name = 'lap_distance') AS metro
               FROM telemetry_messages
              WHERE source_type = %s AND session_id = %s
-               AND signal_name = ANY(%s)""" + _clausula + """
+               AND signal_name = ANY(%s)""" + _clausula + _ca + """
              GROUP BY timestamp)
         SELECT vuelta, metro, greatest(abs(izq), abs(der)) AS peor, timestamp FROM p
          WHERE izq IS NOT NULL AND der IS NOT NULL AND acelerador IS NOT NULL
@@ -2894,13 +2924,15 @@ def _primera_perdida_de_tren_trasero(cursor, fuente: str, session_id: str,
     """, (fuente, session_id,
           ["wheel_slip_ratio_rear_left", "wheel_slip_ratio_rear_right",
            "throttle_position", "lap_number", "lap_distance"],
-          *_par,
-          anotador_vivo.UMBRAL_DESLIZAMIENTO, UMBRAL_ACELERADOR_PCT))
+           *_par,
+           *_pa,
+           anotador_vivo.UMBRAL_DESLIZAMIENTO, UMBRAL_ACELERADOR_PCT))
     return cursor.fetchone()
 
 
 def _primer_trompo(cursor, fuente: str, session_id: str,
-                  vehiculo: str | None = None):
+                  vehiculo: str | None = None,
+                  alcance: tuple[str, tuple] = ("", ())):
     """El primer trompo: giro contra el volante, tren trasero fuera, y que dure.
 
     LA DURACION SE MIDE CON EL RELOJ Y NO CONTANDO FILAS. Dos muestras seguidas
@@ -2912,6 +2944,7 @@ def _primer_trompo(cursor, fuente: str, session_id: str,
     """
 
     _clausula, _par = _acotar_al_vehiculo(vehiculo)
+    _ca, _pa = alcance
     cursor.execute("""
         WITH p AS (
             SELECT timestamp,
@@ -2925,7 +2958,7 @@ def _primer_trompo(cursor, fuente: str, session_id: str,
                    max(value_numeric) FILTER (WHERE signal_name = 'lap_distance') AS metro
               FROM telemetry_messages
              WHERE source_type = %s AND session_id = %s
-               AND signal_name = ANY(%s)""" + _clausula + """
+               AND signal_name = ANY(%s)""" + _clausula + _ca + """
              GROUP BY timestamp),
         q AS (
             SELECT * FROM p
@@ -2948,14 +2981,16 @@ def _primer_trompo(cursor, fuente: str, session_id: str,
           ["yaw_rate", "steering_normalized",
            "wheel_slip_ratio_rear_left", "wheel_slip_ratio_rear_right",
            "lap_number", "lap_distance"],
-          *_par,
-          UMBRAL_GIRO_TROMPO, anotador_vivo.UMBRAL_DESLIZAMIENTO,
+           *_par,
+           *_pa,
+           UMBRAL_GIRO_TROMPO, anotador_vivo.UMBRAL_DESLIZAMIENTO,
           MINIMO_MUESTRAS_TROMPO))
     return cursor.fetchone()
 
 
 def _primer_impacto_vertical(cursor, fuente: str, session_id: str,
-                            vehiculo: str | None = None):
+                            vehiculo: str | None = None,
+                            alcance: tuple[str, tuple] = ("", ())):
     """El primer golpe vertical, mirando el valor absoluto.
 
     **En valor absoluto y no por el maximo**, que es lo que las reglas de canal
@@ -2964,6 +2999,7 @@ def _primer_impacto_vertical(cursor, fuente: str, session_id: str,
     """
 
     _clausula, _par = _acotar_al_vehiculo(vehiculo)
+    _ca, _pa = alcance
     cursor.execute("""
         WITH p AS (
             SELECT timestamp,
@@ -2972,20 +3008,22 @@ def _primer_impacto_vertical(cursor, fuente: str, session_id: str,
                    max(value_numeric) FILTER (WHERE signal_name = 'lap_distance') AS metro
               FROM telemetry_messages
              WHERE source_type = %s AND session_id = %s
-               AND signal_name = ANY(%s)""" + _clausula + """
+               AND signal_name = ANY(%s)""" + _clausula + _ca + """
              GROUP BY timestamp)
         SELECT vuelta, metro, g, timestamp FROM p
          WHERE g IS NOT NULL AND abs(g) > %s
          ORDER BY timestamp LIMIT 1
     """, (fuente, session_id,
-          ["g_force_vertical", "lap_number", "lap_distance"],
-          *_par,
-          anotador_vivo.UMBRAL_VERTICAL_G))
+           ["g_force_vertical", "lap_number", "lap_distance"],
+           *_par,
+           *_pa,
+           anotador_vivo.UMBRAL_VERTICAL_G))
     return cursor.fetchone()
 
 
 def _primera_caida_brusca(cursor, fuente: str, session_id: str,
-                         vehiculo: str | None = None):
+                         vehiculo: str | None = None,
+                         alcance: tuple[str, tuple] = ("", ())):
     """La primera perdida grande de velocidad **sin frenar**, sobre una ventana.
 
     Es la tercera regla del anotador en vivo y la unica de las suyas que no cabe
@@ -3016,6 +3054,7 @@ def _primera_caida_brusca(cursor, fuente: str, session_id: str,
     """
 
     _clausula, _par = _acotar_al_vehiculo(vehiculo)
+    _ca, _pa = alcance
     cursor.execute("""
         WITH p AS (
             SELECT timestamp,
@@ -3025,7 +3064,7 @@ def _primera_caida_brusca(cursor, fuente: str, session_id: str,
                    max(value_numeric) FILTER (WHERE signal_name = 'lap_distance')   AS metro
               FROM telemetry_messages
              WHERE source_type = %s AND session_id = %s
-               AND signal_name = ANY(%s)""" + _clausula + """
+               AND signal_name = ANY(%s)""" + _clausula + _ca + """
              GROUP BY timestamp),
         q AS (
             SELECT * FROM p WHERE velocidad IS NOT NULL AND freno IS NOT NULL),
@@ -3042,14 +3081,16 @@ def _primera_caida_brusca(cursor, fuente: str, session_id: str,
          ORDER BY timestamp LIMIT 1
     """.format(ventana=int(anotador_vivo.VENTANA_CAIDA_S * 1000)),
         (fuente, session_id,
-         ["speed", "brake_position", "lap_number", "lap_distance"],
-         *_par,
-         anotador_vivo.UMBRAL_CAIDA_KMH, UMBRAL_FRENO_SUELTO_PCT))
+          ["speed", "brake_position", "lap_number", "lap_distance"],
+          *_par,
+          *_pa,
+          anotador_vivo.UMBRAL_CAIDA_KMH, UMBRAL_FRENO_SUELTO_PCT))
     return cursor.fetchone()
 
 
 def _primera_salida_de_pista(cursor, fuente: str, session_id: str,
-                            vehiculo: str | None = None):
+                            vehiculo: str | None = None,
+                            alcance: tuple[str, tuple] = ("", ())):
     """El primer instante con las cuatro ruedas fuera del asfalto, o `None`.
 
     Se pide en una consulta y no recorriendo la sesion: la condicion es sobre
@@ -3063,6 +3104,7 @@ def _primera_salida_de_pista(cursor, fuente: str, session_id: str,
 
     esquinas = ["surface_type_%s" % e for e in ESQUINAS]
     _clausula, _par = _acotar_al_vehiculo(vehiculo)
+    _ca, _pa = alcance
     cursor.execute("""
         WITH p AS (
             SELECT timestamp,
@@ -3074,20 +3116,84 @@ def _primera_salida_de_pista(cursor, fuente: str, session_id: str,
                    max(value_numeric) FILTER (WHERE signal_name = 'lap_distance') AS metro
               FROM telemetry_messages
              WHERE source_type = %s AND session_id = %s
-               AND signal_name = ANY(%s)""" + _clausula + """
+               AND signal_name = ANY(%s)""" + _clausula + _ca + """
              GROUP BY timestamp)
         SELECT vuelta, metro, a, b, c, d, timestamp FROM p
          WHERE a IS NOT NULL AND b IS NOT NULL AND c IS NOT NULL AND d IS NOT NULL
            AND a <> %s AND b <> %s AND c <> %s AND d <> %s
          ORDER BY timestamp LIMIT 1
     """, tuple(esquinas) + (fuente, session_id,
-                            esquinas + ["lap_number", "lap_distance"])
-         + tuple(_par) + (f1_udp.SUPERFICIE_DE_PISTA,) * 4)
+                             esquinas + ["lap_number", "lap_distance"])
+         + tuple(_par) + tuple(_pa) + (f1_udp.SUPERFICIE_DE_PISTA,) * 4)
     fila = cursor.fetchone()
     if not fila:
         return None
     vuelta, metro, a, b, c, d, instante = fila
     return vuelta, metro, [int(a), int(b), int(c), int(d)], instante
+
+
+def _avisos_reproducidos(cursor, fuente: str, session_id: str,
+                         vehiculo: str | None,
+                         ventana: tuple[str, str] | None,
+                         limites_fase: tuple[int | None, int | None],
+                         limite: int) -> list[dict[str, Any]]:
+    """Ejecuta sobre lo guardado la misma autoridad que observa el flujo vivo."""
+
+    clausula_vehiculo, parametros_vehiculo = _acotar_al_vehiculo(vehiculo)
+    clausula_fase, parametros_fase = _clausula_de_tramo(*limites_fase)
+    clausula_ventana = " AND timestamp BETWEEN %s AND %s" if ventana else ""
+    parametros_ventana = list(ventana or ())
+    cursor.execute("""
+        SELECT signal_name, value_numeric, value_boolean, value_text, unit, timestamp
+          FROM telemetry_messages
+         WHERE source_type = %s AND session_id = %s
+           AND signal_name = ANY(%s)""" + clausula_vehiculo + clausula_ventana
+                   + clausula_fase + """
+         ORDER BY COALESCE(replay_seq, """ + _captura_us() + "), """
+                   "array_position(%s::text[], "
+                   "COALESCE(metadata->'extra'->>'paquete', '') || ':' || signal_name), "
+                   "timestamp, signal_name",
+        tuple([fuente, session_id, list(anotador_vivo.CANALES_PARA_ANOTAR)]
+              + parametros_vehiculo + parametros_ventana + parametros_fase
+              + [adaptador_f1_25.orden_de_publicacion()]))
+
+    anotador = anotador_vivo.Anotador()
+    while True:
+        filas = (cursor.fetchmany(5000) if hasattr(cursor, "fetchmany")
+                 else cursor.fetchall())
+        if not filas:
+            break
+        for nombre, numero, booleano, texto, unidad, instante in filas:
+            valor = numero if numero is not None else (
+                booleano if booleano is not None else texto)
+            anotador.observar({
+                "signal_name": nombre,
+                "value": valor,
+                "unit": unidad,
+                "timestamp": (instante.isoformat()
+                              if hasattr(instante, "isoformat") else instante),
+            })
+        if not hasattr(cursor, "fetchmany"):
+            break
+    anotador.cerrar_pendiente()
+
+    salida = []
+    for anotacion in anotador.anotaciones:
+        salida.append({
+            "id": anotacion.get("id"),
+            "nivel": "alerta" if anotacion.get("nivel") == "incidente" else "info",
+            "que": anotacion.get("titulo") or "Anotacion",
+            "detalle": anotacion.get("detalle") or "",
+            "vuelta": anotacion.get("vuelta"),
+            "metro": anotacion.get("distancia_m"),
+            "instante": (datetime.fromtimestamp(anotacion["reloj_s"], timezone.utc).isoformat()
+                          if anotacion.get("reloj_s") is not None else None),
+            "canal": anotacion.get("fundamento") or "anotador en vivo",
+            "umbral": anotacion.get("fundamento"),
+            "valor": None,
+            "unidad": "",
+        })
+    return salida[-limite:]
 
 
 @router.get("/sesiones/{session_id}/avisos")
@@ -3101,9 +3207,9 @@ def avisos(session_id: str,
     sesion guardada: sin momento, un aviso no se puede ubicar en la carrera ni
     cruzar con la traza, que es para lo que sirve.
 
-    Se devuelve el **primer** instante en que cada condicion se cumple, no cada
-    muestra que la cumple: un piso roto lo sigue estando durante mil muestras y
-    eso es un solo hecho.
+    La secuencia persistida pasa por el mismo `Anotador` del flujo vivo. Esto
+    conserva no sólo los umbrales, sino también su agrupamiento, silencios,
+    textos y avisos transitorios.
     """
     # El recorrido es el mismo cada vez sobre una sesion guardada: se guarda.
     # LA CLAVE DE LA CACHE LLEVA EL ALCANCE.
@@ -3121,7 +3227,35 @@ def avisos(session_id: str,
     if fuente != "f1_25_udp_simulation":
         return {"session_id": session_id, "fuente": fuente, "avisos": [],
                 "motivo": ("Esta fuente no publica banderas, dano ni tipo de "
-                           "superficie: no hay con que levantar un aviso.")}
+                            "superficie: no hay con que levantar un aviso.")}
+
+    with db.obtener_conexion() as conexion:
+        with conexion.cursor() as cursor:
+            propio = _vehiculo_propio(cursor, fuente, session_id)
+            ventana = _ventana_de_alcance(cursor, fuente, session_id, adquisicion)
+            limites_fase = _limites_de_fase(
+                cursor, fuente, session_id, adquisicion, fase)
+        # Un cursor del servidor evita materializar toda la carrera en la RAM de
+        # la API. `fetchmany` mantiene acotado también el lote de Python.
+        with conexion.cursor(name="avisos_reproducidos") as cursor_avisos:
+            encontrados = _avisos_reproducidos(
+                cursor_avisos, fuente, session_id, propio, ventana,
+                limites_fase, limite)
+
+    respuesta = {
+        "session_id": session_id,
+        "fuente": fuente,
+        "vehiculo": propio,
+        "avisos": encontrados,
+        "reglas_evaluadas": anotador_vivo.CANTIDAD_REGLAS,
+        "criterio": ("mismas reglas, umbrales, agrupamiento y textos que el flujo "
+                     "vivo, reproducidos sobre las muestras persistidas"),
+    }
+    _AVISOS_CACHE[clave] = respuesta
+    _AVISOS_CACHE.move_to_end(clave)
+    while len(_AVISOS_CACHE) > AVISOS_EN_CACHE:
+        _AVISOS_CACHE.popitem(last=False)
+    return dict(respuesta, de_cache=False)
 
     canales = [r["canal"] for r in REGLAS_DE_AVISO]
     superficies = ["surface_type_%s" % e for e in ESQUINAS]
@@ -3133,6 +3267,13 @@ def avisos(session_id: str,
         # acotar mezcla los canales de todos.
         propio = _vehiculo_propio(cursor, fuente, session_id)
         _cl, _pv = _acotar_al_vehiculo(propio)
+        ventana = _ventana_de_alcance(cursor, fuente, session_id, adquisicion)
+        f0, f1 = _limites_de_fase(cursor, fuente, session_id, adquisicion, fase)
+        _ca, _pa = _clausula_de_tramo(f0, f1)
+        if ventana:
+            _ca = " AND timestamp BETWEEN %s AND %s" + _ca
+            _pa = [ventana[0], ventana[1]] + _pa
+        alcance = (_ca, tuple(_pa))
         cursor.execute("""
             WITH p AS (
                 SELECT timestamp,
@@ -3141,13 +3282,13 @@ def avisos(session_id: str,
                        signal_name, max(value_numeric) AS valor
                   FROM telemetry_messages
                  WHERE source_type = %s AND session_id = %s
-                   AND signal_name = ANY(%s)""" + _cl + """
+                   AND signal_name = ANY(%s)""" + _cl + _ca + """
                  GROUP BY timestamp, signal_name)
             SELECT signal_name, min(timestamp) FILTER (WHERE valor IS NOT NULL) AS primero,
                    max(valor) AS pico
               FROM p GROUP BY signal_name
         """, tuple([fuente, session_id,
-                   canales + superficies + ["lap_number", "lap_distance"]] + _pv))
+                   canales + superficies + ["lap_number", "lap_distance"]] + _pv + _pa))
         picos = {f[0]: {"primero": f[1], "pico": f[2]} for f in cursor.fetchall()}
 
         # El momento exacto de cada condicion: una consulta por regla que se
@@ -3165,12 +3306,12 @@ def avisos(session_id: str,
                            max(value_numeric) FILTER (WHERE signal_name = 'lap_distance') AS metro
                       FROM telemetry_messages
                      WHERE source_type = %s AND session_id = %s
-                       AND signal_name IN (%s, 'lap_number', 'lap_distance')""" + _cl + """
+                       AND signal_name IN (%s, 'lap_number', 'lap_distance')""" + _cl + _ca + """
                      GROUP BY timestamp)
                 SELECT vuelta, metro, v, timestamp FROM p
                  WHERE v >= %s ORDER BY timestamp LIMIT 1
             """, tuple([regla["canal"], fuente, session_id, regla["canal"]]
-                       + _pv + [regla["umbral"]]))
+                       + _pv + _pa + [regla["umbral"]]))
             fila = cursor.fetchone()
             if not fila:
                 continue
@@ -3193,7 +3334,7 @@ def avisos(session_id: str,
         # ---ninguna rueda sobre asfalto--- de modo que no entra en esa forma y
         # por eso no estaba. Medido sobre la sesion de Abu Dabi: veintitres
         # cuadros con las cuatro ruedas fuera, y la respuesta traia cero avisos.
-        fila = _primera_salida_de_pista(cursor, fuente, session_id, propio)
+        fila = _primera_salida_de_pista(cursor, fuente, session_id, propio, alcance)
         if fila is not None:
             vuelta, metro, codigos, instante = fila
             nombres = sorted({f1_udp.SUPERFICIES.get(c, "id-%d" % c) for c in codigos})
@@ -3228,7 +3369,7 @@ def avisos(session_id: str,
                 (REGLAS_FISICAS[3], _primera_caida_brusca,
                  lambda v: "-%.0f km/h en %.1f s sin frenar"
                            % (v, anotador_vivo.VENTANA_CAIDA_S))):
-            fila = buscar(cursor, fuente, session_id, propio)
+            fila = buscar(cursor, fuente, session_id, propio, alcance)
             if not fila:
                 continue
             vuelta, metro, valor, instante = fila[:4]

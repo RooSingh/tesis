@@ -3474,6 +3474,28 @@ const PILOTOS_9947 = [
     team_name: "McLaren", team_colour: "F47600" },
 ];
 
+prueba("la parrilla se pide despues de abrir la apertura, no antes", () => {
+  /* EL DEFECTO, QUE NO SE VE MIRANDO EL CODIGO DE LA CONSULTA.
+     `pedirParrillaDeOpenF1` toma `aperturaVigente()` al salir y descarta su
+     respuesta si esa apertura ya no rige. Llamandola **antes** de
+     `nuevaSesionEnCurso()`, la consulta sale con la apertura anterior en la
+     mano: contesta en veinte milisegundos, `sigueVigente` la da por vieja y el
+     resultado se tira. Los pilotos seguian siendo «Vehículo 1» con la API
+     contestando bien.
+
+     Se comprueba sobre el archivo publicado porque es una condicion de
+     **orden** entre dos lineas, y eso no se puede observar llamando a una. */
+  const abrir = fuenteApp.slice(fuenteApp.indexOf("function abrirSesionGuardada"));
+  const cuerpo = abrir.slice(0, abrir.indexOf("\nfunction "));
+  const apertura = cuerpo.indexOf("nuevaSesionEnCurso()");
+  const parrilla = cuerpo.indexOf("pedirParrillaDeOpenF1(");
+  assert.ok(apertura !== -1, "no esta `nuevaSesionEnCurso` en abrirSesionGuardada");
+  assert.ok(parrilla !== -1, "no se pide la parrilla al abrir la sesion");
+  assert.ok(parrilla > apertura,
+            "la parrilla se pide antes de abrir la apertura: su respuesta se " +
+            "descarta por vieja y nadie queda nombrado");
+});
+
 prueba("la clave de sesion sale del identificador y no se pide aparte", () => {
   assert.strictEqual(claveDeSesionOpenF1("openf1:session:9947"), "9947");
   /* Y no se inventa una para lo que no la tiene. */

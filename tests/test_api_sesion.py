@@ -32,7 +32,7 @@ class ConexionFalsa:
     def _ejecutar(self, consulta, parametros=None):
         self.consultas.append((consulta, parametros))
 
-    def cursor(self):
+    def cursor(self, *_, **__):
         contexto = MagicMock()
         contexto.__enter__ = lambda *_: self.cursor_obj
         contexto.__exit__ = lambda *_: False
@@ -610,11 +610,103 @@ class ClimaTests(unittest.TestCase):
         self.assertIn("contexto de sesion", r["motivo_ausencia"])
 
 
+class LosExtremosDeLaSesionLosSabeElCatalogoTests(unittest.TestCase):
+    """Preguntarle a la tabla de mediciones cuando empieza una sesion la recorre.
+
+    `min(timestamp), max(timestamp)` acotado por `session_id` no acota nada: la
+    hipertabla esta particionada por `timestamp`, de modo que sin un limite en
+    esa dimension hay que mirar todos los trozos. Medido sobre
+    `openf1:session:9947` ---932.625 filas, dos horas y media--- esa sola
+    consulta tardaba **26,3 s**, mientras las que de verdad buscan los valores
+    tardan treinta milisegundos. El navegador corta a los treinta segundos, asi
+    que la sesion no terminaba de abrirse y el clima quedaba en «la consulta no
+    contesto».
+
+    El catalogo ya tiene esos dos extremos escritos. Esta prueba fija que se le
+    pregunten a el.
+    """
+
+    @staticmethod
+    def _consultas(falsa) -> str:
+        return "\n".join(c for c, _ in falsa.consultas)
+
+    def test_no_le_pide_los_extremos_a_la_tabla_de_mediciones(self) -> None:
+        from datetime import datetime, timezone
+        t = datetime(2026, 9, 6, tzinfo=timezone.utc)
+        falsa, parche = _con([("air_temperature", 23.4, None, None, "C", t)])
+        with parche:
+            api_sesion.clima("openf1:session:9947")
+        consultas = self._consultas(falsa)
+        self.assertIn("sesiones_catalogo", consultas,
+                      "no se consulto el catalogo por los extremos de la sesion")
+        self.assertNotIn(
+            "min(timestamp), max(timestamp) FROM telemetry_messages", consultas,
+            "se le pidieron los extremos a la tabla de mediciones: eso recorre "
+            "la particion entera de la sesion")
+
+    def test_con_alcance_elegido_si_acota_por_tiempo(self) -> None:
+        """Los extremos del catalogo son los de la sesion, no los de un alcance.
+
+        Con una adquisicion elegida hay que medirlos, pero entonces la consulta
+        lleva un limite en la dimension de particion y es barata.
+        """
+
+        from datetime import datetime, timezone
+        t = datetime(2026, 9, 6, tzinfo=timezone.utc)
+        falsa, parche = _con([("air_temperature", 23.4, None, None, "C", t)])
+        with parche:
+            api_sesion._ultimos_valores(
+                falsa.cursor_obj, "f1_25_udp_simulation", "f1_25:session:1",
+                ["air_temperature"], None,
+                ventana_alcance=(t.isoformat(), t.isoformat()), vehiculo=None)
+        # No alcanza con que «timestamp BETWEEN» aparezca en alguna consulta:
+        # aparece en las que buscan valores. Tiene que estar **en la que mide
+        # los extremos**, que es la que sin acotar recorreria la particion.
+        extremos = [c for c, _ in falsa.consultas
+                    if "min(timestamp), max(timestamp)" in c]
+        self.assertTrue(extremos, "no se midieron los extremos del alcance")
+        self.assertIn("timestamp BETWEEN", extremos[0],
+                      "la consulta de extremos no acota por tiempo: sin un "
+                      "limite en la dimension de particion recorre todo")
+
+
 class AvisosTests(unittest.TestCase):
     def test_una_fuente_sin_banderas_ni_dano_no_inventa_avisos(self) -> None:
         r = api_sesion.avisos("9939")
         self.assertEqual(r["avisos"], [])
         self.assertIn("no hay con que levantar un aviso", r["motivo"])
+
+    def test_el_historico_usa_los_mismos_avisos_que_el_anotador_vivo(self) -> None:
+        from datetime import datetime, timedelta, timezone
+
+        t0 = datetime(2026, 9, 10, tzinfo=timezone.utc)
+        filas = [
+            ("lap_number", 1.0, None, None, "", t0),
+            ("lap_distance", 120.0, None, None, "m", t0),
+            ("fuel_remaining_laps", -0.5, None, None, "vueltas", t0),
+            ("floor_damage", 12.0, None, None, "%", t0 + timedelta(milliseconds=10)),
+        ]
+        mensajes = [{
+            "signal_name": nombre,
+            "value": numero,
+            "unit": unidad,
+            "timestamp": instante.isoformat(),
+        } for nombre, numero, _, _, unidad, instante in filas]
+        esperadas = anotador_vivo.anotar_secuencia(mensajes)
+        falsa, _ = _con(filas)
+        falsa.cursor_obj.fetchmany.side_effect = [filas, []]
+
+        recibidas = api_sesion._avisos_reproducidos(
+            falsa.cursor_obj, "f1_25_udp_simulation", "s", None,
+            None, (None, None), 60)
+
+        self.assertEqual([a["que"] for a in recibidas],
+                         [a["titulo"] for a in esperadas])
+        self.assertEqual([a["detalle"] for a in recibidas],
+                         [a["detalle"] for a in esperadas])
+        self.assertEqual([a["nivel"] for a in recibidas],
+                         ["alerta" if a["nivel"] == "incidente" else "info"
+                          for a in esperadas])
 
     def test_el_piano_deja_la_pista_pero_no_el_agarre(self) -> None:
         """Dos afirmaciones distintas que esta prueba antes mezclaba en una.

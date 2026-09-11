@@ -2661,9 +2661,8 @@ function pintarPista() {
        transformacion del camino vigente. */
     let p = null;
     if (PISTA.proyectarMundo && (PISTA.enConstruccion || PISTA.medidoEnVivo)) {
-      const suyo = vivo.recorrido.get(clave);
-      if (suyo && suyo.length) {
-        const ult = suyo[suyo.length - 1];
+      const ult = vivo.posicionMundo.get(clave);
+      if (ult) {
         const q = PISTA.proyectarMundo(ult[0], ult[1]);
         p = { x: q[0], y: q[1] };
       }
@@ -4296,12 +4295,14 @@ function vueltasParaPrecargar(numero) {
   const indice = lista.findIndex(v => v.numero === numero);
   if (indice === -1 || indice + 1 >= lista.length) return [];
   const rapidez = Math.max(1, velocidadRep || 1);
-  let hastaElInicio = duracionDeVuelta(numero) / rapidez;
+  const duracionActual = duracionDeVuelta(numero);
+  let hastaElInicio = duracionActual > 0 ? duracionActual / rapidez : Infinity;
   const resultado = [];
   for (let i = indice + 1; i < lista.length; i++) {
     if (resultado.length && hastaElInicio > HORIZONTE_PRECARGA_S) break;
     resultado.push(lista[i].numero);
-    hastaElInicio += duracionDeVuelta(lista[i].numero) / rapidez;
+    const duracion = duracionDeVuelta(lista[i].numero);
+    hastaElInicio = duracion > 0 ? hastaElInicio + duracion / rapidez : Infinity;
   }
   return resultado;
 }
@@ -6854,6 +6855,9 @@ const vivo = {
   //: `world_position_z`--- de modo que no es una geometria inventada ni una
   //: forma de catalogo: son las posiciones que el vehiculo declara.
   recorrido: new Map(),
+  //: La ultima coordenada es estado movil, no geometria del circuito. Sigue
+  //: cambiando despues de cerrar la primera vuelta aunque `recorrido` se congele.
+  posicionMundo: new Map(),
   //: Cuantos puntos habia la ultima vez que se rehizo el dibujo. Rehacerlo en
   //: cada punto significa recalcular la orientacion de la nube entera, y el
   //: dibujo salta de sitio a cada paso.
@@ -6985,7 +6989,7 @@ function vaciarVivo(sesion) {
   vivo.anotaciones.clear();
   /* El recorrido es de la sesion que se deja: reusarlo dibujaria el circuito
      anterior debajo del coche de la nueva. */
-  vivo.recorrido.clear();
+  vivo.recorrido.clear(); vivo.posicionMundo.clear();
   vivo.recorridoDibujado = 0;
   /* Y lo derivado de las series tambien: las vistas temporales y los relojes de
      vuelta viven en otra cache, con la vuelta y el vehiculo por clave, y esos
@@ -7083,10 +7087,6 @@ const MAX_PUNTOS_DE_RECORRIDO = 4000;
 const PUNTOS_ENTRE_REDIBUJOS = 25;
 
 function anotarPosicionViva(vehiculo, marca) {
-  /* Congelado significa una vuelta cerrada, no una ventana movil de vueltas.
-     Si se siguen agregando posiciones, el `Z` del SVG une la punta de la vuelta
-     actual con un punto antiguo y dibuja una cuerda que nunca se recorrio. */
-  if (PISTA.medidoEnVivo === true && PISTA.enConstruccion === false) return;
   const ultimos = vivo.ultimos.get(vehiculo);
   if (!ultimos) return;
   const mx = ultimos.get("world_position_x");
@@ -7098,6 +7098,12 @@ function anotarPosicionViva(vehiculo, marca) {
   }
   const x = numeroMedido(mx.value), z = numeroMedido(mz.value);
   if (x === null || z === null) return;
+  vivo.posicionMundo.set(vehiculo, [x, z]);
+
+  /* Congelado significa una vuelta cerrada, no una ventana movil de vueltas.
+     La posicion actual se conserva arriba, pero si se agrega al recorrido el
+     `Z` del SVG une vueltas distintas y dibuja una cuerda que nunca se recorrio. */
+  if (PISTA.medidoEnVivo === true && PISTA.enConstruccion === false) return;
 
   if (!vivo.recorrido.has(vehiculo)) vivo.recorrido.set(vehiculo, []);
   const puntos = vivo.recorrido.get(vehiculo);
@@ -7450,6 +7456,23 @@ const CAMPOS_ESQUINA_VIVA = {
   superficie: "surface_type_%s",
 };
 
+const CAMPOS_CLIMA_VIVO = {
+  temperatura_aire_c: "air_temperature",
+  temperatura_pista_c: "track_temperature",
+  codigo_de_clima: "weather_code",
+  bandera: "fia_flag",
+  retraso_del_coche_de_seguridad_s: "safety_car_delta",
+};
+
+const CLIMA_TEXTO_VIVO = {
+  0: "despejado", 1: "nubes ligeras", 2: "nublado",
+  3: "lluvia ligera", 4: "lluvia intensa", 5: "tormenta",
+};
+
+const BANDERA_TEXTO_VIVO = {
+  "-1": "sin dato", 0: "ninguna", 1: "verde", 2: "azul", 3: "amarilla", 4: "roja",
+};
+
 function sincronizarContextoVivo() {
   if (estadoSesion !== "vivo") return;
   const clave = claveVehiculoPropio();
@@ -7459,6 +7482,23 @@ function sincronizarContextoVivo() {
     const muestra = ultimos.get(canal);
     return muestra ? numeroMedido(muestra.value) : null;
   };
+
+  const canalesClima = Object.values(CAMPOS_CLIMA_VIVO);
+  const ultimosClima = [...vivo.ultimos.values()].find(
+    mapa => canalesClima.some(canal => mapa.has(canal))) || ultimos;
+  const clima = {};
+  Object.entries(CAMPOS_CLIMA_VIVO).forEach(([nombre, canal]) => {
+    const muestra = ultimosClima.get(canal);
+    const medido = muestra ? numeroMedido(muestra.value) : null;
+    if (medido !== null) clima[nombre] = medido;
+  });
+  if (clima.codigo_de_clima !== undefined) {
+    clima.clima = CLIMA_TEXTO_VIVO[clima.codigo_de_clima] || "desconocido";
+  }
+  if (clima.bandera !== undefined) {
+    clima.bandera_texto = BANDERA_TEXTO_VIVO[clima.bandera] || "desconocida";
+  }
+  estado.clima = Object.keys(clima).length ? clima : null;
 
   const esquinas = {};
   ["front_left", "front_right", "rear_left", "rear_right"].forEach(esquina => {
@@ -7880,14 +7920,18 @@ function abrirSesionGuardada(id) {
   const ruta = "/sesiones/" + encodeURIComponent(id);
   const conMotivo = (p, guardar) => p.then(guardar).catch(e => guardar({ error: e.message }));
 
-  /* La parrilla de OpenF1 no viene por `/adquisiciones` ---esa ruta es del
-     simulador y para esta fuente contesta vacio---: vive en el contexto
-     deportivo. Se pide aparte y sin que nadie la espere: llega, renombra y se
-     vuelve a dibujar. Ver `pedirParrillaDeOpenF1`. */
-  if (fuente === "openf1") pedirParrillaDeOpenF1(id);
-
   // Lo que quedo pidiendo la sesion anterior ya no le sirve a nadie.
   const apertura = nuevaSesionEnCurso();
+
+  /* LA PARRILLA DE OPENF1 SE PIDE ACA Y NO ANTES.
+     No viene por `/adquisiciones` ---esa ruta es del simulador y para esta
+     fuente contesta vacio, correctamente---: vive en el contexto deportivo.
+
+     Y va **despues** de abrir la apertura. Pedida antes, su respuesta llegaba
+     con la apertura anterior en la mano y `sigueVigente` la descartaba por
+     vieja: la consulta salia, contestaba en veinte milisegundos y el resultado
+     se tiraba, de modo que los pilotos seguian siendo «Vehículo 1». */
+  if (fuente === "openf1") pedirParrillaDeOpenF1(id);
   /* Abrir una sesion guardada es un acto explicito: fija el objetivo del vivo
      en esa sesion si es la que esta emitiendo, y lo suelta si no. En ningun
      caso queda «siguiendo lo que aparezca». */
@@ -8435,9 +8479,12 @@ function cargarDatosDeSesion(ruta, apertura, senal, s) {
      la apertura, pero no matarla no es lo mismo que no estorbarla: corriendo al
      lado de `/vueltas` le duplica el tiempo, y ninguno de sus tres paneles hace
      falta para dibujar una traza. */
-  cuandoHayaGrafico(() =>
-  conCarga(["clima", "vehiculo", "puesta"], () =>
-    pedir(ruta + "/contexto" + sufijoDeCorrida(false), { senal: senal })
+  cuandoHayaGrafico(() => {
+    const cuando = instanteUtc();
+    return conCarga(["clima", "vehiculo", "puesta"], () =>
+      pedir(ruta + "/contexto" + (cuando
+        ? "?hasta=" + encodeURIComponent(cuando) + sufijoDeCorrida(true)
+        : sufijoDeCorrida(false)), { senal: senal })
       .then(ctx => {
         if (!sigueVigente(apertura) || !ctx) return;
         estado.clima = ctx.clima || null;
@@ -8461,7 +8508,8 @@ function cargarDatosDeSesion(ruta, apertura, senal, s) {
         }
         _firmaClima = "";
         pintarClima();
-      })));
+        }));
+  });
 
   conCarga(["vueltas"], () => Promise.all([
     pedir(ruta + "/vueltas" + sufijoDeCorrida(false), { senal: senal })
