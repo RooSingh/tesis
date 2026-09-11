@@ -3474,26 +3474,34 @@ const PILOTOS_9947 = [
     team_name: "McLaren", team_colour: "F47600" },
 ];
 
-prueba("la parrilla se pide despues de abrir la apertura, no antes", () => {
+prueba("la parrilla se pide por donde pasan todos los caminos", () => {
   /* EL DEFECTO, QUE NO SE VE MIRANDO EL CODIGO DE LA CONSULTA.
-     `pedirParrillaDeOpenF1` toma `aperturaVigente()` al salir y descarta su
-     respuesta si esa apertura ya no rige. Llamandola **antes** de
-     `nuevaSesionEnCurso()`, la consulta sale con la apertura anterior en la
-     mano: contesta en veinte milisegundos, `sigueVigente` la da por vieja y el
-     resultado se tira. Los pilotos seguian siendo «Vehículo 1» con la API
-     contestando bien.
+     Estaba en `abrirSesionGuardada`, que es **uno** de los caminos y no el
+     unico: `elegirCorrida` vuelve a cargar la sesion por `cargarDatosDeSesion`
+     sin pasar por ella, y ese es el que corre al elegir adquisicion o fase, o
+     al recargar la pagina con una eleccion en la direccion. Por ese camino la
+     consulta no salia nunca ---comprobado en el registro del servidor: cero
+     pedidos a `/racing/sessions/.../drivers`--- y los pilotos seguian siendo
+     «Vehículo 1» con la API contestando bien.
 
-     Se comprueba sobre el archivo publicado porque es una condicion de
-     **orden** entre dos lineas, y eso no se puede observar llamando a una. */
-  const abrir = fuenteApp.slice(fuenteApp.indexOf("function abrirSesionGuardada"));
-  const cuerpo = abrir.slice(0, abrir.indexOf("\nfunction "));
-  const apertura = cuerpo.indexOf("nuevaSesionEnCurso()");
-  const parrilla = cuerpo.indexOf("pedirParrillaDeOpenF1(");
-  assert.ok(apertura !== -1, "no esta `nuevaSesionEnCurso` en abrirSesionGuardada");
-  assert.ok(parrilla !== -1, "no se pide la parrilla al abrir la sesion");
-  assert.ok(parrilla > apertura,
-            "la parrilla se pide antes de abrir la apertura: su respuesta se " +
-            "descarta por vieja y nadie queda nombrado");
+     Se comprueba sobre el archivo publicado porque es una condicion de **donde
+     esta escrita** una llamada, y eso no se observa llamandola. */
+  const desde = fuenteApp.indexOf("function cargarDatosDeSesion");
+  assert.ok(desde !== -1, "no esta `cargarDatosDeSesion`");
+  const cuerpo = fuenteApp.slice(desde, fuenteApp.indexOf("\nfunction ", desde + 10));
+  assert.ok(cuerpo.indexOf("pedirParrillaDeOpenF1(") !== -1,
+            "la parrilla no se pide desde `cargarDatosDeSesion`, que es por " +
+            "donde pasan todos los caminos que abren una sesion");
+});
+
+prueba("la parrilla usa la apertura que le dan, no la que encuentre", () => {
+  /* Tomar `aperturaVigente()` adentro ataba la consulta al orden en que se la
+     invoque: llamada antes de `nuevaSesionEnCurso()`, su respuesta llegaba con
+     la apertura anterior y `sigueVigente` la descartaba por vieja. */
+  const desde = fuenteApp.indexOf("function pedirParrillaDeOpenF1");
+  const cuerpo = fuenteApp.slice(desde, fuenteApp.indexOf("\nfunction ", desde + 10));
+  assert.ok(/function pedirParrillaDeOpenF1\(sessionId, apertura\)/.test(cuerpo),
+            "la apertura no es un argumento: la consulta queda atada al orden");
 });
 
 prueba("la clave de sesion sale del identificador y no se pide aparte", () => {

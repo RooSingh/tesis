@@ -235,6 +235,10 @@ const estado = {
   puesta: null,        // de /sesiones/{id}/puesta-a-punto
   avisos: [],          // de /sesiones/{id}/avisos
   avisosMotivo: "",
+  /* Por que la consulta de avisos no contesto, si no contesto. Distinto de
+     «llego vacia», igual que `fallo` lo es para las vueltas: sin esta marca el
+     panel afirma que no hubo incidentes cada vez que la consulta se corta. */
+  avisosFallo: "",
   series: {},          // series por numero de vuelta, ya pedidas
   pidiendo: {},        // vueltas cuya consulta esta en curso
   /* Vueltas cuya consulta fallo, con el motivo. Distinto de «todavia no llego»
@@ -752,10 +756,12 @@ function parrillaDesdePilotos(sessionId, pilotos) {
   return { disponible: vehiculos.length > 0, vehiculos: vehiculos };
 }
 
-function pedirParrillaDeOpenF1(sessionId) {
+function pedirParrillaDeOpenF1(sessionId, apertura) {
   const clave = claveDeSesionOpenF1(sessionId);
   if (!clave) return;
-  const apertura = aperturaVigente();
+  /* La apertura la da quien llama. Tomarla aca ataba la consulta al orden en
+     que se la invoque, y ese orden ya fallo una vez. */
+  if (apertura === undefined) apertura = aperturaVigente();
   pedir("/racing/sessions/" + encodeURIComponent(clave) + "/drivers",
         { senal: senalDeSesion() })
     .then(pilotos => {
@@ -2026,6 +2032,25 @@ function avisosDeLaFuente() {
   return estado.avisos;
 }
 
+/* UNA CONSULTA QUE NO CONTESTO NO ES UNA SESION SIN INCIDENTES.
+   Medido el 2026-09-11 sobre una practica de 4.140.744 filas, `/avisos` en
+   frio tardo 76,0 / 73,4 / 72,6 s. El cliente corta a los 30 s y el corte
+   llega como `TiempoAgotado`, que no es `AbortError` ni `TypeError`: el
+   `catch` de la carga solo anotaba los `TypeError`, y el fallo se perdia sin
+   consola, sin motivo y sin marca. `estado.avisos` quedaba vacio y el panel
+   escribia que no habia ocurrido nada sobre una sesion con veinticuatro
+   avisos, cuatro de ellos alertas.
+   Un panel vacio se lee como un panel vacio. Un panel que **afirma** que no
+   hubo incidentes tranquiliza: el fallo se disfraza de hallazgo. */
+function anotarFalloDeAvisos(e) {
+  /* Cancelar a proposito no es fallar: cerrar la sesion aborta esta consulta
+     igual que las demas, y no hay nada que declarar sobre una sesion que ya
+     no se esta mirando. */
+  if (fueAnulada(e)) return;
+  estado.avisosFallo = (e && e.message) || "la consulta de avisos no volvió";
+  console.error("avisos:", e);
+}
+
 /* Lo mismo con los avisos: la lista solo cambia cuando llega uno nuevo. */
 let _firmaAvisos = "";
 let _cuantosAvisos = 0;
@@ -2044,7 +2069,7 @@ function pintarAvisos() {
   const hasta = estadoSesion === "vivo" ? 1 : cabezal + 1e-9;
   const avisos = todos.filter(a => a.en <= hasta).sort((a, b) => b.en - a.en);
   const firma = [fuente, estadoSesion, avisos.length, todos.length,
-                 tinta("--acento")].join("|");
+                 estado.avisosFallo, tinta("--acento")].join("|");
   if (firma === _firmaAvisos) return;
   // Solo se anuncia el que **acaba de llegar**: si la lista se acorto es
   // porque se rebobino, y entonces no hay nada nuevo que anunciar.
@@ -2054,6 +2079,20 @@ function pintarAvisos() {
   const motivo = fuente === "openf1"
     ? "OpenF1 no publica banderas, daño ni tipo de superficie: no hay con qué levantar un aviso."
     : "El bus del vehículo no declara estado de carrera ni daño de carrocería.";
+
+  /* El orden importa: mientras la consulta no haya vuelto, lo unico cierto es
+     que no se sabe. Preguntar primero por la lista vacia haria que el panel
+     contestara «no ocurrio nada» justamente cuando no tiene con que. */
+  if (estado.avisosFallo && !todos.length) {
+    cont.innerHTML = '<p class="nota sin-avisos">No se pudieron traer los avisos ' +
+      'de esta sesión: ' + textoPlano(estado.avisosFallo) + '. No quiere decir ' +
+      'que no haya ocurrido nada; quiere decir que todavía no se sabe.</p>';
+    document.getElementById("canal-avisos").textContent = "sin respuesta";
+    document.getElementById("motivo-avisos").textContent =
+      "La consulta de avisos recorre la sesión entera y en una captura larga " +
+      "puede no llegar a contestar.";
+    return;
+  }
 
   if (!avisos.length) {
     cont.innerHTML = '<p class="nota sin-avisos">Todavía no ocurrió nada en esta ' +
@@ -7952,15 +7991,6 @@ function abrirSesionGuardada(id) {
   // Lo que quedo pidiendo la sesion anterior ya no le sirve a nadie.
   const apertura = nuevaSesionEnCurso();
 
-  /* LA PARRILLA DE OPENF1 SE PIDE ACA Y NO ANTES.
-     No viene por `/adquisiciones` ---esa ruta es del simulador y para esta
-     fuente contesta vacio, correctamente---: vive en el contexto deportivo.
-
-     Y va **despues** de abrir la apertura. Pedida antes, su respuesta llegaba
-     con la apertura anterior en la mano y `sigueVigente` la descartaba por
-     vieja: la consulta salia, contestaba en veinte milisegundos y el resultado
-     se tiraba, de modo que los pilotos seguian siendo «Vehículo 1». */
-  if (fuente === "openf1") pedirParrillaDeOpenF1(id);
   /* Abrir una sesion guardada es un acto explicito: fija el objetivo del vivo
      en esa sesion si es la que esta emitiendo, y lo suelta si no. En ningun
      caso queda «siguiendo lo que aparezca». */
@@ -8475,6 +8505,21 @@ function etiquetaDeCorrida() {
    vivia ahi, y al separarlo lanzaba un `ReferenceError` que se veia como «la
    sesion se abrio a medias». */
 function cargarDatosDeSesion(ruta, apertura, senal, s) {
+  /* LA PARRILLA DE OPENF1 SE PIDE ACA, QUE ES POR DONDE PASAN TODOS.
+     No viene por `/adquisiciones` ---esa ruta es del simulador y para esta
+     fuente contesta vacio, correctamente---: vive en el contexto deportivo.
+
+     ESTABA EN `abrirSesionGuardada` Y NO ALCANZABA. Esa funcion es uno de los
+     caminos, no el unico: `elegirCorrida` vuelve a cargar la sesion por aca sin
+     pasar por ella, y ese es justo el que corre al elegir adquisicion o fase, o
+     al recargar la pagina con una eleccion en la direccion. Por ese camino la
+     consulta no salia nunca y los pilotos seguian siendo «Vehículo 1».
+
+     Y usa la apertura **que le dieron**. Pedida con una anterior en la mano,
+     `sigueVigente` descarta la respuesta por vieja: la consulta sale, contesta
+     en veinte milisegundos y el resultado se tira. */
+  if (fuente === "openf1") pedirParrillaDeOpenF1((s || {}).session_id, apertura);
+
   /* Los avisos no hacen falta para dibujar y su consulta puede durar veinte
      segundos reteniendo una conexion. Se piden cuando ya hay un grafico. */
   cuandoHayaGrafico(() =>

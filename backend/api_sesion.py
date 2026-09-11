@@ -264,9 +264,47 @@ def listar_vueltas(
     fuente = _fuente_de(session_id)
     senal_distancia = DISTANCIA_POR_FUENTE.get(fuente)
     if not senal_distancia:
+        # NO HAY VUELTAS, PERO SI HAY ALGUIEN CONDUCIENDO.
+        #
+        # Esta respuesta es el sitio donde se declara el vehiculo propio: el
+        # tablero la trata como autoritativa y ninguna otra la pisa. Devolverla
+        # sin vehiculo dejaba a las fuentes sin metro medido sin nadie elegido
+        # en el momento en que se pide el trazado, que es enseguida.
+        #
+        # Con un vehiculo capturado no se notaba ---el tablero cae en el unico
+        # que la serie devuelve--- pero con los tres pilotos de una sesion de
+        # OpenF1 el trazado se pedia de nadie, y sin saber de quien es no se
+        # pueden buscar sus vueltas: salia la sesion entera superpuesta.
+        #
+        # Se elige el mas muestreado, que es el mismo criterio que usa la rama
+        # con distancia: de los rivales suele haber cronometraje y nada mas. El
+        # desempate por identificador es para que dos llamadas seguidas no
+        # contesten cosas distintas.
+        # LA CONSULTA ES UN AÑADIDO, NO UN REQUISITO.
+        #
+        # Esta rama contestaba sin tocar la base: el motivo sale de una tabla
+        # escrita, no de una medicion. Convertirla en obligatoria haria que una
+        # base caida deje de explicar por que no hay vueltas, que es lo unico
+        # que esta respuesta tiene para dar. Si la consulta no sale, se contesta
+        # lo de siempre sin vehiculo.
+        propio = None
+        try:
+            with db.obtener_conexion() as conexion, conexion.cursor() as cursor:
+                cursor.execute("""
+                    SELECT vehicle_id FROM telemetry_messages
+                     WHERE source_type = %s AND session_id = %s
+                     GROUP BY vehicle_id
+                     ORDER BY count(*) DESC, vehicle_id
+                     LIMIT 1
+                """, (fuente, session_id))
+                fila = cursor.fetchone()
+            propio = fila[0] if fila else None
+        except Exception:  # noqa: BLE001
+            propio = None
         return {
             "session_id": session_id,
             "fuente": fuente,
+            "vehiculo": propio,
             "vueltas": [],
             "motivo": ("Esta fuente no tiene eje de distancia: %s. Sin metro medido "
                        "no hay vueltas que delimitar." % _sin_distancia(fuente)),

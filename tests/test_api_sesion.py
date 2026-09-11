@@ -613,6 +613,48 @@ class ClimaTests(unittest.TestCase):
         self.assertIn("contexto de sesion", r["motivo_ausencia"])
 
 
+class SinVueltasPeroConAlguienConduciendoTests(unittest.TestCase):
+    """`/vueltas` es donde se declara el vehiculo propio, y es autoritativa.
+
+    El tablero la trata asi y ninguna otra la pisa. Devolverla sin vehiculo
+    dejaba a las fuentes sin metro medido sin nadie elegido en el momento en que
+    se pide el trazado, que es enseguida. Con un vehiculo capturado no se
+    notaba; con los tres pilotos de una sesion de OpenF1, el trazado se pedia de
+    nadie y salia la sesion entera superpuesta.
+    """
+
+    def test_declara_el_mas_muestreado(self) -> None:
+        falsa, parche = _con([("openf1:session:9947:driver:1",)])
+        with parche:
+            r = api_sesion.listar_vueltas("openf1:session:9947")
+        self.assertEqual(r["vehiculo"], "openf1:session:9947:driver:1")
+        self.assertEqual(r["vueltas"], [])
+        consulta, _ = falsa.consultas[-1]
+        self.assertIn("count(*) DESC, vehicle_id", consulta,
+                      "el desempate por identificador es lo que hace que dos "
+                      "llamadas seguidas contesten lo mismo")
+
+    def test_sigue_explicando_por_que_no_hay_vueltas(self) -> None:
+        falsa, parche = _con([("openf1:session:9947:driver:1",)])
+        with parche:
+            r = api_sesion.listar_vueltas("openf1:session:9947")
+        self.assertIn("no hay vueltas que delimitar", r["motivo"])
+
+    def test_una_base_caida_no_se_lleva_puesta_la_explicacion(self) -> None:
+        """El motivo sale de una tabla escrita, no de una medicion.
+
+        Esta rama contestaba sin tocar la base. Convertir la consulta en
+        obligatoria haria que una base caida deje de explicar por que no hay
+        vueltas, que es lo unico que esta respuesta tiene para dar.
+        """
+
+        with patch("backend.api_sesion.db.obtener_conexion",
+                   side_effect=RuntimeError("sin base")):
+            r = api_sesion.listar_vueltas("openf1:session:9947")
+        self.assertIsNone(r["vehiculo"])
+        self.assertIn("no hay vueltas que delimitar", r["motivo"])
+
+
 class LosExtremosDeLaSesionLosSabeElCatalogoTests(unittest.TestCase):
     """Preguntarle a la tabla de mediciones cuando empieza una sesion la recorre.
 
