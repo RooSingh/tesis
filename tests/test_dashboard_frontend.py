@@ -197,6 +197,18 @@ class AyudantesDeSerieTests(unittest.TestCase):
 
         self._correr("identidad_y_cronometraje.js")
 
+    def test_un_reintento_se_ata_a_que_algo_cambie(self) -> None:
+        """El bucle de microtareas que dejaba la pagina sin volver.
+
+        La vista ampliada pedia los datos que le faltaban y se redibujaba al
+        asentarse la promesa; sobre una fuente que no era la simulacion esa
+        promesa venia asentada y sin traer nada, de modo que el redibujo
+        encontraba lo mismo y volvia a pedir. Medido en el navegador:
+        928.517 llamadas a `dibujarComparacion` en 72 s, y seguia.
+        """
+
+        self._correr("un_reintento_que_no_avanza.js")
+
 
 class IdentidadYUnidadesTests(unittest.TestCase):
     """Lo que no puede volver, por como se rompio.

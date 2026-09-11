@@ -6414,10 +6414,25 @@ function vueltasParaComparar() {
     : [vueltaElegida];
 }
 
+/* ============================================================
+   LA VISTA AMPLIADA TAMBIEN PIDE, Y NO SOLO EN LA SIMULACION
+   ------------------------------------------------------------
+   Esto arrancaba con `if (fuente !== "f1") return Promise.resolve([])`, de
+   cuando comparar era cosa del simulador. Desde que la vista ampliada se abre
+   sobre las tres fuentes, ese retorno temprano dejaba a las otras dos pidiendo
+   nada: la vista se quedaba en «Cargando datos...» para siempre sobre una
+   vuelta que la API tenia.
+
+   Y bastante peor que eso, porque quien llamaba se volvia a dibujar al
+   asentarse la promesa. Ver `reintentarComparacionCuandoLleguenLosDatos`.
+   ============================================================ */
 function asegurarDatosComparacion() {
-  if (fuente !== "f1") return Promise.resolve([]);
   const cuales = vueltasParaComparar();
-  const puntos = puntosParaVueltas(cuales.length);
+  /* Con una sola vuelta no hay presupuesto que repartir, y forzar los 300 de
+     la vista espacial dejaria la ampliada mas gruesa que la cabina, que sobre
+     una fuente que va contra el reloj pide 1.200. Se deja elegir al que sabe
+     que eje tiene la fuente. */
+  const puntos = cuales.length > 1 ? puntosParaVueltas(cuales.length) : undefined;
 
   /* LO QUE SE VE PRIMERO SE PIDE PRIMERO.
      La vuelta bajo el cabezal es la que alguien esta mirando: si sale al final
@@ -6776,6 +6791,45 @@ function bandasParaElTramo(xMin, xMax, clave, ancho, eje, alcance) {
   return [null, ""];
 }
 
+/* ============================================================
+   UN REINTENTO SE ATA A QUE ALGO CAMBIE, NO A QUE UNA PROMESA SE ASIENTE
+   ------------------------------------------------------------
+   ESTO COLGABA LA PAGINA, Y ASI. La vista ampliada, al no encontrar la vuelta
+   bajo el cabezal, pedia los datos y se volvia a dibujar cuando la promesa se
+   asentaba. Sobre una fuente que no fuera la simulacion esa promesa ya venia
+   asentada y sin traer nada, de modo que el redibujo encontraba exactamente lo
+   mismo, volvia a pedir, y otra vez. Son microtareas: se drenan enteras antes
+   de que el navegador pueda pintar o atender un clic, asi que no es lentitud,
+   es una pagina que no vuelve nunca.
+
+   MEDIDO. Arrastrando el cabezal de OpenF1 con la ampliada abierta hasta una
+   vuelta sin cargar: `dibujarComparacion` se llamo **928.517 veces en 72 s** y
+   seguia. Todo lo demas del mismo arrastre, 143 llamadas. El servidor no
+   recibio ni una consulta de mas: el bucle era entero del navegador.
+
+   EL ARREGLO NO ES CONTAR INTENTOS. Un tope de reintentos elige un numero y
+   deja el caso de al lado colgado un poco menos. Lo que hace falta es que el
+   reintento dependa de que el estado **avance**: `_selloSeries` sube cada vez
+   que `estado.series` cambia de verdad. Si despues de pedir el sello es el
+   mismo, no llego nada y no hay nada que volver a dibujar. Y mientras se
+   espera por un sello, no se abre una segunda espera por el mismo.
+   ============================================================ */
+let _selloEsperadoPorLaComparacion = null;
+
+function reintentarComparacionCuandoLleguenLosDatos() {
+  const sello = _selloSeries;
+  if (_selloEsperadoPorLaComparacion === sello) return;
+  _selloEsperadoPorLaComparacion = sello;
+  asegurarDatosComparacion().then(() => {
+    if (_selloEsperadoPorLaComparacion === sello) _selloEsperadoPorLaComparacion = null;
+    if (_selloSeries === sello) return;
+    pintarPilotosComparacion();
+    dibujarComparacion();
+  }, () => {
+    if (_selloEsperadoPorLaComparacion === sello) _selloEsperadoPorLaComparacion = null;
+  });
+}
+
 function dibujarComparacion() {
   const cv = document.getElementById("lienzo-comparacion");
   const ctx = cv.getContext("2d");
@@ -6848,7 +6902,7 @@ function dibujarComparacion() {
     });
     ctx.fillText(faltan ? "Cargando datos para los vehículos y el alcance seleccionados…"
                        : "Las métricas elegidas no tienen datos para estos vehículos.", 20, h / 2);
-    if (faltan) asegurarDatosComparacion().then(() => { pintarPilotosComparacion(); dibujarComparacion(); });
+    if (faltan) reintentarComparacionCuandoLleguenLosDatos();
     return;
   }
   const xMin = vista.xMin, xMax = vista.xMax;
