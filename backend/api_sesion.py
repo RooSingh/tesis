@@ -2202,6 +2202,13 @@ CANALES_PUESTA_A_PUNTO = {
 }
 
 
+def _motivo_sin_puesta(fuente: str) -> str:
+    if fuente == "f1_25_udp_simulation":
+        return ("Esta sesion no contiene el paquete de reglaje normalizado; "
+                "las capturas anteriores necesitan reinyectarse.")
+    return "Esta fuente no publica configuracion del vehiculo."
+
+
 #: Cuanto se mira hacia atras antes de buscar sin acotar. Dos minutos cubren de
 #: sobra el intervalo de cualquier senal que se publique de forma periodica; las
 #: que se publican una sola vez caen en el segundo paso.
@@ -2632,7 +2639,7 @@ def puesta_a_punto(
         "criterio": ("paquete completo observado antes de una muestra posterior "
                      "con velocidad positiva: configuracion llevada a la pista"),
         "sin_decodificar": [],
-        "motivo_ausencia": None if datos else "Esta fuente no publica configuracion del vehiculo.",
+        "motivo_ausencia": None if datos else _motivo_sin_puesta(fuente),
     }
 
 
@@ -2778,8 +2785,7 @@ def contexto(
         "puesta_instante_observado": instante_puesta,
         "referencia_puesta": referencia,
         "diferencias_puesta": diferencias,
-        "puesta_motivo": (None if puesta else
-                           "Esta fuente no publica configuracion del vehiculo."),
+        "puesta_motivo": None if puesta else _motivo_sin_puesta(fuente),
         "sin_decodificar": [],
         "criterio": ("ultimo valor de cada señal hasta el instante pedido; "
                      "el reglaje solo se declara asentado si despues se rodo"),

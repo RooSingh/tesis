@@ -1402,6 +1402,12 @@ class PuestaAPuntoDeclarada(unittest.TestCase):
         self.assertEqual(sorted(api_sesion.CANALES_PUESTA_A_PUNTO),
                          sorted(api_sesion.UNIDADES_PUESTA_A_PUNTO))
 
+    def test_una_captura_antigua_no_se_confunde_con_una_fuente_incapaz(self):
+        self.assertIn("necesitan reinyectarse", api_sesion._motivo_sin_puesta(
+            "f1_25_udp_simulation"))
+        self.assertIn("no publica", api_sesion._motivo_sin_puesta(
+            "can_real_replay"))
+
 
 class VueltaConSalto(unittest.TestCase):
     """Una vuelta con un salto de horas entre dos muestras seguidas no se rodo
