@@ -576,6 +576,31 @@ def _explicar_descensos(fuente: str, session_id: str, vehiculos: dict,
     return salida
 
 
+#: LA COTA DE TIEMPO QUE EL CATALOGO YA CONOCE, para las consultas que buscan la
+#: ventana de una vuelta. Lleva dos veces el identificador de la sesion.
+#:
+#: `min/max(timestamp)` sin cota de tiempo no descarta ningun trozo: la
+#: hipertabla esta particionada por `timestamp`, y el motor recorre el indice de
+#: tiempo desde un extremo de la tabla hasta dar con la sesion, leyendo entero lo
+#: que haya sin comprimir en el camino. Medido el 2026-09-11 sobre Red Bull Ring
+#: (`f1_25:session:4106112287623591878`), con 43 GB sin comprimir de por medio:
+#: la ventana de la vuelta 2 no contestaba en 60 s, y el tablero corta a los 30.
+#: Con esta cota, **236 ms** con el plan preparado y los mismos dos instantes.
+#:
+#: VA DENTRO DE LA CONSULTA Y NO EN UNA LECTURA PREVIA. Una sesion que no esta
+#: catalogada cae en `-infinity` e `infinity`, que es exactamente la consulta de
+#: antes: preguntarle a la tabla por sus extremos seria la misma lectura lenta. Y
+#: no suma una ida a la base. Es el mismo criterio que `extremos_de` aplica en
+#: `/contexto`, con la misma suposicion: que los extremos del catalogo esten al
+#: dia, cosa que la ingesta asegura al terminar cada carga.
+_COTA_DEL_CATALOGO = """
+               AND timestamp BETWEEN
+                   coalesce((SELECT desde FROM sesiones_catalogo WHERE session_id = %s),
+                            '-infinity')
+                   AND coalesce((SELECT hasta FROM sesiones_catalogo WHERE session_id = %s),
+                                'infinity')"""
+
+
 @router.get("/sesiones/{session_id}/posiciones")
 def posiciones_en_pista(
         session_id: str,
@@ -638,8 +663,9 @@ def posiciones_en_pista(
              WHERE source_type = %s AND session_id = %s
                AND signal_name = 'lap_number' AND value_numeric = %s
                AND (%s::timestamptz IS NULL OR timestamp BETWEEN %s AND %s)""" +
-            tramo + """
-        """, tuple([fuente, session_id, float(vuelta), v0, v0, v1] + tramo_par))
+            _COTA_DEL_CATALOGO + tramo + """
+        """, tuple([fuente, session_id, float(vuelta), v0, v0, v1,
+                    session_id, session_id] + tramo_par))
         if not ventana or ventana[0][0] is None:
             return {"session_id": session_id, "vuelta": vuelta, "vehiculos": {},
                     "motivo": "No hay muestras de esa vuelta."}
@@ -1945,16 +1971,19 @@ def series_por_distancia(
             # La ventana de la vuelta se busca **dentro** del alcance: sin
             # esto, la vuelta 1 de Spa abarca los tres dias que separan la
             # captura original de las corridas de prueba.
+            # Acotada por el catalogo, por el mismo motivo que la ventana de
+            # `posiciones_en_pista`: ver `_COTA_DEL_CATALOGO`.
             filas_v = _filas(cursor, """
                 SELECT min(timestamp), max(timestamp)
                   FROM telemetry_messages
                  WHERE source_type = %s AND session_id = %s
                    AND signal_name = 'lap_number' AND value_numeric = %s
                    AND (%s::timestamptz IS NULL OR timestamp BETWEEN %s AND %s)""" +
+                _COTA_DEL_CATALOGO +
                 "".join(" AND " + p for p in _tpreds) + """
             """, tuple([fuente, session_id, float(vuelta),
                         _v[0] if _v else None, _v[0] if _v else None,
-                        _v[1] if _v else None] + _tpar))
+                        _v[1] if _v else None, session_id, session_id] + _tpar))
         if filas_v and filas_v[0][0] is not None:
             ventana = (filas_v[0][0], filas_v[0][1])
             condiciones.append("timestamp BETWEEN %s AND %s")
