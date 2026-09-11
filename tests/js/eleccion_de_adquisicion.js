@@ -398,11 +398,22 @@ prueba("la compuerta esta en las dos consultas de historico", () => {
 });
 
 prueba("si no hay ruta de adquisiciones se declara la lista vacia", () => {
-  /* Sin esto, la compuerta dejaria a una API mas vieja sin cargar nunca. */
-  const i = fuente.indexOf("if (fueAnulada(e)) return;");
-  assert.ok(i > 0, "no esta el catch de adquisiciones");
-  const bloque = fuente.slice(i, i + 200);
-  assert.ok(bloque.indexOf("corrida.disponibles = []") !== -1,
+  /* Sin esto, la compuerta dejaria a una API mas vieja sin cargar nunca.
+
+     SE BUSCA EL CATCH DE ADQUISICIONES, NO EL PRIMERO QUE APAREZCA.
+     Esto anclaba en la primera aparicion de `if (fueAnulada(e)) return;` y
+     miraba los doscientos caracteres siguientes. Es un texto que cualquier
+     consulta puede usar: el dia que se agrego uno en el camino de los avisos
+     ---que esta antes en el archivo--- la ventana paso a mirar codigo de otra
+     cosa y la prueba fallo sin que nada de lo que afirma hubiera cambiado.
+
+     Ahora se ancla en lo que la prueba **es**: el catch que declara la lista
+     vacia. Se lo busca por su propio contenido, de modo que mover codigo no
+     alcanza para romperla, y si ese catch desaparece la prueba lo dice en vez
+     de mirar otro lado. */
+  const bloques = fuente.split("if (fueAnulada(e)) return;").slice(1);
+  assert.ok(bloques.length, "no esta el catch de adquisiciones");
+  assert.ok(bloques.some(b => b.slice(0, 200).indexOf("corrida.disponibles = []") !== -1),
     "al fallar la consulta la compuerta queda cerrada para siempre");
 });
 
