@@ -874,7 +874,35 @@ class Anotador:
 
     @staticmethod
     def _podar(serie: deque, t: float) -> None:
-        while serie and (t - serie[0][0]) > VENTANA_CAIDA_S:
+        """Deja en la serie lo que cae en la ventana que **termina** en `t`.
+
+        EL TIEMPO NO SIEMPRE AVANZA, Y DARLO POR SENTADO SALIA CARO.
+        Esto decia `(t - serie[0][0]) > VENTANA_CAIDA_S`, que con una muestra
+        anterior a la que abrio la serie da una resta **negativa**: la condicion
+        es falsa, no se poda nada, y no se vuelve a podar nunca. La cola crece
+        sin limite y `_caida` la recorre entera en cada muestra, de modo que el
+        recorrido de una sesion se vuelve cuadratico.
+
+        Medido el 2026-09-11 sobre una practica de 216.318 muestras: las series
+        llegaban a **8.838 entradas** para una ventana de medio segundo, el
+        costo por muestra crecia de 30 a 459 us a lo largo de la sesion y
+        `_caida` se llevaba el 85 % del tiempo. `/avisos` tardaba 73 s, de los
+        cuales la consulta a la base era 0,9.
+
+        De donde salia el retroceso: la lectura ordena por desplazamiento de
+        captura, y una sesion con dos capturas pegadas pone primero las filas de
+        la segunda ---que reinicia ese reloj--- con instantes posteriores. En
+        vivo pasa lo mismo si el reloj se corre o la captura se reinicia.
+
+        Y NO ERA SOLO LENTITUD. Con la serie sin podar, `_caida` comparaba
+        contra una velocidad de minutos antes y tomaba el maximo de freno de
+        toda la sesion: la regla quedaba muda. Podar bien la devuelve.
+
+        Se descarta por los dos lados: lo mas viejo que la ventana, y lo
+        posterior a `t`, que tampoco pertenece a una ventana que termina ahi.
+        """
+
+        while serie and not (0.0 <= t - serie[0][0] <= VENTANA_CAIDA_S):
             serie.popleft()
 
 
