@@ -567,11 +567,6 @@
     background: var(--acento); color: var(--sobre-acento); border-color: var(--acento);
   }
   .transporte[data-modo="reproduccion"] #mandos-reproduccion { display: flex; }
-  .sin-reproduccion { display: none; }
-  .transporte[data-sin-distancia="si"] .sin-reproduccion {
-    display: block; flex: 0 1 34ch; margin: 0; padding: 10px 4px;
-    font-size: .72rem; color: var(--texto-medio);
-  }
   .transporte[data-modo="vivo"] #mandos-vivo { display: flex; }
   .transporte[data-modo="vacio"] #mandos-vacio { display: flex; }
 
@@ -1279,7 +1274,6 @@
     .cabina[data-pantalla="completa"] { position: static; inset: auto; z-index: auto; overflow: visible; }
   }
   @media (max-width: 1180px) {
-    .transporte[data-sin-distancia="si"] .sin-reproduccion { display: none; }
     :root[data-fuente="can"] .cabina .graficos-cabina {
       grid-template-columns: repeat(2, minmax(0, 1fr));
       grid-template-rows: none;

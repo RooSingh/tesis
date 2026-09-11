@@ -10089,21 +10089,25 @@ function pintarTransporte() {
   }
   if (modo === "vacio") { detener(); return; }
 
-  /* Sin distancia, el transporte recorre el reloj de la captura. Los botones y
-     el cabezal siguen siendo validos; lo que cambia es el eje horizontal de los
-     graficos y el vocabulario, que habla de tramo y segundos, nunca de vuelta o
-     metros. */
-  if (!hayEjeDeDistancia()) {
-    barra.dataset.sinDistancia = "si";
-    const nota = document.getElementById("nota-transporte");
-    if (nota) {
-      nota.textContent = "Reproducción temporal de " + FUENTES[fuente].nombre +
-        ": las señales avanzan contra el reloj de la captura. No se inventan " +
-        "vueltas ni distancia.";
-    }
-  } else {
-    barra.dataset.sinDistancia = "no";
-  }
+  /* ============================================================
+     EL AVISO QUE EXPLICABA UN ESTADO QUE YA NO EXISTE
+     ------------------------------------------------------------
+     Aca iba un parrafo de tres renglones ---«reproduccion temporal de tal
+     fuente: las señales avanzan contra el reloj de la captura, no se inventan
+     vueltas ni distancia»--- que ocupaba un tercio de la barra. Nacio cuando
+     una fuente sin metro medido **no tenia reproduccion**: el texto iba en el
+     sitio de los mandos, en vez de dejarlos ofreciendo algo que fallaba al
+     primer paso.
+
+     Hoy los mandos funcionan, asi que el parrafo ya no reemplazaba nada: se
+     habia quedado al lado de lo que explicaba que no se podia hacer. Y desde
+     que las vueltas declaradas se cuentan, la mitad de la frase era falsa: la
+     barra de al lado dice «Vuelta 30/52».
+
+     Lo que el aviso queria decir lo dicen los propios mandos, que es donde se
+     lee sin leer un parrafo: la ventana se mide en segundos y no en metros, y
+     el transporte cuenta reloj de sesion. Y lo que la fuente no sostiene esta
+     escrito al pie, que es donde se puede comparar con las otras dos. */
 
   const t = instante();
   const s = serieDelPropio(t.vuelta);

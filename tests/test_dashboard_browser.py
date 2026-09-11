@@ -243,8 +243,17 @@ class DashboardBrowserTests(unittest.TestCase):
             servidor.shutdown()
             servidor.server_close()
 
-        self.assertIn("Reproducción temporal de CAN real", dom)
+        # LOS MANDOS SON LA AFIRMACION, NO UN PARRAFO AL LADO. Aca se
+        # comprobaba que la barra llevara el aviso «reproducción temporal de CAN
+        # real: no se inventan vueltas ni distancia», que nacio cuando una
+        # fuente sin metro medido no tenia reproducción y el texto ocupaba el
+        # sitio de los mandos. Los mandos funcionan, asi que el aviso se quedo
+        # al lado de lo que explicaba que no se podia hacer. Lo que se comprueba
+        # ahora es lo que la barra si dice: la ventana en segundos, que es la
+        # que declara el eje sin necesidad de un parrafo.
+        self.assertNotIn("Reproducción temporal de", dom)
         self.assertIn("20 s", dom)
+        self.assertIn("tramo", dom)
         self.assertRegex(dom, r'<html[^>]+data-fuente="can"')
         self.assertIn('aria-label="Velocidad a lo largo del tiempo"', dom)
         self.assertNotIn("La vuelta 1 no se pudo traer", dom)
