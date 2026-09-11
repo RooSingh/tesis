@@ -45,6 +45,7 @@ function extraer(nombre) {
 globalThis.fuente = "f1";
 globalThis.corrida = { adquisicion: null, fase: null, disponibles: null };
 const NOMBRES = ["nombreDeFase", "etiquetaDeCorrida", "duracionCorta",
+                 "nombreDeAdquisicion", "textoSeguro",
                  "queEsLaFase", "numeroMedido",
                   "alcanceEsAmbiguo", "hayAlcanceQueElegir",
                   "adquisicionSeSolapa", "alcanceElegidoEsValido", "faseDeLaDireccion",

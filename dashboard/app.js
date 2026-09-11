@@ -8409,6 +8409,27 @@ function queEsLaFase(a, f) {
   return "tramo " + f.orden + ", entre dos reinicios del reloj del juego";
 }
 
+/* COMO SE LLAMA UNA ADQUISICION, Y SE DECIDE EN UN SOLO SITIO.
+
+   Desde que la API separa las capturas originales ---`original-1`,
+   `original-2`--- el elector muestra una fila por cada una. Las dos decian
+   «Original» con la misma fecha y solo se distinguian por la cantidad de
+   muestras, que es pedirle a quien mira que deduzca cual es cual; y elegir mal
+   es reproducir la captura equivocada.
+
+   El elector y el encabezado lo escribian cada uno por su cuenta y nada
+   obligaba a que coincidieran. Con una sola captura ---el caso normal--- sigue
+   diciendo «Original», porque no hay nada que numerar. */
+function nombreDeAdquisicion(a, disponibles) {
+  if (!a) return "";
+  if (a.es_reproduccion) return a.clave;
+  const capturas = (disponibles || []).filter(x => !x.es_reproduccion);
+  if (capturas.length <= 1) return "Original";
+  const cual = capturas.findIndex(x => x.clave === a.clave);
+  if (cual < 0) return "Original";
+  return "Captura " + (cual + 1) + " de " + capturas.length;
+}
+
 /* Una fila del elector: la adquisicion, y los botones con los que se la elige.
    Se separa del elector porque es lo unico que decide **que opciones existen**,
    y eso hay que poder comprobarlo sin un documento. `elegida` viene de afuera
@@ -8434,7 +8455,7 @@ function filaDeCorrida(a, elegida) {
     duracionCorta(f.duracion_de_captura_s) + "</small></button>").join("");
   return '<div class="fila-sesion fila-corrida" data-fuente="f1"' +
     (corrida.adquisicion === a.clave ? ' data-elegida="si"' : "") + ">" +
-    "<span><b>" + (a.es_reproduccion ? a.clave : "Original") + "</b><br>" +
+    "<span><b>" + textoSeguro(nombreDeAdquisicion(a, corrida.disponibles)) + "</b><br>" +
     "<small>" + que + " · " + cuando + "</small></span>" +
     "<span>" + a.vehiculos + (a.vehiculos === 1 ? " vehículo" : " vehículos") +
     "<br><small>" + cifra(a.muestras_de_vuelta, 0) + " muestras · " +
@@ -8766,7 +8787,7 @@ function declararAlcance() {
 function etiquetaDeCorrida() {
   if (!corrida.adquisicion) return "todo junto";
   const a = (corrida.disponibles || []).find(x => x.clave === corrida.adquisicion);
-  const base = a && !a.es_reproduccion ? "Original" : corrida.adquisicion;
+  const base = a ? nombreDeAdquisicion(a, corrida.disponibles) : corrida.adquisicion;
   if (!corrida.fase || !a) return base;
   const f = (a.fases || []).find(x => x.orden === corrida.fase);
   return base + " · " + (f ? nombreDeFase(a, f) : "fase " + corrida.fase);
