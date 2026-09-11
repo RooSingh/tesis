@@ -176,15 +176,23 @@ class MemoriaDelAlcanceTests(unittest.TestCase):
 
 
 class FasesDeTodasTests(unittest.TestCase):
-    """Las fases de las tres adquisiciones, en dos consultas y no en seis."""
+    """Las fases de las tres adquisiciones, en dos consultas y no en seis.
+
+    Las filas llevan el numero de captura desde que las fases son **de una
+    captura y no de un `session_uid`**: el reloj se reinicia con cada captura,
+    de modo que tomar su minimo y su maximo sobre dos juntas da un tramo que no
+    existio. Medido sobre la practica de Catalunya: pegadas salian 280 fases,
+    casi todas «Espera de luces» de cero segundos en una sesion sin luces;
+    separadas, una por captura.
+    """
 
     def setUp(self) -> None:
         api_sesion._ALCANCE_CACHE.clear()
 
     def test_agrupa_los_cortes_por_adquisicion(self) -> None:
         cursor = CursorConGuion([
-            [(None, 200), (None, 300)],                       # cortes del reloj
-            [(None, 0, 1000), ("replay_a", 5000, 6000)],      # extremos
+            [(None, 0, 200), (None, 0, 300)],                 # cortes del reloj
+            [(None, 0, 0, 1000), ("replay_a", 0, 5000, 6000)],  # extremos
         ])
         fases = api_sesion._medir_fases_de_todas(cursor, "f", "s")
         self.assertEqual([f["orden"] for f in fases["original"]], [1, 2, 3])
@@ -194,21 +202,38 @@ class FasesDeTodasTests(unittest.TestCase):
         self.assertEqual(len(fases["replay_a"]), 1)
 
     def test_solo_la_primera_fase_no_reinicia_el_reloj(self) -> None:
-        cursor = CursorConGuion([[(None, 200)], [(None, 0, 1000)]])
+        cursor = CursorConGuion([[(None, 0, 200)], [(None, 0, 0, 1000)]])
         fases = api_sesion._medir_fases_de_todas(cursor, "f", "s")["original"]
         self.assertFalse(fases[0]["reloj_del_juego_reinicia_al_entrar"])
         self.assertTrue(fases[1]["reloj_del_juego_reinicia_al_entrar"])
 
     def test_dos_consultas_para_todas_las_adquisiciones(self) -> None:
         cursor = CursorConGuion([
-            [(None, 200)],
-            [(None, 0, 1000), ("a", 2000, 3000), ("b", 4000, 5000)],
+            [(None, 0, 200)],
+            [(None, 0, 0, 1000), ("a", 0, 2000, 3000), ("b", 0, 4000, 5000)],
         ])
         api_sesion._medir_fases_de_todas(cursor, "f", "s")
         self.assertEqual(len(cursor.consultas), 2)
 
+    def test_dos_capturas_originales_tienen_cada_una_sus_fases(self) -> None:
+        """Y no una sola lista medida sobre el tramo pegado, que es de donde
+        salian los bordes inventados."""
+
+        cursor = CursorConGuion([
+            [(None, 0, 200), (None, 1, 7000)],
+            [(None, 0, 0, 1000), (None, 1, 6000, 9000)],
+        ])
+        fases = api_sesion._medir_fases_de_todas(cursor, "f", "s")
+        self.assertIn("original-1", fases)
+        self.assertIn("original-2", fases)
+        self.assertEqual(len(fases["original-1"]), 2)
+        self.assertEqual(len(fases["original-2"]), 2)
+        # Y `original`, que las abarca, son las de las dos y no una medicion
+        # nueva sobre el tramo pegado.
+        self.assertEqual(len(fases["original"]), 4)
+
     def test_una_adquisicion_sin_reloj_de_captura_no_inventa_fases(self) -> None:
-        cursor = CursorConGuion([[], [("a", None, None)]])
+        cursor = CursorConGuion([[], [("a", 0, None, None)]])
         self.assertEqual(api_sesion._medir_fases_de_todas(cursor, "f", "s")["a"], [])
 
 

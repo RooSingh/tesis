@@ -1294,39 +1294,78 @@ def _medir_fases_de_todas(cursor, fuente: str, session_id: str) -> dict:
     las tres y se agrupa por `replay_run_id`.
     """
 
+    # LAS FASES SON DE UNA CAPTURA, NO DE UN `session_uid`.
+    #
+    # El reloj de captura se reinicia con cada captura, de modo que tomar su
+    # minimo y su maximo sobre dos capturas juntas da un tramo que no existio y
+    # `_armar_fases` lo llena de bordes inventados. Medido sobre la practica de
+    # Catalunya: agrupando las dos capturas salian **280 fases**, casi todas
+    # rotuladas «Espera de luces» de cero segundos en una sesion sin luces.
+    #
+    # Separadas, cada una tiene el reloj monotonico que esta cuenta necesita: un
+    # retroceso de `session_time_s` **dentro** de una captura si es un reinicio
+    # del reloj del juego, que es lo que una fase declara.
     cap = _captura_us()
-    cursor.execute("""
-        WITH p AS (
-          SELECT replay_run_id AS run, %s AS d, %s AS orden,
+    partido = """
+          SELECT replay_run_id AS run, timestamp, {cap} AS us, {orden} AS orden,
                  (metadata->'extra'->>'session_time_s')::double precision AS reloj
             FROM telemetry_messages
-           WHERE source_type = %%s AND session_id = %%s
-             AND signal_name = 'lap_number'),
-        q AS (SELECT run, d, reloj,
-                     lag(reloj) OVER (PARTITION BY run ORDER BY orden) AS ant
-                FROM p WHERE d IS NOT NULL AND reloj IS NOT NULL)
-        SELECT run, d FROM q
-         WHERE ant IS NOT NULL AND reloj < ant ORDER BY run, d
-    """ % (cap, _orden_dentro_de_la_sesion()), (fuente, session_id))
-    cortes: dict = {}
-    for run, d in cursor.fetchall():
-        cortes.setdefault(run or ORIGEN_SIN_CORRIDA, []).append(d)
+           WHERE source_type = %s AND session_id = %s
+             AND signal_name = 'lap_number'
+    """.format(cap=cap, orden=_orden_dentro_de_la_sesion())
+    numerado = """
+        WITH p AS (""" + partido + """),
+        cortada AS (
+          SELECT run, us, orden, reloj,
+                 CASE WHEN run IS NULL
+                           AND us < lag(us) OVER (PARTITION BY run ORDER BY orden)
+                      THEN 1 ELSE 0 END AS corte
+            FROM p),
+        n AS (
+          SELECT run, us, orden, reloj,
+                 sum(corte) OVER (PARTITION BY run ORDER BY orden
+                                  ROWS UNBOUNDED PRECEDING) AS captura
+            FROM cortada)
+    """
 
-    cursor.execute("""
-        SELECT replay_run_id, min(%s), max(%s)
-          FROM telemetry_messages
-         WHERE source_type = %%s AND session_id = %%s
-           AND signal_name = 'lap_number'
-         GROUP BY replay_run_id
-    """ % (cap, cap), (fuente, session_id))
+    cursor.execute(numerado + """
+        , q AS (SELECT run, captura, us, reloj,
+                       lag(reloj) OVER (PARTITION BY run, captura ORDER BY orden) AS ant
+                  FROM n WHERE us IS NOT NULL AND reloj IS NOT NULL)
+        SELECT run, captura, us FROM q
+         WHERE ant IS NOT NULL AND reloj < ant ORDER BY run, captura, us
+    """, (fuente, session_id))
+    cortes: dict = {}
+    for run, captura, d in cursor.fetchall():
+        cortes.setdefault((run, int(captura)), []).append(d)
+
+    cursor.execute(numerado + """
+        SELECT run, captura, min(us), max(us) FROM n GROUP BY run, captura
+    """, (fuente, session_id))
+    extremos = cursor.fetchall()
+
+    # Con una sola captura la clave sigue siendo `original`: el caso normal no
+    # estrena nombre.
+    cuantas = sum(1 for f in extremos if f[0] is None)
 
     salida: dict = {}
-    for run, inicio, fin in cursor.fetchall():
-        clave = run or ORIGEN_SIN_CORRIDA
+    sueltas: list = []
+    for run, captura, inicio, fin in extremos:
+        captura = int(captura)
+        clave = run or (clave_de_captura(captura) if cuantas > 1
+                        else ORIGEN_SIN_CORRIDA)
         if inicio is None:
             salida[clave] = []
             continue
-        salida[clave] = _armar_fases([inicio] + cortes.get(clave, []) + [fin])
+        salida[clave] = _armar_fases(
+            [inicio] + cortes.get((run, captura), []) + [fin])
+        if run is None:
+            sueltas += salida[clave]
+
+    # `original` abarca todas las capturas, y sus fases son las de todas. No se
+    # las vuelve a medir sobre el tramo pegado, que es de donde salian las 280.
+    if cuantas > 1:
+        salida[ORIGEN_SIN_CORRIDA] = sueltas
     return salida
 
 
