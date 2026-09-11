@@ -297,6 +297,12 @@
            ============================================================ -->
       <header>
         <h2>Vehículo</h2>
+        <!-- Sin la palabra «Piloto» al lado: el cronometraje ya escribe el
+             nombre, y en un encabezado angosto ese rotulo le quitaba al
+             selector el ancho que necesita. Queda en la etiqueta accesible. -->
+        <label class="elige-propio" for="sel-propio">
+          <select id="sel-propio" aria-label="Piloto propio, del que hay telemetría"></select>
+        </label>
       </header>
       <div class="cuerpo-instrumento">
         <div class="esquema-auto">
@@ -347,27 +353,18 @@
     <!-- En qué vuelta va, y lo que interrumpió la lectura. -->
     <div class="col-cabina derecha">
       <!-- ============================================================
-           DE QUE PILOTO ES TODO ESTO, Y DONDE SE CAMBIA
+           DONDE SE CAMBIA DE PILOTO
            ------------------------------------------------------------
-           El selector vivia en el encabezado del panel «Vehiculo», que es
-           donde se ven sus neumaticos. Tiene sentido hasta que una fuente no
-           publica neumaticos: en OpenF1 ese panel no esta ---la fuente no lo
-           sostiene--- y con el se iba la unica forma de elegir piloto, sobre
-           una sesion con telemetria de tres.
-
-           Va donde se **lee** de quien es lo que se mira, que es el mismo
-           sitio en las tres fuentes. Lo que cambia no es el vehiculo: son el
-           cronometraje, los avisos, los medidores y los graficos.
+           El selector vive en el encabezado del panel «Vehiculo», que es
+           donde se lo busca. En una fuente que no muestra ese panel ---OpenF1
+           no publica neumaticos ni daño--- se iria con el la unica forma de
+           elegir piloto, asi que en ese caso el tablero lo pasa a este
+           encabezado: ver `sacarLosPanelesQueLaFuenteNoLlena`. Es el mismo
+           control que se mueve, no un segundo selector.
            ============================================================ -->
       <section class="instrumento vertical en-cabina" data-panel="cronometraje">
       <header>
         <h2>Cronometraje</h2>
-        <!-- Sin la palabra «Piloto» al lado: el primer renglon del panel ya
-             la dice, y en una columna angosta ese rotulo le quitaba al
-             selector el ancho que necesita. Queda en la etiqueta accesible. -->
-        <label class="elige-propio" for="sel-propio">
-          <select id="sel-propio" aria-label="Piloto propio, del que hay telemetría"></select>
-        </label>
       </header>
       <dl class="tira-cronometraje">
         <div><dt>Piloto</dt><dd class="destacado" id="crono-piloto">—</dd></div>

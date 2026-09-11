@@ -1732,10 +1732,9 @@ function poblarPropio() {
   s.dataset.firma = firma;
   /* EL SELECTOR NO REPITE LO QUE EL PANEL YA DICE.
      Llevaba la identidad entera ---«Oscar PIASTRI · #81 · McLaren»--- y el
-     panel de cronometraje, donde ahora vive, escribe ese mismo nombre completo
-     en su primer renglon, dos centimetros mas abajo. En una columna de 365 px
-     compartida con el titulo, eso se cortaba en «· McLa...», que es un rotulo
-     truncado justo debajo del mismo rotulo entero.
+     panel de cronometraje ya escribe ese mismo nombre completo en su primer
+     renglon. En un encabezado angosto, compartido con el titulo, eso se cortaba
+     en «· McLa...»: un rotulo truncado de algo que el tablero ya dice entero.
      Va corto: el nombre y el dorsal, que es lo que distingue una opcion de
      otra. La identidad completa queda en el titulo de cada opcion. */
   s.innerHTML = AUTOS.map(a =>
@@ -1843,6 +1842,24 @@ function sacarLosPanelesQueLaFuenteNoLlena() {
     const vacia = paneles.length > 0 && paneles.every(p => p.dataset.fuera === "si");
     if (vacia) col.dataset.fuera = "si"; else delete col.dataset.fuera;
   });
+  /* EL SELECTOR DE PILOTO VA DONDE SE VE EL VEHICULO.
+     Vive en el encabezado del panel «Vehiculo». Cuando la fuente no muestra ese
+     panel ---OpenF1 no publica neumaticos ni daño--- se iria con el la unica
+     forma de elegir piloto, y entonces pasa al cronometraje. Se mueve el mismo
+     control y no se duplica: dos selectores tendrian que ponerse de acuerdo
+     sobre a quien se mira.
+     Va aca porque es donde se decide que panel queda fuera: moverlo en otro
+     sitio seria volver a decidirlo, y tarde o temprano en desacuerdo. */
+  if (typeof document.querySelector === "function") {
+    const selector = document.querySelector(".elige-propio");
+    const vehiculo = document.querySelector('section[data-panel="vehiculo"]');
+    const crono = document.querySelector('section[data-panel="cronometraje"]');
+    const panel = (vehiculo && vehiculo.dataset.fuera !== "si") ? vehiculo : crono;
+    const cabecera = panel ? panel.querySelector("header") : null;
+    if (selector && cabecera && selector.parentElement !== cabecera) {
+      cabecera.appendChild(selector);
+    }
+  }
 }
 
 /* Como se llama un panel, tomado de su propio encabezado.

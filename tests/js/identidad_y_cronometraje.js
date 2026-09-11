@@ -2960,8 +2960,8 @@ prueba("la leyenda nombra a los mismos que el grafico dibuja", () => {
 });
 
 prueba("el selector de piloto no repite lo que el panel ya dice", () => {
-  /* Llevaba la identidad entera y el panel de cronometraje, donde ahora vive,
-     escribe el nombre completo dos renglones mas abajo. En una columna de 365
+  /* Llevaba la identidad entera y el panel de cronometraje ya escribe el
+     nombre completo. En una columna de 365
      px compartida con el titulo eso se cortaba en «· McLa...»: un rotulo
      truncado justo debajo del mismo rotulo entero. */
   assert.strictEqual(
