@@ -135,6 +135,26 @@ def _contar(run_id: str) -> int:
         return cur.fetchone()[0]
 
 
+def _comando_capturador(
+    puerto: int,
+    run_id: str,
+    destino: Path,
+    pilotos: str | None,
+) -> list[str]:
+    """Construye una captura de prueba aislada de la seleccion de produccion."""
+    archivo_eleccion = destino / f".{run_id}.pilotos.json"
+    comando = [
+        sys.executable, "-u", "scripts/capturar_f1_25.py",
+        "--puerto", str(puerto), "--run-id", run_id,
+        "--parrilla-completa",
+        "--archivo-eleccion", str(archivo_eleccion),
+        "--destino", str(destino),
+    ]
+    if pilotos is not None:
+        comando.extend(["--pilotos", pilotos])
+    return comando
+
+
 def correr(captura: Path, segundos: float, puerto: int, pilotos: str | None,
            borrar: bool) -> dict:
     marca = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
@@ -172,15 +192,7 @@ def correr(captura: Path, segundos: float, puerto: int, pilotos: str | None,
     print(f"  capturador de prueba en el puerto {puerto}, marca {run_id}",
           flush=True)
     capturador = subprocess.Popen(
-        [sys.executable, "-u", "scripts/capturar_f1_25.py",
-         "--puerto", str(puerto), "--run-id", run_id,
-         # **La prueba existe para medir esta carga y no otra.**
-         # Sin la parrilla completa el capturador normaliza un vehiculo de
-         # veintidos, y lo medido serian unos 1.776 mensajes por segundo en
-         # lugar de los 35.186 que la fuente produce con todos. Correrla sin
-         # esto era medir una carga que no es la que la prueba nombra.
-         "--parrilla-completa",
-         "--destino", str(destino)],
+        _comando_capturador(puerto, run_id, destino, pilotos),
         cwd=str(RAIZ), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
         start_new_session=(os.name != "nt"))
     # El capturador tarda un instante en atarse al puerto. Emitir antes de que

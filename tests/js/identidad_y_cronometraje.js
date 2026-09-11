@@ -95,6 +95,9 @@ globalThis.AUTOS = [];
    `armarAutos` lo consulta. Sin declararlo aca, la funcion extraida no
    encuentra la variable y falla en la primera llamada. */
 globalThis.propioAMano = null;
+globalThis.TINTAS_DE_AUTO = ["--auto-1", "--auto-2", "--auto-3",
+                             "--auto-4", "--auto-5", "--auto-6"];
+globalThis._tintaPorVehiculo = new Map();
 globalThis.vivo = { series: new Map(), ultimos: new Map(), recorrido: new Map(),
                     distancia: new Map(), vuelta: new Map(), recorridoDibujado: 0 };
 globalThis.document = { getElementById: () => null };
@@ -105,6 +108,7 @@ globalThis.PISTA = { largo_m: 7000 };
 globalThis.HUECO_DE_CAPTURA_MS = 2000;
 globalThis.EJE_DISTANCIA = " distancia";
 globalThis.EJE_DISTANCIA_SESION = " distancia de sesion";
+globalThis.EJE_TIEMPO = " tiempo";
 globalThis._selloSeries = 0;
 globalThis._selloDeLoArmado = -1;
 globalThis._seriesArmadas = new Map();
@@ -120,6 +124,9 @@ const NOMBRES = [
   "numeroMedido", "nombreDeSenal", "recortarPorDominio",
   "textoSeguro", "claveCorta", "identidadDeVehiculo",
   "renombrarAutos", "armarAutos", "camposDeIdentidad",
+  // El color es del vehiculo y no de su lugar en la lista: `armarAutos` se lo
+  // pregunta a esta, que recuerda el que le dio la primera vez.
+  "tintaDeVehiculo",
   "anotarParrillas", "parrillaVigente",
   "secundarioDeVehiculo", "quienConduce",
   "vehiculosConTelemetriaGuardada", "autoPropio",
@@ -139,13 +146,16 @@ const NOMBRES = [
   "cambiaronLasSeries",
   "esCanalEscalonado", "_cacheTemporal", "serieTemporal", "_serieTemporalCruda",
   "continuidadDeVuelta", "_umbralDeVuelta", "tiempoEfectivoEntre", "hayCorteEntre",
-  "_antesDe", "valorContinuoEn", "valorEscalonadoEn",
+  "_antesDe", "valorContinuoEn", "valorEscalonadoEn", "abscisaContinua",
+  "loQueSeSabeDelVehiculo", "faltanVehiculosPorAprender", "nombreCortoDeVehiculo",
+  "poblarPropio",
   "relojDeVuelta", "_armarRelojDeVuelta", "_tramosContinuos", "_tramosDeMuestras",
   "tiempoDePresentacion", "recortarConBordes",
   "serieDeCanal", "serieAcumuladaDeCanal", "tramoAcumuladoDeVuelta",
   "vueltasEnTramoAcumulado", "claveVehiculoPropio", "duracionDeVuelta", "duracionSesionS",
   "vueltasDeLaSesion", "iniciosDeVuelta", "calcularInstante",
   "vueltaEnFraccion", "trazadoAPath",
+  "tramoDeLaVuelta",
   "pedirTrazado",
   "senalesParaElRecorrido",
   "pieDelRecorrido",
@@ -161,6 +171,7 @@ const NOMBRES = [
   "ejeVigente", "motivoDelEjeEspacial", "coberturaDeLaVista",
   "explicacionDelTrazado",
   "textoDeLaValidacion",
+  "claveDeSesionOpenF1", "parrillaDesdePilotos",
   "puntoDelBusEn", "_indiceEnElRecorrido", "valoresSobreElRecorrido",
   "tramosDelRecorrido", "tintaDelValor",
 ];
@@ -219,18 +230,21 @@ const sacadas = new Function(
      con `globalThis` no las toca, y leerlas asi devuelve otra cosa. */
   "  rutasPedidas: () => { const r = _rutas; _rutas = []; return r; }," +
   "  fijarContextoDeCorrida: v => { _contextoDeCorrida = v; }," +
+  "  _enUnidad," +
   "  selloDeIdentidad: () => _selloDeIdentidad," +
   "  _fijar," +
   "});")();
 
 const {
   textoSeguro, identidadDeVehiculo, anotarParrillas, parrillaVigente,
-  renombrarAutos, armarAutos,
+  loQueSeSabeDelVehiculo, faltanVehiculosPorAprender, nombreCortoDeVehiculo,
+  poblarPropio,
+  renombrarAutos, armarAutos, tintaDeVehiculo,
   secundarioDeVehiculo, vehiculosConTelemetriaGuardada, autoPropio,
   camposDeIdentidad, quienConduce,
   unidadDeCanal, sinCambiosEnElTramo,
   divisorDeUnidad, unidadDeclaradaDe, divisorDePresentacion,
-  estaEnLaUnidadQueSeMuestra, serieCrudaDeCanal, trazarSerie,
+  estaEnLaUnidadQueSeMuestra, serieCrudaDeCanal, trazarSerie, _enUnidad,
   serieDeCanal, serieAcumuladaDeCanal,
   tiempoDeVuelta, diferenciaEnSegundos, esCanalEscalonado, serieTemporal,
   valorEscalonadoEn, valorContinuoEn, calcularInstante,
@@ -247,7 +261,9 @@ const {
   ejeVigente, motivoDelEjeEspacial, coberturaDeLaVista,
   explicacionDelTrazado,
   textoDeLaValidacion,
+  claveDeSesionOpenF1, parrillaDesdePilotos,
   pedirTrazado, rutasPedidas,
+  tramoDeLaVuelta,
   senalesParaElRecorrido,
   pieDelRecorrido,
   extremosDeLaTraza, _rgbDe,
@@ -2749,7 +2765,7 @@ prueba("la simulacion enciende el mismo panel con su propio nombre", () => {
   const pide = loQuePidenLosPaneles();
   globalThis.estadoSesion = "cargado";
   globalThis.fuente = "f1";
-  globalThis.estado.disponibles = new Set(["g_force_lateral", "brake_bias_front"]);
+  globalThis.estado.disponibles = new Set(["g_force_lateral", "setup_front_wing"]);
   assert.strictEqual(panelEstaPresente(pide.aceleraciones), true);
   assert.strictEqual(panelEstaPresente(pide.puesta), true);
 });
@@ -2782,7 +2798,7 @@ prueba("una señal cruda que no es un canal atraviesa la traduccion intacta", ()
      no se pueden romper por traducir los que si son canales. */
   ["f1", "openf1", "can"].forEach(f => {
     globalThis.fuente = f;
-    ["air_temperature", "brake_bias_front",
+    ["air_temperature", "setup_front_wing",
      "tyre_temperature_surface_front_left", "engine_speed"].forEach(n => {
       assert.strictEqual(nombreDeSenal(n), n, n + " se tradujo en " + f);
     });
@@ -2791,10 +2807,10 @@ prueba("una señal cruda que no es un canal atraviesa la traduccion intacta", ()
 
 prueba("el bus no publica puesta a punto, y eso no cambio", () => {
   /* La comprobacion complementaria: lo que si esta ausente de verdad tiene que
-     seguir ausente. `brake_bias_front` no viaja en un bus de serie. */
+     seguir ausente. `setup_front_wing` no viaja en un bus de serie. */
   const pide = loQuePidenLosPaneles();
   globalThis.fuente = "can";
-  assert.strictEqual(nombreDeSenal(pide.puesta), "brake_bias_front");
+  assert.strictEqual(nombreDeSenal(pide.puesta), "setup_front_wing");
 });
 
 /* ==================================================================
@@ -2802,24 +2818,45 @@ prueba("el bus no publica puesta a punto, y eso no cambio", () => {
    ------------------------------------------------------------------
    En el bus, «puesta a punto» y «vehiculos» no tienen nada que dar nunca: un
    bus de serie no publica configuracion del vehiculo, y una captura de un
-   vehiculo no tiene con quien compararse. Sacarlos de la vista esta bien; que
-   con ellos desaparezca el dato de que esa fuente no los sostiene, no.
+   vehiculo no tiene con quien compararse. En OpenF1 pasa lo mismo con clima,
+   neumaticos, puesta a punto, aceleraciones y avisos. Sacarlos de la vista esta
+   bien; que con ellos desaparezca el dato de que esa fuente no los sostiene, no.
 
-   La tabla del pie ---«Que sostiene cada fuente»--- es donde esa comparacion es
-   el tema. Cada panel que la hoja de estilos esconde por fuente tiene que tener
-   ahi su fila, y la fila lo declara nombrando el panel. Sin eso, esconder un
-   panel es perder lo que ese panel decia.
+   El registro que se ve mientras se usa el tablero es el bloque «lo que esta
+   fuente no sostiene», que se escribe desde la **misma** tabla que saca los
+   paneles: no puede discrepar con lo que falta en pantalla porque es la misma
+   declaracion leida dos veces. Eso se comprueba sobre el DOM, en
+   `tests/test_dashboard_browser.py`, que es donde se puede.
+
+   Lo que se comprueba aca es lo otro: la tabla del pie ---«Que sostiene cada
+   fuente»--- compara las tres fuentes de un vistazo, y un panel que alguna saca
+   tiene que tener ahi su fila. Es la constancia escrita, la que queda en el
+   repositorio y en las capturas del informe; sin ella, sacar un panel es perder
+   la comparacion que ese panel permitia hacer.
+
+   LA DECLARACION SE LEE DEL GUION, NO DE LA HOJA DE ESTILOS. Estaba escrita como
+   reglas `display: none` por fuente, y ahi no cabe el motivo. Peor: el selector
+   por atributo alcanzaba **tambien a las filas de la tabla del pie**, que llevan
+   el mismo `data-panel` justamente para ser el registro. La fuente que escondia
+   un panel escondia con el la unica constancia de por que no estaba, que es lo
+   que estas pruebas existen para impedir. La ultima de la seccion comprueba que
+   esas reglas no vuelvan.
    ================================================================== */
 
 const CSS = fs.readFileSync(
   path.join(__dirname, "..", "..", "dashboard", "styles.css"), "utf8");
 
-/* Los paneles que la hoja de estilos esconde nombrandolos, por fuente. */
+/* Los paneles que cada fuente declara no sostener, con su motivo. */
+const PANELES_QUE_LA_FUENTE_NO_TIENE = new Function(
+  constante("PANELES_QUE_LA_FUENTE_NO_TIENE") +
+  "\nreturn PANELES_QUE_LA_FUENTE_NO_TIENE;")();
+
 function panelesEscondidosPorFuente() {
   const escondidos = {};
-  const re = /:root\[data-fuente="([^"]+)"\]\s*\[data-panel="([^"]+)"\]/g;
-  let m;
-  while ((m = re.exec(CSS))) (escondidos[m[1]] = escondidos[m[1]] || []).push(m[2]);
+  Object.keys(PANELES_QUE_LA_FUENTE_NO_TIENE).forEach(f => {
+    const paneles = Object.keys(PANELES_QUE_LA_FUENTE_NO_TIENE[f]);
+    if (paneles.length) escondidos[f] = paneles;
+  });
   return escondidos;
 }
 
@@ -2835,6 +2872,176 @@ function panelesEnLaTabla() {
 prueba("el bus esconde puesta a punto y la comparacion entre vehiculos", () => {
   const escondidos = panelesEscondidosPorFuente();
   assert.deepStrictEqual((escondidos.can || []).sort(), ["puesta", "vehiculos"]);
+});
+
+prueba("openf1 saca lo que no publica y se queda con lo que si", () => {
+  const escondidos = panelesEscondidosPorFuente();
+  /* Lo que esta fuente no entrega nunca: el estado del vehiculo ---de la
+     telemetria llegan seis canales y ninguno lo es---, la puesta a punto y las
+     aceleraciones. */
+  assert.deepStrictEqual((escondidos.openf1 || []).sort(),
+    ["aceleraciones", "puesta", "vehiculo"]);
+  /* Y lo que si: el trazado sale de las coordenadas medidas, el motor del
+     regimen y la marcha, el cronometraje de la parrilla y las vueltas, y la
+     comparacion entre vehiculos de que hay mas de uno. Sacar alguno de esos
+     seria esconder algo medido. */
+  ["trazado", "motor", "cronometraje", "vehiculos"].forEach(panel => {
+    assert.ok(!(escondidos.openf1 || []).includes(panel),
+              "openf1 sostiene «" + panel + "» y lo esta sacando de la vista");
+  });
+});
+
+prueba("el selector de piloto no repite lo que el panel ya dice", () => {
+  /* Llevaba la identidad entera y el panel de cronometraje, donde ahora vive,
+     escribe el nombre completo dos renglones mas abajo. En una columna de 365
+     px compartida con el titulo eso se cortaba en «· McLa...»: un rotulo
+     truncado justo debajo del mismo rotulo entero. */
+  assert.strictEqual(
+    nombreCortoDeVehiculo({ nombre: "Oscar PIASTRI", numero: 81 }), "PIASTRI · #81");
+  assert.strictEqual(
+    nombreCortoDeVehiculo({ nombre: "Max VERSTAPPEN", numero: 1 }), "VERSTAPPEN · #1");
+});
+
+prueba("sin dorsal declarado el selector no inventa uno", () => {
+  /* Una captura que no declara la parrilla no tiene numeros de carrera: lo que
+     hay es el nombre, y eso se muestra. */
+  assert.strictEqual(nombreCortoDeVehiculo({ nombre: "Vehículo 19" }), "19");
+  assert.strictEqual(
+    nombreCortoDeVehiculo({ nombre: "Sauber", numero: null }), "Sauber");
+});
+
+prueba("el selector emite el nombre corto, y la identidad entera en el titulo", () => {
+  /* Comprobar la funcion del nombre corto no alcanza: lo que se rompio fue el
+     selector usando otra cosa. Aca se ejerce `poblarPropio` con un `select` de
+     mentira y se mira el HTML que emite, que es lo que el navegador muestra. */
+  const select = {
+    dataset: {}, innerHTML: "",
+    closest: () => ({ style: {} }),
+  };
+  const antesDoc = globalThis.document;
+  const antesAutos = globalThis.AUTOS;
+  globalThis.document = { getElementById: () => select };
+  globalThis.AUTOS = [
+    { id: "a", nombre: "Max VERSTAPPEN", numero: 1, propio: true,
+      completa: "Max VERSTAPPEN · #1 · Red Bull Racing" },
+    { id: "b", nombre: "Oscar PIASTRI", numero: 81, propio: false,
+      completa: "Oscar PIASTRI · #81 · McLaren" },
+  ];
+  try {
+    poblarPropio();
+    assert.ok(/>VERSTAPPEN · #1</.test(select.innerHTML),
+      "el selector no emite el nombre corto: " + select.innerHTML);
+    assert.ok(!/>Max VERSTAPPEN · #1 · Red Bull Racing</.test(select.innerHTML),
+      "el selector repite la identidad entera, que el panel ya escribe debajo");
+    /* Y la identidad completa no se pierde: queda a un puntero de distancia. */
+    assert.ok(/title="Max VERSTAPPEN · #1 · Red Bull Racing"/.test(select.innerHTML),
+      "la identidad completa no quedo en el titulo de la opcion");
+    assert.ok(/selected/.test(select.innerHTML), "no se marco el propio");
+  } finally {
+    globalThis.document = antesDoc;
+    globalThis.AUTOS = antesAutos;
+  }
+});
+
+prueba("con un solo vehiculo el selector no se ofrece", () => {
+  /* Elegir entre uno no es elegir. */
+  const caja = { style: {} };
+  const select = { dataset: {}, innerHTML: "", closest: () => caja };
+  const antesDoc = globalThis.document, antesAutos = globalThis.AUTOS;
+  globalThis.document = { getElementById: () => select };
+  globalThis.AUTOS = [{ id: "a", nombre: "Uno", numero: 1, propio: true, completa: "Uno" }];
+  try {
+    poblarPropio();
+    assert.strictEqual(caja.style.display, "none");
+  } finally { globalThis.document = antesDoc; globalThis.AUTOS = antesAutos; }
+});
+
+prueba("cada vehiculo se rotula por lo que tiene, no por el papel que cumple", () => {
+  /* EL DEFECTO. La lista decia «propio · N señales» para uno y «cronometraje»
+     para todos los demas. Es cierto en la simulacion ---la telemetria privada
+     es la del coche que se conduce, y de los rivales llega posicion--- y falso
+     en OpenF1, donde los tres pilotos cargados traen las mismas nueve señales:
+     el rotulo decia «cronometraje» sobre dos vehiculos con 310.881 filas. */
+  const conSerie = ["a", "b"];
+  assert.deepStrictEqual(
+    loQueSeSabeDelVehiculo({ id: "a", propio: true }, conSerie, 9),
+    { clase: "propio", texto: "propio · 9 señales" });
+  assert.deepStrictEqual(
+    loQueSeSabeDelVehiculo({ id: "b", propio: false }, conSerie, 9),
+    { clase: "senales", texto: "9 señales" });
+  /* Y de quien solo aporta posicion se sigue diciendo lo que hay. */
+  assert.deepStrictEqual(
+    loQueSeSabeDelVehiculo({ id: "c", propio: false }, conSerie, 9),
+    { clase: "senales", texto: "cronometraje" });
+});
+
+prueba("el propio se rotula por sus señales aunque la vuelta no haya llegado", () => {
+  /* Es el que la sesion declara mas muestreado: tiene serie por definicion.
+     Sin esto el rotulo parpadeaba a «cronometraje» mientras la vuelta viajaba. */
+  assert.deepStrictEqual(
+    loQueSeSabeDelVehiculo({ id: "a", propio: true }, [], 113),
+    { clase: "propio", texto: "propio · 113 señales" });
+});
+
+prueba("se aprende quienes son mientras falten, y despues no", () => {
+  /* El catalogo declara cuantos vehiculos con telemetria tiene la sesion. */
+  globalThis.estado.abierta = { vehiculos: 3 };
+  globalThis.AUTOS = [{ id: "a" }];
+  assert.strictEqual(faltanVehiculosPorAprender(), true);
+  globalThis.AUTOS = [{ id: "a" }, { id: "b" }, { id: "c" }];
+  assert.strictEqual(faltanVehiculosPorAprender(), false);
+  /* Con uno declarado ---la simulacion y el bus--- no hay nada que aprender:
+     los rivales de F1 25 viajan por posiciones, no por telemetria. */
+  globalThis.estado.abierta = { vehiculos: 1 };
+  globalThis.AUTOS = [];
+  assert.strictEqual(faltanVehiculosPorAprender(), false);
+  /* Y una sesion que no declara cuantos son no dispara consultas abiertas. */
+  globalThis.estado.abierta = {};
+  assert.strictEqual(faltanVehiculosPorAprender(), false);
+  globalThis.AUTOS = [];
+});
+
+prueba("lo que la fuente publica y el tablero todavia no trae no se declara ausente", () => {
+  /* LA CORRECCION QUE ESTO FIJA. `clima` y `avisos` estaban declarados como
+     ausencias de OpenF1, y el motivo de avisos lo copie de lo que contesta
+     `/avisos`, que decide por fuente ---`if fuente != "f1_25_udp_simulation"`---
+     y da el mismo texto para el bus y para OpenF1. Para el bus es cierto.
+
+     Para OpenF1 es falso, y el dato esta en esta misma base: el propio backend
+     cuenta 155 muestras de clima y 158 eventos de control de carrera para la
+     sesion 9947, y `context-at` ya los devuelve resueltos en un instante.
+
+     Esta tabla dice «nunca». Decir «nunca» sobre algo que esta guardado es
+     esconderlo, que es justo lo que la seccion entera existe para impedir. */
+  const escondidos = panelesEscondidosPorFuente();
+  ["clima", "avisos"].forEach(panel => {
+    assert.ok(!(escondidos.openf1 || []).includes(panel),
+      "openf1 declara «" + panel + "» como ausencia de la fuente, y la fuente " +
+      "lo publica: lo que falta es que el tablero lo pida");
+  });
+});
+
+prueba("cada panel sacado dice por que, y no con una cadena vacia", () => {
+  Object.keys(PANELES_QUE_LA_FUENTE_NO_TIENE).forEach(f => {
+    const tabla = PANELES_QUE_LA_FUENTE_NO_TIENE[f];
+    Object.keys(tabla).forEach(panel => {
+      assert.strictEqual(typeof tabla[panel], "string");
+      assert.ok(tabla[panel].trim().length > 20,
+                "la fuente " + f + " saca «" + panel + "» sin decir por que");
+    });
+  });
+});
+
+prueba("la hoja de estilos no esconde paneles por fuente", () => {
+  /* El selector por atributo no distingue la `<section>` del panel de la `<tr>`
+     de la tabla del pie: las dos llevan `data-panel`. Volver a escribirlo aca
+     borraria el registro junto con el panel. */
+  const re = /:root\[data-fuente="([^"]+)"\]\s*\[data-panel="([^"]+)"\]\s*[,{][^{}]*display:\s*none/g;
+  const halladas = [];
+  let m;
+  while ((m = re.exec(CSS))) halladas.push(m[1] + "/" + m[2]);
+  assert.deepStrictEqual(halladas, [],
+    "la hoja de estilos esconde paneles por fuente: " + halladas.join(", "));
 });
 
 prueba("todo panel escondido por fuente sigue declarado en la tabla del pie", () => {
@@ -3327,12 +3534,36 @@ prueba("y la carrera sigue contando vueltas y metros", () => {
 
 prueba("un tramo de bus no se cuenta en vueltas", () => {
   /* «Vuelta 1» sobre un minuto de ruta fuerza el vocabulario del circuito sobre
-     un dato de calle, y ademas promete que hay una vuelta 2. */
-  globalThis.fuente = "can";
+     un dato de calle, y ademas promete que hay una vuelta 2. El tramo unico se
+     lo arma este tablero para compartir cabezal e interpolacion, y lo declara
+     con `tramo_temporal`: eso no es una vuelta en ninguna fuente. */
   globalThis.estado.vueltas = [{ numero: 1, duracion_s: 61.6, tramo_temporal: true }];
+  globalThis.fuente = "can";
   assert.strictEqual(hayVueltas(), false);
   globalThis.fuente = "f1";
+  assert.strictEqual(hayVueltas(), false,
+    "un tramo armado por el tablero se conto como vuelta por venir de la simulación");
+});
+
+prueba("una vuelta declarada es una vuelta aunque la fuente no mida metros", () => {
+  /* EL DEFECTO QUE ESTO CIERRA. `hayVueltas` exigia ademas eje de distancia, de
+     modo que OpenF1 ---que declara sus cincuenta y dos vueltas por reloj, con
+     instante de inicio, fin y duracion medida--- se presentaba como «tramo» en
+     el reproductor y en el cronometraje mientras el encabezado de la misma
+     pantalla decia «VUELTA 1 DE 52».
+
+     Que la fuente declare vueltas y que mida metros son dos preguntas, y la
+     segunda gobierna escribir un metro, no contar vueltas. */
+  globalThis.estado.vueltas = [
+    { numero: 1, duracion_s: 106.1, desde_utc: "2025-07-06T14:03:49.615Z" },
+    { numero: 2, duracion_s: 135.6, desde_utc: "2025-07-06T14:05:35.748Z" },
+  ];
+  globalThis.fuente = "openf1";
+  assert.strictEqual(hayEjeDeDistancia(), false, "el supuesto de la prueba cambio");
   assert.strictEqual(hayVueltas(), true);
+  globalThis.fuente = "can";
+  assert.strictEqual(hayVueltas(), true,
+    "una vuelta declarada deja de serlo segun quien la declare");
 });
 
 prueba("sin ninguna vuelta declarada tampoco hay vueltas", () => {
@@ -3441,4 +3672,293 @@ prueba("y sin comprobacion el titulo no promete una", () => {
   assert.strictEqual(explicacionDelTrazado(), "Forma reconstruida por integracion.");
 });
 
+/* ==================================================================
+   25. LA PARRILLA DE OPENF1 EXISTIA Y NADIE LA PEDIA
+   ------------------------------------------------------------------
+   El tablero rotulaba «Vehículo 1, índice interno del protocolo» sobre una
+   sesion donde la API contesta «Max VERSTAPPEN · VER · Red Bull Racing» con el
+   color del equipo. El dato estaba entero en el contexto deportivo desde que se
+   importo; lo que faltaba era la consulta.
+
+   La identidad de una sesion guardada venia de `/adquisiciones`, que la declara
+   por captura. Esa ruta es del simulador: para OpenF1 contesta la lista vacia,
+   **correctamente**, porque esta fuente no se capturo, se importo. Su parrilla
+   vive en otro sitio.
+   ================================================================== */
+
+/* Los tres pilotos de la sesion 9947, tal como los devuelve la API. */
+const PILOTOS_9947 = [
+  { driver_number: 1, full_name: "Max VERSTAPPEN", name_acronym: "VER",
+    team_name: "Red Bull Racing", team_colour: "4781D7" },
+  { driver_number: 4, full_name: "Lando NORRIS", name_acronym: "NOR",
+    team_name: "McLaren", team_colour: "F47600" },
+  { driver_number: 81, full_name: "Oscar PIASTRI", name_acronym: "PIA",
+    team_name: "McLaren", team_colour: "F47600" },
+];
+
+prueba("la parrilla se pide por donde pasan todos los caminos", () => {
+  /* EL DEFECTO, QUE NO SE VE MIRANDO EL CODIGO DE LA CONSULTA.
+     Estaba en `abrirSesionGuardada`, que es **uno** de los caminos y no el
+     unico: `elegirCorrida` vuelve a cargar la sesion por `cargarDatosDeSesion`
+     sin pasar por ella, y ese es el que corre al elegir adquisicion o fase, o
+     al recargar la pagina con una eleccion en la direccion. Por ese camino la
+     consulta no salia nunca ---comprobado en el registro del servidor: cero
+     pedidos a `/racing/sessions/.../drivers`--- y los pilotos seguian siendo
+     «Vehículo 1» con la API contestando bien.
+
+     Se comprueba sobre el archivo publicado porque es una condicion de **donde
+     esta escrita** una llamada, y eso no se observa llamandola. */
+  const desde = fuenteApp.indexOf("function cargarDatosDeSesion");
+  assert.ok(desde !== -1, "no esta `cargarDatosDeSesion`");
+  const cuerpo = fuenteApp.slice(desde, fuenteApp.indexOf("\nfunction ", desde + 10));
+  assert.ok(cuerpo.indexOf("pedirParrillaDeOpenF1(") !== -1,
+            "la parrilla no se pide desde `cargarDatosDeSesion`, que es por " +
+            "donde pasan todos los caminos que abren una sesion");
+});
+
+prueba("la parrilla usa la apertura que le dan, no la que encuentre", () => {
+  /* Tomar `aperturaVigente()` adentro ataba la consulta al orden en que se la
+     invoque: llamada antes de `nuevaSesionEnCurso()`, su respuesta llegaba con
+     la apertura anterior y `sigueVigente` la descartaba por vieja. */
+  const desde = fuenteApp.indexOf("function pedirParrillaDeOpenF1");
+  const cuerpo = fuenteApp.slice(desde, fuenteApp.indexOf("\nfunction ", desde + 10));
+  assert.ok(/function pedirParrillaDeOpenF1\(sessionId, apertura\)/.test(cuerpo),
+            "la apertura no es un argumento: la consulta queda atada al orden");
+});
+
+prueba("la clave de sesion sale del identificador y no se pide aparte", () => {
+  assert.strictEqual(claveDeSesionOpenF1("openf1:session:9947"), "9947");
+  /* Y no se inventa una para lo que no la tiene. */
+  assert.strictEqual(claveDeSesionOpenF1("can:segmento:sample_28"), null);
+  assert.strictEqual(claveDeSesionOpenF1("f1_25:session:3731090176871608020"), "3731090176871608020");
+  assert.strictEqual(claveDeSesionOpenF1(""), null);
+  assert.strictEqual(claveDeSesionOpenF1(null), null);
+});
+
+prueba("cada piloto queda atado al vehiculo que la telemetria nombra", () => {
+  /* Si la clave no coincide con `vehicle_id`, la parrilla nombra a gente que
+     no esta y nadie queda identificado. */
+  const p = parrillaDesdePilotos("openf1:session:9947", PILOTOS_9947);
+  assert.strictEqual(p.disponible, true);
+  assert.deepStrictEqual(p.vehiculos.map(v => v.vehicle_id), [
+    "openf1:session:9947:driver:1",
+    "openf1:session:9947:driver:4",
+    "openf1:session:9947:driver:81",
+  ]);
+});
+
+prueba("el nombre, el numero y el equipo llegan tal como la fuente los da", () => {
+  const v = parrillaDesdePilotos("openf1:session:9947", PILOTOS_9947).vehiculos[0];
+  assert.strictEqual(v.nombre, "Max VERSTAPPEN");
+  assert.strictEqual(v.numero, 1);
+  assert.strictEqual(v.equipo, "Red Bull Racing");
+});
+
+prueba("son personas, y eso es un no y no una casilla vacia", () => {
+  /* `esIA` tiene tres estados: si, no, y no se sabe. Un piloto de OpenF1 es un
+     no declarado, no un desconocido. */
+  const v = parrillaDesdePilotos("openf1:session:9947", PILOTOS_9947).vehiculos[0];
+  assert.strictEqual(v.es_ia, false);
+  assert.notStrictEqual(v.es_ia, null);
+});
+
+prueba("la sigla es la que publica la fuente, no tres letras del nombre", () => {
+  /* De «Max VERSTAPPEN» recortando salen «MAX», que no es como se lo rotula en
+     ningun cronometraje. OpenF1 publica `name_acronym`. */
+  reiniciar();
+  globalThis.fuente = "openf1";
+  globalThis.estado.abierta = { session_id: "openf1:session:9947" };
+  /* Una sesion importada no declara adquisiciones ---`/adquisiciones` contesta
+     la lista vacia--- y entonces `corrida.adquisicion` queda en `null` y manda
+     la parrilla unica. Es la situacion real de esta fuente. */
+  globalThis.corrida.adquisicion = null;
+  /* La parrilla se ata a **esta** sesion: `parrillaVigente` descarta la que
+     quedo de otra, y ese cuidado no se puede saltear en la prueba. */
+  anotarParrillas("openf1:session:9947",
+                  [{ clave: "contexto",
+                     parrilla: parrillaDesdePilotos("openf1:session:9947", PILOTOS_9947) }]);
+  const i = identidadDeVehiculo("openf1:session:9947:driver:1");
+  assert.strictEqual(i.etiqueta, "VER",
+                     "la marca del trazado dice «" + i.etiqueta + "» en vez de VER");
+  assert.strictEqual(i.nombre, "Max VERSTAPPEN");
+  assert.strictEqual(i.declarada, true);
+  assert.ok(/Red Bull/.test(i.completa), i.completa);
+});
+
+prueba("con una sola parrilla y sin adquisicion elegida, manda esa", () => {
+  /* Es lo que permite que la parrilla del contexto sirva sin inventar una
+     adquisicion: una sesion importada no tiene dos capturas que puedan nombrar
+     gente distinta en el mismo indice, que es la ambiguedad que este cuidado
+     existe para atajar. */
+  reiniciar();
+  globalThis.fuente = "openf1";
+  globalThis.estado.abierta = { session_id: "openf1:session:9947" };
+  globalThis.corrida.adquisicion = null;
+  anotarParrillas("openf1:session:9947",
+                  [{ clave: "contexto",
+                     parrilla: parrillaDesdePilotos("openf1:session:9947", PILOTOS_9947) }]);
+  assert.ok(parrillaVigente(), "la parrilla del contexto no llego a aplicarse");
+  /* Y con una adquisicion elegida que no es la suya, no se la fuerza. */
+  globalThis.corrida.adquisicion = "otra";
+  assert.strictEqual(parrillaVigente(), null);
+  globalThis.corrida.adquisicion = null;
+});
+
+prueba("sin sigla declarada se sigue recortando el nombre", () => {
+  /* El simulador no publica siglas: ese camino no se puede romper. */
+  reiniciar();
+  globalThis.fuente = "f1";
+  ponerParrilla({ disponible: true, vehiculos: [
+    { vehicle_id: CAR19, nombre: "NORRIS", numero: 4, equipo: "McLaren" }] });
+  assert.strictEqual(identidadDeVehiculo(CAR19).etiqueta, "NOR");
+});
+
+prueba("un piloto sin nombre no entra a la parrilla", () => {
+  /* Nombrar a medias es peor que no nombrar: `identidadDeVehiculo` ya tiene su
+     respaldo explicito para el que no se conoce. */
+  const p = parrillaDesdePilotos("openf1:session:9947", [
+    { driver_number: 7, full_name: null, name_acronym: "XXX" },
+    { driver_number: 1, full_name: "Max VERSTAPPEN", name_acronym: "VER" },
+  ]);
+  assert.strictEqual(p.vehiculos.length, 1);
+  assert.strictEqual(p.vehiculos[0].numero, 1);
+});
+
+prueba("una parrilla vacia se declara no disponible", () => {
+  assert.strictEqual(parrillaDesdePilotos("openf1:session:9947", []).disponible, false);
+  assert.strictEqual(parrillaDesdePilotos("openf1:session:9947", null).disponible, false);
+});
+
+/* ==================================================================
+   26. PEDIR UNA VUELTA, NO LA CARRERA ENTERA
+   ------------------------------------------------------------------
+   `/series-tiempo` reparte los puntos que se le piden sobre lo que abarca la
+   consulta. Sin acotar, en una carrera de OpenF1 eso son dos horas y media: mil
+   doscientos puntos dan **una muestra cada 7,8 segundos**, de modo que una
+   ventana de veinte segundos se dibuja con dos o tres puntos y el grafico sale
+   como una recta quebrada. La fuente publica a 3,7 Hz ---unas treinta y cuatro
+   mil muestras por piloto--- asi que se tiraba el 96 % de lo medido.
+
+   Acotando a la vuelta, los mismos puntos caen sobre noventa segundos.
+   ================================================================== */
+
+prueba("la consulta se acota al tramo de la vuelta que se mira", () => {
+  reiniciar();
+  globalThis.fuente = "openf1";
+  globalThis.estado.vueltas = [
+    { numero: 1, duracion_s: 106.134, desde_utc: "2025-07-06T14:03:49.615000+00:00",
+      hasta_utc: "2025-07-06T14:05:35.749000+00:00" },
+    { numero: 2, duracion_s: 91.2, desde_utc: "2025-07-06T14:05:35.749000+00:00",
+      hasta_utc: "2025-07-06T14:07:06.949000+00:00" },
+  ];
+  const tramo = tramoDeLaVuelta(2);
+  assert.ok(/desde=/.test(tramo) && /hasta=/.test(tramo), tramo);
+  assert.ok(tramo.indexOf(encodeURIComponent("2025-07-06T14:05:35.749000+00:00")) !== -1,
+            "no se pide desde donde empieza esa vuelta: " + tramo);
+  assert.ok(tramo.indexOf(encodeURIComponent("2025-07-06T14:07:06.949000+00:00")) !== -1,
+            "no se pide hasta donde termina: " + tramo);
+});
+
+prueba("los dos instantes van escapados, que es una direccion", () => {
+  /* Un `+` sin escapar en una consulta se lee como un espacio, y el instante
+     llega una hora corrido. */
+  reiniciar();
+  globalThis.estado.vueltas = [
+    { numero: 1, desde_utc: "2025-07-06T14:03:49+00:00", hasta_utc: "2025-07-06T14:05:35+00:00" }];
+  const tramo = tramoDeLaVuelta(1);
+  assert.ok(tramo.indexOf("+00:00") === -1,
+            "el desplazamiento horario viaja sin escapar: " + tramo);
+  assert.ok(tramo.indexOf("%2B00%3A00") !== -1, tramo);
+});
+
+prueba("una vuelta sin sus dos instantes se pide como antes", () => {
+  /* Pedir un tramo inventado seria peor que pedir la sesion entera. */
+  reiniciar();
+  globalThis.estado.vueltas = [
+    { numero: 1, duracion_s: 60, desde_utc: null, hasta_utc: null },
+    { numero: 2, duracion_s: 60, desde_utc: "2025-07-06T14:00:00+00:00", hasta_utc: null }];
+  assert.strictEqual(tramoDeLaVuelta(1), "");
+  assert.strictEqual(tramoDeLaVuelta(2), "");
+  assert.strictEqual(tramoDeLaVuelta(9), "", "una vuelta que no existe no da tramo");
+});
+
+prueba("una fuente sin metro medido ya puede tener mas de una vuelta", () => {
+  /* `asegurarVuelta` rechazaba cualquier vuelta que no fuera la 1 cuando la
+     fuente no tiene distancia. OpenF1 declara cincuenta y dos por reloj, y esa
+     restriccion dejaba cincuenta y una sin poder pedirse. Lo que decide es si
+     la vuelta existe, no de que fuente viene. */
+  const desde = fuenteApp.indexOf("function asegurarVuelta");
+  const cuerpo = fuenteApp.slice(desde, fuenteApp.indexOf("\nfunction ", desde + 10));
+  assert.ok(cuerpo.indexOf("temporal && numero !== 1") === -1,
+            "sigue rechazando toda vuelta que no sea la 1 en las fuentes " +
+            "sin metro medido");
+  assert.ok(/estado\.vueltas\.some\(v => v\.numero === numero\)/.test(cuerpo),
+            "no comprueba que la vuelta exista: " +
+            "pedir una que no esta no devuelve nada y se reintenta sin fin");
+});
+
 console.log("identidad_y_cronometraje: " + hechas + " comprobaciones");
+
+/* ============================================================
+   SEIS VEHICULOS, Y QUE EL COLOR NO SE MUEVA
+   ============================================================ */
+
+prueba("el color es del vehiculo y no de su lugar en la lista", () => {
+  reiniciar();
+  globalThis._tintaPorVehiculo = new Map();
+  const A = "f1_25:session:1:car:3";
+  const B = "f1_25:session:1:car:7";
+
+  armarAutos([A, B]);
+  const colorA = globalThis.AUTOS.find(v => v.id === A).tinta;
+  const colorB = globalThis.AUTOS.find(v => v.id === B).tinta;
+  assert.notStrictEqual(colorA, colorB, "dos vehiculos, dos colores");
+
+  /* Aparece uno nuevo **adelante**: con la asignacion por posicion, A y B se
+     corrian un lugar y cambiaban de color. */
+  armarAutos(["f1_25:session:1:car:0", A, B]);
+  assert.strictEqual(globalThis.AUTOS.find(v => v.id === A).tinta, colorA);
+  assert.strictEqual(globalThis.AUTOS.find(v => v.id === B).tinta, colorB);
+
+  // Y desaparecer y volver tampoco lo cambia.
+  armarAutos([B]);
+  armarAutos([A, B]);
+  assert.strictEqual(globalThis.AUTOS.find(v => v.id === A).tinta, colorA);
+});
+
+prueba("seis vehiculos tienen seis colores distintos", () => {
+  reiniciar();
+  globalThis._tintaPorVehiculo = new Map();
+  const claves = [0, 3, 7, 11, 15, 19].map(i => "f1_25:session:1:car:" + i);
+  armarAutos(claves);
+  const colores = new Set(globalThis.AUTOS.map(a => a.tinta));
+  assert.strictEqual(globalThis.AUTOS.length, 6);
+  assert.strictEqual(colores.size, 6, "dos pilotos compartirian trazo");
+});
+
+/* ============================================================
+   LA VENTANA MOVIL DEJA DE CRECER Y EL CONTENIDO SIGUE CAMBIANDO
+   ============================================================ */
+
+prueba("la vista convertida avanza aunque el largo se clave en el tope", () => {
+  /* El largo era la identidad de la vista memorizada, con el argumento de que
+     «el arreglo solo crece». Deja de crecer al llenarse la ventana: desde ahi
+     cada muestra nueva saca la mas vieja y el contenido cambia sin que el largo
+     se mueva. */
+  const serie = [];
+  for (let i = 0; i < 600; i++) serie.push([i, 1000, i]);
+  serie.rev = 600;
+
+  const primera = _enUnidad(serie, 10, "vivo|c|presion|" + serie.rev);
+  assert.strictEqual(primera[599][1], 100);
+
+  // Entra una muestra nueva: el largo sigue en 600 y el contenido no.
+  serie.shift();
+  serie.push([600, 2000, 600]);
+  serie.rev = 601;
+
+  const segunda = _enUnidad(serie, 10, "vivo|c|presion|" + serie.rev);
+  assert.strictEqual(segunda.length, 600, "la ventana movil se conserva");
+  assert.strictEqual(segunda[599][1], 200,
+                     "la vista convertida se quedo con el contenido viejo");
+});

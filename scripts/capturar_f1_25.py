@@ -408,9 +408,9 @@ def nombre_derivado(procedencia: dict, inicio: datetime) -> str:
 #: NO ES UN NUMERO DE GUSTO: ES LO QUE LA MEDICION PERMITE. Sobre la carrera de
 #: Spa con la parrilla entera, cada coche pide 1.511 senales/s y el propio 1.673,
 #: porque suma `motion_ex`. Los veintidos piden 33.250. Cronometrado sobre la
-#: Raspberry, el consumidor tarda 100,8 us por mensaje entre interpretar el JSON,
-#: validarlo, armar los parametros e insertar ---unos 9.900 mensajes/s en serie---
-#: de modo que seis coches, que piden 9.228, entran justos y ocho no entran.
+#: Raspberry, la cadena corregida sostuvo 10.240 senales/s durante dos minutos
+#: con seis coches: 1.228.842 recibidas y persistidas, cero descartes del broker
+#: y una cola acotada a 6.836. Seis entran; no se extrapola ese resultado a ocho.
 #:
 #: El tope existe porque el modo en que esto se rompe es el peor posible: no
 #: falla, se pierden muestras **de todos**, tambien del coche propio. Aceptar una
@@ -535,6 +535,16 @@ class Publicador:
         #: Nombre de cada indice, del mismo paquete. Es lo que permite elegir por
         #: nombre: el indice del arreglo no significa nada para quien conduce.
         self._nombres: dict[int, str] = {}
+        #: De que sesion son los indices y los nombres de arriba.
+        #:
+        #: El publicador vive lo que vive el proceso, y el proceso atraviesa
+        #: varias sesiones de juego: arranca al iniciar sesion en la maquina y se
+        #: queda. Sin esto, entre el primer paquete de una sesion nueva y su
+        #: paquete de participantes ---que llega cada cinco segundos--- los
+        #: nombres elegidos se resuelven contra la parrilla vieja. **Los indices
+        #: del arreglo se reusan**: el 1 de una sesion es otro piloto en la
+        #: siguiente, y se publicarian sus datos como si fueran de aquel.
+        self._sesion_de_la_parrilla: int | None = None
         #: LA ELECCION SE LEE DE UN ARCHIVO Y NO DE UN ARGUMENTO.
         #:
         #: Los nombres de la parrilla recien se conocen cuando llega el paquete
@@ -641,6 +651,23 @@ class Publicador:
         # identidad--- de modo que el filtro lo descarta. Pero es el unico que
         # dice **quienes corren**, y sin el la parrilla completa publicaria
         # tambien los lugares vacios del arreglo.
+        # LA PARRILLA VIEJA SE OLVIDA AL CAMBIAR DE SESION, NO AL LLEGAR LA NUEVA.
+        #
+        # Esperar al paquete de participantes deja una ventana de hasta cinco
+        # segundos ---su frecuencia--- en la que los nombres elegidos se
+        # resuelven contra la parrilla anterior. Se olvida en cuanto la cabecera
+        # dice otro `session_uid`: es preferible no publicar rivales durante esos
+        # segundos a publicarlos mal.
+        #
+        # Lo que **no** se olvida son los nombres que la persona eligio: son una
+        # decision suya y no un dato de la sesion que termino. Se vuelven a
+        # resolver solos cuando llegue la parrilla nueva.
+        uid = (decodificado.get("cabecera") or {}).get("session_uid")
+        if uid is not None and uid != self._sesion_de_la_parrilla:
+            self._sesion_de_la_parrilla = uid
+            self._validos = None
+            self._nombres = {}
+
         if decodificado["paquete"] == "participants":
             self._validos = frozenset(
                 i for i, v in enumerate(decodificado["vehiculos"]) if v.get("name"))
@@ -892,6 +919,13 @@ def capturar_sesion(sock: socket.socket, primer_datagrama: bytes,
             try:
                 datos, _ = sock.recvfrom(4096)
             except socket.timeout:
+                break
+            except KeyboardInterrupt:
+                # Detener la escucha no invalida lo ya recibido. Si SIGINT sale
+                # de esta funcion, el bloque de cierre no renombra el provisional
+                # ni escribe sus metadatos y el tablero queda esperando una
+                # captura terminada que nunca aparece.
+                motivo = "detencion solicitada mientras la sesion seguia activa"
                 break
 
     transcurrido = time.perf_counter() - inicio

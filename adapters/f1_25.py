@@ -127,6 +127,33 @@ SENALES_DANO: dict[str, tuple[str, str, float]] = {
     "engine_seized": ("engine_seized", "bool", 1.0),
 }
 
+# Reglaje declarado por el paquete `car_setups`. El prefijo `setup_` separa una
+# condicion configurada de un estado que puede cambiar mientras se rueda: por
+# ejemplo, `setup_brake_bias_front` no es la lectura operativa
+# `brake_bias_front`, y `setup_tyre_pressure_*` no es la presion medida por la
+# telemetria de cada rueda.
+SENALES_REGLAJE: dict[str, tuple[str, str, float]] = {
+    "front_wing": ("setup_front_wing", "level", 1.0),
+    "rear_wing": ("setup_rear_wing", "level", 1.0),
+    "differential_on_throttle_pct": ("setup_differential_on_throttle", "%", 1.0),
+    "differential_off_throttle_pct": ("setup_differential_off_throttle", "%", 1.0),
+    "front_camber_deg": ("setup_camber_front", "deg", 1.0),
+    "rear_camber_deg": ("setup_camber_rear", "deg", 1.0),
+    "front_toe_deg": ("setup_toe_front", "deg", 1.0),
+    "rear_toe_deg": ("setup_toe_rear", "deg", 1.0),
+    "front_suspension": ("setup_suspension_front", "level", 1.0),
+    "rear_suspension": ("setup_suspension_rear", "level", 1.0),
+    "front_anti_roll_bar": ("setup_anti_roll_bar_front", "level", 1.0),
+    "rear_anti_roll_bar": ("setup_anti_roll_bar_rear", "level", 1.0),
+    "front_ride_height": ("setup_ride_height_front", "level", 1.0),
+    "rear_ride_height": ("setup_ride_height_rear", "level", 1.0),
+    "brake_pressure_pct": ("setup_brake_pressure", "%", 1.0),
+    "brake_bias_pct": ("setup_brake_bias_front", "%", 1.0),
+    "engine_braking_pct": ("setup_engine_braking", "%", 1.0),
+    "ballast": ("setup_ballast", "level", 1.0),
+    "fuel_load_kg": ("setup_fuel_load", "kg", 1.0),
+}
+
 # Campos que traen un valor por rueda. Se emiten como cuatro senales con la
 # rueda en el nombre: aplanarlos en el borde evita que cada consulta posterior
 # tenga que saber en que orden vienen las ruedas, que es exactamente el detalle
@@ -147,6 +174,7 @@ SENALES_POR_RUEDA: dict[str, tuple[str, str, str]] = {
     # Velocidad de giro de cada rueda. Es el equivalente directo de la senal
     # `wheel_speeds` ya validada sobre el bus CAN real de un vehiculo de calle.
     "wheel_speed": ("wheel_speed", "m/s", "motion_ex"),
+    "tyre_pressure_psi": ("setup_tyre_pressure", "psi", "car_setups"),
 }
 
 # Nombre corto de cada rueda para componer el nombre de senal.
@@ -290,6 +318,7 @@ MAPAS_POR_PAQUETE: dict[str, dict[str, tuple[str, str, float]]] = {
     "lap_data": SENALES_VUELTA,
     "car_status": SENALES_ESTADO,
     "car_damage": SENALES_DANO,
+    "car_setups": SENALES_REGLAJE,
     "motion_ex": SENALES_DINAMICA,
     "session": SENALES_CLIMA,
 }
@@ -357,6 +386,23 @@ def catalogo_de_senales() -> list[dict[str, str]]:
                          "campo_origen": "+".join(campos) if isinstance(campos, (list, tuple)) else str(campos),
                          "transformation": "compuesta"})
     return sorted(catalogo, key=lambda s: (s["paquete"], s["signal_name"]))
+
+
+def orden_de_publicacion() -> list[str]:
+    """Orden estable de las señales dentro de cada paquete normalizado."""
+
+    salida: list[str] = []
+    for paquete, mapa in MAPAS_POR_PAQUETE.items():
+        salida.extend(f"{paquete}:{nombre}" for nombre, _, _ in mapa.values())
+        for _, (base, _, paquete_ruedas) in SENALES_POR_RUEDA.items():
+            if paquete_ruedas == paquete:
+                salida.extend(f"{paquete}:{base}_{sufijo}"
+                              for sufijo in SUFIJO_RUEDA.values())
+        salida.extend(f"{paquete}:{nombre}" for nombre, (_, _, _, p) in
+                      SENALES_COMPUESTAS.items() if p == paquete)
+        salida.extend(f"{paquete}:{nombre}" for _, (nombre, _, _, p) in
+                      SENALES_ANIDADAS.items() if p == paquete)
+    return salida
 
 
 class ErrorNormalizacion(Exception):

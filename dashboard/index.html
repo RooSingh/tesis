@@ -81,11 +81,6 @@
   <div class="transporte" id="transporte" data-modo="reproduccion">
 
     <!-- Modo reproduccion: la sesion se recorre. -->
-    <!-- Por qué no hay reproducción, cuando la fuente no tiene eje de distancia.
-         Ocupa el lugar de los mandos en vez de dejarlos ofreciendo algo que
-         falla al primer paso. -->
-    <p class="sin-reproduccion" id="nota-transporte"></p>
-
     <div class="mandos" id="mandos-reproduccion">
       <button class="boton-transporte" id="tr-atras" type="button"
               title="Retroceder 10 segundos" aria-label="Retroceder 10 segundos">
@@ -271,10 +266,6 @@
            ============================================================ -->
       <header>
         <h2>Vehículo</h2>
-        <label class="elige-propio" for="sel-propio">
-          <span>Piloto</span>
-          <select id="sel-propio" aria-label="Piloto propio, del que hay telemetría"></select>
-        </label>
       </header>
       <div class="cuerpo-instrumento">
         <div class="esquema-auto">
@@ -324,8 +315,29 @@
 
     <!-- En qué vuelta va, y lo que interrumpió la lectura. -->
     <div class="col-cabina derecha">
+      <!-- ============================================================
+           DE QUE PILOTO ES TODO ESTO, Y DONDE SE CAMBIA
+           ------------------------------------------------------------
+           El selector vivia en el encabezado del panel «Vehiculo», que es
+           donde se ven sus neumaticos. Tiene sentido hasta que una fuente no
+           publica neumaticos: en OpenF1 ese panel no esta ---la fuente no lo
+           sostiene--- y con el se iba la unica forma de elegir piloto, sobre
+           una sesion con telemetria de tres.
+
+           Va donde se **lee** de quien es lo que se mira, que es el mismo
+           sitio en las tres fuentes. Lo que cambia no es el vehiculo: son el
+           cronometraje, los avisos, los medidores y los graficos.
+           ============================================================ -->
       <section class="instrumento vertical en-cabina" data-panel="cronometraje">
-      <header><h2>Cronometraje</h2></header>
+      <header>
+        <h2>Cronometraje</h2>
+        <!-- Sin la palabra «Piloto» al lado: el primer renglon del panel ya
+             la dice, y en una columna angosta ese rotulo le quitaba al
+             selector el ancho que necesita. Queda en la etiqueta accesible. -->
+        <label class="elige-propio" for="sel-propio">
+          <select id="sel-propio" aria-label="Piloto propio, del que hay telemetría"></select>
+        </label>
+      </header>
       <dl class="tira-cronometraje">
         <div><dt>Piloto</dt><dd class="destacado" id="crono-piloto">—</dd></div>
         <div><dt>Posición</dt><dd id="crono-posicion">—</dd></div>
@@ -335,7 +347,15 @@
       </dl>
       <p class="pie-instrumento" id="crono-cobertura"></p>
     </section>
-      <section class="instrumento panel-avisos en-cabina" data-panel="avisos" data-necesita="tyre_temperature_surface_front_left">
+      <!-- ESTE PANEL NO DEPENDE DE UNA SEÑAL, Y DEPENDIA DE LA EQUIVOCADA.
+           Llevaba `data-necesita="tyre_temperature_surface_front_left"`, que
+           es la temperatura de un neumatico y no tiene nada que ver con los
+           avisos: era una copia del panel de al lado. Sobre una fuente sin
+           neumaticos eso tapaba el panel con la capa de ausencia, de modo
+           que el encabezado contaba «5 graves · 13 leves» mientras el cuerpo
+           decia «sin avisos». Lo que llena este panel es una lista, y cuando
+           esta vacia el propio cuerpo lo explica con sus palabras. -->
+      <section class="instrumento panel-avisos en-cabina" data-panel="avisos">
       <header>
         <h2>Avisos</h2>
         <span class="fuente-canal" id="canal-avisos"></span>
@@ -354,10 +374,11 @@
       <div class="cuerpo-instrumento">
         <div class="linea-avisos" id="lista-avisos"></div>
       </div>
-      <div class="capa-ausente">
-        <strong>Sin avisos</strong>
-        <span id="motivo-avisos"></span>
-      </div>
+      <!-- Que puede llegar a anotar esta fuente. Estaba dentro de la capa de
+           ausencia, o sea que solo se leia cuando el panel estaba tapado; es
+           justamente lo que hace falta para interpretar la lista cuando la
+           lista existe. -->
+      <p class="pie-instrumento" id="motivo-avisos"></p>
     </section>
     </div>
 
@@ -465,17 +486,12 @@
          LA PUESTA A PUNTO CON LA QUE SE RODO
          ------------------------------------------------------------
          El menu del juego publica valores intermedios mientras alguien lo
-         navega. Lo que se muestra aca es el ultimo valor persistido hasta el
-         instante que se esta mirando ---la configuracion con la que se rodo---
-         y nunca los intermedios, que serian declarar como puesta a punto algo
-         que no llego a la pista.
-
-         Tres de los cinco campos son codigos de la especificacion del juego
-         que el trabajo todavia no cita. Se muestran como codigos y se dice que
-         lo son: traducirlos de memoria pondria una anotacion sin fuente donde
-         hoy hay una medicion.
+         navega. Un paquete se declara asentado solamente cuando despues aparece
+         una muestra con el vehiculo en marcha: asi se distingue lo observado de lo que llego a
+         la pista. La referencia externa se muestra al lado y declara su alcance;
+         no se presenta como un optimo.
          ============================================================ -->
-    <section class="instrumento celda-1" data-panel="puesta" data-necesita="brake_bias_front">
+    <section class="instrumento celda-2" data-panel="puesta" data-necesita="setup_front_wing">
       <header>
         <h2>Puesta a punto</h2>
         <span class="fuente-canal" id="canal-puesta"></span>
@@ -483,6 +499,7 @@
       <div class="cuerpo-instrumento">
         <dl class="lista-canales" id="lista-puesta"></dl>
         <p class="nota" id="nota-puesta"></p>
+        <p class="nota" id="referencia-puesta"></p>
       </div>
       <div class="capa-ausente">
         <strong>Sin puesta a punto</strong>
@@ -522,17 +539,34 @@
               <tr><td>Motor y marcha</td><td class="si">sí</td><td class="si">sí</td><td class="no">no</td><td><code>engine_speed</code>, <code>gear_selected</code></td></tr>
               <tr><td>Trazado del circuito</td><td class="si">declarado</td><td class="si">declarado</td><td class="parcial">reconstruido</td><td><code>world_position_*</code>, <code>track_position_*</code></td></tr>
               <tr><td><b>Comparación por distancia</b></td><td class="si">2,67 m entre muestras</td><td class="no">huecos de hasta 83 m</td><td class="no">sin distancia declarada</td><td><code>lap_distance</code></td></tr>
-              <tr><td>Aceleraciones</td><td class="si">3 ejes</td><td class="no">no</td><td class="parcial">2 ejes</td><td><code>g_force_vertical</code> solo en F1 25</td></tr>
+              <tr data-panel="aceleraciones"><td>Aceleraciones</td><td class="si">3 ejes</td><td class="no">no</td><td class="parcial">2 ejes</td><td><code>g_force_vertical</code> solo en F1 25</td></tr>
               <tr><td>Dirección y ruedas</td><td class="si">sí</td><td class="no">no</td><td class="si">sí</td><td><code>steer_angle</code>, <code>wheel_speed_*</code></td></tr>
-              <tr><td>Neumáticos y frenos</td><td class="si">sí</td><td class="no">no</td><td class="no">no</td><td><code>tyre_*</code>, <code>brake_temperature_*</code></td></tr>
+              <tr data-panel="vehiculo"><td>Neumáticos y frenos</td><td class="si">sí</td><td class="no">no</td><td class="no">no</td><td><code>tyre_*</code>, <code>brake_temperature_*</code></td></tr>
               <tr><td>Daño por parte</td><td class="si">sí</td><td class="no">no</td><td class="no">no</td><td><code>wing_damage_*</code>, <code>floor_damage</code></td></tr>
               <tr><td>Combustible y ERS</td><td class="si">sí</td><td class="no">no</td><td class="no">no</td><td><code>fuel_mass</code>, <code>ers_stored_energy</code></td></tr>
-              <tr data-panel="puesta"><td>Puesta a punto</td><td class="si">sí</td><td class="no">no</td><td class="no">no</td><td><code>brake_bias_front</code>, <code>fuel_mix</code>, <code>tyre_compound</code></td></tr>
+              <tr data-panel="puesta"><td>Puesta a punto</td><td class="si">23 ajustes declarados</td><td class="no">no</td><td class="no">no</td><td><code>setup_front_wing</code>, <code>setup_suspension_*</code>, <code>setup_tyre_pressure_*</code></td></tr>
               <tr data-panel="vehiculos"><td>Comparación entre vehículos</td><td class="si">parrilla completa</td><td class="si">parrilla completa</td><td class="no">un solo vehículo</td><td>la captura del bus es de un vehículo: no hay con quién comparar</td></tr>
-              <tr><td>Clima y pista</td><td class="si">sí</td><td class="parcial">por contexto</td><td class="no">no</td><td><code>air_temperature</code></td></tr>
+              <tr data-panel="avisos"><td>Avisos de sesión</td><td class="si">banderas, superficie y daño</td><td class="no">no</td><td class="no">no</td><td><code>fia_flag</code>, <code>surface_type_*</code>, <code>lap_invalid</code>, <code>*_damage</code></td></tr>
+              <tr data-panel="clima"><td>Clima y pista</td><td class="si">sí</td><td class="parcial">por contexto</td><td class="no">no</td><td><code>air_temperature</code></td></tr>
               <tr><td>Biometría del piloto</td><td class="no">no</td><td class="no">no</td><td class="no">no</td><td>ninguna fuente la entrega</td></tr>
             </tbody>
           </table>
+        </div>
+        <!-- ============================================================
+             LO QUE LA FUENTE ABIERTA NO SOSTIENE, Y POR ESO NO ESTA EN PANTALLA
+             ------------------------------------------------------------
+             La tabla de arriba compara las tres fuentes en general. Esto dice
+             lo mismo de **la que esta abierta**, y lo dice donde se puede leer:
+             un panel que se saca del tablero deja de poder explicarse solo.
+
+             No se escribe a mano. Sale de la misma tabla del guion que decide
+             sacar cada panel ---`PANELES_QUE_LA_FUENTE_NO_TIENE`---, de modo
+             que lo que se lee aca y lo que falta en pantalla no pueden
+             discrepar: son la misma declaracion leida dos veces.
+             ============================================================ -->
+        <div class="ausencias-declaradas" id="ausencias-declaradas" hidden>
+          <p class="eyebrow" id="titulo-ausencias"></p>
+          <dl class="lista-ausencias" id="lista-ausencias"></dl>
         </div>
         <p class="nota"><strong>La fila que cambia una decisión:</strong> la comparación por distancia se
         había descartado por medición propia, porque en OpenF1 el muestreo de 3,7 Hz deja huecos de hasta

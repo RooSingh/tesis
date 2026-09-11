@@ -254,28 +254,65 @@ def listar(fuente: str | None = None, limite: int = 400) -> dict[str, Any]:
     }
 
 
-def rango_de(session_id: str, source_type: str) -> str | None:
-    """Cuando empieza lo guardado de esta sesion, o `None` si no hay nada.
+def extremos_de(session_id: str, source_type: str,
+                cursor: Any = None) -> tuple[str | None, str | None]:
+    """Los dos extremos de lo guardado de esta sesion, o `(None, None)`.
 
-    Lo contesta el catalogo, que ya lo tiene calculado, y solo mira la tabla
+    Lo contesta el catalogo, que ya los tiene calculados, y solo mira la tabla
     grande si esa sesion todavia no fue catalogada. La distincion importa:
     preguntarle a la tabla de mediciones por el minimo de una sesion recorre su
     particion entera, y el catalogo existe justamente para no tener que hacerlo.
+
+    CUANTO IMPORTA, MEDIDO. Sobre `openf1:session:9947` ---932.625 filas, dos
+    horas y media--- `min(timestamp), max(timestamp)` acotado por sesion tarda
+    **26,3 s**. Era lo unico lento de `/contexto`: las consultas que buscan los
+    valores tardan treinta milisegundos. Con el catalogo el mismo dato sale de
+    una fila ya escrita.
+
+    `cursor` permite reusar el que la consulta ya tiene abierto: abrir una
+    conexion nueva para leer una fila del catalogo es mas caro que la lectura.
     """
-    asegurar_tabla()
-    with db.obtener_conexion() as conexion, conexion.cursor() as cursor:
-        cursor.execute(
-            "SELECT desde FROM sesiones_catalogo WHERE session_id = %s",
+    def _texto(valor: Any) -> str | None:
+        """Un instante como texto, venga como fecha o como cadena.
+
+        El controlador devuelve `datetime` para una columna de instante, pero no
+        todas las rutas pasan por el: acotar a `isoformat` ataba esta funcion a
+        un solo origen de datos.
+        """
+        if valor is None:
+            return None
+        return valor.isoformat() if hasattr(valor, "isoformat") else str(valor)
+
+    def _leer(cur: Any) -> tuple[str | None, str | None]:
+        cur.execute(
+            "SELECT desde, hasta FROM sesiones_catalogo WHERE session_id = %s",
             (session_id,))
-        fila = cursor.fetchone()
+        fila = cur.fetchone()
         if fila and fila[0]:
-            return fila[0].isoformat()
-        cursor.execute(
-            """SELECT min(timestamp) FROM telemetry_messages
+            return (_texto(fila[0]), _texto(fila[1]))
+        cur.execute(
+            """SELECT min(timestamp), max(timestamp) FROM telemetry_messages
                 WHERE source_type = %s AND session_id = %s""",
             (source_type, session_id))
-        fila = cursor.fetchone()
-    return fila[0].isoformat() if fila and fila[0] else None
+        fila = cur.fetchone()
+        if not fila or not fila[0]:
+            return (None, None)
+        return (_texto(fila[0]), _texto(fila[1]))
+
+    # `asegurar_tabla` abre su propia conexion y commitea. Con un cursor
+    # prestado eso es abrir una transaccion dentro de otra para crear algo que
+    # quien presta el cursor ya dio por hecho: quien consulta el catalogo desde
+    # una peticion lo hace porque la aplicacion ya lo tiene en pie.
+    if cursor is not None:
+        return _leer(cursor)
+    asegurar_tabla()
+    with db.obtener_conexion() as conexion, conexion.cursor() as cur:
+        return _leer(cur)
+
+
+def rango_de(session_id: str, source_type: str) -> str | None:
+    """Cuando empieza lo guardado de esta sesion, o `None` si no hay nada."""
+    return extremos_de(session_id, source_type)[0]
 
 
 def estado() -> dict[str, Any]:

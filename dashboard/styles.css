@@ -6,6 +6,9 @@
     --acento: #6d28d9; --acento-vivo: #7c3aed; --acento-veta: rgba(109,40,217,.1);
     --ok: #136c34; --alerta: #9a4708; --critico: #b91c1c;
     --auto-1: #6d28d9; --auto-2: #9a4708; --auto-3: #0e7490; --auto-4: #136c34;
+    /* Dos mas: el capturador admite seis vehiculos ---el propio y cinco
+       rivales--- y con cuatro colores dos pilotos compartian trazo. */
+    --auto-5: #b91c1c; --auto-6: #a21caf;
     --velo: #6d28d9; --sobre-acento: #ffffff;
     /* La barra de reproduccion no es un panel mas: es el borde de la
        aplicacion. Tiene su propio fondo porque con el de los paneles se
@@ -25,7 +28,7 @@
       --texto: #e8f2f8; --texto-medio: #9fbdd0; --texto-tenue: #6d8ba1;
       --acento: #b794f6; --acento-vivo: #d8b4fe; --acento-veta: rgba(183,148,246,.14);
       --ok: #4ade80; --alerta: #fbbf24; --critico: #f87171;
-      --auto-1: #b794f6; --auto-2: #fbbf24; --auto-3: #22d3ee; --auto-4: #4ade80;
+      --auto-1: #b794f6; --auto-2: #fbbf24; --auto-3: #22d3ee; --auto-4: #4ade80; --auto-5: #fb7185; --auto-6: #f0abfc;
       --velo: #22d3ee; --sobre-acento: #12071f;
       --sombra: 0 1px 0 rgba(183,148,246,.07), 0 20px 48px rgba(0,0,0,.5);
       --barra-fondo: #182a3f; --barra-linea: rgba(183,148,246,.45);
@@ -38,7 +41,7 @@
     --texto: #e8f2f8; --texto-medio: #9fbdd0; --texto-tenue: #6d8ba1;
     --acento: #b794f6; --acento-vivo: #d8b4fe; --acento-veta: rgba(183,148,246,.14);
     --ok: #4ade80; --alerta: #fbbf24; --critico: #f87171;
-    --auto-1: #b794f6; --auto-2: #fbbf24; --auto-3: #22d3ee; --auto-4: #4ade80;
+    --auto-1: #b794f6; --auto-2: #fbbf24; --auto-3: #22d3ee; --auto-4: #4ade80; --auto-5: #fb7185; --auto-6: #f0abfc;
     --velo: #22d3ee; --sobre-acento: #12071f;
       --sombra: 0 1px 0 rgba(183,148,246,.07), 0 20px 48px rgba(0,0,0,.5);
       --barra-fondo: #182a3f; --barra-linea: rgba(183,148,246,.45);
@@ -168,6 +171,21 @@
   .capa-ausente strong { font-family: var(--titulo); font-size: 1rem; letter-spacing: .05em; text-transform: uppercase; color: var(--texto-medio); }
   .capa-ausente span { color: var(--texto-tenue); font-size: .8rem; max-width: 42ch; }
 
+  /* Y LO QUE LA FUENTE NO PUBLICA NUNCA NO OCUPA SITIO.
+     La regla de arriba es para el dato que podria haber estado y hoy no esta:
+     el panel se queda y escribe por que. Esta es para el que no puede estar,
+     y la decide `PANELES_QUE_LA_FUENTE_NO_TIENE` en el guion ---con el motivo
+     escrito, que una hoja de estilos no sabe llevar---. El hecho sigue en la
+     tabla del pie, que es donde comparar las tres fuentes es el tema.
+
+     LLEVA `!important` Y ES A PROPOSITO. Los elementos que esta regla saca
+     ---`.instrumento` y `.col-cabina`--- declaran su propio `display` mas
+     abajo en esta misma hoja y con la misma especificidad, de modo que sin la
+     marca gana el que este escrito ultimo: el panel se iria o se quedaria
+     segun el orden del archivo, que no es un criterio. «Fuera» es una decision
+     tomada en el guion con su motivo, y no hay nada que pueda revertirla. */
+  [data-fuera="si"] { display: none !important; }
+
   /* CINCO CELDAS, Y NO SE MUEVEN CUANDO CAMBIAN LAS CIFRAS.
      Identidad, puesto, vuelta, cronometro y diferencia son cinco hechos de
      distinta naturaleza y cada uno tiene su celda: antes «Vehículo» cargaba con
@@ -280,6 +298,26 @@
   .lista-canales div { display: flex; justify-content: space-between; gap: 10px; align-items: baseline; padding-bottom: 6px; border-bottom: 1px solid var(--linea); }
   .lista-canales dt { font-family: var(--cifra); font-size: .7rem; color: var(--texto-tenue); }
   .lista-canales dd { margin: 0; font-family: var(--cifra); font-variant-numeric: tabular-nums; font-weight: 600; }
+
+  /* LO QUE LA FUENTE ABIERTA NO SOSTIENE. Un instrumento por renglon con su
+     motivo al lado. El motivo es una frase, no una cifra: se lee como texto,
+     alineado a la izquierda del ancho que le toca, y no como la columna de
+     numeros de `.lista-canales`. */
+  .ausencias-declaradas { margin-top: 14px; }
+  .lista-ausencias { display: grid; gap: 8px; margin: 8px 0 0; }
+  .lista-ausencias div {
+    display: grid; grid-template-columns: minmax(0, 150px) minmax(0, 1fr);
+    gap: 4px 14px; align-items: baseline;
+    padding-bottom: 7px; border-bottom: 1px solid var(--linea);
+  }
+  .lista-ausencias dt {
+    font-family: var(--titulo); font-size: .68rem; letter-spacing: .06em;
+    text-transform: uppercase; color: var(--texto-medio);
+  }
+  .lista-ausencias dd { margin: 0; color: var(--texto-tenue); font-size: .78rem; }
+  @media (max-width: 640px) {
+    .lista-ausencias div { grid-template-columns: minmax(0, 1fr); }
+  }
 
   /* Veinte vehiculos no pueden empujar al resto de la grilla fuera de
      pantalla: la lista tiene su propio desplazamiento. */
@@ -529,11 +567,6 @@
     background: var(--acento); color: var(--sobre-acento); border-color: var(--acento);
   }
   .transporte[data-modo="reproduccion"] #mandos-reproduccion { display: flex; }
-  .sin-reproduccion { display: none; }
-  .transporte[data-sin-distancia="si"] .sin-reproduccion {
-    display: block; flex: 0 1 34ch; margin: 0; padding: 10px 4px;
-    font-size: .72rem; color: var(--texto-medio);
-  }
   .transporte[data-modo="vivo"] #mandos-vivo { display: flex; }
   .transporte[data-modo="vacio"] #mandos-vacio { display: flex; }
 
@@ -781,15 +814,13 @@
   :root[data-fuente="can"] .cabina .col-cabina.izquierda > .instrumento:not([data-panel="trazado"]) {
     display: none;
   }
-  /* Y ABAJO, DOS PANELES QUE EN EL BUS NO TIENEN NADA QUE DAR NUNCA.
-     No es que esta sesion no los trajo ---para eso esta `data-necesita`, que
-     marca la ausencia y escribe el motivo a la vista---: es que un bus de serie
-     no publica configuracion del vehiculo, y una captura de **un** vehiculo no
-     tiene con quien compararse. Un panel que solo puede decir «no» le quita el
-     sitio a lo que si se midio. El hecho no se pierde: sigue escrito en la
-     tabla del pie, que es donde comparar las tres fuentes es el tema. */
-  :root[data-fuente="can"] [data-panel="puesta"],
-  :root[data-fuente="can"] [data-panel="vehiculos"] { display: none; }
+  /* Los dos paneles que en el bus no tienen nada que dar nunca ---puesta a
+     punto y comparacion entre vehiculos--- se sacan desde el guion, en
+     `PANELES_QUE_LA_FUENTE_NO_TIENE`, que es donde el motivo se puede escribir.
+     Estaban aca como dos selectores por atributo, y alcanzaban tambien a las
+     filas de la tabla del pie ---que llevan el mismo `data-panel` justamente
+     para que quede constancia de lo que la fuente no sostiene---: esconder el
+     panel escondia ademas el unico sitio donde el hecho seguia escrito. */
 
   :root[data-fuente="can"] .cabina .graficos-cabina {
     grid-column: 2; grid-row: 1;
@@ -803,6 +834,123 @@
       grid-template-columns: repeat(2, minmax(0, 1fr));
       grid-template-rows: repeat(4, minmax(0, 1fr));
     }
+  }
+
+  /* OPENF1 ES UNA CABINA DE CARRERA A LA QUE LE FALTA EL VEHICULO.
+     De las cuatro columnas se va la del medio entera: esta fuente no publica
+     neumaticos ni daño, y ese panel era lo unico que esa columna tenia. Con
+     tres paneles en una rejilla de cuatro columnas la cuarta quedaba reservada
+     y vacia, asi que la rejilla pasa a tener tres.
+
+     Y la fila de abajo se lleva lo que sobra. Lo que esta fuente si entrega son
+     seis señales del coche ---velocidad, acelerador, freno, regimen, marcha y
+     DRS--- y eso vive en los graficos: donde antes habia un panel de neumaticos
+     ahora hay mas alto para lo que se midio. */
+  :root[data-fuente="openf1"] .cabina {
+    grid-template-columns:
+      minmax(0, 1.38fr) minmax(0, .88fr) minmax(0, 1.04fr) minmax(0, .8fr);
+    /* TRES FILAS, Y LA PRIMERA LA PIDE SU CONTENIDO.
+       El cronometraje son cinco renglones de alto fijo: repartirle una fraccion
+       le da de mas o de menos segun la ventana, y lo que sobre o falte se lo
+       quita al clima, que va justo debajo. `min-content` le da exactamente los
+       renglones que tiene.
+
+       De las dos que se reparten, la de arriba pesa algo mas: ahi estan la
+       figura, la rejilla y la lista, que son los que necesitan alto. Los
+       graficos de abajo son trazos anchos y un diez por ciento menos de alto no
+       les cambia lo que se lee. */
+    grid-template-rows: min-content minmax(0, 1fr) minmax(0, 1.05fr);
+  }
+
+  /* NADIE COMPARTE COLUMNA A MEDIAS, PORQUE COMPARTIRLA ERA REPARTIR EL ALTO.
+     El trazado y el clima estaban uno encima del otro y se quedaban con media
+     fila cada uno: el circuito entraba en un sello y las seis casillas del
+     clima se cortaban por la mitad.
+
+     Los dos envoltorios de columna dejan de serlo: con `display: contents`
+     desaparecen del reparto y sus paneles pasan a ser celdas de la cabina. Asi
+     el trazado toma una columna entera, los avisos ---que son una lista, y una
+     lista sin alto no se puede leer--- toman otra, y el cronometraje y el clima
+     comparten la del medio, que es donde compartir no molesta: uno tiene alto
+     fijo y el otro son seis casillas.
+
+     Se declara donde va cada uno y no se deja al orden del documento: con los
+     envoltorios disueltos, ese orden pondria el clima segundo y empujaria todo
+     lo demas un lugar. */
+  :root[data-fuente="openf1"] .cabina .col-cabina.izquierda,
+  :root[data-fuente="openf1"] .cabina .col-cabina.derecha { display: contents; }
+
+  :root[data-fuente="openf1"] .cabina [data-panel="trazado"] {
+    grid-column: 1; grid-row: 1 / 3;
+  }
+  :root[data-fuente="openf1"] .cabina .col-cabina.motor {
+    grid-column: 2; grid-row: 1 / 3;
+  }
+  :root[data-fuente="openf1"] .cabina [data-panel="cronometraje"] {
+    grid-column: 3; grid-row: 1;
+  }
+  :root[data-fuente="openf1"] .cabina [data-panel="clima"] {
+    grid-column: 3; grid-row: 2;
+  }
+  :root[data-fuente="openf1"] .cabina [data-panel="avisos"] {
+    grid-column: 4; grid-row: 1 / 3;
+  }
+  :root[data-fuente="openf1"] .cabina .graficos-cabina { grid-row: 3; }
+
+  /* Las casillas del clima dejan de apretarse en una fila de cuatro ---que con
+     seis magnitudes se partia en dos y desbordaba--- y van de a tres, que es lo
+     que entra en una celda ancha y baja sin cortar ningun rotulo. */
+  :root[data-fuente="openf1"] .cabina .clima-mini .clima-rejilla {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    flex: 1; min-height: 0; align-content: stretch;
+    grid-auto-rows: minmax(0, 1fr);
+  }
+  :root[data-fuente="openf1"] .cabina .clima-mini .clima-rejilla div {
+    display: flex; flex-direction: column; justify-content: center;
+  }
+  :root[data-fuente="openf1"] .cabina .clima-mini .clima-rejilla dd { font-size: .9rem; }
+
+  /* EL TOPE DE ALTO DEL DIBUJO ERA DE CUANDO COMPARTIA COLUMNA.
+     `.pista svg` esta acotado a 320 px para que, compartiendo columna con el
+     clima, el dibujo no se comiera la mitad del otro. Con columna propia ese
+     tope es lo unico que lo frena: el panel mide 414 y el dibujo se quedaba en
+     293. Sin el, crece hasta donde llegue su propia proporcion. */
+  :root[data-fuente="openf1"] .cabina .pista svg { max-height: none; }
+
+  /* EL ROTULO NO PUEDE SER LO QUE SE CORTA, Y NO ERA CUESTION DE ANCHO.
+     «Cronometro» quedaba en «Cronó...». Probe dos arreglos y los dos estaban
+     mal por el mismo motivo. Siete pixeles mas de columna: volvio a cortarse al
+     cambiar de vuelta, porque el valor mide lo que mida la cifra. Un escalon
+     menos de cuerpo en el valor: tampoco, y ahi se vio por que.
+
+     Medido: el rotulo pide 61 px, el valor 110, mas la separacion y el relleno
+     son 197 en una celda de 181. **No entran en un renglon**, y ningun ancho
+     razonable los hace entrar, porque la celda es la mitad de una columna que
+     comparte con el clima. Con `space-between` el valor se queda con lo suyo y
+     el rotulo con lo que sobre, asi que lo que se corta es siempre el rotulo, y
+     un rotulo cortado dice otra cosa que el rotulo.
+
+     Van uno sobre otro. Nada se corta, no depende de la cifra, y el renglon de
+     mas lo paga la fila del cronometraje ---que es `min-content` y crece--- y
+     no una casilla a medias. */
+  :root[data-fuente="openf1"] .cabina .vertical .tira-cronometraje div {
+    display: flex; flex-direction: column; align-items: flex-start;
+    justify-content: center; gap: 1px; padding: 6px 14px;
+  }
+  :root[data-fuente="openf1"] .cabina .vertical .tira-cronometraje dt {
+    white-space: nowrap;
+  }
+  :root[data-fuente="openf1"] .cabina .vertical .tira-cronometraje dd {
+    font-size: 1.2rem;
+  }
+
+  /* ABAJO, LA LISTA DE PILOTOS SOLA EN SU FILA.
+     Puesta a punto y aceleraciones ocupaban tres de las cuatro celdas y
+     OpenF1 no sostiene ninguna de las dos. Dejar la lista en una celda de
+     cuarto de ancho con tres huecos al lado es peor que darsela entera: son
+     veinte pilotos declarados y los que tengan telemetria se eligen ahi. */
+  :root[data-fuente="openf1"] .tablero [data-panel="vehiculos"] {
+    grid-column: 1 / -1;
   }
 
   /* EL TRAZADO SE QUEDA CON EL SITIO DE LA LEYENDA.
@@ -919,6 +1067,11 @@
     letter-spacing: 0; text-transform: none; cursor: pointer;
   }
   .elige-propio select:hover { border-color: var(--acento); }
+  /* Y no se lleva por delante el titulo del panel: en una columna angosta el
+     selector se encoge y el navegador recorta lo que muestra, que es lo que un
+     `select` sabe hacer. La lista desplegada se abre a su propio ancho. */
+  .elige-propio { min-width: 0; }
+  .elige-propio select { min-width: 0; max-width: 100%; }
 
   .cabina .esquina { overflow: hidden; padding: 7px 10px; }
   .cabina .esquina .eyebrow { font-size: .55rem; margin-bottom: 4px; }
@@ -1210,14 +1363,42 @@
     .cabina[data-pantalla="completa"] { position: static; inset: auto; z-index: auto; overflow: visible; }
   }
   @media (max-width: 1180px) {
-    .transporte[data-sin-distancia="si"] .sin-reproduccion { display: none; }
     :root[data-fuente="can"] .cabina .graficos-cabina {
       grid-template-columns: repeat(2, minmax(0, 1fr));
       grid-template-rows: none;
     }
+    /* Las tres columnas de OpenF1 se declaran con la fuente en el selector, y
+       eso le gana por especificidad a la regla de ancho de arriba aunque este
+       escrita despues: sin esto, la cabina seguiria en tres columnas en una
+       ventana donde ni siquiera entran dos. Se repite el apilado, que es lo
+       que la regla general ya decia. */
+    :root[data-fuente="openf1"] .cabina {
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1.25fr);
+      grid-template-rows: auto auto auto auto;
+    }
+    /* Apilado no hay columnas que repartir, asi que los envoltorios vuelven a
+       serlo y las celdas fluyen: colocarlas a mano dejaria huecos donde antes
+       habia paneles, y una fila declarada a mano donde no hay tres filas. */
+    :root[data-fuente="openf1"] .cabina .col-cabina.izquierda,
+    :root[data-fuente="openf1"] .cabina .col-cabina.derecha {
+      display: flex; grid-column: auto; grid-row: auto;
+    }
+    :root[data-fuente="openf1"] .cabina [data-panel="trazado"],
+    :root[data-fuente="openf1"] .cabina [data-panel="clima"],
+    :root[data-fuente="openf1"] .cabina [data-panel="cronometraje"],
+    :root[data-fuente="openf1"] .cabina [data-panel="avisos"],
+    :root[data-fuente="openf1"] .cabina .col-cabina.motor,
+    :root[data-fuente="openf1"] .cabina .graficos-cabina {
+      grid-column: auto; grid-row: auto;
+    }
+    /* Y el clima vuelve a su rejilla de siempre: apilado sobra el ancho. */
+    :root[data-fuente="openf1"] .cabina .clima-mini .clima-rejilla {
+      grid-template-columns: repeat(auto-fit, minmax(88px, 1fr));
+    }
   }
   @media (max-width: 860px) {
     .cabina { grid-template-columns: minmax(0, 1fr); }
+    :root[data-fuente="openf1"] .cabina { grid-template-columns: minmax(0, 1fr); }
   }
   @media (max-width: 640px) {
     :root[data-fuente="can"] .cabina .graficos-cabina {
@@ -1777,8 +1958,15 @@
     color: var(--texto-tenue); font-family: var(--cifra);
     padding: 1px 7px; border: 1px dashed var(--linea-fuerte); border-radius: 6px;
   }
+  #lista-puesta { grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: 24px; }
   #lista-puesta div { padding-bottom: 7px; }
+  #lista-puesta dd { display: flex; align-items: baseline; gap: 8px; }
+  .valor-referencia { color: var(--acento); font-size: .62rem; font-weight: 600; white-space: nowrap; }
   #nota-puesta { margin-top: 10px; }
+  #referencia-puesta a { color: var(--acento); font-weight: 700; }
+  @media (max-width: 720px) {
+    #lista-puesta { grid-template-columns: minmax(0, 1fr); }
+  }
 
   /* Una vuelta que no se rodo de corrido se marca en la linea de tiempo: el
      salto es del dato, no de la reproduccion, y quien mira tiene que poder

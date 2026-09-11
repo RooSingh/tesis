@@ -136,13 +136,26 @@ RUEDAS = ("rear_left", "rear_right", "front_left", "front_right")
 
 #: Canales de dano y como se los nombra al avisar.
 PARTES_DANADAS = (
-    ("front_left_wing_damage", "aleron delantero izquierdo"),
-    ("front_right_wing_damage", "aleron delantero derecho"),
-    ("rear_wing_damage", "aleron trasero"),
+    ("wing_damage_front_left", "aleron delantero izquierdo"),
+    ("wing_damage_front_right", "aleron delantero derecho"),
+    ("wing_damage_rear", "aleron trasero"),
     ("floor_damage", "piso"),
     ("diffuser_damage", "difusor"),
     ("sidepod_damage", "pontones"),
 )
+
+# Una reproducción histórica debe alimentar al mismo anotador con exactamente
+# los canales que éste consume. La lista vive acá, junto a las reglas, para que
+# la consulta histórica no mantenga un segundo catálogo que pueda divergir.
+CANALES_PARA_ANOTAR = tuple(dict.fromkeys((
+    "lap_number", "lap_distance", "lap_invalid", "g_force_lateral",
+    "speed", "throttle_position", "brake_position", "g_force_vertical",
+    "wheel_slip_ratio_rear_left", "wheel_slip_ratio_rear_right",
+    "surface_type_rear_left", "surface_type_rear_right",
+    "surface_type_front_left", "surface_type_front_right",
+    "drs_activation_distance", "drs_allowed", "delta_to_car_in_front",
+    "fia_flag", "fuel_remaining_laps", "ers_stored_energy",
+) + tuple(canal for canal, _ in PARTES_DANADAS)))
 
 #: Limite de energia electrica almacenada, en julios. Es el del reglamento, que
 #: el juego respeta, y no un numero elegido aca.
@@ -163,6 +176,10 @@ VENTANA_ALERON_MS = 1000
 BANDERAS = {2: "azul, dejar pasar al que viene doblando",
             3: "amarilla, levantar y prohibido adelantar",
             4: "roja, sesion detenida"}
+
+# Cuatro familias de incidentes, dos estados de DRS, su ventana reglamentaria,
+# las banderas accionables, combustible, batería y cada pieza dañada.
+CANTIDAD_REGLAS = 4 + 2 + 1 + len(BANDERAS) + 2 + len(PARTES_DANADAS)
 
 
 class Anotador:
@@ -243,8 +260,8 @@ class Anotador:
         if nombre == "speed":
             self._velocidades.append((t, float(valor)))
             self._podar(self._velocidades, t)
-        elif nombre == "brake":
-            self._frenos.append((t, float(valor)))
+        elif nombre == "brake_position":
+            self._frenos.append((t, float(valor) / 100.0))
             self._podar(self._frenos, t)
         elif nombre == "lap_number":
             self._al_cambiar_de_vuelta(int(valor))
@@ -339,8 +356,8 @@ class Anotador:
             "t": t,
             "distancia": self._fresco("lap_distance", t, tolerancia=5.0),
             "velocidad": self._fresco("speed", t),
-            "acelerador": self._fresco("throttle", t),
-            "freno": self._fresco("brake", t),
+            "acelerador": self._pedal("throttle_position", t),
+            "freno": self._pedal("brake_position", t),
             "vertical": self._fresco("g_force_vertical", t),
             "superficies": [int(s) for s in superficies if s is not None],
             "deslizamiento": max((abs(d) for d in deslizamientos if d is not None),
@@ -466,10 +483,9 @@ class Anotador:
         if vertical is not None and abs(vertical) > UMBRAL_VERTICAL_G:
             motivos.append(("impacto vertical", f"{vertical:+.2f} g"))
 
-        # Perdida de tren trasero. Solo se evalua si el canal existe: el paquete
-        # que lo publica no forma parte del contrato interno todavia, y una regla
-        # que no puede evaluarse debe abstenerse y no dar por buena su ausencia.
-        acelerador = self._fresco("throttle", t)
+        # Perdida de tren trasero. Solo se evalua si estan el deslizamiento y el
+        # acelerador: una regla sin sus dos canales debe abstenerse.
+        acelerador = self._pedal("throttle_position", t)
         crudos = [self._fresco(f"wheel_slip_ratio_{r}", t)
                   for r in ("rear_left", "rear_right")]
         deslizamientos = [abs(d) for d in crudos if d is not None]
@@ -840,6 +856,10 @@ class Anotador:
         valor = self._fresco(nombre, t, tolerancia)
         return int(valor) if valor is not None else None
 
+    def _pedal(self, nombre: str, t: float) -> float | None:
+        valor = self._fresco(nombre, t)
+        return valor / 100.0 if valor is not None else None
+
     def _caida(self, t: float) -> float | None:
         if len(self._velocidades) < 2:
             return None
@@ -854,7 +874,35 @@ class Anotador:
 
     @staticmethod
     def _podar(serie: deque, t: float) -> None:
-        while serie and (t - serie[0][0]) > VENTANA_CAIDA_S:
+        """Deja en la serie lo que cae en la ventana que **termina** en `t`.
+
+        EL TIEMPO NO SIEMPRE AVANZA, Y DARLO POR SENTADO SALIA CARO.
+        Esto decia `(t - serie[0][0]) > VENTANA_CAIDA_S`, que con una muestra
+        anterior a la que abrio la serie da una resta **negativa**: la condicion
+        es falsa, no se poda nada, y no se vuelve a podar nunca. La cola crece
+        sin limite y `_caida` la recorre entera en cada muestra, de modo que el
+        recorrido de una sesion se vuelve cuadratico.
+
+        Medido el 2026-09-11 sobre una practica de 216.318 muestras: las series
+        llegaban a **8.838 entradas** para una ventana de medio segundo, el
+        costo por muestra crecia de 30 a 459 us a lo largo de la sesion y
+        `_caida` se llevaba el 85 % del tiempo. `/avisos` tardaba 73 s, de los
+        cuales la consulta a la base era 0,9.
+
+        De donde salia el retroceso: la lectura ordena por desplazamiento de
+        captura, y una sesion con dos capturas pegadas pone primero las filas de
+        la segunda ---que reinicia ese reloj--- con instantes posteriores. En
+        vivo pasa lo mismo si el reloj se corre o la captura se reinicia.
+
+        Y NO ERA SOLO LENTITUD. Con la serie sin podar, `_caida` comparaba
+        contra una velocidad de minutos antes y tomaba el maximo de freno de
+        toda la sesion: la regla quedaba muda. Podar bien la devuelve.
+
+        Se descarta por los dos lados: lo mas viejo que la ventana, y lo
+        posterior a `t`, que tampoco pertenece a una ventana que termina ahi.
+        """
+
+        while serie and not (0.0 <= t - serie[0][0] <= VENTANA_CAIDA_S):
             serie.popleft()
 
 

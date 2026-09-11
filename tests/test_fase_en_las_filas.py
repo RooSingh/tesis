@@ -55,7 +55,7 @@ class ConexionQueAnota:
     def __init__(self, cursor):
         self.cursor_obj = cursor
 
-    def cursor(self):
+    def cursor(self, *_, **__):
         c = MagicMock()
         c.__enter__ = lambda *_: self.cursor_obj
         c.__exit__ = lambda *_: False
@@ -224,6 +224,44 @@ class LaFaseLlegaALasFilasTests(unittest.TestCase):
         geometria = next(c for c, _ in cursor.consultas if "world_position_y" in c)
         self.assertIn("desplazamiento_captura_us", geometria,
                       "el trazado sigue sin aplicar la fase")
+
+    def test_el_contexto_aplica_adquisicion_y_fase_a_cada_lectura(self) -> None:
+        cursor = CursorQueAnota([[], []])
+        with patch.object(api_sesion.db, "obtener_conexion",
+                          return_value=ConexionQueAnota(cursor)), \
+             patch.object(api_sesion, "_vehiculo_propio", return_value="car:0"), \
+             patch.object(api_sesion, "_ventana_de_alcance",
+                          return_value=(_t(0).isoformat(), _t(180).isoformat())), \
+             patch.object(api_sesion, "_fases_de", return_value=self.FASES):
+            api_sesion.contexto("f1_25:session:1", adquisicion="original", fase=2)
+
+        lecturas = [(c, p) for c, p in cursor.consultas
+                    if "FROM telemetry_messages" in c]
+        self.assertTrue(lecturas)
+        for consulta, parametros in lecturas:
+            self.assertIn("timestamp BETWEEN", consulta)
+            self.assertIn("desplazamiento_captura_us", consulta)
+            self.assertEqual(consulta.count("%s"), len(parametros))
+
+    def test_los_avisos_aplican_adquisicion_y_fase_a_todas_sus_reglas(self) -> None:
+        cursor = CursorQueAnota([])
+        api_sesion._AVISOS_CACHE.clear()
+        with patch.object(api_sesion.db, "obtener_conexion",
+                          return_value=ConexionQueAnota(cursor)), \
+             patch.object(api_sesion, "_vehiculo_propio", return_value="car:0"), \
+             patch.object(api_sesion, "_ventana_de_alcance",
+                          return_value=(_t(0).isoformat(), _t(180).isoformat())), \
+             patch.object(api_sesion, "_fases_de", return_value=self.FASES):
+            api_sesion.avisos("f1_25:session:1", adquisicion="original", fase=2)
+
+        lecturas = [(c, p) for c, p in cursor.consultas
+                    if "FROM telemetry_messages" in c]
+        self.assertEqual(len(lecturas), 1,
+                         "los avisos no usan una unica pasada del anotador vivo")
+        for consulta, parametros in lecturas:
+            self.assertIn("timestamp BETWEEN", consulta)
+            self.assertIn("desplazamiento_captura_us", consulta)
+            self.assertEqual(consulta.count("%s"), len(parametros))
 
 
 # ---------------------------------------------------------------------------

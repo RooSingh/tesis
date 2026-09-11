@@ -51,6 +51,15 @@ class RepartoDelRelojTests(unittest.TestCase):
         api_sesion._ALCANCE_CACHE.clear()
 
     def _reparto(self, tramos):
+        """`tramos` son `(replay_run_id, captura, desde, hasta)`.
+
+        El numero de captura se agrego cuando el reparto empezo a distinguir
+        dos capturas originales de la misma sesion, que hasta entonces caian
+        las dos en `original`. Lo que esa distincion promete se comprueba en
+        `test_identidad_por_captura.py`; aca sigue comprobandose el reparto del
+        reloj, que es lo mismo de antes.
+        """
+
         return api_sesion._repartir_el_reloj(CursorConGuion([tramos]), "f", "s")
 
     def test_los_extremos_quedan_abiertos(self) -> None:
@@ -60,34 +69,34 @@ class RepartoDelRelojTests(unittest.TestCase):
         112. La primera adquisicion empieza en `-infinity` y la ultima termina
         en `infinity`: asi no se pierde ninguna fila.
         """
-        r = self._reparto([(None, _t(10), _t(20)),
-                           ("replay_a", _t(100), _t(110))])
+        r = self._reparto([(None, 0, _t(10), _t(20)),
+                           ("replay_a", 0, _t(100), _t(110))])
         self.assertEqual(r["original"][0], "-infinity")
         self.assertEqual(r["replay_a"][1], "infinity")
 
     def test_el_corte_va_a_mitad_de_camino(self) -> None:
         """Entre el final de una adquisicion y el principio de la siguiente."""
-        r = self._reparto([(None, _t(10), _t(20)),
-                           ("replay_a", _t(100), _t(110))])
+        r = self._reparto([(None, 0, _t(10), _t(20)),
+                           ("replay_a", 0, _t(100), _t(110))])
         medio = _t(60).isoformat()          # (20 + 100) / 2
         self.assertEqual(r["original"][1], medio)
         self.assertEqual(r["replay_a"][0], medio)
 
     def test_las_ventanas_se_tocan_y_no_dejan_hueco(self) -> None:
         """El final de una es exactamente el principio de la siguiente."""
-        r = self._reparto([(None, _t(0), _t(10)),
-                           ("a", _t(50), _t(60)),
-                           ("b", _t(200), _t(300))])
+        r = self._reparto([(None, 0, _t(0), _t(10)),
+                           ("a", 0, _t(50), _t(60)),
+                           ("b", 0, _t(200), _t(300))])
         self.assertEqual(r["original"][1], r["a"][0])
         self.assertEqual(r["a"][1], r["b"][0])
 
     def test_una_sola_adquisicion_no_acota_nada(self) -> None:
         """Sin vecinos, la ventana es todo el reloj."""
-        r = self._reparto([(None, _t(0), _t(10))])
+        r = self._reparto([(None, 0, _t(0), _t(10))])
         self.assertEqual(r["original"], ("-infinity", "infinity"))
 
     def test_una_adquisicion_que_no_esta_es_un_404(self) -> None:
-        cursor = CursorConGuion([[(None, _t(0), _t(10))]])
+        cursor = CursorConGuion([[(None, 0, _t(0), _t(10))]])
         with self.assertRaises(HTTPException) as caso:
             api_sesion._ventana_de_alcance(cursor, "f", "s", "no_existe")
         self.assertEqual(caso.exception.status_code, 404)
@@ -167,15 +176,23 @@ class MemoriaDelAlcanceTests(unittest.TestCase):
 
 
 class FasesDeTodasTests(unittest.TestCase):
-    """Las fases de las tres adquisiciones, en dos consultas y no en seis."""
+    """Las fases de las tres adquisiciones, en dos consultas y no en seis.
+
+    Las filas llevan el numero de captura desde que las fases son **de una
+    captura y no de un `session_uid`**: el reloj se reinicia con cada captura,
+    de modo que tomar su minimo y su maximo sobre dos juntas da un tramo que no
+    existio. Medido sobre la practica de Catalunya: pegadas salian 280 fases,
+    casi todas «Espera de luces» de cero segundos en una sesion sin luces;
+    separadas, una por captura.
+    """
 
     def setUp(self) -> None:
         api_sesion._ALCANCE_CACHE.clear()
 
     def test_agrupa_los_cortes_por_adquisicion(self) -> None:
         cursor = CursorConGuion([
-            [(None, 200), (None, 300)],                       # cortes del reloj
-            [(None, 0, 1000), ("replay_a", 5000, 6000)],      # extremos
+            [(None, 0, 200), (None, 0, 300)],                 # cortes del reloj
+            [(None, 0, 0, 1000), ("replay_a", 0, 5000, 6000)],  # extremos
         ])
         fases = api_sesion._medir_fases_de_todas(cursor, "f", "s")
         self.assertEqual([f["orden"] for f in fases["original"]], [1, 2, 3])
@@ -185,21 +202,38 @@ class FasesDeTodasTests(unittest.TestCase):
         self.assertEqual(len(fases["replay_a"]), 1)
 
     def test_solo_la_primera_fase_no_reinicia_el_reloj(self) -> None:
-        cursor = CursorConGuion([[(None, 200)], [(None, 0, 1000)]])
+        cursor = CursorConGuion([[(None, 0, 200)], [(None, 0, 0, 1000)]])
         fases = api_sesion._medir_fases_de_todas(cursor, "f", "s")["original"]
         self.assertFalse(fases[0]["reloj_del_juego_reinicia_al_entrar"])
         self.assertTrue(fases[1]["reloj_del_juego_reinicia_al_entrar"])
 
     def test_dos_consultas_para_todas_las_adquisiciones(self) -> None:
         cursor = CursorConGuion([
-            [(None, 200)],
-            [(None, 0, 1000), ("a", 2000, 3000), ("b", 4000, 5000)],
+            [(None, 0, 200)],
+            [(None, 0, 0, 1000), ("a", 0, 2000, 3000), ("b", 0, 4000, 5000)],
         ])
         api_sesion._medir_fases_de_todas(cursor, "f", "s")
         self.assertEqual(len(cursor.consultas), 2)
 
+    def test_dos_capturas_originales_tienen_cada_una_sus_fases(self) -> None:
+        """Y no una sola lista medida sobre el tramo pegado, que es de donde
+        salian los bordes inventados."""
+
+        cursor = CursorConGuion([
+            [(None, 0, 200), (None, 1, 7000)],
+            [(None, 0, 0, 1000), (None, 1, 6000, 9000)],
+        ])
+        fases = api_sesion._medir_fases_de_todas(cursor, "f", "s")
+        self.assertIn("original-1", fases)
+        self.assertIn("original-2", fases)
+        self.assertEqual(len(fases["original-1"]), 2)
+        self.assertEqual(len(fases["original-2"]), 2)
+        # Y `original`, que las abarca, son las de las dos y no una medicion
+        # nueva sobre el tramo pegado.
+        self.assertEqual(len(fases["original"]), 4)
+
     def test_una_adquisicion_sin_reloj_de_captura_no_inventa_fases(self) -> None:
-        cursor = CursorConGuion([[], [("a", None, None)]])
+        cursor = CursorConGuion([[], [("a", 0, None, None)]])
         self.assertEqual(api_sesion._medir_fases_de_todas(cursor, "f", "s")["a"], [])
 
 

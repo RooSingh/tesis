@@ -171,3 +171,60 @@ class RefrescoPuntualTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ExtremosDeUnaSesionTests(unittest.TestCase):
+    """Los dos extremos salen del catalogo, y salen los dos.
+
+    `rango_de` devolvia solo el comienzo porque era lo unico que hacia falta
+    para alinear el recorrido del bus. `/contexto` necesita tambien el final:
+    devolver `None` ahi lo dejaba sin tope y la busqueda por ventana no podia
+    armarse, de modo que todo caia en el recorrido completo ---que es justo lo
+    que este atajo existe para evitar---.
+    """
+
+    class _Cursor:
+        def __init__(self, filas):
+            self.filas = list(filas)
+            self.consultas = []
+
+        def execute(self, consulta, parametros=None):
+            self.consultas.append(consulta)
+
+        def fetchone(self):
+            return self.filas.pop(0) if self.filas else None
+
+    def test_devuelve_los_dos_extremos_del_catalogo(self) -> None:
+        from datetime import datetime, timezone
+        a = datetime(2025, 7, 6, 13, 7, 43, tzinfo=timezone.utc)
+        b = datetime(2025, 7, 6, 15, 42, 53, tzinfo=timezone.utc)
+        cur = self._Cursor([(a, b)])
+        desde, hasta = catalogo_sesiones.extremos_de(
+            "openf1:session:9947", "openf1_historical_replay", cur)
+        self.assertEqual(desde, a.isoformat())
+        self.assertEqual(hasta, b.isoformat(),
+                         "el extremo de arriba se perdio: sin tope no hay ventana")
+        self.assertEqual(len(cur.consultas), 1,
+                         "se consulto la tabla grande teniendo la fila del catalogo")
+
+    def test_una_sesion_sin_catalogar_se_mide(self) -> None:
+        from datetime import datetime, timezone
+        a = datetime(2026, 9, 9, tzinfo=timezone.utc)
+        cur = self._Cursor([None, (a, a)])
+        desde, hasta = catalogo_sesiones.extremos_de("x", "can_real_replay", cur)
+        self.assertEqual(desde, a.isoformat())
+        self.assertEqual(hasta, a.isoformat())
+        self.assertEqual(len(cur.consultas), 2)
+
+    def test_una_sesion_que_no_esta_en_ningun_lado_no_inventa_extremos(self) -> None:
+        cur = self._Cursor([None, None])
+        self.assertEqual(
+            catalogo_sesiones.extremos_de("x", "can_real_replay", cur), (None, None))
+
+    def test_el_comienzo_sigue_saliendo_por_donde_salia(self) -> None:
+        """`rango_de` es ahora la primera mitad de esto y no puede cambiar."""
+        from datetime import datetime, timezone
+        a = datetime(2025, 7, 6, tzinfo=timezone.utc)
+        cur = self._Cursor([(a, a)])
+        self.assertEqual(
+            catalogo_sesiones.extremos_de("s", "f", cur)[0], a.isoformat())

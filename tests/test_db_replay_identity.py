@@ -9,7 +9,16 @@ from __future__ import annotations
 import json
 import unittest
 
-from backend.db import _filas_insertadas, _identidad_replay, _parametros_telemetria
+from backend.db import (
+    COPY_TELEMETRY_SQL,
+    INSERT_TELEMETRY_FROM_BATCH_SQL,
+    TELEMETRY_COLUMNS,
+    _fila_telemetria,
+    _filas_insertadas,
+    _identidad_replay,
+    _insertar_filas_por_copy,
+    _parametros_telemetria,
+)
 from backend.models import TelemetryMessage
 
 
@@ -73,6 +82,56 @@ class FilasInsertadasTests(unittest.TestCase):
         """Suponer una perdida sin evidencia seria tan incorrecto como suponer exito."""
         self.assertEqual(_filas_insertadas(None, 1000), 1000)
         self.assertEqual(_filas_insertadas(-1, 1000), 1000)
+
+
+class _CopiaFalsa:
+    def __init__(self) -> None:
+        self.filas = []
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> None:
+        return None
+
+    def write_row(self, fila) -> None:
+        self.filas.append(fila)
+
+
+class _CursorFalso:
+    def __init__(self, insertadas: int) -> None:
+        self.rowcount = -1
+        self.insertadas = insertadas
+        self.consultas = []
+        self.copia = _CopiaFalsa()
+
+    def execute(self, consulta) -> None:
+        self.consultas.append(consulta)
+        if consulta == INSERT_TELEMETRY_FROM_BATCH_SQL:
+            self.rowcount = self.insertadas
+
+    def copy(self, consulta):
+        self.consultas.append(consulta)
+        return self.copia
+
+
+class InsercionPorCopyTests(unittest.TestCase):
+    def test_copia_todas_las_columnas_y_devuelve_las_realmente_insertadas(self) -> None:
+        telemetria = mensaje({"replay_run_id": "corrida_001", "replay_seq": 7})
+        fila = _fila_telemetria(telemetria)
+        cursor = _CursorFalso(insertadas=0)
+
+        insertadas = _insertar_filas_por_copy(cursor, [fila])
+
+        self.assertEqual(insertadas, 0)
+        self.assertIn(COPY_TELEMETRY_SQL, cursor.consultas)
+        self.assertIn(INSERT_TELEMETRY_FROM_BATCH_SQL, cursor.consultas)
+        self.assertEqual(
+            cursor.copia.filas,
+            [fila],
+        )
+        self.assertEqual(len(fila), len(TELEMETRY_COLUMNS))
+        self.assertEqual(json.loads(fila[TELEMETRY_COLUMNS.index("metadata")])["extra"]["replay_seq"], 7)
 
 
 if __name__ == "__main__":

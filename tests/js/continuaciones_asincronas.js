@@ -64,6 +64,7 @@ const preludio = `
   let vueltaElegida = 1;
   let estadoSesion = "cargado";
   let alcanceComparacion = "vuelta";
+  let velocidadRep = 1;
   let _mandoSesion = null;
   let _aperturaActual = 0;
   let _selloSeries = 0;
@@ -133,6 +134,18 @@ const preludio = `
   function nombreDeSesion() { return "sesion"; }
   function pedirCurvas() {}
   function pedirTrazado() {}
+  /* El control de carrera es otra consulta y otra lista: lo que este arnes
+     persigue es que una respuesta atrasada no pise la sesion vigente, y esa
+     ruta tiene la suya. Queda muda para no meter una segunda respuesta en un
+     banco que resuelve las suyas a mano. */
+  function pedirControlDeCarrera() {}
+  /* La usa el aviso del hueco mayor de una vuelta cortada, dentro de la carga
+     de sesion. Sin ella ese aviso lanzaba ReferenceError y el catch de la
+     apertura lo anotaba como «apertura interrumpida»: la prueba pasaba igual y
+     el fallo quedaba en la consola. Una excepcion que el arnes se traga es
+     exactamente lo que esconde la proxima. */
+  function cifra(v, d) { return Number(v).toFixed(d === undefined ? 1 : d); }
+  function ubicarControlDeCarrera() {}
   function pintarClima() {}
   function pintarEsquinas() {}
   function pintarPuestaAPunto() {}
@@ -148,9 +161,9 @@ const preludio = `
   function pintarAvisos() {}
   function refrescarContexto() {}
   function dibujarComparacion() {}
+  function instanteUtc() { return null; }
   let _ultimaComparacion = 0;
   let _ultimaVueltaDibujada = -1;
-  let _relojSiguiente = null;
   let _relojPedidos = null;
   let cabezal = 0;
   let ventanaTraza = 1200;
@@ -229,6 +242,7 @@ const PIEZAS = [
   fn("puntosParaVueltas"),
   fn("enTandas"),
   fn("asegurarVuelta"),
+  fn("tramoDeLaVuelta"),
   /* La compuerta que decide si se puede pedir historico. Se extrae de verdad y
      no se sustituye por un `true`: lo que estas pruebas miran es justamente
      cuando sale una consulta y cuando no. */
@@ -243,6 +257,9 @@ const PIEZAS = [
   fn("alcanceResuelto"),
   fn("alcancePermitePedir"),
   fn("vueltaSiguienteDeclarada"),
+  constanteNumerica("HORIZONTE_PRECARGA_S"),
+  fn("vueltasParaPrecargar"),
+  fn("precargarVueltas"),
   fn("anotarEnPantalla"),
   fn("moverCabezal"),
   fn("vueltaEnFraccion"),
@@ -257,6 +274,7 @@ const PIEZAS = [
   constanteNumerica("HUECO_DE_CAPTURA_MS"),
   'const EJE_DISTANCIA = " distancia";',
   'const EJE_DISTANCIA_SESION = " distancia de sesion";',
+  'const EJE_TIEMPO = " tiempo";',
   fn("numeroMedido"),
   fn("nombreDeSenal"),
   fn("claveVehiculoPropio"),
@@ -275,6 +293,9 @@ const PIEZAS = [
   fn("tiempoDePresentacion"),
   /* Y la carga de verdad: es la que instala `estado.vueltas`. */
   fn("cargarDatosDeSesion"),
+  /* Decide si la consulta de series sale acotada a un vehiculo o abierta. Va la
+     de verdad y no un doble: lo que se comprueba es su efecto sobre la URL. */
+  fn("faltanVehiculosPorAprender"),
 ];
 
 const pedidos = [];
@@ -301,10 +322,15 @@ function nuevoBanco(opciones) {
         ? "const LIMITE_ESPERA_MS = " + (o.limiteMs || 40) + ";" : t))
     : PIEZAS;
   const devolver = `return { estado, asegurarVuelta, nuevaSesionEnCurso,
+                             /* Para poder poner el tablero en «ya aprendi
+                                quienes son» y en «todavia no». */
+                             fijarAutos: (ids) => { armarAutos(ids); },
+                             cuantosAutos: () => AUTOS.length,
                              aperturaVigente, sigueVigente, puntosParaVueltas,
                              enTandas, podarVueltas,
                              fijarVuelta: (v) => { vueltaElegida = v; },
                              corrida, alcancePermitePedir, vueltaSiguienteDeclarada,
+                             vueltasParaPrecargar,
                              conCarga, vales: () => [..._vales.values()],
                              faltaLoImprescindible, vueltaEnFraccion,
                              anotarEspera, soltarEspera,
@@ -314,6 +340,7 @@ function nuevoBanco(opciones) {
                              anotarEnPantalla, limiteDeDetalle: () => LIMITE_DE_DETALLE_PUNTOS,
                              limpiarLoDeLaCorrida: () => { _vueltasEnPantalla = []; },
                              asegurarPosiciones, moverCabezal,
+                             fijarVelocidad: (v) => { velocidadRep = v; },
                              fijarCabezal: (f) => { cabezal = f; },
                              leerCabezal: () => cabezal,
                              cargarDatosDeSesion, relojDeVuelta, tiempoDePresentacion,
@@ -379,6 +406,54 @@ prueba("una respuesta de la primera A no escribe sobre la segunda A", async (b) 
 
   assert.strictEqual(b.estado.series[3], undefined,
     "la respuesta de la apertura vieja escribio las series de la nueva");
+});
+
+prueba("mientras falte aprender quienes son, la consulta no se acota", async (b) => {
+  /* EL DEFECTO. La consulta salia acotada al vehiculo propio en cuanto se sabia
+     cual era, y en OpenF1 se sabe desde el principio ---`/vueltas` declara el
+     mas muestreado---. De modo que las otras dos telemetrias de la sesion no
+     aparecian nunca: para poder ofrecerlas en la lista primero hay que saber
+     que existen, y para saberlo hay que pedirlas al menos una vez.
+
+     El catalogo dice cuantas hay. Mientras lo aprendido sea menos, se pide
+     abierto y la respuesta ensena el resto. */
+  b.estado.abierta = { session_id: "A", vehiculos: 3 };
+  b.estado.vehiculoClave = "car:1";
+  b.fijarAutos(["car:1"]);
+  b.nuevaSesionEnCurso();
+  b.asegurarVuelta(3);
+  const rutas = PEDIDOS.map(p => p.ruta);
+  assert.ok(rutas.length > 0, "no salio ninguna consulta");
+  assert.ok(rutas.every(r => r.indexOf("vehiculos=") === -1),
+    "la consulta salio acotada antes de conocer a los tres: " + rutas[0]);
+});
+
+prueba("una vez aprendidos, la consulta vuelve a acotarse", async (b) => {
+  /* Lo abierto es para aprender, no un modo de trabajo: con los tres conocidos,
+     pedir los tres en cada vuelta seria triplicar cada respuesta para dibujar
+     uno. */
+  b.estado.abierta = { session_id: "A", vehiculos: 3 };
+  b.estado.vehiculoClave = "car:1";
+  b.fijarAutos(["car:1", "car:4", "car:81"]);
+  b.nuevaSesionEnCurso();
+  b.asegurarVuelta(3);
+  const rutas = PEDIDOS.map(p => p.ruta);
+  assert.ok(rutas.length > 0, "no salio ninguna consulta");
+  assert.ok(rutas.every(r => r.indexOf("vehiculos=") !== -1),
+    "la consulta siguio abierta con los tres ya conocidos: " + rutas[0]);
+});
+
+prueba("con un solo vehiculo declarado nada cambia", async (b) => {
+  /* La simulacion y el bus declaran uno: los rivales de F1 25 viajan por
+     `/posiciones` y no por telemetria. Ahi la consulta se acota como siempre. */
+  b.estado.abierta = { session_id: "A", vehiculos: 1 };
+  b.estado.vehiculoClave = "car:1";
+  b.fijarAutos([]);
+  b.nuevaSesionEnCurso();
+  b.asegurarVuelta(3);
+  const rutas = PEDIDOS.map(p => p.ruta);
+  assert.ok(rutas.every(r => r.indexOf("vehiculos=") !== -1),
+    "se abrio la consulta sobre una sesion de un solo vehiculo: " + rutas[0]);
 });
 
 prueba("la respuesta de la apertura vigente si se aplica", async (b) => {
@@ -875,6 +950,23 @@ function dosVueltasDeclaradas(b) {
     { numero: 2, duracion_s: 100, desde_utc: "2026-09-05T00:01:40Z", hasta_utc: "2026-09-05T00:03:20Z" },
   ];
 }
+
+prueba("a 10x se precargan las vueltas que entran en los proximos veinte segundos", (b) => {
+  b.estado.vueltas = [1, 2, 3, 4].map(numero => ({ numero, duracion_s: 100 }));
+  b.fijarVelocidad(1);
+  assert.deepStrictEqual(b.vueltasParaPrecargar(1), [2],
+    "a velocidad normal se pidio mas de una vuelta futura");
+  b.fijarVelocidad(10);
+  assert.deepStrictEqual(b.vueltasParaPrecargar(1), [2, 3],
+    "a 10x no se cubrieron los veinte segundos siguientes");
+});
+
+prueba("sin duraciones medidas la precarga queda acotada a la siguiente", (b) => {
+  b.estado.vueltas = [1, 2, 3, 4].map(numero => ({ numero }));
+  b.fijarVelocidad(10);
+  assert.deepStrictEqual(b.vueltasParaPrecargar(1), [2],
+    "sin plazo medido se intento traer la carrera entera");
+});
 
 prueba("se pregunta por donde se va a pisar, no por donde se piso", async (b) => {
   /* EL DEFECTO QUE ESTO CUIDA. Comprobandolo despues de mover, el cabezal ya
@@ -1383,6 +1475,43 @@ prueba("con el bus abierto el historico sale por tiempo", async (b) => {
   assert.ok(PEDIDOS[0].ruta.indexOf("/series-tiempo?") !== -1, PEDIDOS[0].ruta);
   assert.ok(PEDIDOS[0].ruta.indexOf("/series?vuelta=") === -1, PEDIDOS[0].ruta);
   assert.strictEqual(b.alcancePermitePedir(), false);
+});
+
+prueba("la consulta por tiempo se acota a la vuelta que se pide", async (b) => {
+  /* Sin acotar, `/series-tiempo` reparte los puntos pedidos sobre la sesion
+     entera. En una carrera de dos horas y media eso son mil doscientos puntos
+     para 9.197 segundos ---una muestra cada 7,8--- y una ventana de veinte
+     segundos se dibuja con dos o tres puntos. */
+  conAlcance(b); dosVueltasDeclaradas(b);
+  b.fijarFuente("openf1");
+  b.asegurarVuelta(2);
+  await asentar();
+  assert.strictEqual(PEDIDOS.length, 1);
+  const ruta = PEDIDOS[0].ruta;
+  assert.ok(ruta.indexOf("desde=") !== -1, "no acota el comienzo: " + ruta);
+  assert.ok(ruta.indexOf("hasta=") !== -1, "no acota el final: " + ruta);
+  assert.ok(ruta.indexOf(encodeURIComponent("2026-09-05T00:01:40Z")) !== -1,
+            "no pide desde donde empieza la vuelta 2: " + ruta);
+});
+
+prueba("una fuente por tiempo puede pedir cualquiera de sus vueltas", async (b) => {
+  /* `asegurarVuelta` rechazaba todo lo que no fuera la vuelta 1 cuando la
+     fuente no tiene metro medido. OpenF1 declara sus vueltas por reloj, y esa
+     restriccion dejaba fuera a todas menos la primera. */
+  conAlcance(b); dosVueltasDeclaradas(b);
+  b.fijarFuente("openf1");
+  b.asegurarVuelta(2);
+  await asentar();
+  assert.strictEqual(PEDIDOS.length, 1, "la vuelta 2 no llego a pedirse");
+});
+
+prueba("y no pide una vuelta que la sesion no declara", async (b) => {
+  /* Pedir lo que no existe devuelve vacio y se reintenta sin fin. */
+  conAlcance(b); dosVueltasDeclaradas(b);
+  b.fijarFuente("openf1");
+  b.asegurarVuelta(9);
+  await asentar();
+  assert.strictEqual(PEDIDOS.length, 0);
 });
 
 prueba("la misma sesion en una fuente con eje si pide", async (b) => {

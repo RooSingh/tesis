@@ -121,7 +121,7 @@ def insertar_telemetria(mensaje: TelemetryMessage) -> None:
                     "curve_id": mensaje.curve_id,
                     "can_id": metadata.can_id,
                     "src": metadata.src,
-                    "metadata": json.dumps(metadata.model_dump(mode="json", exclude_none=True)),
+                    "metadata": metadata.model_dump_json(exclude_none=True),
                 },
             )
 
@@ -203,7 +203,7 @@ def _parametros_telemetria(mensaje: TelemetryMessage) -> dict[str, Any]:
         "curve_id": mensaje.curve_id,
         "can_id": metadata.can_id,
         "src": metadata.src,
-        "metadata": json.dumps(metadata.model_dump(mode="json", exclude_none=True)),
+        "metadata": metadata.model_dump_json(exclude_none=True),
     }
 
 
@@ -233,6 +233,71 @@ INSERT_TELEMETRY_SQL = """
 """
 
 
+TELEMETRY_COLUMNS = (
+    "timestamp", "vehicle_id", "driver_id", "session_id", "lap_id",
+    "source_type", "signal_name", "value_numeric", "value_boolean",
+    "value_text", "unit", "quality_flag", "track_segment_id", "sector_id",
+    "curve_id", "can_id", "src", "metadata", "replay_run_id", "replay_seq",
+    "desplazamiento_captura_us",
+)
+_COLUMNAS_TELEMETRIA_SQL = ", ".join(TELEMETRY_COLUMNS)
+CREAR_LOTE_TEMPORAL_SQL = """
+    CREATE TEMP TABLE IF NOT EXISTS telemetry_messages_batch
+    (LIKE telemetry_messages INCLUDING DEFAULTS)
+    ON COMMIT DELETE ROWS
+"""
+COPY_TELEMETRY_SQL = (
+    f"COPY pg_temp.telemetry_messages_batch ({_COLUMNAS_TELEMETRIA_SQL}) "
+    "FROM STDIN"
+)
+INSERT_TELEMETRY_FROM_BATCH_SQL = f"""
+    INSERT INTO telemetry_messages ({_COLUMNAS_TELEMETRIA_SQL})
+    SELECT {_COLUMNAS_TELEMETRIA_SQL}
+    FROM pg_temp.telemetry_messages_batch
+    ON CONFLICT DO NOTHING
+"""
+
+
+def _fila_telemetria(mensaje: TelemetryMessage) -> tuple[Any, ...]:
+    """Construye una fila en el mismo orden que ``TELEMETRY_COLUMNS``."""
+    value_numeric, value_boolean, value_text = _separar_valor(mensaje.value)
+    metadata = mensaje.metadata
+    replay_run_id, replay_seq = _identidad_replay(metadata)
+    return (
+        mensaje.timestamp,
+        mensaje.vehicle_id,
+        mensaje.driver_id,
+        mensaje.session_id,
+        mensaje.lap_id,
+        mensaje.source_type,
+        mensaje.signal_name,
+        value_numeric,
+        value_boolean,
+        value_text,
+        mensaje.unit,
+        mensaje.quality_flag,
+        mensaje.track_segment_id,
+        mensaje.sector_id,
+        mensaje.curve_id,
+        metadata.can_id,
+        metadata.src,
+        metadata.model_dump_json(exclude_none=True),
+        replay_run_id,
+        replay_seq,
+        _desplazamiento_de_captura(metadata),
+    )
+
+
+def _insertar_filas_por_copy(cur: psycopg.Cursor, filas: list[tuple[Any, ...]]) -> int:
+    """Carga un lote por COPY y conserva la deduplicacion de la tabla final."""
+    cur.execute(CREAR_LOTE_TEMPORAL_SQL)
+    with cur.copy(COPY_TELEMETRY_SQL) as copia:
+        for fila in filas:
+            copia.write_row(fila)
+    cur.execute(INSERT_TELEMETRY_FROM_BATCH_SQL)
+    return _filas_insertadas(cur.rowcount, len(filas))
+
+
 def _filas_insertadas(rowcount: int | None, esperadas: int) -> int:
     """Interpreta `cur.rowcount` de forma conservadora.
 
@@ -256,12 +321,10 @@ def insertar_telemetria_lote(mensajes: list[TelemetryMessage]) -> int:
     """
     if not mensajes:
         return 0
-    parametros = [_parametros_telemetria(mensaje) for mensaje in mensajes]
+    filas = [_fila_telemetria(mensaje) for mensaje in mensajes]
     with obtener_conexion() as conn:
         with conn.cursor() as cur:
-            cur.executemany(INSERT_TELEMETRY_SQL, parametros)
-            insertadas = cur.rowcount
-    return _filas_insertadas(insertadas, len(mensajes))
+            return _insertar_filas_por_copy(cur, filas)
 
 
 class EscritorTelemetria:
@@ -289,18 +352,17 @@ class EscritorTelemetria:
     def __call__(self, mensajes: list[TelemetryMessage]) -> int:
         if not mensajes:
             return 0
-        parametros = [_parametros_telemetria(mensaje) for mensaje in mensajes]
+        filas = [_fila_telemetria(mensaje) for mensaje in mensajes]
         with self.lock:
             try:
                 conn = self._conexion_activa()
                 with conn.transaction():
                     with conn.cursor() as cur:
-                        cur.executemany(INSERT_TELEMETRY_SQL, parametros)
-                        insertadas = cur.rowcount
+                        insertadas = _insertar_filas_por_copy(cur, filas)
             except Exception:
                 self._cerrar_sin_bloquear()
                 raise
-        return _filas_insertadas(insertadas, len(mensajes))
+        return insertadas
 
     def _cerrar_sin_bloquear(self) -> None:
         if self._conexion is not None:
@@ -1070,10 +1132,89 @@ def obtener_serie_replay_openf1(
             return [dict(zip(columns, row)) for row in cur.fetchall()]
 
 
+# ---------------------------------------------------------------------------
+# COMO SE LEE UN CONTEXTO DE CARRERA EN UN INSTANTE
+# ---------------------------------------------------------------------------
+#
+# DOS DEFECTOS QUE COMPARTIAN CAUSA: las tres magnitudes se leian con la misma
+# regla ---la muestra **mas cercana** al instante, y un vencimiento de treinta
+# segundos para todas--- y las tres tienen naturalezas distintas. Medido sobre
+# la sesion 9947 de Silverstone 2025, piloto 1, carrera entera:
+#
+#     racing_positions       28 muestras en 9.084 s   una cada 336,5 s
+#     racing_intervals    1.153 muestras en 9.213 s   una cada   8,0 s
+#     racing_weather        155 muestras en 9.241 s   una cada  60,0 s
+#
+# EL PRIMERO: LA MAS CERCANA PUEDE SER POSTERIOR. `ORDER BY ABS(date - t)` no
+# mira hacia que lado. Sobre 193 instantes repartidos cada treinta segundos, en
+# **110** la muestra elegida estaba en el futuro del instante pedido. En el
+# puesto de carrera eso no es un redondeo: es mostrar un adelantamiento antes de
+# que ocurriera. Es el mismo error que el tablero ya corrige en sus señales
+# discretas ---una marcha no sube antes de que el dato diga que subio--- y por
+# el mismo motivo se corrige aca: se toma la ultima muestra **en o antes** del
+# instante, nunca una posterior.
+#
+# EL SEGUNDO: UN VENCIMIENTO DE TREINTA SEGUNDOS NO SIRVE PARA LAS TRES.
+#
+#   - El puesto se publica **al cambiar**: veintiocho muestras para cincuenta y
+#     dos vueltas. Entre dos cambios no es que no se sepa el puesto; es que el
+#     puesto es el mismo. Vencerlo a los treinta segundos lo borraba en el 90 %
+#     de los instantes ---nueve de sesenta utilizables--- afirmando que no se
+#     sabe algo que la fuente declaro. Un estado que se sostiene no vence: vale
+#     hasta que la fuente diga otra cosa.
+#
+#   - El intervalo es periodico, una muestra cada ocho segundos. Ahi el
+#     vencimiento si dice algo, y diez y treinta segundos son una y casi cuatro
+#     cadencias. La edad mediana de lo que se muestra es 2,7 s.
+#
+#   - El clima es periodico y lento, una muestra por minuto. Con la regla
+#     correcta ---la ultima en o antes--- la edad mediana de lo que se muestra
+#     es **49 s**, de modo que el corte de treinta lo habria borrado siempre. Se
+#     corta en una cadencia y media y en dos y media, que sobre un minuto son
+#     noventa y ciento cincuenta segundos.
+#
+# LO QUE NO CAMBIA: no se interpola nada. Un valor declarado se entrega tal cual
+# con su edad al lado, y cuando no se puede sostener se entrega en nulo. La
+# diferencia esta en cuando corresponde cada cosa, y eso ahora lo dice cada
+# magnitud por su cuenta en vez de una constante compartida.
+# ---------------------------------------------------------------------------
+
+#: Que es cada contexto de carrera y como envejece.
+#:
+#: `sostiene`  el valor se publica al cambiar y vale hasta el siguiente. No
+#:             vence con el reloj; lo unico que lo invalida es no tener todavia
+#:             una primera muestra.
+#: `vigente_s` hasta aca la muestra describe el instante pedido.
+#: `viejo_s`   hasta aca todavia sirve, declarada como vieja. Mas alla, no.
+CONTEXTOS_DE_CARRERA = {
+    "position": {
+        "sostiene": True,
+        "vigente_s": None,
+        "viejo_s": None,
+        "porque": "el puesto se publica al cambiar, no cada tanto: entre dos "
+                  "cambios el puesto es el mismo, no es que se desconozca",
+    },
+    "interval": {
+        "sostiene": False,
+        "vigente_s": 10,
+        "viejo_s": 30,
+        "porque": "una muestra cada ocho segundos; diez es una cadencia y "
+                  "treinta son casi cuatro",
+    },
+    "weather": {
+        "sostiene": False,
+        "vigente_s": 90,
+        "viejo_s": 150,
+        "porque": "una muestra por minuto; noventa es una cadencia y media y "
+                  "ciento cincuenta son dos y media",
+    },
+}
+
+
 def obtener_contexto_racing_en_instante(
     session_key: int, timestamp: str, driver_numbers: list[int]
 ) -> dict:
-    """Devuelve contexto racing cercano a un instante UTC para pilotos elegidos."""
+    """Devuelve contexto racing declarado hasta un instante UTC, sin adelantarlo."""
     if not driver_numbers:
         return {"drivers": [], "weather": None}
     query = """
@@ -1092,26 +1233,29 @@ def obtener_contexto_racing_en_instante(
             stint.tyre_age_at_start
         FROM racing_drivers AS drivers
         LEFT JOIN LATERAL (
-            SELECT position, ABS(EXTRACT(EPOCH FROM (date - %s::timestamptz))) AS age_seconds
+            SELECT position, EXTRACT(EPOCH FROM (%s::timestamptz - date)) AS age_seconds
             FROM racing_positions
             WHERE session_key = drivers.session_key
               AND driver_number = drivers.driver_number
-            ORDER BY ABS(EXTRACT(EPOCH FROM (date - %s::timestamptz)))
+              AND date <= %s::timestamptz
+            ORDER BY date DESC
             LIMIT 1
         ) AS position ON true
         LEFT JOIN LATERAL (
             SELECT gap_to_leader_seconds, gap_to_leader_text, interval_seconds, interval_text,
-                   ABS(EXTRACT(EPOCH FROM (date - %s::timestamptz))) AS age_seconds
+                   EXTRACT(EPOCH FROM (%s::timestamptz - date)) AS age_seconds
             FROM racing_intervals
             WHERE session_key = drivers.session_key
               AND driver_number = drivers.driver_number
-            ORDER BY ABS(EXTRACT(EPOCH FROM (date - %s::timestamptz)))
+              AND date <= %s::timestamptz
+            ORDER BY date DESC
             LIMIT 1
         ) AS interval ON true
         LEFT JOIN LATERAL (
             SELECT stint_number, compound, tyre_age_at_start
             FROM racing_stints AS stints
             WHERE stints.session_key = drivers.session_key
+              AND stints.driver_number = drivers.driver_number
               AND lap_start IS NOT NULL
               AND lap_end IS NOT NULL
               AND lap_start <= (
@@ -1139,10 +1283,11 @@ def obtener_contexto_racing_en_instante(
     """
     weather_query = """
         SELECT air_temperature_c, track_temperature_c, rainfall, humidity_percent,
-               ABS(EXTRACT(EPOCH FROM (date - %s::timestamptz))) AS weather_age_seconds
+               pressure_mbar, wind_speed_mps, wind_direction_degrees,
+               EXTRACT(EPOCH FROM (%s::timestamptz - date)) AS weather_age_seconds
         FROM racing_weather
-        WHERE session_key = %s
-        ORDER BY ABS(EXTRACT(EPOCH FROM (date - %s::timestamptz)))
+        WHERE session_key = %s AND date <= %s::timestamptz
+        ORDER BY date DESC
         LIMIT 1
     """
     with obtener_conexion() as conn:
@@ -1164,28 +1309,123 @@ def obtener_contexto_racing_en_instante(
     return {"drivers": drivers, "weather": weather}
 
 
+#: Que campos se borran cuando una magnitud no se puede sostener. Un valor que
+#: no describe el instante pedido no se entrega: entregarlo con la edad al lado
+#: y confiar en que alguien la lea seria dejar el numero disponible para que lo
+#: muestren igual.
+_CAMPOS_DEL_CONTEXTO = {
+    "position": ("position",),
+    "interval": ("gap_to_leader_seconds", "gap_to_leader_text",
+                 "interval_seconds", "interval_text"),
+    "weather": ("air_temperature_c", "track_temperature_c", "rainfall",
+                "humidity_percent", "pressure_mbar", "wind_speed_mps",
+                "wind_direction_degrees"),
+}
+
+
 def _clasificar_frescura_contexto(context: dict, name: str, age_key: str) -> None:
-    """Marca la frescura de un contexto OpenF1 sin interpolar sus valores."""
-    age_seconds = float(context[age_key]) if context.get(age_key) is not None else None
-    context[f"{name}_freshness"] = (
-        "unavailable" if age_seconds is None or age_seconds > 30
-        else "aged" if age_seconds > 10
-        else "current"
-    )
-    if context[f"{name}_freshness"] != "unavailable":
+    """Marca la frescura de un contexto OpenF1 sin interpolar sus valores.
+
+    Cuatro estados, y el tercero es el que faltaba:
+
+    `current`     la muestra describe el instante pedido.
+    `aged`        sirve, y se declara vieja.
+    `held`        el valor se publica al cambiar y este es el ultimo declarado.
+                  No es una aproximacion: es el valor, sostenido.
+    `unavailable` no hay con que responder, y los campos se entregan en nulo.
+    """
+    regla = CONTEXTOS_DE_CARRERA[name]
+    edad = float(context[age_key]) if context.get(age_key) is not None else None
+
+    if edad is None:
+        estado = "unavailable"
+    elif regla["sostiene"]:
+        estado = "held"
+    elif edad <= regla["vigente_s"]:
+        estado = "current"
+    elif edad <= regla["viejo_s"]:
+        estado = "aged"
+    else:
+        estado = "unavailable"
+
+    context[f"{name}_freshness"] = estado
+    if estado != "unavailable":
         return
-    if name == "position":
-        context["position"] = None
-    elif name == "interval":
-        context["gap_to_leader_seconds"] = None
-        context["gap_to_leader_text"] = None
-        context["interval_seconds"] = None
-        context["interval_text"] = None
-    elif name == "weather":
-        context["air_temperature_c"] = None
-        context["track_temperature_c"] = None
-        context["rainfall"] = None
-        context["humidity_percent"] = None
+    for campo in _CAMPOS_DEL_CONTEXTO[name]:
+        if campo in context:
+            context[campo] = None
+
+# ---------------------------------------------------------------------------
+# EL CONTROL DE CARRERA ES UN HECHO DECLARADO, NO UNO DERIVADO
+# ---------------------------------------------------------------------------
+#
+# `/avisos` declara en su propia respuesta que cada entrada salio de aplicar una
+# regla con un umbral sobre la telemetria, y cuenta cuantas reglas evaluo. Una
+# bandera de control de carrera no se derivo de nada: la fuente la declaro. Si
+# las dos listas viajaran juntas por esa ruta, ese `criterio` quedaria mintiendo
+# para la mitad de las entradas y `reglas_evaluadas` contaria reglas que no
+# evaluaron nada. Es la misma distincion que el catalogo de curvas ya hace entre
+# el nombre ---anotacion--- y el metro ---medicion---.
+#
+# Asi que esto es una ruta aparte, y este lector no interpreta: entrega los
+# campos tal como OpenF1 los publica. Que una bandera amarilla se pinte como
+# alerta y una verde como normal es una decision de presentacion, y vive donde
+# se presenta. Aca se copia y se declara la procedencia.
+#
+# LO QUE HAY EN LA BASE: los once campos viven dentro de `raw_payload`, porque
+# `racing_events` solo tiene columnas para el instante, el piloto y la vuelta.
+# Se abren aca en vez de dejar que cada consumidor sepa que la bandera esta
+# escondida dentro de un jsonb.
+# ---------------------------------------------------------------------------
+
+#: Tope de eventos por sesion. Silverstone 2025 tiene 158, y una sesion larga
+#: con muchas intervenciones no deberia pasar de unos pocos cientos: el tope
+#: existe para que una respuesta rara no llegue como un volcado.
+LIMITE_CONTROL_DE_CARRERA = 2000
+
+
+def obtener_control_de_carrera(session_key: int, limite: int | None = None) -> dict:
+    """Devuelve los eventos de control de carrera que la fuente declaro."""
+
+    tope = LIMITE_CONTROL_DE_CARRERA if limite is None else max(1, int(limite))
+    consulta = """
+        SELECT event_time,
+               driver_number,
+               lap_number,
+               raw_payload->>'category'  AS category,
+               raw_payload->>'flag'      AS flag,
+               raw_payload->>'scope'     AS scope,
+               raw_payload->>'message'   AS message,
+               raw_payload->>'sector'    AS sector
+        FROM racing_events
+        WHERE session_key = %s AND event_type = 'race_control'
+        ORDER BY event_time
+        LIMIT %s
+    """
+    with obtener_conexion() as conexion:
+        with conexion.cursor() as cursor:
+            cursor.execute(consulta, (session_key, tope + 1))
+            columnas = [d[0] for d in cursor.description]
+            filas = [dict(zip(columnas, fila)) for fila in cursor.fetchall()]
+
+    truncado = len(filas) > tope
+    if truncado:
+        filas = filas[:tope]
+    for fila in filas:
+        instante = fila.pop("event_time")
+        fila["instante"] = instante.isoformat() if hasattr(instante, "isoformat") else instante
+        fila["sector"] = int(fila["sector"]) if fila["sector"] is not None else None
+
+    return {
+        "session_key": session_key,
+        "eventos": filas,
+        "total_devuelto": len(filas),
+        "truncado": truncado,
+        # La procedencia viaja con la respuesta y no en la cabeza de quien la
+        # lea: es lo que distingue esta lista de la de `/avisos`.
+        "procedencia": "declarado por la fuente en el control de carrera; "
+                       "no se derivo de la telemetria ni se evaluo ningun umbral",
+    }
 
 
 def obtener_ejecucion_por_huella(package_fingerprint: str) -> dict | None:

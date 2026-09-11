@@ -10,6 +10,7 @@ import asyncio
 from collections import deque
 import json
 import unittest
+from unittest.mock import patch
 
 from backend import live_stream
 from backend.live_stream import DifusorEnVivo, evento_sse
@@ -84,8 +85,30 @@ class DifusorTests(unittest.TestCase):
         self._entregar({"signal_name": "speed"})
         self.assertIn("_recibido_utc", cola.get_nowait())
 
+    def test_el_sse_no_repite_metadata_que_el_dashboard_no_lee(self):
+        """La persistencia conserva el mensaje; la vista recibe solo lo que usa."""
+
+        cola = self.d.suscribir()
+        self._entregar({
+            "timestamp": "2026-09-10T20:00:00+00:00",
+            "vehicle_id": "car:19",
+            "session_id": "session:1",
+            "source_type": "f1_25_udp_simulation",
+            "signal_name": "speed",
+            "value": 300,
+            "unit": "km/h",
+            "metadata": {"extra": {"frame_identifier": 10}},
+        })
+        recibido = cola.get_nowait()
+        self.assertEqual(recibido["signal_name"], "speed")
+        self.assertEqual(recibido["value"], 300)
+        self.assertIn("_recibido_utc", recibido)
+        self.assertNotIn("metadata", recibido)
+        self.assertIn("metadata", self.d.recientes[-1],
+                      "adelgazar SSE no puede adelgazar la recuperacion")
+
     def test_desagrupa_un_lote_mqtt(self):
-        """El capturador publica lotes; SSE debe entregar una senal por evento."""
+        """El capturador publica lotes y cada senal conserva su identidad."""
 
         cola = self.d.suscribir()
         self._entregar([
@@ -118,14 +141,36 @@ class DifusorTests(unittest.TestCase):
         descarta, y para eso necesita el difusor. La cuenta es la parte nueva
         ---antes se descartaba en silencio--- y es lo que permite distinguir un
         grafico con menos puntos de un grafico saturado.
+
+        LO QUE SE TIRA ES UN INSTANTE ENTERO, no una señal suelta: el tablero
+        dibuja momentos y necesita las dos coordenadas de la misma marca. Aca
+        cada muestra es su propio instante, de modo que se ve lo mismo de antes
+        ---se conservan las mas nuevas--- con la cuenta que corresponde.
         """
 
         sus = live_stream.Suscriptor()
-        sus.datos = deque(maxlen=3)
-        for i in range(5):
-            sus.poner_dato({"n": i})
+        with patch.object(live_stream, "COLA_POR_SUSCRIPTOR", 3):
+            for i in range(5):
+                sus.poner_dato({"n": i, "timestamp": "t%d" % i})
         self.assertEqual([sus.get_nowait()["n"] for _ in range(3)], [2, 3, 4])
         self.assertEqual(sus.descartes_datos, 2)
+
+    def test_al_saturarse_no_parte_un_instante(self):
+        """Media posicion no dibuja un coche, y ocupa lugar igual."""
+
+        sus = live_stream.Suscriptor()
+        with patch.object(live_stream, "COLA_POR_SUSCRIPTOR", 5):
+            for i in range(4):                      # cuatro instantes de a tres
+                for senal in ("x", "z", "speed"):
+                    sus.poner_dato({"timestamp": "t%d" % i, "signal_name": senal})
+        porInstante = {}
+        for c in sus.datos:
+            porInstante[c["timestamp"]] = porInstante.get(c["timestamp"], 0) + 1
+        self.assertTrue(porInstante, "no quedo nada en la cola")
+        for marca, cuantas in porInstante.items():
+            self.assertEqual(cuantas, 3,
+                             "el instante %s quedo partido en %d señales"
+                             % (marca, cuantas))
 
     def test_el_trabajo_pendiente_del_puente_tiene_tope(self):
         """La cola de cada suscriptor tenia tope; lo que estaba antes, no.
@@ -320,9 +365,12 @@ class EntregaDeAnotacionesTests(unittest.IsolatedAsyncioTestCase):
     async def test_una_anotacion_sobrevive_a_seiscientas_muestras(self):
         d, (sus,) = await self._difusor_con()
         d._depositar(d._pendientes_eventos, self._anotacion("bloqueo"), "evento")
+        # Cada muestra es su propio instante, para que la saturacion se note:
+        # el descarte es por instante desde que media posicion no dibuja nada.
         for i in range(600):
-            d._depositar(d._pendientes, {"n": i}, "telemetria")
-        await self._repartir(d)
+            d._depositar(d._pendientes, {"n": i, "timestamp": "t%d" % i}, "telemetria")
+        with patch.object(live_stream, "COLA_POR_SUSCRIPTOR", 500):
+            await self._repartir(d)
 
         recibidos = []
         while not sus.empty():
@@ -375,7 +423,7 @@ class EntregaDeAnotacionesTests(unittest.IsolatedAsyncioTestCase):
         d, (rapido, lento) = await self._difusor_con(2)
         d._depositar(d._pendientes_eventos, self._anotacion("bloqueo"), "evento")
         for i in range(200):
-            d._depositar(d._pendientes, {"n": i}, "telemetria")
+            d._depositar(d._pendientes, {"n": i, "timestamp": "t%d" % i}, "telemetria")
         await self._repartir(d)
 
         # El rapido vacia; el lento no lee nada y sigue recibiendo.
@@ -386,8 +434,10 @@ class EntregaDeAnotacionesTests(unittest.IsolatedAsyncioTestCase):
         # con 600 sobre un tope de 500 perderia tambien el rapido, y eso no
         # diria nada sobre el lento.
         for i in range(400):
-            d._depositar(d._pendientes, {"n": 1000 + i}, "telemetria")
-        await self._repartir(d)
+            d._depositar(d._pendientes, {"n": 1000 + i, "timestamp": "u%d" % i},
+                         "telemetria")
+        with patch.object(live_stream, "COLA_POR_SUSCRIPTOR", 500):
+            await self._repartir(d)
 
         # El rapido vuelve a vaciar y no pierde nada: cada suscriptor tiene su
         # propia cola, de modo que el atraso de uno no se le cobra al otro.
@@ -431,6 +481,34 @@ class EntregaDeAnotacionesTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn("despiste", segundo)
             tercero = await generador.__anext__()
             self.assertIn("event: telemetria", tercero)
+            await generador.aclose()
+        finally:
+            live_stream.difusor = anterior
+
+    async def test_el_flujo_sse_agrupa_senales_sin_perderlas(self):
+        """El caudal se paga en lotes, no con una respuesta HTTP por senal."""
+
+        d, (sus,) = await self._difusor_con()
+        anterior = live_stream.difusor
+        live_stream.difusor = d
+        try:
+            cantidad = live_stream.SENALES_POR_EVENTO + 17
+            for i in range(cantidad):
+                d._depositar(d._pendientes,
+                             {"n": i, "signal_name": "speed"}, "telemetria")
+            await self._repartir(d)
+
+            generador = live_stream.flujo_de_eventos(sus, intervalo_latido_s=5.0)
+            await generador.__anext__()  # estado inicial
+            primero = await generador.__anext__()
+            segundo = await generador.__anext__()
+            cuerpos = []
+            for evento in (primero, segundo):
+                datos = evento.split("data: ", 1)[1].rsplit("\n\n", 1)[0]
+                cuerpos.extend(json.loads(datos))
+
+            self.assertEqual([m["n"] for m in cuerpos], list(range(cantidad)))
+            self.assertEqual(sus.entregados, cantidad)
             await generador.aclose()
         finally:
             live_stream.difusor = anterior

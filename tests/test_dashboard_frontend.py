@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import subprocess
 import unittest
 from pathlib import Path
@@ -52,6 +53,73 @@ class DashboardFrontendTests(unittest.TestCase):
         )
         self.assertIn("grid-template-columns: repeat(4, minmax(0, 1fr));", estilos)
 
+    def test_un_panel_fuera_se_esconde_y_nada_lo_puede_revertir(self) -> None:
+        """La regla que saca un panel no puede depender del orden del archivo.
+
+        `.instrumento` y `.col-cabina` declaran su propio `display` mas abajo en
+        la misma hoja y con la misma especificidad: sin la marca, que el panel
+        se vaya o se quede lo decide cual de las dos reglas este escrita ultima.
+        """
+        estilos = ESTILOS.read_text(encoding="utf-8")
+        self.assertIn('[data-fuera="si"] { display: none !important; }', estilos)
+
+    def test_openf1_ordena_la_cabina_para_lo_que_esa_fuente_si_entrega(self) -> None:
+        """Sin el panel del vehiculo, la cabina pasa de cuatro columnas a tres.
+
+        Con la columna del medio escondida y la rejilla todavia en cuatro, la
+        cuarta queda reservada y vacia: el hueco se ve igual que se veia el
+        panel y encima no dice nada.
+        """
+        estilos = ESTILOS.read_text(encoding="utf-8")
+        inicio = estilos.index(':root[data-fuente="openf1"] .cabina {')
+        bloque = estilos[inicio:estilos.index("}", inicio)]
+        columnas = re.search(r"grid-template-columns:([^;]+);", bloque)
+        self.assertIsNotNone(columnas, bloque)
+        # Cuatro: trazado, motor, cronometraje con avisos, y clima. Ninguno
+        # comparte, porque compartir columna era repartir el alto y los cuatro
+        # necesitan alto.
+        self.assertEqual(columnas.group(1).count("minmax(0,"), 4, bloque)
+        # El envoltorio de la izquierda se disuelve para que sus dos paneles
+        # sean celdas de la cabina y no mitades de una columna.
+        self.assertIn(
+            ':root[data-fuente="openf1"] .cabina .col-cabina.izquierda,\n'
+            '  :root[data-fuente="openf1"] .cabina .col-cabina.derecha'
+            ' { display: contents; }',
+            estilos,
+        )
+        # Y al apilar se deshace, o quedarian huecos donde habia paneles.
+        self.assertIn(
+            ':root[data-fuente="openf1"] .cabina .col-cabina.izquierda,\n'
+            '    :root[data-fuente="openf1"] .cabina .col-cabina.derecha {\n'
+            '      display: flex; grid-column: auto; grid-row: auto;\n    }',
+            estilos,
+        )
+        # Y la lista de pilotos se queda con la fila de abajo entera, porque los
+        # dos paneles que la acompañaban ---puesta a punto y aceleraciones---
+        # esta fuente no los sostiene.
+        self.assertIn(
+            ':root[data-fuente="openf1"] .tablero [data-panel="vehiculos"] {',
+            estilos,
+        )
+
+    def test_ninguna_fuente_esconde_paneles_desde_la_hoja_de_estilos(self) -> None:
+        """El selector por atributo no distingue el panel de su fila en el pie.
+
+        Las dos llevan `data-panel`: la `<section>` del instrumento y la `<tr>`
+        de la tabla «Que sostiene cada fuente», que es el registro que queda
+        cuando el panel se va. Escondiendo por atributo se borraban las dos, de
+        modo que la fuente que escondia un panel borraba ademas la constancia de
+        por que no estaba. La decision vive ahora en
+        `PANELES_QUE_LA_FUENTE_NO_TIENE`, que ademas lleva el motivo.
+        """
+        estilos = ESTILOS.read_text(encoding="utf-8")
+        sobrantes = re.findall(
+            r':root\[data-fuente="([^"]+)"\]\s*\[data-panel="([^"]+)"\]'
+            r'\s*[,{][^{}]*display:\s*none',
+            estilos,
+        )
+        self.assertEqual(sobrantes, [], sobrantes)
+
     def test_can_mapea_las_trece_senales_reales(self) -> None:
         codigo = APP.read_text(encoding="utf-8")
         for senal in (
@@ -97,6 +165,14 @@ class AyudantesDeSerieTests(unittest.TestCase):
 
         self._correr("aislamiento_de_sesiones.js")
 
+    def test_el_contexto_historico_habilita_la_puesta_a_punto(self) -> None:
+        codigo = APP.read_text(encoding="utf-8")
+        self.assertGreaterEqual(
+            codigo.count('if (estado.puesta) estado.disponibles.add("setup_front_wing");'),
+            2,
+        )
+        self.assertGreaterEqual(codigo.count("aplicarDisponibilidad();"), 3)
+
     def test_las_continuaciones_asincronas_no_pisan_la_sesion_vigente(self) -> None:
         """El .then que corre cuando la consulta vuelve, con el tablero en otro estado.
 
@@ -138,6 +214,40 @@ class AyudantesDeSerieTests(unittest.TestCase):
         """
 
         self._correr("identidad_y_cronometraje.js")
+
+    def test_un_reintento_se_ata_a_que_algo_cambie(self) -> None:
+        """El bucle de microtareas que dejaba la pagina sin volver.
+
+        La vista ampliada pedia los datos que le faltaban y se redibujaba al
+        asentarse la promesa; sobre una fuente que no era la simulacion esa
+        promesa venia asentada y sin traer nada, de modo que el redibujo
+        encontraba lo mismo y volvia a pedir. Medido en el navegador:
+        928.517 llamadas a `dibujarComparacion` en 72 s, y seguia.
+        """
+
+        self._correr("un_reintento_que_no_avanza.js")
+
+    def test_el_contexto_de_carrera_muestra_lo_que_la_fuente_trae(self) -> None:
+        """Clima, puesto y diferencia al lider de OpenF1, que ya estaban en la base.
+
+        El panel de clima tenia cuatro casillas escritas a mano porque son las
+        que publica el simulador; OpenF1 publica otras seis. Y el puesto, que en
+        OpenF1 se publica al cambiar, se sostiene entre cambios en vez de
+        presentarse como una medicion del instante.
+        """
+
+        self._correr("el_contexto_de_carrera.js")
+
+    def test_las_banderas_declaradas_no_se_confunden_con_las_derivadas(self) -> None:
+        """Dos listas en un panel, y cada entrada dice de donde sale.
+
+        `/avisos` declara que cada entrada salio de aplicar una regla con un
+        umbral sobre la telemetria. Una bandera de control de carrera no se
+        derivo de nada: la fuente la declaro. Viajan por rutas distintas y se
+        juntan al dibujar, sin perder la procedencia.
+        """
+
+        self._correr("las_banderas_que_declara_la_fuente.js")
 
 
 class IdentidadYUnidadesTests(unittest.TestCase):
@@ -297,8 +407,23 @@ class IdentidadYUnidadesTests(unittest.TestCase):
         self.assertEqual(llamadas, 2, "la pantalla y la lámina tienen que pintar lo mismo")
 
     def test_el_nombre_se_escapa_tambien_en_la_leyenda_del_trazado(self) -> None:
-        self.assertNotIn("'\"></i>' + n + '</span>'", self.codigo)
-        self.assertIn("textoSeguro(n)", self.codigo)
+        """Se comprueba lo que la leyenda hace, no como se llama su variable.
+
+        Fijaba el literal `textoSeguro(n)`, y eso ata la prueba al nombre de una
+        variable: al pasar la leyenda a llevar el color del vehiculo ---y no el
+        de su lugar en la lista--- la variable dejo de llamarse `n` y la prueba
+        fallo sin que nada de lo que afirma hubiera cambiado.
+        """
+
+        import re
+        cuerpo = self.codigo[self.codigo.index("function pintarLeyendaTraza("):]
+        cuerpo = cuerpo[:cuerpo.index("\nfunction ")]
+        self.assertIn("textoSeguro(", cuerpo,
+                      "la leyenda del trazado tiene que escapar el nombre")
+        # Y que no haya ninguna concatenacion del nombre sin escapar.
+        self.assertFalse(
+            re.search(r"\+ *(?:a\.)?nombre *\+", cuerpo),
+            "hay un nombre concatenado sin pasar por `textoSeguro`")
 
 
 class RepresentacionDeDatosVivosTests(unittest.TestCase):
@@ -386,6 +511,34 @@ class RepresentacionDeDatosVivosTests(unittest.TestCase):
         self.assertIn("function armarTrazadoVivo(", self.codigo)
         self.assertIn("function congelarTrazadoVivo(", self.codigo)
         self.assertIn("recorrido en construcción, medido en vivo", self.codigo)
+
+    def test_el_vivo_acepta_lotes_sse(self) -> None:
+        """Agrupar el transporte no puede convertir el lote en una sola senal."""
+
+        cuerpo = self.codigo[self.codigo.index(
+            'canal.addEventListener("telemetria"'):]
+        cuerpo = cuerpo[:cuerpo.index("});") + 3]
+        self.assertIn("Array.isArray(recibido)", cuerpo)
+        self.assertIn("lote.forEach", cuerpo)
+        self.assertIn("incorporarTelemetriaViva(m)", cuerpo)
+
+    def test_detener_la_escucha_cierra_el_flujo_antes_de_abrir_el_historico(self) -> None:
+        cuerpo = self.codigo[self.codigo.index("function terminarEscucha("):]
+        cuerpo = cuerpo[:cuerpo.index("\n}")]
+        self.assertIn("cerrarFlujoEnVivo();", cuerpo)
+        self.assertIn("vaciarVivo(null);", cuerpo)
+        self.assertLess(cuerpo.index("cerrarFlujoEnVivo();"),
+                        cuerpo.index("abrirCuandoEste"))
+
+    def test_el_contexto_inicial_se_acota_al_instante_visible(self) -> None:
+        cuerpo = self.codigo[self.codigo.index("function cargarDatosDeSesion("):]
+        cuerpo = cuerpo[:cuerpo.index("function instanteUtc(")]
+        self.assertIn('"?hasta=" + encodeURIComponent(cuando)', cuerpo)
+
+    def test_la_marca_viva_lee_la_posicion_movil_y_no_el_circuito_congelado(self) -> None:
+        cuerpo = self.codigo[self.codigo.index("function pintarPista("):]
+        cuerpo = cuerpo[:cuerpo.index("function pintarValidacionDeLaForma(")]
+        self.assertIn("vivo.posicionMundo.get(clave)", cuerpo)
 
     def test_el_catalogo_no_pisa_una_sesion_viva(self) -> None:
         """El catalogo llega despues que la primera muestra del flujo.

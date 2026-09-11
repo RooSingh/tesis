@@ -45,6 +45,7 @@ function extraer(nombre) {
 globalThis.fuente = "f1";
 globalThis.corrida = { adquisicion: null, fase: null, disponibles: null };
 const NOMBRES = ["nombreDeFase", "etiquetaDeCorrida", "duracionCorta",
+                 "nombreDeAdquisicion", "textoSeguro",
                  "queEsLaFase", "numeroMedido",
                   "alcanceEsAmbiguo", "hayAlcanceQueElegir",
                   "adquisicionSeSolapa", "alcanceElegidoEsValido", "faseDeLaDireccion",
@@ -387,22 +388,44 @@ prueba("no se pide historico con el alcance sin resolver", () => {
 });
 
 prueba("la compuerta esta en las dos consultas de historico", () => {
+  /* SE MIRA LA FUNCION ENTERA, NO SUS PRIMEROS CUATROCIENTOS CARACTERES.
+     Esto cortaba en un largo fijo desde el nombre de la funcion, asi que
+     agregarle un comentario adelante ---explicar por que una condicion es la
+     que es--- empujaba la condicion fuera de la ventana y la prueba fallaba sin
+     que la compuerta se hubiera movido. Lo que se afirma es que la funcion
+     comprueba el alcance antes de pedir, y eso se mira en la funcion. */
   [["asegurarVuelta", "alcanceResuelto()"],
    ["asegurarPosiciones", "alcancePermitePedir()"]].forEach(([nombre, compuerta]) => {
     const i = fuente.indexOf("function " + nombre + "(");
     assert.ok(i > 0, "no esta " + nombre);
-    const cabeza = fuente.slice(i, i + 420);
-    assert.ok(cabeza.indexOf(compuerta) !== -1,
+    const fin = fuente.indexOf("\nfunction ", i + 10);
+    const cuerpo = fuente.slice(i, fin === -1 ? undefined : fin);
+    assert.ok(cuerpo.indexOf(compuerta) !== -1,
       nombre + " pide sin comprobar que el alcance este resuelto");
+    /* Y antes de pedir, no en cualquier lado de la funcion. */
+    const pide = cuerpo.indexOf("pedir(");
+    assert.ok(pide === -1 || cuerpo.indexOf(compuerta) < pide,
+      nombre + " comprueba el alcance despues de haber pedido");
   });
 });
 
 prueba("si no hay ruta de adquisiciones se declara la lista vacia", () => {
-  /* Sin esto, la compuerta dejaria a una API mas vieja sin cargar nunca. */
-  const i = fuente.indexOf("if (fueAnulada(e)) return;");
-  assert.ok(i > 0, "no esta el catch de adquisiciones");
-  const bloque = fuente.slice(i, i + 200);
-  assert.ok(bloque.indexOf("corrida.disponibles = []") !== -1,
+  /* Sin esto, la compuerta dejaria a una API mas vieja sin cargar nunca.
+
+     SE BUSCA EL CATCH DE ADQUISICIONES, NO EL PRIMERO QUE APAREZCA.
+     Esto anclaba en la primera aparicion de `if (fueAnulada(e)) return;` y
+     miraba los doscientos caracteres siguientes. Es un texto que cualquier
+     consulta puede usar: el dia que se agrego uno en el camino de los avisos
+     ---que esta antes en el archivo--- la ventana paso a mirar codigo de otra
+     cosa y la prueba fallo sin que nada de lo que afirma hubiera cambiado.
+
+     Ahora se ancla en lo que la prueba **es**: el catch que declara la lista
+     vacia. Se lo busca por su propio contenido, de modo que mover codigo no
+     alcanza para romperla, y si ese catch desaparece la prueba lo dice en vez
+     de mirar otro lado. */
+  const bloques = fuente.split("if (fueAnulada(e)) return;").slice(1);
+  assert.ok(bloques.length, "no esta el catch de adquisiciones");
+  assert.ok(bloques.some(b => b.slice(0, 200).indexOf("corrida.disponibles = []") !== -1),
     "al fallar la consulta la compuerta queda cerrada para siempre");
 });
 

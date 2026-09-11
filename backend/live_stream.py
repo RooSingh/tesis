@@ -53,10 +53,48 @@ from backend import anotador_vivo, resumen_sesion
 # pestanas olvidadas. Se acota para que una fuga no consuma memoria sin limite.
 MAX_SUSCRIPTORES = 16
 
-# Cuantos mensajes se conservan por suscriptor si no consume a tiempo. Al
+# Cuantas senales se conservan por suscriptor si no consume a tiempo. Al
 # llenarse se descarta lo mas viejo: en un flujo en vivo el dato reciente vale
 # mas que el atrasado, y acumular introduciria una latencia creciente invisible.
-COLA_POR_SUSCRIPTOR = 500
+#
+# ERAN 500, Y ESO SON CUARENTA Y SIETE MILISEGUNDOS.
+#
+# A las 10.600 senales/s que produce una carrera de seis vehiculos, quinientas
+# ranuras se llenan en 47 ms: menos de lo que tarda un cuadro lento del
+# navegador. Cualquier pausa ---una recoleccion de basura, una pestana que pasa
+# a segundo plano--- vaciaba la cola entera. Medido en esa carrera: el difusor
+# recibio 1.416.819 senales y entrego 89.250, un 6,3 %, con 3.044.945 descartes.
+#
+# Doce mil cubren algo mas de un segundo de esa misma carrera, que es margen
+# para un parpadeo sin volverse una latencia que se note: mas alla de un segundo
+# lo que se entrega ya no es «en vivo». Ocupan unos cinco megabytes por
+# suscriptor con el contrato de vista adelgazado, sobre los 8 GB de la Pi.
+COLA_POR_SUSCRIPTOR = 12000
+
+# Cuantas senales viajan dentro de un evento SSE. El flujo MQTT ya llega
+# agrupado, pero se desarmaba y se enviaba una respuesta HTTP por senal. Con
+# seis vehiculos la sesion de Spa produjo unas 10.600 senales/s y cada
+# suscriptor solo alcanzo a retirar unas 670/s: la cola descartaba alrededor del
+# 94 %, independientemente del camino de persistencia. Agrupar reduce el trabajo
+# de transporte sin cambiar las muestras ni su orden.
+SENALES_POR_EVENTO = 250
+
+# El navegador no consulta procedencia CAN ni el bloque ``metadata`` para
+# pintar el vivo. En la carrera de seis vehiculos, repetirlos en cada senal
+# ocupaba 765 bytes por muestra; este contrato de vista ocupa 336, un 56 %
+# menos. La historia y ``/live/recent`` conservan el mensaje completo: solo se
+# adelgaza la copia que cruza SSE.
+CAMPOS_DE_VISTA = (
+    "timestamp", "vehicle_id", "session_id", "source_type", "signal_name",
+    "value", "unit", "_recibido_utc",
+)
+
+
+def _para_vista(cuerpo: dict) -> dict:
+    """Proyecta una senal al contrato que consume el dashboard en vivo."""
+
+    return {campo: cuerpo[campo] for campo in CAMPOS_DE_VISTA if campo in cuerpo}
+
 
 #: CUANTAS ANOTACIONES ESPERAN POR SUSCRIPTOR.
 #:
@@ -88,6 +126,54 @@ EVENTOS_POR_SUSCRIPTOR = 200
 #: funcion mientras haya una pendiente. El trabajo pendiente pasa de ser
 #: proporcional al caudal a ser uno.
 PENDIENTES_DE_TELEMETRIA = 4000
+
+
+def recortar_por_instante(cola: deque, tope: int) -> int:
+    """Deja la cola en el tope tirando **instantes enteros**. Devuelve cuantas.
+
+    EL TABLERO NO DIBUJA SENALES: DIBUJA MOMENTOS. Para colocar un coche
+    necesita `world_position_x` y `world_position_z` **de la misma marca**, y lo
+    dice en su propio contador: «una perdida del 50 % en cada una deja un cuarto
+    de los pares: el emparejamiento amplifica la perdida al cuadrado».
+
+    `deque(maxlen=N)` descartaba la senal mas vieja sin mirar a que instante
+    pertenecia. Con eso, conservar el 6 % de las senales deja alrededor del
+    0,4 % de los pares completos: la pantalla no queda incompleta, queda **en
+    blanco**, que es lo que se vio en la carrera de seis vehiculos ---el difusor
+    recibio 1.416.819 senales y entrego 89.250---.
+
+    Esto no entrega mas senales: con un consumidor mas lento que el productor
+    algo hay que tirar. Lo que promete es que lo que sobreviva sea coherente:
+    menos momentos, pero completos y dibujables. Un coche a siete cuadros por
+    segundo se ve moverse; un coche con el 6 % de sus senales sueltas no.
+
+    SE USA EN LOS DOS SITIOS QUE SE SATURAN ---el puente del difusor y la cola
+    de cada suscriptor--- porque recortar bien en uno y mal en el otro deja el
+    instante partido igual.
+
+    Las senales de un mismo instante llegan juntas y en orden, de modo que
+    comparten el frente de la cola y alcanza con mirar el primero.
+    """
+
+    tirados = 0
+    while len(cola) > tope:
+        marca = cola[0].get("timestamp")
+        if cola[-1].get("timestamp") == marca:
+            # UN SOLO INSTANTE QUE NO ENTRA. Pasa con una fuente que no declare
+            # marca temporal ---y entonces todo es un mismo instante--- o con un
+            # instante absurdamente grande. Se lo recorta por la izquierda
+            # aunque quede partido: **una cola sin tope es una fuga de memoria
+            # con otro nombre**, y ese tope es justamente lo que este recorte
+            # esta para sostener. Conservar la coherencia no puede costar la
+            # memoria de la maquina.
+            while len(cola) > tope:
+                cola.popleft()
+                tirados += 1
+            break
+        while cola and cola[0].get("timestamp") == marca:
+            cola.popleft()
+            tirados += 1
+    return tirados
 
 #: Las anotaciones van por su propio camino y con mucho mas margen. Son eventos
 #: ---un bloqueo de rueda, un despiste--- de los que hay unos pocos por sesion,
@@ -141,7 +227,9 @@ class Suscriptor:
 
     def __init__(self) -> None:
         self.eventos: deque = deque(maxlen=EVENTOS_POR_SUSCRIPTOR)
-        self.datos: deque = deque(maxlen=COLA_POR_SUSCRIPTOR)
+        # Sin `maxlen`: el recorte no puede ser senal por senal. Ver
+        # `_descartar_instantes_viejos`.
+        self.datos: deque = deque()
         self._hay = asyncio.Event()
         #: Descartes en el ultimo tramo del transporte, separados por tipo.
         self.descartes_datos = 0
@@ -163,10 +251,14 @@ class Suscriptor:
 
     def poner_dato(self, cuerpo: dict) -> None:
         self.encolados += 1
-        if len(self.datos) == self.datos.maxlen:
-            self.descartes_datos += 1
         self.datos.append(cuerpo)
+        if len(self.datos) > COLA_POR_SUSCRIPTOR:
+            self._descartar_instantes_viejos()
         self._hay.set()
+
+    def _descartar_instantes_viejos(self) -> None:
+        self.descartes_datos += recortar_por_instante(
+            self.datos, COLA_POR_SUSCRIPTOR)
 
     async def obtener(self) -> dict:
         """Devuelve lo proximo a enviar. Los eventos salen antes que los datos."""
@@ -200,6 +292,15 @@ class Suscriptor:
             return self.datos.popleft()
         raise asyncio.QueueEmpty
 
+    def extraer_datos(self, maximo: int) -> list[dict]:
+        """Retira hasta ``maximo`` datos sin consumir eventos prioritarios."""
+
+        lote = []
+        while self.datos and len(lote) < maximo:
+            lote.append(self.datos.popleft())
+        self.entregados += len(lote)
+        return lote
+
     def empty(self) -> bool:
         return not self.eventos and not self.datos
 
@@ -228,8 +329,10 @@ class DifusorEnVivo:
         #: mensaje de mas o de menos en el instante en que alguien se conecta.
         self._cuantos_suscriptores = 0
         #: El puente: lo que el hilo de MQTT dejo y el bucle todavia no repartio.
-        self._pendientes: deque = deque(maxlen=PENDIENTES_DE_TELEMETRIA)
-        self._pendientes_eventos: deque = deque(maxlen=PENDIENTES_DE_EVENTOS)
+        # Sin `maxlen`: el recorte es por instante, no senal por senal.
+        # Ver `recortar_por_instante`.
+        self._pendientes: deque = deque()
+        self._pendientes_eventos: deque = deque()
         self._despacho_pedido = False
         #: Que se perdio y donde. Sin esto la saturacion es invisible: se
         #: descartaba en silencio y el estado seguia diciendo cuantos mensajes
@@ -423,7 +526,7 @@ class DifusorEnVivo:
             return
         # Se entrega a traves del bucle porque este hilo no es el suyo, pero
         # se programa una funcion por lote y no una por señal y suscriptor.
-        self._depositar(self._pendientes, cuerpo, "telemetria")
+        self._depositar(self._pendientes, _para_vista(cuerpo), "telemetria")
 
     def _repartir_anotacion(self, anotacion: dict, vehiculo: str = "") -> None:
         """Envia una anotacion recien emitida por el mismo canal que los datos.
@@ -452,14 +555,20 @@ class DifusorEnVivo:
         with self._candado:
             if not self._suscriptores:
                 return
-            if len(buffer) == buffer.maxlen:
-                # `deque` con `maxlen` tira el mas viejo sola. Se cuenta, porque
-                # un descarte silencioso es una perdida que nadie puede ver.
-                if clase == "evento":
-                    self.descartes_eventos += 1
-                else:
-                    self.descartes_puente += 1
             buffer.append(cuerpo)
+            if clase == "evento":
+                # Un evento es un hecho, no resolucion: se lo recorta de a uno y
+                # se lo cuenta aparte. Perder uno es perder el hecho.
+                if len(buffer) > PENDIENTES_DE_EVENTOS:
+                    buffer.popleft()
+                    self.descartes_eventos += 1
+            elif len(buffer) > PENDIENTES_DE_TELEMETRIA:
+                # EL PUENTE TAMBIEN TIENE QUE RECORTAR POR INSTANTE. Recortar
+                # bien en la cola del suscriptor y mal aca dejaria el instante
+                # partido igual, solo que un paso antes. Se cuenta, porque un
+                # descarte silencioso es una perdida que nadie puede ver.
+                self.descartes_puente += recortar_por_instante(
+                    buffer, PENDIENTES_DE_TELEMETRIA)
             hondura = len(self._pendientes) + len(self._pendientes_eventos)
             if hondura > self.pendientes_maximos_vistos:
                 self.pendientes_maximos_vistos = hondura
@@ -604,4 +713,15 @@ async def flujo_de_eventos(cola: "Suscriptor", intervalo_latido_s: float = 15.0)
             yield evento_sse({"momento": datetime.now(timezone.utc).isoformat(),
                               "recibidos": difusor.recibidos}, "latido")
             continue
-        yield evento_sse(dato, dato.get("_evento", "telemetria"))
+        evento = dato.get("_evento")
+        if evento:
+            yield evento_sse(dato, evento)
+            continue
+
+        # UNA RESPUESTA POR LOTE, NO UNA POR SENAL. Las senales siguen siendo
+        # objetos independientes dentro del JSON y conservan su orden. Los
+        # eventos no se mezclan: si aparece una anotacion, sale antes del lote
+        # siguiente por la prioridad de ``Suscriptor.obtener``.
+        lote = [dato]
+        lote.extend(cola.extraer_datos(SENALES_POR_EVENTO - 1))
+        yield evento_sse(lote, "telemetria")

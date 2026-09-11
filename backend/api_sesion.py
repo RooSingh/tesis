@@ -33,8 +33,9 @@ from typing import Annotated, Any
 
 from fastapi import APIRouter, HTTPException, Query
 
-from backend import (anotador_vivo, catalogo_curvas, catalogo_sesiones, db,
-                     f1_udp, procedencia_sesiones)
+from adapters import f1_25 as adaptador_f1_25
+from backend import (anotador_vivo, catalogo_curvas, catalogo_reglajes,
+                     catalogo_sesiones, db, f1_udp, procedencia_sesiones)
 
 router = APIRouter()
 
@@ -263,9 +264,69 @@ def listar_vueltas(
     fuente = _fuente_de(session_id)
     senal_distancia = DISTANCIA_POR_FUENTE.get(fuente)
     if not senal_distancia:
+        # NO HAY VUELTAS, PERO SI HAY ALGUIEN CONDUCIENDO.
+        #
+        # Esta respuesta es el sitio donde se declara el vehiculo propio: el
+        # tablero la trata como autoritativa y ninguna otra la pisa. Devolverla
+        # sin vehiculo dejaba a las fuentes sin metro medido sin nadie elegido
+        # en el momento en que se pide el trazado, que es enseguida.
+        #
+        # Con un vehiculo capturado no se notaba ---el tablero cae en el unico
+        # que la serie devuelve--- pero con los tres pilotos de una sesion de
+        # OpenF1 el trazado se pedia de nadie, y sin saber de quien es no se
+        # pueden buscar sus vueltas: salia la sesion entera superpuesta.
+        #
+        # Se elige el mas muestreado, que es el mismo criterio que usa la rama
+        # con distancia: de los rivales suele haber cronometraje y nada mas. El
+        # desempate por identificador es para que dos llamadas seguidas no
+        # contesten cosas distintas.
+        # LA CONSULTA ES UN AÑADIDO, NO UN REQUISITO.
+        #
+        # Esta rama contestaba sin tocar la base: el motivo sale de una tabla
+        # escrita, no de una medicion. Convertirla en obligatoria haria que una
+        # base caida deje de explicar por que no hay vueltas, que es lo unico
+        # que esta respuesta tiene para dar. Si la consulta no sale, se contesta
+        # lo de siempre sin vehiculo.
+        # DOS AVERIGUACIONES INDEPENDIENTES, Y CADA UNA CAE SOLA.
+        #
+        # Envolver las dos en un mismo intento hacia que un fallo al buscar las
+        # vueltas se llevara tambien al vehiculo, que se habia averiguado bien.
+        # Son dos preguntas distintas ---quien conduce, y que vueltas hay--- y
+        # la respuesta vale aunque solo se conteste una.
+        propio = None
+        vueltas_del_reloj: list[dict[str, Any]] = []
+        try:
+            with db.obtener_conexion() as conexion, conexion.cursor() as cursor:
+                cursor.execute("""
+                    SELECT vehicle_id FROM telemetry_messages
+                     WHERE source_type = %s AND session_id = %s
+                     GROUP BY vehicle_id
+                     ORDER BY count(*) DESC, vehicle_id
+                     LIMIT 1
+                """, (fuente, session_id))
+                fila = cursor.fetchone()
+                propio = fila[0] if fila else None
+        except Exception:  # noqa: BLE001
+            propio = None
+        if propio:
+            try:
+                with db.obtener_conexion() as conexion, conexion.cursor() as cursor:
+                    vueltas_del_reloj = _vueltas_del_contexto(cursor, session_id, propio)
+            except Exception:  # noqa: BLE001
+                vueltas_del_reloj = []
+        if vueltas_del_reloj:
+            return {
+                "session_id": session_id,
+                "fuente": fuente,
+                "vehiculo": propio,
+                "vueltas": vueltas_del_reloj,
+                # De donde salen, porque no salen de la telemetria.
+                "medidas_por": "contexto deportivo, por reloj",
+            }
         return {
             "session_id": session_id,
             "fuente": fuente,
+            "vehiculo": propio,
             "vueltas": [],
             "motivo": ("Esta fuente no tiene eje de distancia: %s. Sin metro medido "
                        "no hay vueltas que delimitar." % _sin_distancia(fuente)),
@@ -973,23 +1034,59 @@ def _repartir_el_reloj(cursor, fuente: str, session_id: str) -> dict:
     """
 
     cursor.execute("""
-        SELECT replay_run_id, min(timestamp), max(timestamp)
-          FROM telemetry_messages
-         WHERE source_type = %s AND session_id = %s AND signal_name = 'lap_number'
-         GROUP BY replay_run_id
+        WITH m AS (
+            SELECT replay_run_id, timestamp,
+                   {cap}   AS us,
+                   {orden} AS orden
+              FROM telemetry_messages
+             WHERE source_type = %s AND session_id = %s
+               AND signal_name = 'lap_number'),
+        cortada AS (
+            SELECT replay_run_id, timestamp, orden,
+                   -- UN REINICIO DEL RELOJ DE CAPTURA ES UNA CAPTURA NUEVA.
+                   -- El capturador lo numera desde cero en cada corrida, de
+                   -- modo que verlo bajar es lo unico que separa dos capturas
+                   -- originales: las dos llevan `replay_run_id` nulo y ninguna
+                   -- escribe la huella de su archivo en cada fila.
+                   CASE WHEN replay_run_id IS NULL
+                             AND us < lag(us) OVER (PARTITION BY replay_run_id
+                                                        ORDER BY orden)
+                        THEN 1 ELSE 0 END AS corte
+              FROM m),
+        numerada AS (
+            SELECT replay_run_id, timestamp,
+                   sum(corte) OVER (PARTITION BY replay_run_id ORDER BY orden
+                                    ROWS UNBOUNDED PRECEDING) AS captura
+              FROM cortada)
+        SELECT replay_run_id, captura, min(timestamp), max(timestamp)
+          FROM numerada
+         GROUP BY replay_run_id, captura
          ORDER BY min(timestamp)
-    """, (fuente, session_id))
+    """.format(cap=_captura_us(), orden=_orden_dentro_de_la_sesion()),
+        (fuente, session_id))
     tramos = cursor.fetchall()
 
     ventanas: dict = {}
-    for i, (run, desde, hasta) in enumerate(tramos):
-        antes = tramos[i - 1][2] if i > 0 else None
-        despues = tramos[i + 1][1] if i + 1 < len(tramos) else None
+    originales: list[tuple[str, str]] = []
+    for i, (run, captura, desde, hasta) in enumerate(tramos):
+        antes = tramos[i - 1][3] if i > 0 else None
+        despues = tramos[i + 1][2] if i + 1 < len(tramos) else None
         v0 = _iso(antes + (desde - antes) / 2) if antes is not None else "-infinity"
         v1 = _iso(hasta + (despues - hasta) / 2) if despues is not None else "infinity"
-        ventanas[run or ORIGEN_SIN_CORRIDA] = (v0, v1)
         if run is not None:
             ventanas[run] = (v0, v1)
+        else:
+            originales.append((v0, v1))
+            ventanas[clave_de_captura(int(captura))] = (v0, v1)
+
+    # `original` SIGUE SIGNIFICANDO TODAS LAS CAPTURAS ORIGINALES.
+    #
+    # Lo que se agrega es poder elegir **una**; no se le cambia el significado a
+    # quien ya venia pidiendo `original`, que con una sola captura ---el caso
+    # normal--- es exactamente lo mismo de antes. Con dos, `original` las abarca
+    # y la respuesta lo declara mezclado, que es el aviso que antes no existia.
+    if originales:
+        ventanas[ORIGEN_SIN_CORRIDA] = (originales[0][0], originales[-1][1])
     return ventanas
 
 
@@ -1002,12 +1099,14 @@ def _declarar_alcance(cursor, fuente: str, session_id: str,
     cambia, para no romper a nadie--- la respuesta tiene que declararlo.
     """
 
-    cursor.execute("""
-        SELECT count(DISTINCT COALESCE(replay_run_id, '')) FROM telemetry_messages
-         WHERE source_type = %s AND session_id = %s AND signal_name = 'lap_number'
-    """, (fuente, session_id))
-    fila = cursor.fetchone()
-    cuantas = int(fila[0]) if fila and fila[0] is not None else 1
+    # CONTAR POR `replay_run_id` DECIA UNA SOLA ADQUISICION TENIENDO DOS.
+    #
+    # La captura original no escribe esa columna, de modo que dos capturas de la
+    # misma sesion contaban como una y la respuesta declaraba que no estaba
+    # mezclada justo cuando lo estaba. El reparto ya las distingue; se cuenta de
+    # ahi, que es el mismo sitio que despues resuelve la ventana de cada una.
+    reparto = _repartir_el_reloj(cursor, fuente, session_id)
+    cuantas = max(1, len([c for c in reparto if c != ORIGEN_SIN_CORRIDA]))
     elegida = adquisicion or ("todas" if cuantas > 1 else ORIGEN_SIN_CORRIDA)
     return {
         "adquisicion": elegida,
@@ -1024,12 +1123,53 @@ def _declarar_alcance(cursor, fuente: str, session_id: str,
 
 
 
+#: Como se nombra una captura original suelta: `original-1`, `original-2`...
+#: El numero es su orden en el reloj, no un identificador del archivo, porque la
+#: fila no trae con que nombrar al archivo: `captura_sha256` es nula en todas.
+#:
+#: EL SEPARADOR ES UN GUION Y NO UN NUMERAL A PROPOSITO. Esta clave viaja por la
+#: direccion ---el tablero deja la eleccion en `?adquisicion=` y ademas usa el
+#: fragmento para el cabezal--- y un `#` ahi depende de que todos los que armen
+#: la direccion lo escapen. El guion no necesita que nadie se acuerde.
+SEPARADOR_DE_CAPTURA = "-"
+
+
+def clave_de_captura(indice: int) -> str:
+    """El nombre de la captura numero `indice` (contado desde cero)."""
+
+    return "%s%s%d" % (ORIGEN_SIN_CORRIDA, SEPARADOR_DE_CAPTURA, indice + 1)
+
+
+def es_captura_original(adquisicion: str | None) -> bool:
+    """Si lo pedido es una captura original suelta, o todas ellas.
+
+    Se exige que lo que sigue al separador sean **digitos**: sin eso, un
+    `replay_run_id` que empezara con `original-` se filtraria como si fuera una
+    captura y devolveria las filas equivocadas en silencio.
+    """
+
+    if not adquisicion:
+        return False
+    if adquisicion == ORIGEN_SIN_CORRIDA:
+        return True
+    prefijo = ORIGEN_SIN_CORRIDA + SEPARADOR_DE_CAPTURA
+    return (adquisicion.startswith(prefijo)
+            and adquisicion[len(prefijo):].isdigit())
+
+
 def _clausula_de_adquisicion(adquisicion: str | None) -> tuple[str, list]:
-    """Condicion SQL para acotar a una adquisicion. Vacia si no se pidio."""
+    """Condicion SQL para acotar a una adquisicion. Vacia si no se pidio.
+
+    Una captura suelta ---`original#2`--- se filtra igual que `original`: por
+    `replay_run_id IS NULL`. Lo que la separa de sus hermanas es la ventana de
+    tiempo, que `_ventana_de_alcance` resuelve aparte y que todas las rutas ya
+    aplican. Poner aca el numero de captura seria un segundo sitio donde
+    equivocarse sobre lo mismo.
+    """
 
     if not adquisicion or adquisicion == "todas":
         return "", []
-    if adquisicion == ORIGEN_SIN_CORRIDA:
+    if es_captura_original(adquisicion):
         return " AND replay_run_id IS NULL", []
     return " AND replay_run_id = %s", [adquisicion]
 
@@ -1154,39 +1294,78 @@ def _medir_fases_de_todas(cursor, fuente: str, session_id: str) -> dict:
     las tres y se agrupa por `replay_run_id`.
     """
 
+    # LAS FASES SON DE UNA CAPTURA, NO DE UN `session_uid`.
+    #
+    # El reloj de captura se reinicia con cada captura, de modo que tomar su
+    # minimo y su maximo sobre dos capturas juntas da un tramo que no existio y
+    # `_armar_fases` lo llena de bordes inventados. Medido sobre la practica de
+    # Catalunya: agrupando las dos capturas salian **280 fases**, casi todas
+    # rotuladas «Espera de luces» de cero segundos en una sesion sin luces.
+    #
+    # Separadas, cada una tiene el reloj monotonico que esta cuenta necesita: un
+    # retroceso de `session_time_s` **dentro** de una captura si es un reinicio
+    # del reloj del juego, que es lo que una fase declara.
     cap = _captura_us()
-    cursor.execute("""
-        WITH p AS (
-          SELECT replay_run_id AS run, %s AS d, %s AS orden,
+    partido = """
+          SELECT replay_run_id AS run, timestamp, {cap} AS us, {orden} AS orden,
                  (metadata->'extra'->>'session_time_s')::double precision AS reloj
             FROM telemetry_messages
-           WHERE source_type = %%s AND session_id = %%s
-             AND signal_name = 'lap_number'),
-        q AS (SELECT run, d, reloj,
-                     lag(reloj) OVER (PARTITION BY run ORDER BY orden) AS ant
-                FROM p WHERE d IS NOT NULL AND reloj IS NOT NULL)
-        SELECT run, d FROM q
-         WHERE ant IS NOT NULL AND reloj < ant ORDER BY run, d
-    """ % (cap, _orden_dentro_de_la_sesion()), (fuente, session_id))
-    cortes: dict = {}
-    for run, d in cursor.fetchall():
-        cortes.setdefault(run or ORIGEN_SIN_CORRIDA, []).append(d)
+           WHERE source_type = %s AND session_id = %s
+             AND signal_name = 'lap_number'
+    """.format(cap=cap, orden=_orden_dentro_de_la_sesion())
+    numerado = """
+        WITH p AS (""" + partido + """),
+        cortada AS (
+          SELECT run, us, orden, reloj,
+                 CASE WHEN run IS NULL
+                           AND us < lag(us) OVER (PARTITION BY run ORDER BY orden)
+                      THEN 1 ELSE 0 END AS corte
+            FROM p),
+        n AS (
+          SELECT run, us, orden, reloj,
+                 sum(corte) OVER (PARTITION BY run ORDER BY orden
+                                  ROWS UNBOUNDED PRECEDING) AS captura
+            FROM cortada)
+    """
 
-    cursor.execute("""
-        SELECT replay_run_id, min(%s), max(%s)
-          FROM telemetry_messages
-         WHERE source_type = %%s AND session_id = %%s
-           AND signal_name = 'lap_number'
-         GROUP BY replay_run_id
-    """ % (cap, cap), (fuente, session_id))
+    cursor.execute(numerado + """
+        , q AS (SELECT run, captura, us, reloj,
+                       lag(reloj) OVER (PARTITION BY run, captura ORDER BY orden) AS ant
+                  FROM n WHERE us IS NOT NULL AND reloj IS NOT NULL)
+        SELECT run, captura, us FROM q
+         WHERE ant IS NOT NULL AND reloj < ant ORDER BY run, captura, us
+    """, (fuente, session_id))
+    cortes: dict = {}
+    for run, captura, d in cursor.fetchall():
+        cortes.setdefault((run, int(captura)), []).append(d)
+
+    cursor.execute(numerado + """
+        SELECT run, captura, min(us), max(us) FROM n GROUP BY run, captura
+    """, (fuente, session_id))
+    extremos = cursor.fetchall()
+
+    # Con una sola captura la clave sigue siendo `original`: el caso normal no
+    # estrena nombre.
+    cuantas = sum(1 for f in extremos if f[0] is None)
 
     salida: dict = {}
-    for run, inicio, fin in cursor.fetchall():
-        clave = run or ORIGEN_SIN_CORRIDA
+    sueltas: list = []
+    for run, captura, inicio, fin in extremos:
+        captura = int(captura)
+        clave = run or (clave_de_captura(captura) if cuantas > 1
+                        else ORIGEN_SIN_CORRIDA)
         if inicio is None:
             salida[clave] = []
             continue
-        salida[clave] = _armar_fases([inicio] + cortes.get(clave, []) + [fin])
+        salida[clave] = _armar_fases(
+            [inicio] + cortes.get((run, captura), []) + [fin])
+        if run is None:
+            sueltas += salida[clave]
+
+    # `original` abarca todas las capturas, y sus fases son las de todas. No se
+    # las vuelve a medir sobre el tramo pegado, que es de donde salian las 280.
+    if cuantas > 1:
+        salida[ORIGEN_SIN_CORRIDA] = sueltas
     return salida
 
 
@@ -1425,21 +1604,56 @@ def adquisiciones(session_id: str) -> dict:
 
     fuente = _fuente_de(session_id)
     with db.obtener_conexion() as conexion, conexion.cursor() as cursor:
+        # UNA CAPTURA ORIGINAL NO ESCRIBE `replay_run_id`, ASI QUE AGRUPAR POR
+        # ESA COLUMNA JUNTABA TODAS LAS CAPTURAS EN UNA SOLA ENTRADA.
+        #
+        # Se las separa por el reinicio del reloj de captura, que el capturador
+        # numera desde cero en cada corrida, recorriendo por el contador de
+        # cuadros del juego ---monotonico en la sesion entera---. Medido el
+        # 2026-09-11: de las catorce sesiones originales de F1 25, **ocho tienen
+        # mas de una captura**, y una de ellas dos completas de 393,7 s y
+        # 306,8 s pegadas bajo la misma entrada.
         cursor.execute("""
+            WITH m AS (
+                SELECT replay_run_id, timestamp, vehicle_id,
+                       metadata->'extra'->>'captura_sha256' AS sha,
+                       {cap}   AS us,
+                       {orden} AS orden
+                  FROM telemetry_messages
+                 WHERE source_type = %s AND session_id = %s
+                   AND signal_name = 'lap_number'),
+            cortada AS (
+                SELECT replay_run_id, timestamp, vehicle_id, sha, orden,
+                       CASE WHEN replay_run_id IS NULL
+                                 AND us < lag(us) OVER (PARTITION BY replay_run_id
+                                                            ORDER BY orden)
+                            THEN 1 ELSE 0 END AS corte
+                  FROM m),
+            numerada AS (
+                SELECT replay_run_id, timestamp, vehicle_id, sha,
+                       sum(corte) OVER (PARTITION BY replay_run_id ORDER BY orden
+                                        ROWS UNBOUNDED PRECEDING) AS captura
+                  FROM cortada)
             SELECT replay_run_id, count(*), count(DISTINCT vehicle_id),
                    min(timestamp), max(timestamp),
                    array_agg(DISTINCT vehicle_id),
                    -- La huella del archivo del que salieron estas filas, cuando
-                   -- el capturador la escribio. Es lo que ata una adquisicion a
-                   -- su captura sin depender de cual sea la mas larga.
-                   array_agg(DISTINCT metadata->'extra'->>'captura_sha256')
-              FROM telemetry_messages
-             WHERE source_type = %s AND session_id = %s
-               AND signal_name = 'lap_number'
-             GROUP BY replay_run_id
+                   -- el capturador la escribio. Ata una adquisicion a su captura
+                   -- cuando esta; hoy es nula en todas las filas guardadas, y por
+                   -- eso el corte se busca en el reloj y no aca.
+                   array_agg(DISTINCT sha),
+                   captura
+              FROM numerada
+             GROUP BY replay_run_id, captura
              ORDER BY min(timestamp)
-        """, (fuente, session_id))
+        """.format(cap=_captura_us(), orden=_orden_dentro_de_la_sesion()),
+            (fuente, session_id))
         crudas = cursor.fetchall()
+
+        # Con una sola captura la clave sigue siendo `original`, para que el
+        # caso normal se vea exactamente como antes. La numeracion aparece
+        # cuando hay algo que numerar.
+        cuantas_originales = sum(1 for f in crudas if f[0] is None)
 
         salida = []
         con_telemetria: set[str] = set()
@@ -1447,8 +1661,10 @@ def adquisiciones(session_id: str) -> dict:
             run, filas, vehiculos, desde, hasta = fila[:5]
             suyos = [x for x in (fila[5] if len(fila) > 5 else None) or [] if x]
             shas = [x for x in (fila[6] if len(fila) > 6 else None) or [] if x]
+            captura = int(fila[7]) if len(fila) > 7 and fila[7] is not None else 0
             con_telemetria.update(suyos)
-            clave = run or ORIGEN_SIN_CORRIDA
+            clave = run or (clave_de_captura(captura)
+                            if cuantas_originales > 1 else ORIGEN_SIN_CORRIDA)
             salida.append({
                 "clave": clave,
                 "replay_run_id": run,
@@ -1493,11 +1709,31 @@ def series_por_tiempo(
     senales: Annotated[str, Query(description="Nombres de senal separados por coma")],
     vehiculos: Annotated[str | None, Query(description="Identificadores separados por coma")] = None,
     puntos: Annotated[int, Query(ge=50, le=5000)] = 600,
+    desde: Annotated[str | None, Query(
+        description="Instante ISO-8601 inclusivo: acota el tramo que se devuelve")] = None,
+    hasta: Annotated[str | None, Query(
+        description="Instante ISO-8601 inclusivo: acota el tramo que se devuelve")] = None,
     adquisicion: Annotated[str | None, Query(
         description="Que adquisicion mirar: `original`, un `replay_run_id`, o `todas`")] = None,
     fase: Annotated[int | None, Query(ge=1)] = None,
 ) -> dict[str, Any]:
-    """Series contra el reloj de sesion para fuentes sin distancia medida."""
+    """Series contra el reloj de sesion para fuentes sin distancia medida.
+
+    PEDIR UN TRAMO Y NO LA SESION ENTERA.
+
+    Sin `desde` y `hasta` esto devuelve la sesion completa repartida en `puntos`
+    muestras, y eso alcanza mientras la sesion sea corta. Sobre una carrera de
+    OpenF1 no: dos horas y media en mil doscientos puntos son **una muestra cada
+    7,8 segundos**, de modo que una ventana de veinte segundos se dibuja con dos
+    o tres puntos y el grafico sale como una recta quebrada. La fuente publica a
+    3,7 Hz ---unas treinta y cuatro mil muestras por piloto--- asi que se estaba
+    tirando el 96 % de lo medido.
+
+    Acotando el tramo, los mismos mil doscientos puntos caen sobre la vuelta que
+    se esta mirando y sobra resolucion. Y no cuesta nada: `timestamp` es la
+    dimension por la que la tabla esta particionada, de modo que un tramo acota
+    de verdad en vez de recorrerlo todo para despues descartar.
+    """
 
     fuente = _fuente_de(session_id)
     pedidas = [s.strip() for s in senales.split(",") if s.strip()]
@@ -1508,6 +1744,13 @@ def series_por_tiempo(
 
     condiciones = ["source_type = %s", "session_id = %s"]
     parametros: list[Any] = [fuente, session_id]
+    # El tramo pedido acota antes que nada: es la dimension de particion.
+    if desde:
+        condiciones.append("timestamp >= %s")
+        parametros.append(desde)
+    if hasta:
+        condiciones.append("timestamp <= %s")
+        parametros.append(hasta)
     with db.obtener_conexion() as conexion, conexion.cursor() as cursor:
         ventana = _ventana_de_alcance(cursor, fuente, session_id, adquisicion)
         fase_desde, fase_hasta = _limites_de_fase(
@@ -1620,7 +1863,7 @@ def series_por_distancia(
     senales: Annotated[str, Query(description="Nombres de senal separados por coma")],
     vuelta: int | None = None,
     vehiculos: Annotated[str | None, Query(description="Identificadores separados por coma")] = None,
-    desde_m: float = 0.0,
+    desde_m: float | None = None,
     hasta_m: float | None = None,
     puntos: Annotated[int, Query(ge=50, le=5000)] = 600,
     adquisicion: Annotated[str | None, Query(
@@ -1726,7 +1969,7 @@ def series_por_distancia(
              GROUP BY timestamp, vehicle_id)
         SELECT * FROM p
          WHERE distancia IS NOT NULL {filtro_distancia} {filtro_vuelta}
-         ORDER BY vehicle_id, distancia
+         ORDER BY vehicle_id, distancia, timestamp
     """
     columnas = ["max(value_numeric) FILTER (WHERE signal_name = %s) AS distancia"]
     columnas_par: list[Any] = [senal_distancia]
@@ -1761,9 +2004,26 @@ def series_por_distancia(
     # Se hacia en Python despues de traer todo: para dibujar doscientos metros
     # de una vuelta se traian los siete mil, se armaban las filas en memoria y
     # se descartaban casi todas. Puesto aca, la base no las materializa.
+    #
+    # UNA COTA NO PEDIDA NO ES UNA COTA EN CERO.
+    #
+    # `desde_m` valia `0.0` por defecto y se aplicaba dos veces con dos
+    # significados: aca `if desde_m:` lo tomaba por falso y **no** ponia cota,
+    # y mas abajo `d < desde_m` lo tomaba por un piso real. Como
+    # `lap_distance` es negativa antes de cruzar la meta, la segunda mitad
+    # borraba la vuelta de salida entera sin que nadie la hubiera pedido.
+    #
+    # Medido el 2026-09-11 en la practica de Catalunya: de las 5.355 muestras
+    # de la vuelta 1 del coche propio se devolvian 1.761, las de distancia
+    # positiva. `/vueltas` declaraba la vuelta de 267,7 s y la serie cubria sus
+    # ultimos 88: durante tres minutos el cabezal caia antes de la primera
+    # muestra y todos los instrumentos se clavaban en la muestra cero.
+    #
+    # Ahora la ausencia de cota se dice con `None` y se pregunta igual en los
+    # dos sitios. Un cero pedido a proposito sigue siendo un piso en la meta.
     distancia_par: list[Any] = []
     filtro_distancia = ""
-    if desde_m:
+    if desde_m is not None:
         filtro_distancia += " AND distancia >= %s"
         distancia_par.append(desde_m)
     if hasta_m is not None:
@@ -1806,7 +2066,7 @@ def series_por_distancia(
     por_vehiculo: dict[str, list[tuple]] = {}
     for f in filas:
         d = f[idx_dist]
-        if d is None or d < desde_m:
+        if d is None or (desde_m is not None and d < desde_m):
             continue
         if hasta_m is not None and d > hasta_m:
             continue
@@ -1869,6 +2129,125 @@ def series_por_distancia(
 # 2. Trazado del circuito
 # --------------------------------------------------------------------------
 
+def _vueltas_por_reloj(cursor, session_id: str, vehicle_id: str | None) -> list[tuple]:
+    """Las vueltas de esta sesion como ventanas de tiempo, o lista vacia.
+
+    POR QUE HACE FALTA. El trazado agrupa por `lap_number`, que viaja en la
+    telemetria del simulador. OpenF1 no lo publica: sus nueve señales son
+    posicion y estado del coche, y nada dice en que vuelta va. Sin numero de
+    vuelta **todas las filas caen en un solo grupo** y el dibujo sale con las
+    cincuenta y dos vueltas de la carrera superpuestas ---mas la de formacion y
+    el regreso a boxes---, que es un ovillo y no un circuito.
+
+    Pero las vueltas existen: el contexto deportivo las trae con su instante de
+    comienzo y su duracion. Son ventanas de **tiempo**, que es la dimension que
+    esta fuente si tiene. De ahi salen.
+
+    Se piden del vehiculo que se esta dibujando: dos pilotos cruzan la meta en
+    instantes distintos, y usar las vueltas de uno para cortar el recorrido del
+    otro parte el lazo por donde no corresponde.
+    """
+
+    clave = session_id.rsplit(":", 1)[-1]
+    if not clave.isdigit():
+        return []
+    piloto = None
+    if vehicle_id and ":driver:" in vehicle_id:
+        cola = vehicle_id.rsplit(":driver:", 1)[-1]
+        if cola.isdigit():
+            piloto = int(cola)
+    if piloto is None:
+        return []
+    cursor.execute("""
+        SELECT lap_number, date_start,
+               date_start + make_interval(secs => lap_duration_seconds)
+          FROM racing_laps
+         WHERE session_key = %s AND driver_number = %s
+           AND date_start IS NOT NULL AND lap_duration_seconds IS NOT NULL
+         ORDER BY lap_number
+    """, (int(clave), piloto))
+    return [(int(n), a, b) for n, a, b in cursor.fetchall()]
+
+
+def _vueltas_del_contexto(cursor, session_id: str,
+                          vehiculo: str | None) -> list[dict[str, Any]]:
+    """Las vueltas de una fuente sin metro medido, como las declara el contexto.
+
+    NO HAY DISTANCIA, PERO HAY VUELTAS. Delimitar una vuelta con el metro es lo
+    que hace el simulador; OpenF1 no lo publica, y por eso esta ruta contestaba
+    la lista vacia. Pero las vueltas de esa carrera existen: el contexto
+    deportivo las trae con su instante de comienzo y su duracion. Son ventanas
+    de **tiempo**, que es la dimension que esta fuente si tiene.
+
+    QUE DESTRABA DECIRLAS. El tablero reparte los puntos que pide entre lo que
+    dura lo que va a dibujar. Con una sola vuelta de dos horas y media, mil
+    doscientos puntos son una muestra cada 7,8 segundos y una ventana de veinte
+    segundos se dibuja con dos o tres. Con las cincuenta y dos vueltas de
+    noventa segundos, los mismos puntos sobran. Y de paso aparecen el
+    cronometraje y la eleccion de vuelta, que sin vueltas no existian.
+
+    La duracion sale declarada y no se recalcula: es la que midio la fuente.
+    Una vuelta sin instante o sin duracion no se ofrece ---delimitar lo que no
+    se sabe donde empieza seria inventarlo---.
+    """
+
+    clave = session_id.rsplit(":", 1)[-1]
+    if not clave.isdigit() or not vehiculo or ":driver:" not in vehiculo:
+        return []
+    cola = vehiculo.rsplit(":driver:", 1)[-1]
+    if not cola.isdigit():
+        return []
+    cursor.execute("""
+        SELECT lap_number, date_start, lap_duration_seconds
+          FROM racing_laps
+         WHERE session_key = %s AND driver_number = %s
+           AND date_start IS NOT NULL AND lap_duration_seconds IS NOT NULL
+         ORDER BY lap_number
+    """, (int(clave), int(cola)))
+    salida = []
+    for numero, comienzo, duracion in cursor.fetchall():
+        desde = comienzo.isoformat() if hasattr(comienzo, "isoformat") else str(comienzo)
+        fin = None
+        if hasattr(comienzo, "isoformat"):
+            fin = (comienzo + timedelta(seconds=float(duracion))).isoformat()
+        salida.append({
+            "numero": int(numero),
+            "duracion_s": round(float(duracion), 3),
+            "desde_utc": desde,
+            "hasta_utc": fin,
+            "huecos": [],
+            "continua": True,
+            # Una vuelta de carrera esta completa por definicion: el contexto la
+            # declara con su duracion, que es lo que la cierra.
+            "completa": True,
+        })
+    return salida
+
+
+def _numerar_por_reloj(filas: list, vueltas: list[tuple]) -> list:
+    """Le pone su numero de vuelta a cada fila, por el instante en que se midio.
+
+    Las filas llegan ordenadas por tiempo y las vueltas tambien, asi que alcanza
+    con avanzar una vez por cada lista. Lo que cae fuera de toda vuelta ---la
+    formacion, el regreso a boxes--- se queda sin numero y queda fuera del
+    dibujo, que es lo correcto: no son parte del circuito.
+    """
+
+    if not vueltas:
+        return filas
+    salida = []
+    i = 0
+    for fila in filas:
+        cuando = fila[5]
+        while i < len(vueltas) and vueltas[i][2] < cuando:
+            i += 1
+        if i < len(vueltas) and vueltas[i][1] <= cuando:
+            salida.append(fila[:4] + (vueltas[i][0],) + fila[5:])
+        else:
+            salida.append(fila)
+    return salida
+
+
 def _vuelta_que_mejor_dibuja(por_vuelta: dict) -> list:
     """La vuelta que sirve de contorno del circuito: la que **cierra**.
 
@@ -1920,6 +2299,8 @@ def _vuelta_que_mejor_dibuja(por_vuelta: dict) -> list:
 def trazado(session_id: str, vuelta: int | None = None,
             puntos: Annotated[int, Query(ge=50, le=3000)] = 400,
             adquisicion: Annotated[str | None, Query()] = None,
+            vehiculo: Annotated[str | None, Query(
+                description="De quien es el recorrido; por omision, quien conduce")] = None,
             fase: Annotated[int | None, Query(ge=1)] = None) -> dict[str, Any]:
     """Trazado del circuito en el plano, con su desnivel y su sentido de giro.
 
@@ -1967,7 +2348,14 @@ def trazado(session_id: str, vuelta: int | None = None,
         # acotada: el trazado salio como una tira angosta en vez del circuito.
         # El defecto estaba desde siempre y hacia falta un segundo coche para
         # que se notara.
-        _propio = _vehiculo_propio(cursor, fuente, session_id)
+        # QUIEN CONDUCE NO SIEMPRE LO DICE LA TELEMETRIA.
+        #
+        # `_vehiculo_propio` lo lee de `player_car_index`, que viaja en la
+        # cabecera del protocolo del simulador. OpenF1 no tiene nada
+        # equivalente: sus nueve señales describen el coche y ninguna dice cual
+        # de ellos es el que se esta mirando. Quien consulta si lo sabe ---el
+        # tablero tiene su vehiculo elegido--- y por eso se lo puede decir.
+        _propio = vehiculo or _vehiculo_propio(cursor, fuente, session_id)
         _cv, _cv_par = _acotar_al_vehiculo(_propio)
         cursor.execute("""
             WITH p AS (
@@ -1982,7 +2370,7 @@ def trazado(session_id: str, vuelta: int | None = None,
                    AND (%s::timestamptz IS NULL OR timestamp BETWEEN %s AND %s)""" +
             _cv + _tramo + """
                  GROUP BY timestamp)
-            SELECT x, z, y, distancia, vuelta FROM p
+            SELECT x, z, y, distancia, vuelta, timestamp FROM p
              WHERE x IS NOT NULL AND z IS NOT NULL
              ORDER BY vuelta NULLS LAST, distancia NULLS LAST, timestamp
         """, tuple([eje_x, eje_z, fuente, session_id, interes,
@@ -1993,6 +2381,14 @@ def trazado(session_id: str, vuelta: int | None = None,
     if not filas:
         return {"session_id": session_id, "fuente": fuente, "puntos": [],
                 "motivo": "La sesion no tiene posicion persistida."}
+
+    # SIN `lap_number`, LA VUELTA SE DEDUCE DEL RELOJ.
+    # Ver `_vueltas_por_reloj`: sin esto, una fuente que no publica el numero de
+    # vuelta dibuja la sesion entera superpuesta.
+    if all(f[4] is None for f in filas):
+        with db.obtener_conexion() as conexion, conexion.cursor() as cursor:
+            _vs = _vueltas_por_reloj(cursor, session_id, _propio)
+        filas = _numerar_por_reloj(filas, _vs)
 
     if vuelta is not None:
         filas = [f for f in filas if f[4] is not None and int(f[4]) == vuelta]
@@ -2094,12 +2490,37 @@ CANALES_CARROCERIA = {
 }
 
 CANALES_PUESTA_A_PUNTO = {
-    "sesgo_de_freno_pct": "brake_bias_front",
-    "mezcla_de_combustible": "fuel_mix_mode",
-    "modo_de_despliegue_ers": "ers_deploy_mode",
-    "compuesto": "tyre_compound",
-    "edad_del_neumatico_vueltas": "tyre_age",
+    "aleron_delantero": "setup_front_wing",
+    "aleron_trasero": "setup_rear_wing",
+    "diferencial_con_acelerador_pct": "setup_differential_on_throttle",
+    "diferencial_sin_acelerador_pct": "setup_differential_off_throttle",
+    "caida_delantera_deg": "setup_camber_front",
+    "caida_trasera_deg": "setup_camber_rear",
+    "convergencia_delantera_deg": "setup_toe_front",
+    "convergencia_trasera_deg": "setup_toe_rear",
+    "suspension_delantera": "setup_suspension_front",
+    "suspension_trasera": "setup_suspension_rear",
+    "barra_delantera": "setup_anti_roll_bar_front",
+    "barra_trasera": "setup_anti_roll_bar_rear",
+    "altura_delantera": "setup_ride_height_front",
+    "altura_trasera": "setup_ride_height_rear",
+    "presion_de_freno_pct": "setup_brake_pressure",
+    "sesgo_de_freno_pct": "setup_brake_bias_front",
+    "freno_motor_pct": "setup_engine_braking",
+    "presion_neumatico_trasero_izq_psi": "setup_tyre_pressure_rear_left",
+    "presion_neumatico_trasero_der_psi": "setup_tyre_pressure_rear_right",
+    "presion_neumatico_delantero_izq_psi": "setup_tyre_pressure_front_left",
+    "presion_neumatico_delantero_der_psi": "setup_tyre_pressure_front_right",
+    "lastre": "setup_ballast",
+    "combustible_inicial_kg": "setup_fuel_load",
 }
+
+
+def _motivo_sin_puesta(fuente: str) -> str:
+    if fuente == "f1_25_udp_simulation":
+        return ("Esta sesion no contiene el paquete de reglaje normalizado; "
+                "las capturas anteriores necesitan reinyectarse.")
+    return "Esta fuente no publica configuracion del vehiculo."
 
 
 #: Cuanto se mira hacia atras antes de buscar sin acotar. Dos minutos cubren de
@@ -2155,7 +2576,9 @@ def _restar(instante_iso: str, segundos: int) -> str | None:
 def _ultimos_valores(cursor, fuente: str, session_id: str, senales: list[str],
                      hasta_utc: str | None = None,
                      ventana_alcance: tuple[str, str] | None = None,
-                     vehiculo: str | None = None) -> dict[str, float]:
+                     vehiculo: str | None = None,
+                     limites_fase: tuple[int | None, int | None] = (None, None),
+                     ) -> dict[str, float]:
     """Ultimo valor de cada senal **hasta un instante**, o de toda la sesion.
 
     Se resuelve con una sola consulta y `DISTINCT ON`, que sobre las columnas
@@ -2185,6 +2608,7 @@ def _ultimos_valores(cursor, fuente: str, session_id: str, senales: list[str],
     # alerones delanteros al 100 % de dano, 2.974 muestras lo declaran, y el
     # panel decia «sin dano, ninguna pieza lo declara».
     _cv, _cvp = _acotar_al_vehiculo(vehiculo)
+    _cf, _cfp = _clausula_de_tramo(*limites_fase)
     if not senales:
         return {}
 
@@ -2216,7 +2640,7 @@ def _ultimos_valores(cursor, fuente: str, session_id: str, senales: list[str],
     # y recordar la ausencia sin decir de quien deja al coche propio marcado
     # como si tampoco los tuviera. Se vio en pantalla: «SIN CLIMA» sobre una
     # sesion cuya API devolvia veinticuatro grados.
-    _clave_ausentes = (fuente, session_id, ventana_alcance, vehiculo)
+    _clave_ausentes = (fuente, session_id, ventana_alcance, vehiculo, limites_fase)
     salida: dict[str, Any] = {}
 
     def _consultar_ventana(faltan: list[str], desde: str, hasta: str) -> None:
@@ -2227,11 +2651,13 @@ def _ultimos_valores(cursor, fuente: str, session_id: str, senales: list[str],
                    signal_name, value_numeric, value_boolean, value_text, unit, timestamp
               FROM telemetry_messages
              WHERE source_type = %s AND session_id = %s AND signal_name = ANY(%s)"""
-                   + _cv + """
+                   + _cv + _cf + """
                AND timestamp >= %s AND timestamp <= %s
+               AND (%s::timestamptz IS NULL OR timestamp <= %s)
                AND (%s::timestamptz IS NULL OR timestamp BETWEEN %s AND %s)
              ORDER BY signal_name, timestamp DESC
-        """, tuple([fuente, session_id, faltan] + _cvp + [desde, hasta,
+        """, tuple([fuente, session_id, faltan] + _cvp + _cfp + [desde, hasta,
+              hasta_utc, hasta_utc,
               ventana_alcance[0] if ventana_alcance else None,
               ventana_alcance[0] if ventana_alcance else None,
               ventana_alcance[1] if ventana_alcance else None]))
@@ -2242,7 +2668,7 @@ def _ultimos_valores(cursor, fuente: str, session_id: str, senales: list[str],
 
     def _consultar(faltan: list[str], desde: str | None) -> None:
         condicion = ""
-        parametros: list[Any] = [fuente, session_id, faltan] + _cvp
+        parametros: list[Any] = [fuente, session_id, faltan] + _cvp + _cfp
         # El alcance acota siempre, incluso en el paso «sin acotar»: ese paso no
         # acota **por tiempo de sesion**, pero no puede salirse de la
         # adquisicion elegida.
@@ -2260,7 +2686,7 @@ def _ultimos_valores(cursor, fuente: str, session_id: str, senales: list[str],
                    signal_name, value_numeric, value_boolean, value_text, unit, timestamp
               FROM telemetry_messages
              WHERE source_type = %s AND session_id = %s AND signal_name = ANY(%s)"""
-                   + _cv + """""" +
+                   + _cv + _cf + """""" +
             condicion + """
              ORDER BY signal_name, timestamp DESC
         """, tuple(parametros))
@@ -2278,17 +2704,36 @@ def _ultimos_valores(cursor, fuente: str, session_id: str, senales: list[str],
     # El controlador devuelve `datetime`; un banco de pruebas puede devolver la
     # marca ya escrita. Si no se la puede leer, las ventanas no se aplican y se
     # cae en la consulta sin acotar: se pierde velocidad, nunca el dato.
-    cursor.execute("""
-        SELECT min(timestamp), max(timestamp) FROM telemetry_messages
-         WHERE source_type = %s AND session_id = %s
-           AND (%s::timestamptz IS NULL OR timestamp BETWEEN %s AND %s)
-    """, (fuente, session_id,
-          ventana_alcance[0] if ventana_alcance else None,
-          ventana_alcance[0] if ventana_alcance else None,
-          ventana_alcance[1] if ventana_alcance else None))
-    fila = cursor.fetchone()
-    piso = _iso(fila[0]) if fila else None
-    tope = hasta_utc if hasta_utc is not None else (_iso(fila[1]) if fila else None)
+    # LOS DOS EXTREMOS LOS SABE EL CATALOGO, Y PREGUNTARSELOS A LA TABLA GRANDE
+    # ERA LO UNICO LENTO DE ESTE PUNTO DE ACCESO.
+    #
+    # `min/max(timestamp)` acotado por sesion recorre su particion entera.
+    # Medido sobre `openf1:session:9947` ---932.625 filas, dos horas y media---:
+    # **26,3 s**, mientras las consultas que de verdad buscan los valores tardan
+    # treinta milisegundos. El navegador corta a los treinta segundos, asi que
+    # esa sesion no terminaba de abrirse y el clima quedaba en «la consulta no
+    # contesto».
+    #
+    # Con alcance elegido no sirve el catalogo ---sus extremos son los de la
+    # sesion entera y no los de esa adquisicion--- pero entonces la consulta va
+    # acotada por tiempo, que es la dimension de particion, y es barata.
+    if ventana_alcance or _cf:
+        condicion_ventana = ""
+        parametros_extremos: list[Any] = [fuente, session_id, senales] + _cfp
+        if ventana_alcance:
+            condicion_ventana = " AND timestamp BETWEEN %s AND %s"
+            parametros_extremos.extend(ventana_alcance)
+        cursor.execute("""
+            SELECT min(timestamp), max(timestamp) FROM telemetry_messages
+             WHERE source_type = %s AND session_id = %s
+               AND signal_name = ANY(%s)""" + _cf + condicion_ventana,
+            tuple(parametros_extremos))
+        fila = cursor.fetchone()
+        piso = _iso(fila[0]) if fila else None
+        fin = _iso(fila[1]) if fila else None
+    else:
+        piso, fin = catalogo_sesiones.extremos_de(session_id, fuente, cursor)
+    tope = hasta_utc if hasta_utc is not None else fin
 
     if tope is not None:
         _consultar(senales, _restar(tope, VENTANA_DE_CONTEXTO_S))
@@ -2386,21 +2831,90 @@ def estado_del_vehiculo(
     }
 
 
-#: Que unidad tiene cada campo de la puesta a punto, y si esta decodificado.
-#:
-#: TRES DE LOS CINCO SON CODIGOS SIN DECODIFICAR, Y SE DECLARA.
-#: El compuesto, la mezcla de combustible y el modo de despliegue de ERS llegan
-#: como enteros que solo significan algo contra la tabla de la especificacion
-#: oficial del juego. Esa tabla **no esta citada en el trabajo**, y traducirla
-#: de memoria pondria una anotacion sin fuente donde hoy hay una medicion. Se
-#: devuelve el codigo, se dice que es un codigo, y queda como tarea citarla.
+# Unidades del reglaje declarado. A diferencia del estado operativo que ocupaba
+# antes este panel, ningun campo es un codigo sin interpretar.
 UNIDADES_PUESTA_A_PUNTO = {
-    "sesgo_de_freno_pct": {"unidad": "%", "decodificado": True},
-    "edad_del_neumatico_vueltas": {"unidad": "vueltas", "decodificado": True},
-    "compuesto": {"unidad": "codigo", "decodificado": False},
-    "mezcla_de_combustible": {"unidad": "codigo", "decodificado": False},
-    "modo_de_despliegue_ers": {"unidad": "codigo", "decodificado": False},
+    clave: {"unidad": unidad, "decodificado": True}
+    for clave, unidad in {
+        "aleron_delantero": "nivel", "aleron_trasero": "nivel",
+        "diferencial_con_acelerador_pct": "%",
+        "diferencial_sin_acelerador_pct": "%",
+        "caida_delantera_deg": "deg", "caida_trasera_deg": "deg",
+        "convergencia_delantera_deg": "deg", "convergencia_trasera_deg": "deg",
+        "suspension_delantera": "nivel", "suspension_trasera": "nivel",
+        "barra_delantera": "nivel", "barra_trasera": "nivel",
+        "altura_delantera": "nivel", "altura_trasera": "nivel",
+        "presion_de_freno_pct": "%", "sesgo_de_freno_pct": "%",
+        "freno_motor_pct": "%",
+        "presion_neumatico_trasero_izq_psi": "psi",
+        "presion_neumatico_trasero_der_psi": "psi",
+        "presion_neumatico_delantero_izq_psi": "psi",
+        "presion_neumatico_delantero_der_psi": "psi",
+        "lastre": "nivel", "combustible_inicial_kg": "kg",
+    }.items()
 }
+
+
+def _armar_puesta_a_punto(valores: dict[str, dict]) -> tuple[dict, list, str | None, bool]:
+    """Reconstruye un paquete completo sin mezclar instantes."""
+
+    datos, campos, instantes = {}, [], set()
+    for clave, canal in CANALES_PUESTA_A_PUNTO.items():
+        v = valores.get(canal)
+        if v is None:
+            continue
+        datos[clave] = v["valor"]
+        meta = UNIDADES_PUESTA_A_PUNTO[clave]
+        campos.append({"clave": clave, "canal": canal, "valor": v["valor"],
+                       "unidad": meta["unidad"], "decodificado": True,
+                       "instante": v.get("instante")})
+        if v.get("instante") is not None:
+            instantes.add(v["instante"])
+    completa = len(datos) == len(CANALES_PUESTA_A_PUNTO) and len(instantes) == 1
+    instante = next(iter(instantes)) if completa else None
+    return datos, campos, instante, completa
+
+
+def _hay_rodaje_despues(cursor, fuente: str, session_id: str,
+                        vehiculo: str | None, desde: str,
+                        hasta: str | None = None,
+                        ventana: tuple[str, str] | None = None,
+                        limites_fase: tuple[int | None, int | None] = (None, None),
+                        ) -> bool:
+    """Confirma que el reglaje observado llego a una vuelta conducida."""
+
+    cv, pv = _acotar_al_vehiculo(vehiculo)
+    cf, pf = _clausula_de_tramo(*limites_fase)
+    condicion_ventana = " AND timestamp BETWEEN %s AND %s" if ventana else ""
+    parametros = [fuente, session_id] + pv + pf + list(ventana or ()) + [desde,
+                  hasta, hasta]
+    cursor.execute("""
+        SELECT EXISTS (
+            SELECT 1 FROM telemetry_messages
+             WHERE source_type = %s AND session_id = %s
+               AND signal_name = 'speed' AND value_numeric > 0""" + cv + cf + condicion_ventana + """
+               AND timestamp > %s
+               AND (%s::timestamptz IS NULL OR timestamp <= %s)
+             LIMIT 1)
+    """, tuple(parametros))
+    fila = cursor.fetchone()
+    return bool(fila and fila[0])
+
+
+def _comparar_con_referencia(session_id: str, puesta: dict,
+                             asentada: bool) -> tuple[dict | None, list[dict]]:
+    procedencia = procedencia_sesiones.de(session_id) or {}
+    referencia = catalogo_reglajes.referencia_de(procedencia.get("circuito"))
+    diferencias = []
+    if referencia and asentada:
+        for clave, esperado in referencia["valores"].items():
+            if clave not in puesta:
+                continue
+            aplicado = puesta[clave]
+            diferencias.append({"clave": clave, "aplicado": aplicado,
+                                "referencia": esperado,
+                                "diferencia": aplicado - esperado})
+    return referencia, diferencias
 
 
 @router.get("/sesiones/{session_id}/puesta-a-punto")
@@ -2409,50 +2923,37 @@ def puesta_a_punto(
         hasta: Annotated[str | None, Query(
             description="Instante ISO-8601: la configuracion vigente hasta ahi")] = None,
         ) -> dict[str, Any]:
-    """Configuracion asentada del vehiculo.
+    """Reglaje observado y confirmacion de que luego se condujo con el.
 
-    IMPORTANTE. Se devuelve el ultimo valor persistido, que es la
-    configuracion **con la que se rodo**. El menu del juego publica valores
-    intermedios mientras se navega, y mostrarlos seria declarar como puesta a
-    punto algo que nunca se llevo a la pista.
-
-    Con `hasta` se devuelve la que estaba vigente en ese instante, que es lo que
-    necesita un tablero que se recorre: el sesgo de freno y el modo de ERS se
-    cambian **en marcha**, y decir siempre el ultimo seria decir el del final de
-    la carrera durante toda la reproduccion.
-
-    Cada campo declara su unidad y si esta decodificado. Tres de los cinco son
-    codigos de la especificacion del juego que el trabajo todavia no cita; se
-    devuelven como codigos y se dice que lo son.
+    El menu publica valores intermedios. Por eso observar un paquete no alcanza:
+    se lo llama `asentado` solamente si sus veintitres señales pertenecen al
+        mismo instante y existe una muestra posterior con el vehiculo en marcha.
     """
     fuente = _fuente_de(session_id)
     with db.obtener_conexion() as conexion, conexion.cursor() as cursor:
+        propio = _vehiculo_propio(cursor, fuente, session_id)
         valores = _ultimos_valores(cursor, fuente, session_id,
-                                   list(CANALES_PUESTA_A_PUNTO.values()), hasta)
-    datos = {}
-    campos = []
-    for clave, canal in CANALES_PUESTA_A_PUNTO.items():
-        v = valores.get(canal)
-        if v is None:
-            continue
-        datos[clave] = v["valor"]
-        meta = UNIDADES_PUESTA_A_PUNTO.get(clave, {})
-        campos.append({
-            "clave": clave,
-            "canal": canal,
-            "valor": v["valor"],
-            "unidad": meta.get("unidad", v.get("unidad")),
-            "decodificado": meta.get("decodificado", True),
-            "instante": v.get("instante"),
-        })
+                                   list(CANALES_PUESTA_A_PUNTO.values()), hasta,
+                                   vehiculo=propio)
+        datos, campos, instante, completa = _armar_puesta_a_punto(valores)
+        asentada = bool(completa and _hay_rodaje_despues(
+            cursor, fuente, session_id, propio, instante, hasta))
+    referencia, diferencias = _comparar_con_referencia(
+        session_id, datos, asentada)
     return {
         "session_id": session_id,
         "fuente": fuente,
         "puesta_a_punto": datos,
         "campos": campos,
-        "criterio": "ultimo valor persistido hasta el instante pedido: la configuracion con la que se rodo",
-        "sin_decodificar": [c["clave"] for c in campos if not c["decodificado"]],
-        "motivo_ausencia": None if datos else "Esta fuente no publica configuracion del vehiculo.",
+        "completa": completa,
+        "asentada": asentada,
+        "instante_observado": instante,
+        "referencia": referencia,
+        "diferencias": diferencias,
+        "criterio": ("paquete completo observado antes de una muestra posterior "
+                     "con velocidad positiva: configuracion llevada a la pista"),
+        "sin_decodificar": [],
+        "motivo_ausencia": None if datos else _motivo_sin_puesta(fuente),
     }
 
 
@@ -2491,6 +2992,7 @@ def _senales_del_vehiculo() -> list[str]:
 def contexto(
         session_id: str,
         adquisicion: Annotated[str | None, Query()] = None,
+        fase: Annotated[int | None, Query(ge=1)] = None,
         hasta: Annotated[str | None, Query(
             description="Instante ISO-8601: el contexto vigente hasta ahi")] = None,
         vehiculo: Annotated[str | None, Query(
@@ -2522,6 +3024,7 @@ def contexto(
         # de la carrera original no son los de una prueba de parrilla corrida
         # tres dias despues.
         _cv = _ventana_de_alcance(cursor, fuente, session_id, adquisicion)
+        _lf = _limites_de_fase(cursor, fuente, session_id, adquisicion, fase)
         # DE QUIEN ES CADA PARTE.
         #
         # `DISTINCT ON (signal_name)` sin acotar el vehiculo devuelve, por cada
@@ -2530,19 +3033,25 @@ def contexto(
         # canal. Por eso el panel mostraba las cuatro esquinas identicas y «sin
         # dano» sobre un coche que termino con los dos alerones rotos.
         #
-        # El clima y la puesta a punto **no son de un vehiculo**: los publica el
-        # paquete de sesion, que el protocolo entrega solo para el propio. Por
-        # eso la consulta base va siempre acotada al propio, y solo cuando se
-        # pide otro se hace una segunda para sus canales. Mirar a un rival no
-        # tiene por que costar el clima.
+        # El clima es de la sesion y el reglaje es telemetria privada del propio.
+        # Ambos llegan atados a su identificador porque toda fila canonica exige
+        # vehiculo. Por eso la consulta base va siempre acotada al propio, y solo
+        # cuando se pide otro se reemplazan sus canales fisicos. Mirar a un rival
+        # no tiene por que costar ni el clima ni el reglaje propio.
         propio = _vehiculo_propio(cursor, fuente, session_id)
         valores = _ultimos_valores(cursor, fuente, session_id, senales, hasta,
-                                   ventana_alcance=_cv, vehiculo=propio)
+                                   ventana_alcance=_cv, vehiculo=propio,
+                                   limites_fase=_lf)
         if vehiculo and vehiculo != propio:
             del_otro = _ultimos_valores(cursor, fuente, session_id,
                                         _senales_del_vehiculo(), hasta,
-                                        ventana_alcance=_cv, vehiculo=vehiculo)
+                                        ventana_alcance=_cv, vehiculo=vehiculo,
+                                        limites_fase=_lf)
             valores = {**valores, **del_otro}
+        puesta, campos, instante_puesta, completa = _armar_puesta_a_punto(valores)
+        asentada = bool(completa and _hay_rodaje_despues(
+            cursor, fuente, session_id, propio, instante_puesta, hasta,
+            ventana=_cv, limites_fase=_lf))
 
     clima = {}
     for clave, canal in CANALES_CLIMA.items():
@@ -2570,16 +3079,8 @@ def contexto(
         if v is not None:
             carroceria[clave] = v["valor"]
 
-    puesta, campos = {}, []
-    for clave, canal in CANALES_PUESTA_A_PUNTO.items():
-        v = valores.get(canal)
-        if v is None:
-            continue
-        puesta[clave] = v["valor"]
-        meta = UNIDADES_PUESTA_A_PUNTO.get(clave, {})
-        campos.append({"clave": clave, "canal": canal, "valor": v["valor"],
-                       "unidad": meta.get("unidad", v.get("unidad")),
-                       "decodificado": meta.get("decodificado", True)})
+    referencia, diferencias = _comparar_con_referencia(
+        session_id, puesta, asentada)
 
     return {
         "session_id": session_id,
@@ -2593,9 +3094,15 @@ def contexto(
                             else "Esta fuente no publica estado de neumaticos ni de daño."),
         "puesta_a_punto": puesta,
         "campos": campos,
-        "sin_decodificar": [c["clave"] for c in campos if not c["decodificado"]],
+        "puesta_completa": completa,
+        "puesta_asentada": asentada,
+        "puesta_instante_observado": instante_puesta,
+        "referencia_puesta": referencia,
+        "diferencias_puesta": diferencias,
+        "puesta_motivo": None if puesta else _motivo_sin_puesta(fuente),
+        "sin_decodificar": [],
         "criterio": ("ultimo valor de cada señal hasta el instante pedido; "
-                     "las tres partes son del mismo instante por construccion"),
+                     "el reglaje solo se declara asentado si despues se rodo"),
     }
 
 
@@ -2865,7 +3372,8 @@ def _acotar_al_vehiculo(vehiculo: str | None) -> tuple[str, list]:
 
 
 def _primera_perdida_de_tren_trasero(cursor, fuente: str, session_id: str,
-                                    vehiculo: str | None = None):
+                                    vehiculo: str | None = None,
+                                    alcance: tuple[str, tuple] = ("", ())):
     """El primer instante en que el eje trasero desliza **acelerando**.
 
     El acelerador esta en la regla y no de adorno: el deslizamiento solo por si
@@ -2875,6 +3383,7 @@ def _primera_perdida_de_tren_trasero(cursor, fuente: str, session_id: str,
     """
 
     _clausula, _par = _acotar_al_vehiculo(vehiculo)
+    _ca, _pa = alcance
     cursor.execute("""
         WITH p AS (
             SELECT timestamp,
@@ -2885,7 +3394,7 @@ def _primera_perdida_de_tren_trasero(cursor, fuente: str, session_id: str,
                    max(value_numeric) FILTER (WHERE signal_name = 'lap_distance') AS metro
               FROM telemetry_messages
              WHERE source_type = %s AND session_id = %s
-               AND signal_name = ANY(%s)""" + _clausula + """
+               AND signal_name = ANY(%s)""" + _clausula + _ca + """
              GROUP BY timestamp)
         SELECT vuelta, metro, greatest(abs(izq), abs(der)) AS peor, timestamp FROM p
          WHERE izq IS NOT NULL AND der IS NOT NULL AND acelerador IS NOT NULL
@@ -2894,13 +3403,15 @@ def _primera_perdida_de_tren_trasero(cursor, fuente: str, session_id: str,
     """, (fuente, session_id,
           ["wheel_slip_ratio_rear_left", "wheel_slip_ratio_rear_right",
            "throttle_position", "lap_number", "lap_distance"],
-          *_par,
-          anotador_vivo.UMBRAL_DESLIZAMIENTO, UMBRAL_ACELERADOR_PCT))
+           *_par,
+           *_pa,
+           anotador_vivo.UMBRAL_DESLIZAMIENTO, UMBRAL_ACELERADOR_PCT))
     return cursor.fetchone()
 
 
 def _primer_trompo(cursor, fuente: str, session_id: str,
-                  vehiculo: str | None = None):
+                  vehiculo: str | None = None,
+                  alcance: tuple[str, tuple] = ("", ())):
     """El primer trompo: giro contra el volante, tren trasero fuera, y que dure.
 
     LA DURACION SE MIDE CON EL RELOJ Y NO CONTANDO FILAS. Dos muestras seguidas
@@ -2912,6 +3423,7 @@ def _primer_trompo(cursor, fuente: str, session_id: str,
     """
 
     _clausula, _par = _acotar_al_vehiculo(vehiculo)
+    _ca, _pa = alcance
     cursor.execute("""
         WITH p AS (
             SELECT timestamp,
@@ -2925,7 +3437,7 @@ def _primer_trompo(cursor, fuente: str, session_id: str,
                    max(value_numeric) FILTER (WHERE signal_name = 'lap_distance') AS metro
               FROM telemetry_messages
              WHERE source_type = %s AND session_id = %s
-               AND signal_name = ANY(%s)""" + _clausula + """
+               AND signal_name = ANY(%s)""" + _clausula + _ca + """
              GROUP BY timestamp),
         q AS (
             SELECT * FROM p
@@ -2948,14 +3460,16 @@ def _primer_trompo(cursor, fuente: str, session_id: str,
           ["yaw_rate", "steering_normalized",
            "wheel_slip_ratio_rear_left", "wheel_slip_ratio_rear_right",
            "lap_number", "lap_distance"],
-          *_par,
-          UMBRAL_GIRO_TROMPO, anotador_vivo.UMBRAL_DESLIZAMIENTO,
+           *_par,
+           *_pa,
+           UMBRAL_GIRO_TROMPO, anotador_vivo.UMBRAL_DESLIZAMIENTO,
           MINIMO_MUESTRAS_TROMPO))
     return cursor.fetchone()
 
 
 def _primer_impacto_vertical(cursor, fuente: str, session_id: str,
-                            vehiculo: str | None = None):
+                            vehiculo: str | None = None,
+                            alcance: tuple[str, tuple] = ("", ())):
     """El primer golpe vertical, mirando el valor absoluto.
 
     **En valor absoluto y no por el maximo**, que es lo que las reglas de canal
@@ -2964,6 +3478,7 @@ def _primer_impacto_vertical(cursor, fuente: str, session_id: str,
     """
 
     _clausula, _par = _acotar_al_vehiculo(vehiculo)
+    _ca, _pa = alcance
     cursor.execute("""
         WITH p AS (
             SELECT timestamp,
@@ -2972,20 +3487,22 @@ def _primer_impacto_vertical(cursor, fuente: str, session_id: str,
                    max(value_numeric) FILTER (WHERE signal_name = 'lap_distance') AS metro
               FROM telemetry_messages
              WHERE source_type = %s AND session_id = %s
-               AND signal_name = ANY(%s)""" + _clausula + """
+               AND signal_name = ANY(%s)""" + _clausula + _ca + """
              GROUP BY timestamp)
         SELECT vuelta, metro, g, timestamp FROM p
          WHERE g IS NOT NULL AND abs(g) > %s
          ORDER BY timestamp LIMIT 1
     """, (fuente, session_id,
-          ["g_force_vertical", "lap_number", "lap_distance"],
-          *_par,
-          anotador_vivo.UMBRAL_VERTICAL_G))
+           ["g_force_vertical", "lap_number", "lap_distance"],
+           *_par,
+           *_pa,
+           anotador_vivo.UMBRAL_VERTICAL_G))
     return cursor.fetchone()
 
 
 def _primera_caida_brusca(cursor, fuente: str, session_id: str,
-                         vehiculo: str | None = None):
+                         vehiculo: str | None = None,
+                         alcance: tuple[str, tuple] = ("", ())):
     """La primera perdida grande de velocidad **sin frenar**, sobre una ventana.
 
     Es la tercera regla del anotador en vivo y la unica de las suyas que no cabe
@@ -3016,6 +3533,7 @@ def _primera_caida_brusca(cursor, fuente: str, session_id: str,
     """
 
     _clausula, _par = _acotar_al_vehiculo(vehiculo)
+    _ca, _pa = alcance
     cursor.execute("""
         WITH p AS (
             SELECT timestamp,
@@ -3025,7 +3543,7 @@ def _primera_caida_brusca(cursor, fuente: str, session_id: str,
                    max(value_numeric) FILTER (WHERE signal_name = 'lap_distance')   AS metro
               FROM telemetry_messages
              WHERE source_type = %s AND session_id = %s
-               AND signal_name = ANY(%s)""" + _clausula + """
+               AND signal_name = ANY(%s)""" + _clausula + _ca + """
              GROUP BY timestamp),
         q AS (
             SELECT * FROM p WHERE velocidad IS NOT NULL AND freno IS NOT NULL),
@@ -3042,14 +3560,16 @@ def _primera_caida_brusca(cursor, fuente: str, session_id: str,
          ORDER BY timestamp LIMIT 1
     """.format(ventana=int(anotador_vivo.VENTANA_CAIDA_S * 1000)),
         (fuente, session_id,
-         ["speed", "brake_position", "lap_number", "lap_distance"],
-         *_par,
-         anotador_vivo.UMBRAL_CAIDA_KMH, UMBRAL_FRENO_SUELTO_PCT))
+          ["speed", "brake_position", "lap_number", "lap_distance"],
+          *_par,
+          *_pa,
+          anotador_vivo.UMBRAL_CAIDA_KMH, UMBRAL_FRENO_SUELTO_PCT))
     return cursor.fetchone()
 
 
 def _primera_salida_de_pista(cursor, fuente: str, session_id: str,
-                            vehiculo: str | None = None):
+                            vehiculo: str | None = None,
+                            alcance: tuple[str, tuple] = ("", ())):
     """El primer instante con las cuatro ruedas fuera del asfalto, o `None`.
 
     Se pide en una consulta y no recorriendo la sesion: la condicion es sobre
@@ -3063,6 +3583,7 @@ def _primera_salida_de_pista(cursor, fuente: str, session_id: str,
 
     esquinas = ["surface_type_%s" % e for e in ESQUINAS]
     _clausula, _par = _acotar_al_vehiculo(vehiculo)
+    _ca, _pa = alcance
     cursor.execute("""
         WITH p AS (
             SELECT timestamp,
@@ -3074,15 +3595,15 @@ def _primera_salida_de_pista(cursor, fuente: str, session_id: str,
                    max(value_numeric) FILTER (WHERE signal_name = 'lap_distance') AS metro
               FROM telemetry_messages
              WHERE source_type = %s AND session_id = %s
-               AND signal_name = ANY(%s)""" + _clausula + """
+               AND signal_name = ANY(%s)""" + _clausula + _ca + """
              GROUP BY timestamp)
         SELECT vuelta, metro, a, b, c, d, timestamp FROM p
          WHERE a IS NOT NULL AND b IS NOT NULL AND c IS NOT NULL AND d IS NOT NULL
            AND a <> %s AND b <> %s AND c <> %s AND d <> %s
          ORDER BY timestamp LIMIT 1
     """, tuple(esquinas) + (fuente, session_id,
-                            esquinas + ["lap_number", "lap_distance"])
-         + tuple(_par) + (f1_udp.SUPERFICIE_DE_PISTA,) * 4)
+                             esquinas + ["lap_number", "lap_distance"])
+         + tuple(_par) + tuple(_pa) + (f1_udp.SUPERFICIE_DE_PISTA,) * 4)
     fila = cursor.fetchone()
     if not fila:
         return None
@@ -3090,9 +3611,74 @@ def _primera_salida_de_pista(cursor, fuente: str, session_id: str,
     return vuelta, metro, [int(a), int(b), int(c), int(d)], instante
 
 
+def _avisos_reproducidos(cursor, fuente: str, session_id: str,
+                         vehiculo: str | None,
+                         ventana: tuple[str, str] | None,
+                         limites_fase: tuple[int | None, int | None],
+                         limite: int) -> list[dict[str, Any]]:
+    """Ejecuta sobre lo guardado la misma autoridad que observa el flujo vivo."""
+
+    clausula_vehiculo, parametros_vehiculo = _acotar_al_vehiculo(vehiculo)
+    clausula_fase, parametros_fase = _clausula_de_tramo(*limites_fase)
+    clausula_ventana = " AND timestamp BETWEEN %s AND %s" if ventana else ""
+    parametros_ventana = list(ventana or ())
+    cursor.execute("""
+        SELECT signal_name, value_numeric, value_boolean, value_text, unit, timestamp
+          FROM telemetry_messages
+         WHERE source_type = %s AND session_id = %s
+           AND signal_name = ANY(%s)""" + clausula_vehiculo + clausula_ventana
+                   + clausula_fase + """
+         ORDER BY COALESCE(replay_seq, """ + _orden_dentro_de_la_sesion() + "), """
+                   "array_position(%s::text[], "
+                   "COALESCE(metadata->'extra'->>'paquete', '') || ':' || signal_name), "
+                   "timestamp, signal_name",
+        tuple([fuente, session_id, list(anotador_vivo.CANALES_PARA_ANOTAR)]
+              + parametros_vehiculo + parametros_ventana + parametros_fase
+              + [adaptador_f1_25.orden_de_publicacion()]))
+
+    anotador = anotador_vivo.Anotador()
+    while True:
+        filas = (cursor.fetchmany(5000) if hasattr(cursor, "fetchmany")
+                 else cursor.fetchall())
+        if not filas:
+            break
+        for nombre, numero, booleano, texto, unidad, instante in filas:
+            valor = numero if numero is not None else (
+                booleano if booleano is not None else texto)
+            anotador.observar({
+                "signal_name": nombre,
+                "value": valor,
+                "unit": unidad,
+                "timestamp": (instante.isoformat()
+                              if hasattr(instante, "isoformat") else instante),
+            })
+        if not hasattr(cursor, "fetchmany"):
+            break
+    anotador.cerrar_pendiente()
+
+    salida = []
+    for anotacion in anotador.anotaciones:
+        salida.append({
+            "id": anotacion.get("id"),
+            "nivel": "alerta" if anotacion.get("nivel") == "incidente" else "info",
+            "que": anotacion.get("titulo") or "Anotacion",
+            "detalle": anotacion.get("detalle") or "",
+            "vuelta": anotacion.get("vuelta"),
+            "metro": anotacion.get("distancia_m"),
+            "instante": (datetime.fromtimestamp(anotacion["reloj_s"], timezone.utc).isoformat()
+                          if anotacion.get("reloj_s") is not None else None),
+            "canal": anotacion.get("fundamento") or "anotador en vivo",
+            "umbral": anotacion.get("fundamento"),
+            "valor": None,
+            "unidad": "",
+        })
+    return salida[-limite:]
+
+
 @router.get("/sesiones/{session_id}/avisos")
 def avisos(session_id: str,
-           limite: Annotated[int, Query(ge=1, le=300)] = 60,
+           limite: Annotated[int, Query(
+               ge=1, le=anotador_vivo.ANOTACIONES_CONSERVADAS)] = 60,
            adquisicion: Annotated[str | None, Query()] = None,
            fase: Annotated[int | None, Query(ge=1)] = None) -> dict[str, Any]:
     """Avisos de una sesion ya corrida, con la vuelta y el metro en que ocurren.
@@ -3101,9 +3687,9 @@ def avisos(session_id: str,
     sesion guardada: sin momento, un aviso no se puede ubicar en la carrera ni
     cruzar con la traza, que es para lo que sirve.
 
-    Se devuelve el **primer** instante en que cada condicion se cumple, no cada
-    muestra que la cumple: un piso roto lo sigue estando durante mil muestras y
-    eso es un solo hecho.
+    La secuencia persistida pasa por el mismo `Anotador` del flujo vivo. Esto
+    conserva no sólo los umbrales, sino también su agrupamiento, silencios,
+    textos y avisos transitorios.
     """
     # El recorrido es el mismo cada vez sobre una sesion guardada: se guarda.
     # LA CLAVE DE LA CACHE LLEVA EL ALCANCE.
@@ -3121,145 +3707,29 @@ def avisos(session_id: str,
     if fuente != "f1_25_udp_simulation":
         return {"session_id": session_id, "fuente": fuente, "avisos": [],
                 "motivo": ("Esta fuente no publica banderas, dano ni tipo de "
-                           "superficie: no hay con que levantar un aviso.")}
+                            "superficie: no hay con que levantar un aviso.")}
 
-    canales = [r["canal"] for r in REGLAS_DE_AVISO]
-    superficies = ["surface_type_%s" % e for e in ESQUINAS]
+    with db.obtener_conexion() as conexion:
+        with conexion.cursor() as cursor:
+            propio = _vehiculo_propio(cursor, fuente, session_id)
+            ventana = _ventana_de_alcance(cursor, fuente, session_id, adquisicion)
+            limites_fase = _limites_de_fase(
+                cursor, fuente, session_id, adquisicion, fase)
+        # Un cursor del servidor evita materializar toda la carrera en la RAM de
+        # la API. `fetchmany` mantiene acotado también el lote de Python.
+        with conexion.cursor(name="avisos_reproducidos") as cursor_avisos:
+            encontrados = _avisos_reproducidos(
+                cursor_avisos, fuente, session_id, propio, ventana,
+                limites_fase, limite)
 
-    with db.obtener_conexion() as conexion, conexion.cursor() as cursor:
-        # DE QUIEN SON ESTOS AVISOS. De quien conduce, y hay que decirlo con un
-        # `vehicle_id` y no darlo por sentado: desde que se puede escuchar a
-        # varios pilotos, la sesion tiene mas de un vehiculo y girar la tabla sin
-        # acotar mezcla los canales de todos.
-        propio = _vehiculo_propio(cursor, fuente, session_id)
-        _cl, _pv = _acotar_al_vehiculo(propio)
-        cursor.execute("""
-            WITH p AS (
-                SELECT timestamp,
-                       max(value_numeric) FILTER (WHERE signal_name = 'lap_number')  AS vuelta,
-                       max(value_numeric) FILTER (WHERE signal_name = 'lap_distance') AS metro,
-                       signal_name, max(value_numeric) AS valor
-                  FROM telemetry_messages
-                 WHERE source_type = %s AND session_id = %s
-                   AND signal_name = ANY(%s)""" + _cl + """
-                 GROUP BY timestamp, signal_name)
-            SELECT signal_name, min(timestamp) FILTER (WHERE valor IS NOT NULL) AS primero,
-                   max(valor) AS pico
-              FROM p GROUP BY signal_name
-        """, tuple([fuente, session_id,
-                   canales + superficies + ["lap_number", "lap_distance"]] + _pv))
-        picos = {f[0]: {"primero": f[1], "pico": f[2]} for f in cursor.fetchall()}
-
-        # El momento exacto de cada condicion: una consulta por regla que se
-        # cumple, no por regla declarada.
-        encontrados = []
-        for regla in REGLAS_DE_AVISO:
-            info = picos.get(regla["canal"])
-            if not info or info["pico"] is None or info["pico"] < regla["umbral"]:
-                continue
-            cursor.execute("""
-                WITH p AS (
-                    SELECT timestamp,
-                           max(value_numeric) FILTER (WHERE signal_name = %s) AS v,
-                           max(value_numeric) FILTER (WHERE signal_name = 'lap_number') AS vuelta,
-                           max(value_numeric) FILTER (WHERE signal_name = 'lap_distance') AS metro
-                      FROM telemetry_messages
-                     WHERE source_type = %s AND session_id = %s
-                       AND signal_name IN (%s, 'lap_number', 'lap_distance')""" + _cl + """
-                     GROUP BY timestamp)
-                SELECT vuelta, metro, v, timestamp FROM p
-                 WHERE v >= %s ORDER BY timestamp LIMIT 1
-            """, tuple([regla["canal"], fuente, session_id, regla["canal"]]
-                       + _pv + [regla["umbral"]]))
-            fila = cursor.fetchone()
-            if not fila:
-                continue
-            encontrados.append({
-                "nivel": regla["nivel"],
-                "que": regla["que"],
-                "valor": round(fila[2], 2) if fila[2] is not None else None,
-                "unidad": regla["unidad"],
-                "vuelta": int(fila[0]) if fila[0] is not None else None,
-                "metro": round(fila[1], 1) if fila[1] is not None else None,
-                "instante": fila[3].isoformat() if fila[3] else None,
-                "canal": regla["canal"],
-                "umbral": regla["umbral"],
-            })
-
-        # FUERA DE PISTA, QUE HASTA AHORA SOLO EXISTIA EN VIVO.
-        #
-        # Las catorce reglas de arriba miran **un canal contra un umbral**, y la
-        # salida de pista no es eso: es una condicion sobre los cuatro a la vez
-        # ---ninguna rueda sobre asfalto--- de modo que no entra en esa forma y
-        # por eso no estaba. Medido sobre la sesion de Abu Dabi: veintitres
-        # cuadros con las cuatro ruedas fuera, y la respuesta traia cero avisos.
-        fila = _primera_salida_de_pista(cursor, fuente, session_id, propio)
-        if fila is not None:
-            vuelta, metro, codigos, instante = fila
-            nombres = sorted({f1_udp.SUPERFICIES.get(c, "id-%d" % c) for c in codigos})
-            # Sobre piano se deja la pista **sin perder agarre**, que es la
-            # trazada normal de muchas curvas. Se anota igual ---el reglamento no
-            # distingue--- y se dice, porque no es lo mismo pisar un piano que
-            # irse al cesped.
-            con_agarre = all(c in f1_udp.SUPERFICIES_CON_AGARRE for c in codigos)
-            encontrados.append({
-                "nivel": "info" if con_agarre else REGLA_FUERA_DE_PISTA["nivel"],
-                "que": REGLA_FUERA_DE_PISTA["que"],
-                "valor": None,
-                "unidad": "",
-                "vuelta": int(vuelta) if vuelta is not None else None,
-                "metro": round(metro, 1) if metro is not None else None,
-                "instante": instante.isoformat() if instante else None,
-                "canal": REGLA_FUERA_DE_PISTA["canal"],
-                "umbral": REGLA_FUERA_DE_PISTA["umbral"],
-                "detalle": "las cuatro ruedas sobre %s%s" % (
-                    "/".join(nombres),
-                    "; sobre superficie con agarre" if con_agarre else ""),
-            })
-
-        # Las fisicas, que hasta hoy solo existian sobre el flujo en vivo.
-        for regla, buscar, formato in (
-                (REGLAS_FISICAS[0], _primera_perdida_de_tren_trasero,
-                 lambda v: "%.0f %% de deslizamiento en el eje trasero" % (abs(v) * 100)),
-                (REGLAS_FISICAS[1], _primer_trompo,
-                 lambda v: "%.2f rad/s de giro contra el volante" % abs(v)),
-                (REGLAS_FISICAS[2], _primer_impacto_vertical,
-                 lambda v: "%+.2f g" % v),
-                (REGLAS_FISICAS[3], _primera_caida_brusca,
-                 lambda v: "-%.0f km/h en %.1f s sin frenar"
-                           % (v, anotador_vivo.VENTANA_CAIDA_S))):
-            fila = buscar(cursor, fuente, session_id, propio)
-            if not fila:
-                continue
-            vuelta, metro, valor, instante = fila[:4]
-            encontrados.append({
-                "nivel": regla["nivel"],
-                "que": regla["que"],
-                "valor": round(valor, 2) if valor is not None else None,
-                "unidad": regla["unidad"],
-                "vuelta": int(vuelta) if vuelta is not None else None,
-                "metro": round(metro, 1) if metro is not None else None,
-                "instante": instante.isoformat() if instante else None,
-                "canal": regla["canal"],
-                "umbral": regla["umbral"],
-                "detalle": formato(valor) if valor is not None else None,
-            })
-
-    encontrados.sort(key=lambda a: (-(a["vuelta"] or 0), -(a["metro"] or 0)))
     respuesta = {
         "session_id": session_id,
         "fuente": fuente,
-        # De quien son. Con una sola sesion de un vehiculo la pregunta no
-        # existia; desde que se escucha a varios pilotos, un aviso sin dueno es
-        # una afirmacion sin sujeto.
         "vehiculo": propio,
-        "avisos": encontrados[:limite],
-        # Las de canal contra umbral, mas la de superficie y las fisicas, que no
-        # tienen esa forma. Contar solo las primeras seria decir que se
-        # evaluaron catorce cuando se evaluaron diecinueve.
-        "reglas_evaluadas": len(REGLAS_DE_AVISO) + 1 + len(REGLAS_FISICAS),
-        "criterio": ("primer instante en que cada condicion se cumple; cada aviso "
-                     "declara su canal y su umbral"),
+        "avisos": encontrados,
+        "reglas_evaluadas": anotador_vivo.CANTIDAD_REGLAS,
+        "criterio": ("mismas reglas, umbrales, agrupamiento y textos que el flujo "
+                     "vivo, reproducidos sobre las muestras persistidas"),
     }
     _AVISOS_CACHE[clave] = respuesta
     _AVISOS_CACHE.move_to_end(clave)

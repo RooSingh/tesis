@@ -18,7 +18,7 @@ from collections import deque
 import threading
 
 import paho.mqtt.client as mqtt
-from pydantic import ValidationError
+from pydantic import TypeAdapter, ValidationError
 
 from backend.config import (
     MQTT_BATCH_SIZE,
@@ -46,6 +46,7 @@ MAX_MENSAJES_EN_MEMORIA = 20
 BATCH_SIZE = MQTT_BATCH_SIZE
 FLUSH_INTERVAL_SECONDS = MQTT_FLUSH_INTERVAL_SECONDS
 MAX_PENDING_MESSAGES = MQTT_MAX_PENDING_MESSAGES
+ADAPTADOR_LOTE_TELEMETRIA = TypeAdapter(list[TelemetryMessage])
 
 
 class TelemetryBatchBuffer:
@@ -121,6 +122,52 @@ class TelemetryBatchBuffer:
             self.pending.append(message)
             self.metrics["received"] += 1
             self.metrics["max_pending"] = max(self.metrics["max_pending"], len(self.pending))
+            if len(self.pending) >= self.batch_size:
+                self.batch_ready.notify()
+
+    def encolar_mensaje(self, mensajes: list, mid: int, qos: int) -> None:
+        """Encola las senales de **un** mensaje del intermediario y anota su acuse.
+
+        LAS DOS COSAS BAJO EL MISMO CERROJO, Y ESE ES EL PUNTO.
+
+        Antes se encolaba senal por senal con `enqueue` y se anotaba el acuse
+        recien al terminar el mensaje. Entre la primera senal encolada y esa
+        anotacion hay un instante en que el trabajador ---que corre en otro
+        hilo--- puede tomar un lote, escribirlo y consumir de la cola de acuses
+        una cobertura **que todavia no existe**. La senal queda persistida y el
+        mensaje del intermediario pendiente para siempre: nunca se confirma, y
+        el intermediario lo retiene o lo reenvia. Reproducido con `batch_size=1`.
+
+        Lo que hace visible el estado al trabajador es soltar el cerrojo, porque
+        es lo unico que necesita para tomar un lote. Encolando y anotando sin
+        soltarlo en el medio, no hay instante en que una senal este en la cola
+        sin su cobertura.
+
+        Un mensaje sin senales validas se confirma en el acto: ningun lote lo va
+        a cubrir nunca, y sin confirmarlo el intermediario lo reenvia sin fin.
+        """
+
+        if not mensajes:
+            if self.confirmar is not None:
+                self.confirmar(mid, qos)
+            return
+
+        with self.batch_ready:
+            # La contrapresion espera **antes** de anotar nada: mientras se
+            # espera se suelta el cerrojo, y anotar el acuse antes dejaria la
+            # cobertura sin sus senales, que es el defecto simetrico.
+            if self.max_pending and len(self.pending) >= self.max_pending:
+                self.metrics["backpressure_waits"] += 1
+                self.batch_ready.wait_for(
+                    lambda: self.stop_event.is_set() or len(self.pending) < self.max_pending,
+                    timeout=self.flush_interval * 4,
+                )
+            if self.confirmar is not None:
+                self.acuses.append([mid, qos, len(mensajes)])
+            self.pending.extend(mensajes)
+            self.metrics["received"] += len(mensajes)
+            self.metrics["max_pending"] = max(self.metrics["max_pending"],
+                                              len(self.pending))
             if len(self.pending) >= self.batch_size:
                 self.batch_ready.notify()
 
@@ -292,13 +339,11 @@ class TelemetryBatchBuffer:
             return {**self.metrics, "pending": len(self.pending)}
 
 
-def _guardar_mensaje_en_memoria(mensaje: dict) -> None:
-    """Guarda un mensaje recibido en un buffer corto en memoria."""
-
-    ULTIMOS_MENSAJES.append(mensaje)
-
+def _guardar_mensajes_en_memoria(mensajes: list[dict]) -> None:
+    """Conserva de una vez solo la cola util de un lote ya validado."""
+    ULTIMOS_MENSAJES.extend(mensajes[-MAX_MENSAJES_EN_MEMORIA:])
     if len(ULTIMOS_MENSAJES) > MAX_MENSAJES_EN_MEMORIA:
-        del ULTIMOS_MENSAJES[0]
+        del ULTIMOS_MENSAJES[:-MAX_MENSAJES_EN_MEMORIA]
 
 
 # Tope de mensajes de error impresos por categoria. Sin este limite, una corrida
@@ -363,73 +408,65 @@ def on_message(client: mqtt.Client, userdata: TelemetryBatchBuffer, msg: mqtt.MQ
     """Callback ejecutado cuando llega un mensaje desde MQTT."""
 
     try:
-        payload = msg.payload.decode("utf-8")
-        contenido = json.loads(payload)
-    except (UnicodeDecodeError, json.JSONDecodeError) as error:
-        userdata.record_decode_error()
-        _informar_error_acotado("Mensaje descartado por decodificacion o validacion", error)
-        return
+        # Parsear con ``json.loads`` y despues validar recorria todo el payload
+        # dos veces. El camino normal hace ambas cosas dentro de pydantic-core.
+        # La forma sigue distinguiendo lote de mensaje suelto, sin agregar una
+        # marca al contrato que comparten los tres publicadores.
+        if msg.payload.lstrip().startswith(b"["):
+            aceptadas = ADAPTADOR_LOTE_TELEMETRIA.validate_json(msg.payload)
+        else:
+            aceptadas = [TelemetryMessage.model_validate_json(msg.payload)]
+    except ValidationError:
+        # Una senal invalida dentro de un lote no puede arrastrar a las demas.
+        # Este camino excepcional separa el JSON y valida una por una para
+        # conservar las validas y contar exactamente cada rechazo.
+        try:
+            contenido = json.loads(msg.payload)
+        except (UnicodeDecodeError, json.JSONDecodeError) as error:
+            userdata.record_decode_error()
+            _informar_error_acotado(
+                "Mensaje descartado por decodificacion o validacion", error)
+            return
+        crudos = contenido if isinstance(contenido, list) else [contenido]
+        aceptadas = []
+        for mensaje_dict in crudos:
+            try:
+                mensaje = TelemetryMessage.model_validate(mensaje_dict)
+            except ValidationError as error:
+                userdata.record_decode_error()
+                _informar_error_acotado(
+                    "Mensaje descartado por decodificacion o validacion", error)
+                continue
+            except Exception as error:
+                userdata.record_processing_error()
+                _informar_error_acotado("Error inesperado al procesar mensaje", error)
+                continue
+            aceptadas.append(mensaje)
     except Exception as error:
         userdata.record_processing_error()
         _informar_error_acotado("Error inesperado al procesar mensaje", error)
         return
 
-    # **Un mensaje suelto y un lote se distinguen por la forma, no por una
-    # marca.** Si lo que llega es una lista, son varias senales; si es un
-    # objeto, es una.
-    #
-    # Se aceptan las dos porque hay tres publicadores usando este contrato ---el
-    # capturador, la reproduccion del bus y la carga de la fuente deportiva--- y
-    # cambiarlos a los tres a la vez volveria imposible ubicar un fallo. Los que
-    # no agrupen siguen andando sin tocarlos.
-    #
-    # Por que existe el lote: cada mensaje con garantia de entrega paga un ida y
-    # vuelta con el intermediario, y **el cliente acepta unos 6.578 por segundo
-    # sin importar que lleven adentro**. Con una senal por mensaje, la parrilla
-    # completa descartaba el 96 % en la cola de salida; con 560 por lote, el
-    # caudal util pasa a 3,19 millones de senales por segundo y no se descarta
-    # ninguna.
-    crudos = contenido if isinstance(contenido, list) else [contenido]
+    # Solo se materializan los veinte modelos que pueden sobrevivir en esta cola;
+    # convertir los anteriores seria trabajo descartado en el mismo callback.
+    _guardar_mensajes_en_memoria([
+        mensaje.model_dump(mode="json")
+        for mensaje in aceptadas[-MAX_MENSAJES_EN_MEMORIA:]
+    ])
 
-    aceptadas = 0
-    for mensaje_dict in crudos:
-        try:
-            mensaje = TelemetryMessage.model_validate(mensaje_dict)
-        except ValidationError as error:
-            # **Se cuenta y se sigue con el resto del lote.** Una senal invalida
-            # entre quinientas sesenta no puede descartar las otras quinientas
-            # cincuenta y nueve, que es lo que pasaria si el error cortara aca.
-            userdata.record_decode_error()
-            _informar_error_acotado(
-                "Mensaje descartado por decodificacion o validacion", error)
-            continue
-        except Exception as error:
-            userdata.record_processing_error()
-            _informar_error_acotado("Error inesperado al procesar mensaje", error)
-            continue
-
-        try:
-            # Se reutiliza el diccionario ya parseado en lugar de `mensaje.model_dump()`.
-            # Serializar el modelo completo costaba una vuelta extra por cada mensaje,
-            # en el hilo de red, para conservar solo los ultimos veinte: sobre 6,2
-            # millones de mensajes ese trabajo se descartaba casi por completo.
-            _guardar_mensaje_en_memoria(mensaje_dict)
-            userdata.enqueue(mensaje)
-            aceptadas += 1
-        except Exception as error:
-            userdata.record_processing_error()
-            _informar_error_acotado("Error al encolar mensaje", error)
-
-    # **Se anota el mensaje del intermediario recien aca**, con la cuenta de
-    # senales que efectivamente entraron a la cola. El acuse sale despues, cuando
-    # un lote las haya escrito.
+    # EL MENSAJE ENTERO ENTRA A LA COLA DE UNA VEZ, CON SU ACUSE ANOTADO.
     #
-    # Se anota siempre, incluso con cero aceptadas: un mensaje cuyas senales se
-    # rechazaron todas igual hay que confirmarlo, o el intermediario lo reenvia
-    # sin fin. Ese caso se confirma en el acto, porque ningun lote lo va a
-    # cubrir.
-    userdata.registrar_mensaje(getattr(msg, "mid", 0),
-                               getattr(msg, "qos", 0), aceptadas)
+    # Antes se encolaba senal por senal y se anotaba el acuse recien aca. Entre
+    # la primera senal encolada y esta linea hay un instante en que el
+    # trabajador ---otro hilo--- puede tomar un lote, escribirlo y consumir una
+    # cobertura que todavia no existe: la senal queda persistida y el mensaje
+    # del intermediario pendiente para siempre.
+    #
+    # Con cero aceptadas se confirma en el acto, dentro del mismo metodo: un
+    # mensaje cuyas senales se rechazaron todas igual hay que confirmarlo, o el
+    # intermediario lo reenvia sin fin, y ningun lote lo va a cubrir.
+    userdata.encolar_mensaje(aceptadas, getattr(msg, "mid", 0),
+                             getattr(msg, "qos", 0))
 
 
 def on_disconnect(client: mqtt.Client, userdata: TelemetryBatchBuffer, disconnect_flags, reason_code, properties) -> None:

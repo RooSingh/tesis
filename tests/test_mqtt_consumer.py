@@ -33,11 +33,17 @@ class FakeBuffer:
         #: la prueba pasaria con un buffer que el consumidor real no acepta.
         self.registrados = []
 
-    def enqueue(self, mensaje) -> None:
-        self.enqueued.append(mensaje)
+    def encolar_mensaje(self, mensajes, mid: int, qos: int) -> None:
+        """Encolar y anotar el acuse son **una sola operacion** en el real.
 
-    def registrar_mensaje(self, mid: int, qos: int, senales: int) -> None:
-        self.registrados.append((mid, qos, senales))
+        Lo eran en dos, y entre una y otra el trabajador podia escribir senales
+        cuya cobertura todavia no estaba anotada. El simulacro sigue al contrato
+        real: si ofreciera los dos metodos por separado, esta prueba pasaria con
+        un buffer que el consumidor ya no usa.
+        """
+
+        self.enqueued.extend(mensajes)
+        self.registrados.append((mid, qos, len(mensajes)))
 
     def record_decode_error(self) -> None:
         self.decode_errors += 1
