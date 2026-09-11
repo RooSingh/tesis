@@ -1633,6 +1633,15 @@ function elegirPropio(id) {
   render();
 }
 
+/* Lo mas corto que sigue distinguiendo a un piloto de otro: su apellido y su
+   dorsal. Sin dorsal, el nombre tal cual; es lo que hay. */
+function nombreCortoDeVehiculo(a) {
+  const partes = String(a.nombre || "").trim().split(/\s+/);
+  const corto = partes.length > 1 ? partes[partes.length - 1] : (a.nombre || "");
+  return (a.numero === null || a.numero === undefined)
+    ? corto : corto + " · #" + a.numero;
+}
+
 function poblarPropio() {
   const s = document.getElementById("sel-propio");
   if (!s) return;
@@ -1644,9 +1653,18 @@ function poblarPropio() {
   const firma = AUTOS.map(a => a.id).join(",") + "|" + actual;
   if (s.dataset.firma === firma) return;
   s.dataset.firma = firma;
+  /* EL SELECTOR NO REPITE LO QUE EL PANEL YA DICE.
+     Llevaba la identidad entera ---«Oscar PIASTRI · #81 · McLaren»--- y el
+     panel de cronometraje, donde ahora vive, escribe ese mismo nombre completo
+     en su primer renglon, dos centimetros mas abajo. En una columna de 365 px
+     compartida con el titulo, eso se cortaba en «· McLa...», que es un rotulo
+     truncado justo debajo del mismo rotulo entero.
+     Va corto: el nombre y el dorsal, que es lo que distingue una opcion de
+     otra. La identidad completa queda en el titulo de cada opcion. */
   s.innerHTML = AUTOS.map(a =>
-    '<option value="' + textoSeguro(a.id) + '"' + (a.id === actual ? " selected" : "") + '>' +
-    textoSeguro(a.completa) + '</option>').join("");
+    '<option value="' + textoSeguro(a.id) + '"' + (a.id === actual ? " selected" : "") +
+    ' title="' + textoSeguro(a.completa) + '">' +
+    textoSeguro(nombreCortoDeVehiculo(a)) + '</option>').join("");
 }
 
 (function mandoDePropio() {

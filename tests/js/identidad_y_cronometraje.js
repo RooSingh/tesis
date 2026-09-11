@@ -147,7 +147,8 @@ const NOMBRES = [
   "esCanalEscalonado", "_cacheTemporal", "serieTemporal", "_serieTemporalCruda",
   "continuidadDeVuelta", "_umbralDeVuelta", "tiempoEfectivoEntre", "hayCorteEntre",
   "_antesDe", "valorContinuoEn", "valorEscalonadoEn", "abscisaContinua",
-  "loQueSeSabeDelVehiculo", "faltanVehiculosPorAprender",
+  "loQueSeSabeDelVehiculo", "faltanVehiculosPorAprender", "nombreCortoDeVehiculo",
+  "poblarPropio",
   "relojDeVuelta", "_armarRelojDeVuelta", "_tramosContinuos", "_tramosDeMuestras",
   "tiempoDePresentacion", "recortarConBordes",
   "serieDeCanal", "serieAcumuladaDeCanal", "tramoAcumuladoDeVuelta",
@@ -236,7 +237,8 @@ const sacadas = new Function(
 
 const {
   textoSeguro, identidadDeVehiculo, anotarParrillas, parrillaVigente,
-  loQueSeSabeDelVehiculo, faltanVehiculosPorAprender,
+  loQueSeSabeDelVehiculo, faltanVehiculosPorAprender, nombreCortoDeVehiculo,
+  poblarPropio,
   renombrarAutos, armarAutos, tintaDeVehiculo,
   secundarioDeVehiculo, vehiculosConTelemetriaGuardada, autoPropio,
   camposDeIdentidad, quienConduce,
@@ -2887,6 +2889,71 @@ prueba("openf1 saca lo que no publica y se queda con lo que si", () => {
     assert.ok(!(escondidos.openf1 || []).includes(panel),
               "openf1 sostiene «" + panel + "» y lo esta sacando de la vista");
   });
+});
+
+prueba("el selector de piloto no repite lo que el panel ya dice", () => {
+  /* Llevaba la identidad entera y el panel de cronometraje, donde ahora vive,
+     escribe el nombre completo dos renglones mas abajo. En una columna de 365
+     px compartida con el titulo eso se cortaba en «· McLa...»: un rotulo
+     truncado justo debajo del mismo rotulo entero. */
+  assert.strictEqual(
+    nombreCortoDeVehiculo({ nombre: "Oscar PIASTRI", numero: 81 }), "PIASTRI · #81");
+  assert.strictEqual(
+    nombreCortoDeVehiculo({ nombre: "Max VERSTAPPEN", numero: 1 }), "VERSTAPPEN · #1");
+});
+
+prueba("sin dorsal declarado el selector no inventa uno", () => {
+  /* Una captura que no declara la parrilla no tiene numeros de carrera: lo que
+     hay es el nombre, y eso se muestra. */
+  assert.strictEqual(nombreCortoDeVehiculo({ nombre: "Vehículo 19" }), "19");
+  assert.strictEqual(
+    nombreCortoDeVehiculo({ nombre: "Sauber", numero: null }), "Sauber");
+});
+
+prueba("el selector emite el nombre corto, y la identidad entera en el titulo", () => {
+  /* Comprobar la funcion del nombre corto no alcanza: lo que se rompio fue el
+     selector usando otra cosa. Aca se ejerce `poblarPropio` con un `select` de
+     mentira y se mira el HTML que emite, que es lo que el navegador muestra. */
+  const select = {
+    dataset: {}, innerHTML: "",
+    closest: () => ({ style: {} }),
+  };
+  const antesDoc = globalThis.document;
+  const antesAutos = globalThis.AUTOS;
+  globalThis.document = { getElementById: () => select };
+  globalThis.AUTOS = [
+    { id: "a", nombre: "Max VERSTAPPEN", numero: 1, propio: true,
+      completa: "Max VERSTAPPEN · #1 · Red Bull Racing" },
+    { id: "b", nombre: "Oscar PIASTRI", numero: 81, propio: false,
+      completa: "Oscar PIASTRI · #81 · McLaren" },
+  ];
+  try {
+    poblarPropio();
+    assert.ok(/>VERSTAPPEN · #1</.test(select.innerHTML),
+      "el selector no emite el nombre corto: " + select.innerHTML);
+    assert.ok(!/>Max VERSTAPPEN · #1 · Red Bull Racing</.test(select.innerHTML),
+      "el selector repite la identidad entera, que el panel ya escribe debajo");
+    /* Y la identidad completa no se pierde: queda a un puntero de distancia. */
+    assert.ok(/title="Max VERSTAPPEN · #1 · Red Bull Racing"/.test(select.innerHTML),
+      "la identidad completa no quedo en el titulo de la opcion");
+    assert.ok(/selected/.test(select.innerHTML), "no se marco el propio");
+  } finally {
+    globalThis.document = antesDoc;
+    globalThis.AUTOS = antesAutos;
+  }
+});
+
+prueba("con un solo vehiculo el selector no se ofrece", () => {
+  /* Elegir entre uno no es elegir. */
+  const caja = { style: {} };
+  const select = { dataset: {}, innerHTML: "", closest: () => caja };
+  const antesDoc = globalThis.document, antesAutos = globalThis.AUTOS;
+  globalThis.document = { getElementById: () => select };
+  globalThis.AUTOS = [{ id: "a", nombre: "Uno", numero: 1, propio: true, completa: "Uno" }];
+  try {
+    poblarPropio();
+    assert.strictEqual(caja.style.display, "none");
+  } finally { globalThis.document = antesDoc; globalThis.AUTOS = antesAutos; }
 });
 
 prueba("cada vehiculo se rotula por lo que tiene, no por el papel que cumple", () => {

@@ -1067,6 +1067,11 @@
     letter-spacing: 0; text-transform: none; cursor: pointer;
   }
   .elige-propio select:hover { border-color: var(--acento); }
+  /* Y no se lleva por delante el titulo del panel: en una columna angosta el
+     selector se encoge y el navegador recorta lo que muestra, que es lo que un
+     `select` sabe hacer. La lista desplegada se abre a su propio ancho. */
+  .elige-propio { min-width: 0; }
+  .elige-propio select { min-width: 0; max-width: 100%; }
 
   .cabina .esquina { overflow: hidden; padding: 7px 10px; }
   .cabina .esquina .eyebrow { font-size: .55rem; margin-bottom: 4px; }
