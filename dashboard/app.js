@@ -1851,7 +1851,12 @@ function aplicarDisponibilidad() {
   poner("motivo-clima", estado.climaMotivo, f.motivos.clima);
   poner("motivo-auto", estado.vehiculoMotivo, f.motivos.auto);
   poner("motivo-motor", estado.vehiculoMotivo, f.motivos.motor);
-  poner("motivo-avisos", estado.avisosMotivo, "");
+  /* `motivo-avisos` NO se escribe aca. Lo llena `pintarAvisos`, que es el unico
+     que sabe cuantas entradas hay y de donde salen. Estaba en las dos, y esta
+     ganaba por correr despues: el panel contaba «5 graves · 13 leves» y el pie
+     quedaba vacio, borrado por un `estado.avisosMotivo` que en esta fuente no
+     existe. Es el mismo enredo que el clima, que tambien tenia dos escritores
+     para el mismo campo, y se arregla igual: un dato, un dueño. */
   // La procedencia va al encabezado, que es donde el resto de los
   // instrumentos la declara, y la explicacion completa al titulo del panel.
   /* Lo que dice el encabezado del trazado es lo que midio **esta** sesion, no
@@ -2479,11 +2484,20 @@ function pintarAvisos() {
      la telemetria con lo que la fuente declaro, y el recuento no lo distingue. */
   const declarados = avisos.filter(a => a.origen === "declarado").length;
   const derivados = avisos.length - declarados;
+  /* Y DE QUIEN SON, QUE NO ES LO MISMO PARA LOS DOS.
+     Los derivados de la telemetria son del piloto que se mira: salen de sus
+     señales y cambian al cambiar de piloto. Los declarados en el control de
+     carrera son de la sesion ---banderas, coche de seguridad, estado de
+     pista--- y no cambian con el piloto, lo cual se ve como que el panel no
+     reacciona. Medido sobre la carrera cargada: de 158 eventos, **157 no
+     nombran piloto**; el unico que lo hace es una bandera azul para el coche 31.
+     Decirlo evita que la quietud del panel se lea como un fallo. */
   document.getElementById("motivo-avisos").textContent =
     (declarados && derivados)
-      ? derivados + " derivados de la telemetría y " + declarados +
-        " declarados por la fuente"
-      : declarados ? "Declarados por la fuente en el control de carrera"
+      ? derivados + " del piloto, derivados de su telemetría · " + declarados +
+        " de la carrera, declarados por la fuente"
+      : declarados ? "De la carrera, no del piloto: declarados por la fuente en " +
+                     "el control de carrera"
       : "";
 }
 
