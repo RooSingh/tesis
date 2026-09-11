@@ -258,6 +258,36 @@
   /* Un tiempo que no es el cronometro medido no puede verse igual que uno que
      si lo es. */
   .tira-cronometraje dd[data-medido="no"] { color: var(--texto-medio); font-weight: 500; }
+  /* ---------- de cuando es cada valor del contexto ----------
+     CUATRO ESTADOS Y SOLO UNO SE ATENUA. La API los resuelve ---la cadencia de
+     cada magnitud la conoce quien la midio--- y aca se pintan.
+
+     `held` NO SE ATENUA, y es la decision que mas importa. Atenuar significa
+     «desconfia un poco de esto»; un puesto que la fuente publica al cambiar no
+     merece desconfianza entre dos cambios: es exactamente lo que declaro. Lleva
+     su punto y su edad, que es una aclaracion, no una degradacion.
+
+     `aged` si se atenua, con la misma opacidad con la que el trazado marca una
+     posicion estimada: una sola convencion para «esto no describe el ahora con
+     la misma autoridad», en vez de una por panel. */
+  [data-frescura="aged"] { opacity: .62; }
+  /* El sostenido lleva su punto desde la hoja y no desde el texto: asi esta
+     tambien cuando la edad no se sabe, que es cuando mas falta hace distinguirlo
+     de un valor de ahora. */
+  .tira-cronometraje dd[data-frescura="held"]::after {
+    content: "·"; margin-left: 5px; color: var(--acento); font-weight: 700;
+  }
+  .tira-cronometraje dd .edad,
+  .frescura-panel {
+    font-family: var(--cifra); font-size: .62rem; font-weight: 500;
+    color: var(--texto-tenue); letter-spacing: .02em; margin-left: 5px;
+  }
+  .frescura-panel {
+    display: block; margin: 8px 0 0; margin-left: 0; font-size: .64rem;
+    line-height: 1.45;
+  }
+  .frescura-panel:empty { display: none; }
+
   .tira-cronometraje .unidad { font-size: .72rem; font-weight: 400; color: var(--texto-tenue); }
   .pie-instrumento {
     margin: 0; padding: 8px 14px 10px; font-size: .68rem; color: var(--texto-tenue);

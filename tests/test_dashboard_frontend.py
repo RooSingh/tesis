@@ -314,6 +314,11 @@ class AyudantesDeSerieTests(unittest.TestCase):
 
         self._correr("las_rayas_de_sector.js")
 
+    def test_de_cuando_es_cada_valor_del_contexto(self) -> None:
+        """Cuatro estados y solo uno se atenua: `held` no es degradado."""
+
+        self._correr("de_cuando_es_este_valor.js")
+
     def test_el_trazado_grande_es_el_mismo_dibujo_escalado(self) -> None:
         """EL INVARIANTE QUE HACE QUE LA VISTA GRANDE SEA CONFIABLE.
 
