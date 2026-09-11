@@ -7064,6 +7064,7 @@ function limpiarContextoDeSesion() {
   estado.clima = null; estado.climaMotivo = "";
   estado.vehiculo = null; estado.vehiculoMotivo = "";
   estado.puesta = null; estado.avisos = []; estado.avisosMotivo = "";
+  estado.avisosFallo = "";
 }
 
 /* ============================================================
@@ -7953,7 +7954,8 @@ function olvidarLoDeLaCorrida() {
      aproximado guardado antes de que llegaran las vueltas. */
   cambiaronLasSeries();
   estado.trazado = null; estado.curvas = []; estado.clima = null; estado.vehiculo = null;
-  estado.puesta = null; estado.avisos = []; estado.disponibles = new Set();
+  estado.puesta = null; estado.avisos = []; estado.avisosFallo = "";
+  estado.disponibles = new Set();
   estado.vehiculoClave = null;
   estado.climaMotivo = ""; estado.vehiculoMotivo = ""; estado.avisosMotivo = "";
   estado.vigilancia = null; estado.vigilanciaMotivo = "";
@@ -8550,9 +8552,13 @@ function cargarDatosDeSesion(ruta, apertura, senal, s) {
   conCarga("avisos", () => pedir(ruta + "/avisos" + sufijoDeCorrida(false), { senal: senal })
     .then(d => {
       if (!sigueVigente(apertura)) return;
-      ubicarAvisos(d.avisos || []); estado.avisosMotivo = d.motivo_ausencia || ""; render();
+      ubicarAvisos(d.avisos || []); estado.avisosMotivo = d.motivo_ausencia || "";
+      estado.avisosFallo = ""; render();
     })
-    .catch(e => { if (!fueAnulada(e) && e instanceof TypeError) console.error(e); })));
+    .catch(e => {
+      if (!sigueVigente(apertura)) return;
+      anotarFalloDeAvisos(e); render();
+    })));
 
   /* UNA CONSULTA ANULADA NO ES UNA CONSULTA QUE FALLO.
      Estos `catch` convertian cualquier error en una respuesta de respaldo
