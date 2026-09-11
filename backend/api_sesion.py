@@ -1708,7 +1708,7 @@ def series_por_distancia(
     senales: Annotated[str, Query(description="Nombres de senal separados por coma")],
     vuelta: int | None = None,
     vehiculos: Annotated[str | None, Query(description="Identificadores separados por coma")] = None,
-    desde_m: float = 0.0,
+    desde_m: float | None = None,
     hasta_m: float | None = None,
     puntos: Annotated[int, Query(ge=50, le=5000)] = 600,
     adquisicion: Annotated[str | None, Query(
@@ -1814,7 +1814,7 @@ def series_por_distancia(
              GROUP BY timestamp, vehicle_id)
         SELECT * FROM p
          WHERE distancia IS NOT NULL {filtro_distancia} {filtro_vuelta}
-         ORDER BY vehicle_id, distancia
+         ORDER BY vehicle_id, distancia, timestamp
     """
     columnas = ["max(value_numeric) FILTER (WHERE signal_name = %s) AS distancia"]
     columnas_par: list[Any] = [senal_distancia]
@@ -1849,9 +1849,26 @@ def series_por_distancia(
     # Se hacia en Python despues de traer todo: para dibujar doscientos metros
     # de una vuelta se traian los siete mil, se armaban las filas en memoria y
     # se descartaban casi todas. Puesto aca, la base no las materializa.
+    #
+    # UNA COTA NO PEDIDA NO ES UNA COTA EN CERO.
+    #
+    # `desde_m` valia `0.0` por defecto y se aplicaba dos veces con dos
+    # significados: aca `if desde_m:` lo tomaba por falso y **no** ponia cota,
+    # y mas abajo `d < desde_m` lo tomaba por un piso real. Como
+    # `lap_distance` es negativa antes de cruzar la meta, la segunda mitad
+    # borraba la vuelta de salida entera sin que nadie la hubiera pedido.
+    #
+    # Medido el 2026-09-11 en la practica de Catalunya: de las 5.355 muestras
+    # de la vuelta 1 del coche propio se devolvian 1.761, las de distancia
+    # positiva. `/vueltas` declaraba la vuelta de 267,7 s y la serie cubria sus
+    # ultimos 88: durante tres minutos el cabezal caia antes de la primera
+    # muestra y todos los instrumentos se clavaban en la muestra cero.
+    #
+    # Ahora la ausencia de cota se dice con `None` y se pregunta igual en los
+    # dos sitios. Un cero pedido a proposito sigue siendo un piso en la meta.
     distancia_par: list[Any] = []
     filtro_distancia = ""
-    if desde_m:
+    if desde_m is not None:
         filtro_distancia += " AND distancia >= %s"
         distancia_par.append(desde_m)
     if hasta_m is not None:
@@ -1894,7 +1911,7 @@ def series_por_distancia(
     por_vehiculo: dict[str, list[tuple]] = {}
     for f in filas:
         d = f[idx_dist]
-        if d is None or d < desde_m:
+        if d is None or (desde_m is not None and d < desde_m):
             continue
         if hasta_m is not None and d > hasta_m:
             continue
