@@ -316,16 +316,30 @@ const PUNTOS_POR_VUELTA = 300;
 const PRESUPUESTO_DE_PUNTOS = 2400;
 
 /* Piso absoluto por vuelta. Es lo que hace falta para que una vuelta siga
-   siendo una linea y no dos puntos unidos: con veinte muestras sobre siete
-   kilometros, cada una cubre 350 m, que alcanza para ver el ritmo de una
+   siendo una linea y no dos puntos unidos: con cincuenta muestras sobre siete
+   kilometros, cada una cubre 140 m, que alcanza para ver el ritmo de una
    vuelta ---que es lo que se compara en la vista de carrera--- y no para ver
    una frenada, que es lo que se mira vuelta por vuelta.
 
+   ERA VEINTE, Y ESO PRODUCIA UNA CONSULTA QUE LA API RECHAZA. `/series` y
+   `/series-tiempo` declaran `ge=50`: por debajo de cincuenta puntos no
+   contestan. Con el reparto del presupuesto, a partir de **cuarenta y nueve
+   vueltas** el pedido cae por debajo de ese piso y la vista de carrera entera
+   falla. En una carrera de F1 25 no se notaba ---veintidos vueltas dan 109
+   puntos--- y en Silverstone 2025, que tiene cincuenta y dos, daba 46 y la
+   respuesta era «Input should be greater than or equal to 50».
+
+   Eran dos pisos para lo mismo y el del cliente era mas bajo que el del
+   servidor, o sea que el cliente podia construir una consulta invalida por su
+   cuenta. Ahora es el mismo, y una prueba lo comprueba contra el `ge=` que
+   declara la ruta: copiar una cifra sin comprobarla es como no tenerla.
+
    Este piso si puede ganarle al presupuesto, y hay que decir cuando: por
-   encima de 120 vueltas. Ninguna carrera de F1 llega ahi ---el maximo
-   historico es 78--- pero la cifra queda escrita para que el limite sea
-   comprobable en vez de suponerse. */
-const PUNTOS_MINIMOS_POR_VUELTA = 20;
+   encima de 48 vueltas. Con cincuenta y dos ---la carrera cargada--- se piden
+   2.600 puntos contra los 2.400 declarados, un ocho por ciento de mas. El
+   presupuesto es una guarda de memoria y la poda lo hace cumplir igual; el piso
+   de la API es un contrato, y entre una guarda y un contrato gana el contrato. */
+const PUNTOS_MINIMOS_POR_VUELTA = 50;
 const VUELTAS_HASTA_ROMPER_EL_PRESUPUESTO =
   Math.floor(PRESUPUESTO_DE_PUNTOS / PUNTOS_MINIMOS_POR_VUELTA);
 
@@ -1837,7 +1851,12 @@ function aplicarDisponibilidad() {
   poner("motivo-clima", estado.climaMotivo, f.motivos.clima);
   poner("motivo-auto", estado.vehiculoMotivo, f.motivos.auto);
   poner("motivo-motor", estado.vehiculoMotivo, f.motivos.motor);
-  poner("motivo-avisos", estado.avisosMotivo, "");
+  /* `motivo-avisos` NO se escribe aca. Lo llena `pintarAvisos`, que es el unico
+     que sabe cuantas entradas hay y de donde salen. Estaba en las dos, y esta
+     ganaba por correr despues: el panel contaba «5 graves · 13 leves» y el pie
+     quedaba vacio, borrado por un `estado.avisosMotivo` que en esta fuente no
+     existe. Es el mismo enredo que el clima, que tambien tenia dos escritores
+     para el mismo campo, y se arregla igual: un dato, un dueño. */
   // La procedencia va al encabezado, que es donde el resto de los
   // instrumentos la declara, y la explicacion completa al titulo del panel.
   /* Lo que dice el encabezado del trazado es lo que midio **esta** sesion, no
@@ -2465,11 +2484,20 @@ function pintarAvisos() {
      la telemetria con lo que la fuente declaro, y el recuento no lo distingue. */
   const declarados = avisos.filter(a => a.origen === "declarado").length;
   const derivados = avisos.length - declarados;
+  /* Y DE QUIEN SON, QUE NO ES LO MISMO PARA LOS DOS.
+     Los derivados de la telemetria son del piloto que se mira: salen de sus
+     señales y cambian al cambiar de piloto. Los declarados en el control de
+     carrera son de la sesion ---banderas, coche de seguridad, estado de
+     pista--- y no cambian con el piloto, lo cual se ve como que el panel no
+     reacciona. Medido sobre la carrera cargada: de 158 eventos, **157 no
+     nombran piloto**; el unico que lo hace es una bandera azul para el coche 31.
+     Decirlo evita que la quietud del panel se lea como un fallo. */
   document.getElementById("motivo-avisos").textContent =
     (declarados && derivados)
-      ? derivados + " derivados de la telemetría y " + declarados +
-        " declarados por la fuente"
-      : declarados ? "Declarados por la fuente en el control de carrera"
+      ? derivados + " del piloto, derivados de su telemetría · " + declarados +
+        " de la carrera, declarados por la fuente"
+      : declarados ? "De la carrera, no del piloto: declarados por la fuente en " +
+                     "el control de carrera"
       : "";
 }
 

@@ -211,6 +211,18 @@ const preludio = `
    quiera. Es lo que usan casi todas; las del corte por tiempo usan la real. */
 const PEDIR_DE_MENTIRA = `
   function pedir(ruta, opciones) {
+    /* LO QUE EL SERVIDOR RECHAZA, ESTE TAMBIEN.
+       Aceptaba cualquier cosa, y por eso dos pruebas afirmaban que una carrera
+       de cien vueltas «entra entera» pidiendo veinticuatro puntos por vuelta:
+       contra la API de verdad esa consulta no existe, porque las rutas de
+       series declaran ge=50. El defecto se vio en pantalla y no aca
+       ---«Vuelta 52: Input should be greater than or equal to 50»--- que es lo
+       que pasa cuando el doble es mas permisivo que el original. */
+    const puntos = /[?&]puntos=(\\d+)/.exec(ruta);
+    if (puntos && Number(puntos[1]) < 50) {
+      return Promise.reject(new Error(
+        "la API exige puntos >= 50 y se pidieron " + puntos[1] + ": " + ruta));
+    }
     let resolver, rechazar;
     const p = new Promise((a, b) => { resolver = a; rechazar = b; });
     PEDIDOS.push({ ruta, opciones: opciones || {}, resolver, rechazar });
@@ -597,15 +609,31 @@ prueba("enTandas no pone mas de N en vuelo a la vez", async (b) => {
 /* ==================================================================
    El presupuesto de la carrera es un limite, no una aspiracion
    ================================================================== */
-prueba("la resolucion objetivo nunca supera el presupuesto", async (b) => {
+prueba("hasta donde el piso lo permite, el presupuesto se respeta", async (b) => {
   /* `Math.max(60, floor(2400 / vueltas))` no acotaba: el piso le ganaba a la
      division y el total se disparaba. Con 100 vueltas daba 6.000 puntos para
-     un presupuesto declarado de 2.400. */
-  [2, 8, 22, 40, 60, 78, 100, 120].forEach(n => {
+     un presupuesto declarado de 2.400.
+
+     EL LIMITE SE CORRIO, Y A PROPOSITO. El piso paso de 20 a 50 porque
+     `/series` y `/series-tiempo` declaran `ge=50`: con 20, a partir de 49
+     vueltas el tablero armaba una consulta que la API rechaza. De modo que el
+     presupuesto ya no se cumple por encima de 48 vueltas, y eso es una
+     decision: el presupuesto es una guarda de memoria que la poda hace cumplir
+     igual, y el piso de la API es un contrato. */
+  [2, 8, 22, 40, 48].forEach(n => {
     const porVuelta = b.puntosParaVueltas(n);
-    assert.ok(porVuelta >= 20, n + " vueltas dieron " + porVuelta + " puntos");
+    assert.ok(porVuelta >= 50, n + " vueltas dieron " + porVuelta + " puntos");
     assert.ok(n * porVuelta <= 2400,
       n + " vueltas x " + porVuelta + " puntos = " + (n * porVuelta) + ", sobre 2400");
+  });
+});
+
+prueba("nunca se pide menos de lo que la API acepta", async (b) => {
+  /* Esto es lo que fallaba en pantalla: «Vuelta 52: Input should be greater
+     than or equal to 50». Silverstone 2025 tiene cincuenta y dos vueltas. */
+  [49, 52, 60, 78, 100, 120, 200].forEach(n => {
+    assert.ok(b.puntosParaVueltas(n) >= 50,
+      n + " vueltas piden " + b.puntosParaVueltas(n) + " puntos, y la API exige 50");
   });
 });
 
@@ -613,12 +641,19 @@ prueba("una vuelta sola conserva toda su resolucion", async (b) => {
   assert.strictEqual(b.puntosParaVueltas(1), 300);
 });
 
-prueba("el piso solo le gana al presupuesto por encima de 120 vueltas", async (b) => {
-  // Es el limite declarado, y ninguna carrera de F1 lo alcanza: el maximo
-  // historico son 78 vueltas.
-  assert.ok(120 * b.puntosParaVueltas(120) <= 2400);
-  assert.ok(200 * b.puntosParaVueltas(200) > 2400,
+prueba("el piso le gana al presupuesto por encima de 48 vueltas, y cuanto", async (b) => {
+  /* Antes el cruce estaba en 120 vueltas ---ninguna carrera de F1 llega, el
+     maximo historico son 78--- y con el piso en cincuenta cae a 48, que si se
+     cruza: la carrera cargada tiene cincuenta y dos. El exceso no es libre y se
+     deja escrito para que se pueda discutir. */
+  assert.ok(48 * b.puntosParaVueltas(48) <= 2400,
+    "en 48 vueltas el presupuesto todavia se cumple");
+  assert.ok(49 * b.puntosParaVueltas(49) > 2400,
     "por encima del limite el piso manda, y eso hay que poder afirmarlo");
+  assert.strictEqual(52 * b.puntosParaVueltas(52), 2600,
+    "la carrera cargada pide un ocho por ciento sobre el presupuesto");
+  assert.strictEqual(78 * b.puntosParaVueltas(78), 3900,
+    "el maximo historico de F1 pide 3.900 puntos");
 });
 
 prueba("abrir la carrera despues de recorrer vueltas en detalle no crece sin fin", async (b) => {
@@ -658,25 +693,12 @@ prueba("la carrera completa entra sin desalojar lo que acaba de llegar", async (
     "se volvieron a pedir " + pedidos.length + " vueltas que ya estaban");
 });
 
-prueba("una carrera de 60 vueltas tambien entra entera", async (b) => {
+prueba("una carrera de 48 vueltas entra entera y dentro del presupuesto", async (b) => {
+  /* Cuarenta y ocho es donde el presupuesto y el piso de la API se cruzan:
+     48 x 50 = 2.400 exactos. */
   b.estado.abierta = { session_id: "A" };
   b.nuevaSesionEnCurso();
-  const VUELTAS = 60;
-  const puntos = b.puntosParaVueltas(VUELTAS);
-  for (let v = 1; v <= VUELTAS; v++) {
-    b.asegurarVuelta(v, puntos);
-    pedidos.forEach(p => p.resolver(respuesta("car:1", puntos, v)));
-    pedidos.length = 0;
-    await asentar();
-  }
-  assert.strictEqual(Object.keys(b.estado.series).length, VUELTAS);
-  assert.ok(VUELTAS * puntos <= 2400);
-});
-
-prueba("una carrera de 100 vueltas tambien, y sigue dentro del limite", async (b) => {
-  b.estado.abierta = { session_id: "A" };
-  b.nuevaSesionEnCurso();
-  const VUELTAS = 100;
+  const VUELTAS = 48;
   const puntos = b.puntosParaVueltas(VUELTAS);
   for (let v = 1; v <= VUELTAS; v++) {
     b.asegurarVuelta(v, puntos);
@@ -686,6 +708,40 @@ prueba("una carrera de 100 vueltas tambien, y sigue dentro del limite", async (b
   }
   assert.strictEqual(Object.keys(b.estado.series).length, VUELTAS);
   assert.ok(VUELTAS * puntos <= 2400, VUELTAS * puntos + " puntos");
+});
+
+prueba("una carrera larga no entra entera, y la poda se queda con lo cercano", async (b) => {
+  /* ESTAS DOS PRUEBAS AFIRMABAN QUE CIEN VUELTAS ENTRABAN ENTERAS, y era
+     cierto en el arnes y falso contra la API: con el piso viejo en veinte, cien
+     vueltas pedian veinticuatro puntos, y las rutas de series declaran ge=50.
+     La consulta no existia. El doble aceptaba lo que el servidor rechaza, asi
+     que la prueba medía una propiedad de memoria sobre algo que nunca podia
+     ocurrir. Ahora el doble rechaza igual que el servidor.
+
+     Con el piso correcto, una carrera larga **no** entra entera y eso esta
+     bien: la poda suelta lo mas lejano al cabezal y conserva lo que se mira.
+     Perder historia lejana es honesto; pedir menos puntos de los que la API
+     acepta era una consulta que fallaba. */
+  b.estado.abierta = { session_id: "A" };
+  b.nuevaSesionEnCurso();
+  b.fijarVuelta(100);
+  const VUELTAS = 100;
+  const puntos = b.puntosParaVueltas(VUELTAS);
+  assert.strictEqual(puntos, 50, "con cien vueltas se pide el piso de la API");
+  for (let v = 1; v <= VUELTAS; v++) {
+    b.asegurarVuelta(v, puntos);
+    pedidos.forEach(p => p.resolver(respuesta("car:1", puntos, v)));
+    pedidos.length = 0;
+    await asentar();
+  }
+  const guardadas = Object.keys(b.estado.series).map(Number);
+  assert.ok(guardadas.length < VUELTAS,
+    "cien vueltas a cincuenta puntos no pueden caber en el presupuesto");
+  assert.ok(guardadas.length * puntos <= 3600,
+    "lo guardado supera el limite de detalle: " + (guardadas.length * puntos));
+  /* Y lo que queda es lo de alrededor del cabezal, no lo primero que llego. */
+  assert.ok(guardadas.includes(100), "se solto la vuelta que se esta mirando");
+  assert.ok(!guardadas.includes(1), "se conservo la mas lejana al cabezal");
 });
 
 prueba("las posiciones se podan aparte y no las protege la comparacion", async (b) => {

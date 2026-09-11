@@ -145,6 +145,37 @@ prueba("un 500 de la API tambien queda anotado", () => {
 
 /* ---- lo que el panel puede afirmar ---- */
 
+prueba("el pie dice de quien son los avisos, que no es lo mismo para los dos", () => {
+  /* Los derivados de la telemetria son del piloto que se mira y cambian al
+     cambiar de piloto; los declarados en el control de carrera son de la
+     sesion y no cambian, lo cual se ve como que el panel no reacciona. Medido
+     sobre la carrera cargada: de 158 eventos, 157 no nombran piloto. */
+  reiniciar();
+  const nodos = documentoDePrueba();
+  try {
+    globalThis.estado.controlDeCarrera = [
+      { que: "YELLOW", nivel: "alerta", en: 0.1, origen: "declarado", canal: "race_control" },
+    ];
+    modulo.pintarAvisos();
+    assert.ok(/De la carrera, no del piloto/.test(nodos["motivo-avisos"].textContent),
+      "el pie no dice de quien son: " + nodos["motivo-avisos"].textContent);
+
+    /* Con las dos clases mezcladas, se dice cuantas hay de cada una. */
+    globalThis.estado.avisos = [
+      { que: "derrape", nivel: "alerta", en: 0.2, canal: "wheel_slip_ratio_rear_left" },
+    ];
+    globalThis._firmaAvisos = "";
+    modulo.pintarAvisos();
+    const pie = nodos["motivo-avisos"].textContent;
+    assert.ok(/1 del piloto/.test(pie) && /1 de la carrera/.test(pie), pie);
+  } finally {
+    /* Se limpia pase lo que pase: una lista que sobrevive al caso se la
+       encuentra el siguiente y lo hace fallar por algo que no es suyo. */
+    globalThis.estado.controlDeCarrera = [];
+    reiniciar();
+  }
+});
+
 prueba("sin respuesta, el panel no afirma que no ocurrio nada", () => {
   reiniciar();
   const t = new Error("la consulta no contestó en 30 s");
