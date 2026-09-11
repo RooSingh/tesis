@@ -8432,6 +8432,22 @@ let sesionAbierta = null;
 /* La sesion abierta se recuerda en el navegador: al volver, se sigue donde se
    estaba en vez de empezar de cero. Si el almacenamiento no esta disponible,
    la vista funciona igual y simplemente no recuerda. */
+/* CUAL SE ABRE SOLA AL ENTRAR: la que se estaba mirando, y ninguna otra.
+   ---------------------------------------------------------------------
+   Antes, sin nada recordado, se abria la sesion **mas grande de F1 25**. La
+   idea era no dejar el tablero en blanco, pero abrir de prepo una carrera que
+   nadie pidio tiene dos costos: la persona cree que eso es «lo suyo» cuando es
+   la que mas filas tiene, y se pagan las consultas de una sesion que quiza no
+   queria. Sin recuerdo no se abre nada: el tablero dice que elijas, que es lo
+   que efectivamente hay que hacer.
+
+   Se queda sin DOM para poder ejercerla. */
+function sesionQueSeAbreSola(sesiones, recordada) {
+  if (!recordada) return null;
+  const hay = (sesiones || []).find(s => s.session_id === recordada);
+  return hay ? hay.session_id : null;
+}
+
 function recordarSesion(id) {
   try { window.localStorage.setItem("sesion-abierta", id); } catch (e) { /* sin memoria */ }
 }
@@ -8910,6 +8926,9 @@ function abrirElectorDeCorrida(ruta, apertura, s) {
   const sub = document.getElementById("sub-corridas");
   const nota = document.getElementById("nota-corridas");
   if (!velo || !cont) return;
+  /* Acá el tablero deja de cargar y pasa a esperar a la persona. Sostener el
+     velo sobre una pregunta es esconder la pregunta. */
+  levantarElVelo();
   _contextoDeCorrida = { ruta: ruta, s: s };
 
   const lista = corrida.disponibles || [];
@@ -11447,6 +11466,75 @@ function pintarMatriz() {
    resuelto**, con o sin exito. El tope por reloj se conserva como red ---si
    `/vueltas` se colgara--- pero por encima del corte de 30 s de `pedir`, de
    modo que en la practica siempre se suelta por la primera condicion. */
+/* ============================================================
+   EL VELO DE ARRANQUE
+   ------------------------------------------------------------
+   POR QUE EXISTE. Entre que la pagina pinta y que el tablero tiene algo que
+   mostrar hay un rato en que se ven veinte paneles vacios con rayas. Eso no se
+   lee como «esta cargando»: se lee como un tablero roto.
+
+   CUANDO SE VA. Cuando el tablero **queda listo para la persona**, que no es
+   lo mismo que «cuando termino de cargar todo». Son cuatro situaciones y las
+   cuatro cuentan: lo esencial se resolvio ---haya llegado o haya fallado---,
+   el elector de etapa quedo esperando una decision, el catalogo esta vacio, o
+   la API no contesto. En las dos ultimas el velo **tiene que** irse: tapar un
+   error es dejar a alguien mirando un giro eterno sin saber que paso.
+
+   EL PISO NO SE SUMA, COMPITE. Medido el 2026-09-11 sobre Spa: en frio lo que
+   hace falta para dibujar entra en 1,1 s ---`/vueltas` 0,27, `/trazado` 0,30,
+   `/contexto` 0,74--- y tibio el primer trazo aparece a los 657 ms. Un velo que
+   durase el piso **mas** la carga castigaria cada recarga con cinco segundos
+   de mas. Lo que se quiere es que nunca parpadee: dura lo que tarde la carga, y
+   si la carga fue mas rapida que el piso, dura el piso. Ni un milisegundo mas.
+
+   `/avisos` queda afuera de esta cuenta a proposito: tarda 16,9 s con el
+   backend en frio y 0,01 s despues, es secundaria, y ya espera su turno por
+   `cuandoHayaGrafico`. Retener el velo por ella seria esconder diecisiete
+   segundos un tablero que ya se puede leer y usar.
+
+   EL TECHO NO VIVE ACA. Esta en un guion en linea dentro del propio HTML,
+   porque un velo que solo este archivo sabe levantar deja la pagina tapada
+   para siempre el dia que este archivo no cargue.
+   ============================================================ */
+const PISO_DEL_VELO_MS = 5000;
+
+/* La unica decision que el velo toma, sin tocar el DOM para poder ejercerla:
+   cuanto falta para poder levantarlo, dado cuanto hace que arranco la pagina. */
+function esperaDelVelo(msDesdeElArranque) {
+  const falta = PISO_DEL_VELO_MS - msDesdeElArranque;
+  return falta > 0 ? falta : 0;
+}
+
+/* Cuanto dura el desvanecido. Tiene que coincidir con la transicion de la hoja:
+   menos, y el velo desaparece de golpe a mitad de camino. */
+const DESVANECIDO_DEL_VELO_MS = 300;
+
+let _veloLevantado = false;
+function levantarElVelo() {
+  /* La primera situacion que declare «listo» manda. Las demas llegan igual
+     ---el elector se abre y despues lo esencial termina--- y sin esta guarda
+     cada una programaria su propia levantada. */
+  if (_veloLevantado) return;
+  _veloLevantado = true;
+  setTimeout(() => {
+    const velo = document.getElementById("velo-de-arranque");
+    if (!velo) return;
+    velo.dataset.abierto = "no";
+    /* EL DESVANECIDO ES ADORNO; `hidden` ES LA GARANTIA.
+       Una transicion de CSS **no corre en una pestaña que no se ve**: el
+       navegador no pinta cuadros ahi. Y abrir el tablero y cambiar de pestaña
+       mientras carga es lo normal, no el caso raro. Visto el 2026-09-11: con la
+       pestaña de fondo, el velo quedaba a medio desvanecer, con el giro dando
+       vueltas sobre el tablero ya cargado.
+
+       Colgar la desaparicion de que la transicion termine es colgarla de algo
+       que puede no pasar nunca. Asi que la transicion queda para que se vea
+       lindo cuando se puede ver, y lo que saca el velo de la pagina es el
+       atributo, que no depende de que se pinte un solo cuadro. */
+    setTimeout(() => { velo.hidden = true; }, DESVANECIDO_DEL_VELO_MS);
+  }, esperaDelVelo(performance.now()));
+}
+
 const ESPERA_MAXIMA_DE_CORTESIA_MS = 35000;
 let _enEspera = [];
 let _relojCortesia = null;
@@ -11457,6 +11545,8 @@ let _esencialResuelta = false;
    libera a lo secundario no es el exito, es que la conexion quedo libre. */
 function laEsencialTermino() {
   _esencialResuelta = true;
+  /* Llego o fallo, pero ya no hay nada mas que esperar para mostrar. */
+  levantarElVelo();
   if (!_enEspera.length) return;
   const cola = _enEspera;
   _enEspera = [];
@@ -11833,6 +11923,7 @@ function arrancar() {
         estado.motivo = d.vacio_porque ||
           "El catálogo está vacío. No hay sesiones guardadas en la base.";
         render();
+        levantarElVelo();
         return;
       }
       /* Cual se abre sola. La ultima que se miro, si sigue estando. Si no, la
@@ -11845,9 +11936,7 @@ function arrancar() {
          la conversacion. */
       const pedida = new URLSearchParams(location.search).get("sesion");
       const recordada = pedida || sesionRecordada();
-      const conEje = SESIONES.filter(s => s.fuente === "f1_25_udp_simulation");
-      const elegida = SESIONES.find(s => s.session_id === recordada) ||
-        (conEje.length ? conEje : SESIONES).slice().sort((a, b) => b.filas - a.filas)[0];
+      const elegida = sesionQueSeAbreSola(SESIONES, recordada);
 
       /* SI YA HAY UNA SESION VIVA ADOPTADA, NO SE ABRE UNA GUARDADA ENCIMA.
          El catalogo tarda mas en llegar que la primera muestra del flujo. Al
@@ -11871,7 +11960,20 @@ function arrancar() {
                        "sesión en vivo " + vivo.sesion, false);
         return;
       }
-      abrirSesionGuardada(elegida.session_id);
+      if (!elegida) {
+        /* Que no se abra nada tiene dos motivos distintos y no se dicen igual.
+           Uno es no haber mirado nada todavia, y ahi el pie ya invita a elegir.
+           El otro es que lo que se estaba mirando ya no esta, y callarselo
+           dejaria a alguien creyendo que el tablero se olvido de su sesion. */
+        if (recordada) {
+          estado.motivo = "La sesión que estabas mirando ya no está en el " +
+            "catálogo. Elegí una guardada.";
+        }
+        render();
+        levantarElVelo();
+        return;
+      }
+      abrirSesionGuardada(elegida);
     })
     .catch(e => {
       estadoSesion = "vacio";
@@ -11879,6 +11981,9 @@ function arrancar() {
         ": " + e.message;
       decirEstadoApi(estado.motivo, true);
       render();
+      /* Un velo que se queda puesto cuando la API no contesta convierte un
+         error legible en un giro eterno. */
+      levantarElVelo();
     });
 
   // La matriz de fuentes tarda: se pide aparte y se dibuja cuando llega.

@@ -304,6 +304,11 @@ class AyudantesDeSerieTests(unittest.TestCase):
     def test_la_adquisicion_y_la_fase_se_eligen_como_las_declara_la_api(self) -> None:
         self._correr("eleccion_de_adquisicion.js")
 
+    def test_el_velo_de_arranque_dura_lo_que_tiene_que_durar(self) -> None:
+        """El piso compite con la carga, y el techo no depende de app.js."""
+
+        self._correr("el_velo_de_arranque.js")
+
     def test_todo_el_tablero_muestra_el_mismo_instante(self) -> None:
         """Un solo tiempo de presentacion para instrumentos, coche y graficos.
 
