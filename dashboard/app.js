@@ -2085,7 +2085,7 @@ function pintarAvisos() {
      contestara «no ocurrio nada» justamente cuando no tiene con que. */
   if (estado.avisosFallo && !todos.length) {
     cont.innerHTML = '<p class="nota sin-avisos">No se pudieron traer los avisos ' +
-      'de esta sesión: ' + textoPlano(estado.avisosFallo) + '. No quiere decir ' +
+      'de esta sesión: ' + textoSeguro(estado.avisosFallo) + '. No quiere decir ' +
       'que no haya ocurrido nada; quiere decir que todavía no se sabe.</p>';
     document.getElementById("canal-avisos").textContent = "sin respuesta";
     document.getElementById("motivo-avisos").textContent =
