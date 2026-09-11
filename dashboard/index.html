@@ -518,17 +518,34 @@
               <tr><td>Motor y marcha</td><td class="si">sí</td><td class="si">sí</td><td class="no">no</td><td><code>engine_speed</code>, <code>gear_selected</code></td></tr>
               <tr><td>Trazado del circuito</td><td class="si">declarado</td><td class="si">declarado</td><td class="parcial">reconstruido</td><td><code>world_position_*</code>, <code>track_position_*</code></td></tr>
               <tr><td><b>Comparación por distancia</b></td><td class="si">2,67 m entre muestras</td><td class="no">huecos de hasta 83 m</td><td class="no">sin distancia declarada</td><td><code>lap_distance</code></td></tr>
-              <tr><td>Aceleraciones</td><td class="si">3 ejes</td><td class="no">no</td><td class="parcial">2 ejes</td><td><code>g_force_vertical</code> solo en F1 25</td></tr>
+              <tr data-panel="aceleraciones"><td>Aceleraciones</td><td class="si">3 ejes</td><td class="no">no</td><td class="parcial">2 ejes</td><td><code>g_force_vertical</code> solo en F1 25</td></tr>
               <tr><td>Dirección y ruedas</td><td class="si">sí</td><td class="no">no</td><td class="si">sí</td><td><code>steer_angle</code>, <code>wheel_speed_*</code></td></tr>
-              <tr><td>Neumáticos y frenos</td><td class="si">sí</td><td class="no">no</td><td class="no">no</td><td><code>tyre_*</code>, <code>brake_temperature_*</code></td></tr>
+              <tr data-panel="vehiculo"><td>Neumáticos y frenos</td><td class="si">sí</td><td class="no">no</td><td class="no">no</td><td><code>tyre_*</code>, <code>brake_temperature_*</code></td></tr>
               <tr><td>Daño por parte</td><td class="si">sí</td><td class="no">no</td><td class="no">no</td><td><code>wing_damage_*</code>, <code>floor_damage</code></td></tr>
               <tr><td>Combustible y ERS</td><td class="si">sí</td><td class="no">no</td><td class="no">no</td><td><code>fuel_mass</code>, <code>ers_stored_energy</code></td></tr>
               <tr data-panel="puesta"><td>Puesta a punto</td><td class="si">23 ajustes declarados</td><td class="no">no</td><td class="no">no</td><td><code>setup_front_wing</code>, <code>setup_suspension_*</code>, <code>setup_tyre_pressure_*</code></td></tr>
               <tr data-panel="vehiculos"><td>Comparación entre vehículos</td><td class="si">parrilla completa</td><td class="si">parrilla completa</td><td class="no">un solo vehículo</td><td>la captura del bus es de un vehículo: no hay con quién comparar</td></tr>
-              <tr><td>Clima y pista</td><td class="si">sí</td><td class="parcial">por contexto</td><td class="no">no</td><td><code>air_temperature</code></td></tr>
+              <tr data-panel="avisos"><td>Avisos de sesión</td><td class="si">banderas, superficie y daño</td><td class="no">no</td><td class="no">no</td><td><code>fia_flag</code>, <code>surface_type_*</code>, <code>lap_invalid</code>, <code>*_damage</code></td></tr>
+              <tr data-panel="clima"><td>Clima y pista</td><td class="si">sí</td><td class="parcial">por contexto</td><td class="no">no</td><td><code>air_temperature</code></td></tr>
               <tr><td>Biometría del piloto</td><td class="no">no</td><td class="no">no</td><td class="no">no</td><td>ninguna fuente la entrega</td></tr>
             </tbody>
           </table>
+        </div>
+        <!-- ============================================================
+             LO QUE LA FUENTE ABIERTA NO SOSTIENE, Y POR ESO NO ESTA EN PANTALLA
+             ------------------------------------------------------------
+             La tabla de arriba compara las tres fuentes en general. Esto dice
+             lo mismo de **la que esta abierta**, y lo dice donde se puede leer:
+             un panel que se saca del tablero deja de poder explicarse solo.
+
+             No se escribe a mano. Sale de la misma tabla del guion que decide
+             sacar cada panel ---`PANELES_QUE_LA_FUENTE_NO_TIENE`---, de modo
+             que lo que se lee aca y lo que falta en pantalla no pueden
+             discrepar: son la misma declaracion leida dos veces.
+             ============================================================ -->
+        <div class="ausencias-declaradas" id="ausencias-declaradas" hidden>
+          <p class="eyebrow" id="titulo-ausencias"></p>
+          <dl class="lista-ausencias" id="lista-ausencias"></dl>
         </div>
         <p class="nota"><strong>La fila que cambia una decisión:</strong> la comparación por distancia se
         había descartado por medición propia, porque en OpenF1 el muestreo de 3,7 Hz deja huecos de hasta

@@ -529,6 +529,67 @@ function porQueNoHayDistancia(cual) {
   return (d && d.porque) || "esta fuente no declara distancia recorrida";
 }
 
+/* ============================================================
+   QUE PANEL NO TIENE NADA QUE DAR NUNCA, Y CUAL SOLO NO LO TRAJO HOY
+   ------------------------------------------------------------
+   Son dos afirmaciones distintas y el tablero las venia mezclando en una sola.
+
+   `data-necesita` dice «esta sesion no trajo esta señal»: el panel se queda en
+   su sitio, se cubre y **escribe el motivo**, que es lo correcto cuando el dato
+   podria haber estado. Una captura del simulador sin clima es eso.
+
+   Esto otro dice «esta fuente no publica esto, ni hoy ni nunca». Ahi el panel
+   solo puede decir que no: ocupa un cuarto de la pantalla para declarar una
+   ausencia estructural mientras las señales que si se midieron se aprietan en
+   lo que sobra. Se lo saca del tablero.
+
+   EL HECHO NO SE PIERDE, Y ESO ES LA MITAD DE LA REGLA. La tabla del pie
+   ---«Qué sostiene cada fuente»--- tiene una fila por instrumento y las tres
+   fuentes en columnas: ahi es donde la ausencia es el tema y donde se puede
+   comparar, que es lo que un panel tapado nunca deja hacer. Sacar un panel sin
+   ese registro seria esconder; con el, es ordenar.
+
+   POR QUE ACA Y NO EN LA HOJA DE ESTILOS. Estaba escrito como reglas
+   `display: none` por fuente, y una regla de estilo no puede llevar el motivo
+   ni la puede leer una prueba. Peor: el selector alcanzaba tambien a las filas
+   de la tabla del pie, que llevan el mismo `data-panel` justamente para que
+   quede el registro, de modo que la fuente que escondia un panel escondia
+   ademas el unico sitio donde ese hecho seguia escrito.
+   ============================================================ */
+const PANELES_QUE_LA_FUENTE_NO_TIENE = {
+  f1: {},
+  openf1: {
+    /* Lo dice `/clima` de esta fuente con estas palabras: el clima no viaja en
+       la telemetría, llega por el contexto de sesión, aparte. Es un dato de la
+       sesión, no una señal que se pueda seguir contra el reloj de la captura. */
+    clima: "el clima no viaja en la telemetría de esta fuente: llega por el " +
+           "contexto de sesión, aparte",
+    vehiculo: "OpenF1 no publica temperatura ni presión de neumáticos, ni daño " +
+              "por parte: de car_data llegan seis canales y ninguno es del " +
+              "estado del vehículo",
+    puesta: "OpenF1 no publica la configuración del vehículo",
+    aceleraciones: "OpenF1 no publica aceleraciones en ningún eje",
+    /* Este lo dice la propia API al pedirle los avisos de una sesión de esta
+       fuente: «no publica banderas, daño ni tipo de superficie: no hay con qué
+       levantar un aviso». No es que esta sesión salió limpia. */
+    avisos: "OpenF1 no publica banderas, daño ni tipo de superficie: no hay " +
+            "con qué levantar un aviso",
+  },
+  can: {
+    puesta: "un bus vehicular de serie no publica la configuración del vehículo",
+    vehiculos: "la captura del bus es de un solo vehículo: no hay con quién " +
+               "comparar",
+  },
+};
+
+/* El motivo por el que la fuente no sostiene ese panel, o cadena vacia si lo
+   sostiene. Se devuelve el motivo y no un booleano: quien decide esconder algo
+   tiene que poder decir por que, y el mismo texto sirve para el titulo. */
+function porQueLaFuenteNoTieneElPanel(panel, cual) {
+  const d = PANELES_QUE_LA_FUENTE_NO_TIENE[cual === undefined ? fuente : cual];
+  return (d && d[panel]) || "";
+}
+
 const FUENTES = {
   f1: {
     nombre: "F1 25",
@@ -1617,11 +1678,86 @@ function panelEstaPresente(necesita) {
          estado.disponibles.has(nombreDeSenal(necesita));
 }
 
+/* Saca del tablero los paneles que la fuente abierta no puede llenar nunca, y
+   con ellos la columna de la cabina que se queda sin nada. La marca es un
+   atributo ---igual que la espera y que la ausencia--- y el motivo viaja en el
+   titulo, de modo que el hecho sigue disponible para quien inspeccione la
+   pagina aunque el panel no este.
+
+   SOLO LAS SECCIONES. Las filas de la tabla del pie llevan el mismo
+   `data-panel` a proposito: son el registro que queda cuando el panel se va.
+   Esconderlas junto con el panel seria borrar la unica constancia. */
+function sacarLosPanelesQueLaFuenteNoLlena() {
+  document.querySelectorAll("section[data-panel]").forEach(el => {
+    const motivo = porQueLaFuenteNoTieneElPanel(el.dataset.panel);
+    if (motivo) { el.dataset.fuera = "si"; el.title = motivo; }
+    else if (el.dataset.fuera) { delete el.dataset.fuera; el.removeAttribute("title"); }
+  });
+  /* Una columna vacia sigue reservando su parte de la rejilla: el hueco se ve
+     igual que se veia el panel, y encima sin decir nada. */
+  document.querySelectorAll(".col-cabina").forEach(col => {
+    const paneles = [...col.querySelectorAll("section[data-panel]")];
+    const vacia = paneles.length > 0 && paneles.every(p => p.dataset.fuera === "si");
+    if (vacia) col.dataset.fuera = "si"; else delete col.dataset.fuera;
+  });
+}
+
+/* Como se llama un panel, tomado de su propio encabezado.
+   Escribir los nombres otra vez en una tabla seria tener dos sitios donde el
+   panel se llama de alguna manera, y el dia que uno cambie el otro miente. */
+function nombreDelPanel(panel) {
+  const seccion = document.querySelector('section[data-panel="' + panel + '"]');
+  const titulo = seccion ? seccion.querySelector("h2") : null;
+  return titulo ? titulo.textContent.trim() : panel;
+}
+
+/* LO QUE LA FUENTE NO SOSTIENE, ESCRITO DONDE SE PUEDE LEER.
+   Un panel que se saca del tablero deja de poder explicarse solo: el motivo va
+   en su titulo, y un panel que no esta no tiene titulo que apuntar. Esta lista
+   sale de la **misma** declaracion que lo saca, de modo que lo que se lee aca y
+   lo que falta en pantalla no pueden discrepar.
+
+   Con la fuente que lo sostiene todo, el bloque no esta: un cartel que dice
+   «nada» ocupa sitio para no decir nada. */
+function pintarAusenciasDeclaradas() {
+  const bloque = document.getElementById("ausencias-declaradas");
+  if (!bloque) return;
+  const tabla = PANELES_QUE_LA_FUENTE_NO_TIENE[fuente] || {};
+  const paneles = Object.keys(tabla);
+  bloque.hidden = paneles.length === 0;
+  if (!paneles.length) return;
+
+  const titulo = document.getElementById("titulo-ausencias");
+  if (titulo) {
+    titulo.textContent = (FUENTES[fuente] ? FUENTES[fuente].nombre : fuente) +
+      " no sostiene " + (paneles.length === 1 ? "este instrumento" :
+                         "estos " + paneles.length + " instrumentos") +
+      ", y por eso no están en pantalla";
+  }
+  const lista = document.getElementById("lista-ausencias");
+  if (!lista) return;
+  /* Se arma con nodos y no con una cadena: el motivo es texto, y un texto que
+     se concatena dentro de HTML es una via para que deje de serlo. */
+  lista.textContent = "";
+  paneles.forEach(panel => {
+    const fila = document.createElement("div");
+    const que = document.createElement("dt");
+    que.textContent = nombreDelPanel(panel);
+    const porque = document.createElement("dd");
+    porque.textContent = tabla[panel];
+    fila.appendChild(que);
+    fila.appendChild(porque);
+    lista.appendChild(fila);
+  });
+}
+
 function aplicarDisponibilidad() {
   const f = FUENTES[fuente];
   document.querySelectorAll("[data-necesita]").forEach(el => {
     el.dataset.estado = panelEstaPresente(el.dataset.necesita) ? "presente" : "ausente";
   });
+  sacarLosPanelesQueLaFuenteNoLlena();
+  pintarAusenciasDeclaradas();
   /* El motivo de cada ausencia lo escribe la API: es la fuente la que sabe
      por que no publica un dato, y repetirlo aca seria copiarlo mal tarde o
      temprano. Cuando la API no dio motivo se cae en el de la fuente. */

@@ -171,6 +171,21 @@
   .capa-ausente strong { font-family: var(--titulo); font-size: 1rem; letter-spacing: .05em; text-transform: uppercase; color: var(--texto-medio); }
   .capa-ausente span { color: var(--texto-tenue); font-size: .8rem; max-width: 42ch; }
 
+  /* Y LO QUE LA FUENTE NO PUBLICA NUNCA NO OCUPA SITIO.
+     La regla de arriba es para el dato que podria haber estado y hoy no esta:
+     el panel se queda y escribe por que. Esta es para el que no puede estar,
+     y la decide `PANELES_QUE_LA_FUENTE_NO_TIENE` en el guion ---con el motivo
+     escrito, que una hoja de estilos no sabe llevar---. El hecho sigue en la
+     tabla del pie, que es donde comparar las tres fuentes es el tema.
+
+     LLEVA `!important` Y ES A PROPOSITO. Los elementos que esta regla saca
+     ---`.instrumento` y `.col-cabina`--- declaran su propio `display` mas
+     abajo en esta misma hoja y con la misma especificidad, de modo que sin la
+     marca gana el que este escrito ultimo: el panel se iria o se quedaria
+     segun el orden del archivo, que no es un criterio. «Fuera» es una decision
+     tomada en el guion con su motivo, y no hay nada que pueda revertirla. */
+  [data-fuera="si"] { display: none !important; }
+
   /* CINCO CELDAS, Y NO SE MUEVEN CUANDO CAMBIAN LAS CIFRAS.
      Identidad, puesto, vuelta, cronometro y diferencia son cinco hechos de
      distinta naturaleza y cada uno tiene su celda: antes «Vehículo» cargaba con
@@ -283,6 +298,26 @@
   .lista-canales div { display: flex; justify-content: space-between; gap: 10px; align-items: baseline; padding-bottom: 6px; border-bottom: 1px solid var(--linea); }
   .lista-canales dt { font-family: var(--cifra); font-size: .7rem; color: var(--texto-tenue); }
   .lista-canales dd { margin: 0; font-family: var(--cifra); font-variant-numeric: tabular-nums; font-weight: 600; }
+
+  /* LO QUE LA FUENTE ABIERTA NO SOSTIENE. Un instrumento por renglon con su
+     motivo al lado. El motivo es una frase, no una cifra: se lee como texto,
+     alineado a la izquierda del ancho que le toca, y no como la columna de
+     numeros de `.lista-canales`. */
+  .ausencias-declaradas { margin-top: 14px; }
+  .lista-ausencias { display: grid; gap: 8px; margin: 8px 0 0; }
+  .lista-ausencias div {
+    display: grid; grid-template-columns: minmax(0, 150px) minmax(0, 1fr);
+    gap: 4px 14px; align-items: baseline;
+    padding-bottom: 7px; border-bottom: 1px solid var(--linea);
+  }
+  .lista-ausencias dt {
+    font-family: var(--titulo); font-size: .68rem; letter-spacing: .06em;
+    text-transform: uppercase; color: var(--texto-medio);
+  }
+  .lista-ausencias dd { margin: 0; color: var(--texto-tenue); font-size: .78rem; }
+  @media (max-width: 640px) {
+    .lista-ausencias div { grid-template-columns: minmax(0, 1fr); }
+  }
 
   /* Veinte vehiculos no pueden empujar al resto de la grilla fuera de
      pantalla: la lista tiene su propio desplazamiento. */
@@ -784,15 +819,13 @@
   :root[data-fuente="can"] .cabina .col-cabina.izquierda > .instrumento:not([data-panel="trazado"]) {
     display: none;
   }
-  /* Y ABAJO, DOS PANELES QUE EN EL BUS NO TIENEN NADA QUE DAR NUNCA.
-     No es que esta sesion no los trajo ---para eso esta `data-necesita`, que
-     marca la ausencia y escribe el motivo a la vista---: es que un bus de serie
-     no publica configuracion del vehiculo, y una captura de **un** vehiculo no
-     tiene con quien compararse. Un panel que solo puede decir «no» le quita el
-     sitio a lo que si se midio. El hecho no se pierde: sigue escrito en la
-     tabla del pie, que es donde comparar las tres fuentes es el tema. */
-  :root[data-fuente="can"] [data-panel="puesta"],
-  :root[data-fuente="can"] [data-panel="vehiculos"] { display: none; }
+  /* Los dos paneles que en el bus no tienen nada que dar nunca ---puesta a
+     punto y comparacion entre vehiculos--- se sacan desde el guion, en
+     `PANELES_QUE_LA_FUENTE_NO_TIENE`, que es donde el motivo se puede escribir.
+     Estaban aca como dos selectores por atributo, y alcanzaban tambien a las
+     filas de la tabla del pie ---que llevan el mismo `data-panel` justamente
+     para que quede constancia de lo que la fuente no sostiene---: esconder el
+     panel escondia ademas el unico sitio donde el hecho seguia escrito. */
 
   :root[data-fuente="can"] .cabina .graficos-cabina {
     grid-column: 2; grid-row: 1;
@@ -806,6 +839,39 @@
       grid-template-columns: repeat(2, minmax(0, 1fr));
       grid-template-rows: repeat(4, minmax(0, 1fr));
     }
+  }
+
+  /* OPENF1 ES UNA CABINA DE CARRERA A LA QUE LE FALTA EL VEHICULO.
+     De las cuatro columnas se va la del medio entera: esta fuente no publica
+     neumaticos ni daño, y ese panel era lo unico que esa columna tenia. Con
+     tres paneles en una rejilla de cuatro columnas la cuarta quedaba reservada
+     y vacia, asi que la rejilla pasa a tener tres.
+
+     Y la fila de abajo se lleva lo que sobra. Lo que esta fuente si entrega son
+     seis señales del coche ---velocidad, acelerador, freno, regimen, marcha y
+     DRS--- y eso vive en los graficos: donde antes habia un panel de neumaticos
+     ahora hay mas alto para lo que se midio. */
+  :root[data-fuente="openf1"] .cabina {
+    grid-template-columns:
+      minmax(0, 1.25fr) minmax(0, 1fr) minmax(0, .8fr);
+    /* Y la fila de abajo pesa mas que la de arriba, al reves que en la cabina
+       de carrera. Arriba quedaron tres paneles ---dos de ellos, motor y
+       cronometraje, de alto fijo--- y lo que esta fuente si entrega son las
+       seis señales del coche, que viven abajo. */
+    grid-template-rows: minmax(0, .82fr) minmax(0, 1.18fr);
+  }
+  /* Con el clima fuera, el trazado es lo unico de su columna y se queda con el
+     alto entero: es una figura, y el alto es lo que le faltaba. Y la columna
+     de la derecha se queda con el cronometraje solo ---esta fuente no levanta
+     avisos---, que son cinco renglones: es la que menos ancho necesita. */
+
+  /* ABAJO, LA LISTA DE PILOTOS SOLA EN SU FILA.
+     Puesta a punto y aceleraciones ocupaban tres de las cuatro celdas y
+     OpenF1 no sostiene ninguna de las dos. Dejar la lista en una celda de
+     cuarto de ancho con tres huecos al lado es peor que darsela entera: son
+     veinte pilotos declarados y los que tengan telemetria se eligen ahi. */
+  :root[data-fuente="openf1"] .tablero [data-panel="vehiculos"] {
+    grid-column: 1 / -1;
   }
 
   /* EL TRAZADO SE QUEDA CON EL SITIO DE LA LEYENDA.
@@ -1218,9 +1284,19 @@
       grid-template-columns: repeat(2, minmax(0, 1fr));
       grid-template-rows: none;
     }
+    /* Las tres columnas de OpenF1 se declaran con la fuente en el selector, y
+       eso le gana por especificidad a la regla de ancho de arriba aunque este
+       escrita despues: sin esto, la cabina seguiria en tres columnas en una
+       ventana donde ni siquiera entran dos. Se repite el apilado, que es lo
+       que la regla general ya decia. */
+    :root[data-fuente="openf1"] .cabina {
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1.25fr);
+      grid-template-rows: auto auto auto auto;
+    }
   }
   @media (max-width: 860px) {
     .cabina { grid-template-columns: minmax(0, 1fr); }
+    :root[data-fuente="openf1"] .cabina { grid-template-columns: minmax(0, 1fr); }
   }
   @media (max-width: 640px) {
     :root[data-fuente="can"] .cabina .graficos-cabina {

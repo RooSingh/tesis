@@ -249,6 +249,35 @@ class DashboardBrowserTests(unittest.TestCase):
         self.assertIn('aria-label="Velocidad a lo largo del tiempo"', dom)
         self.assertNotIn("La vuelta 1 no se pudo traer", dom)
 
+        # Dos paneles que el bus no puede llenar nunca salen del tablero, y la
+        # marca la pone el guion.
+        for panel in ("puesta", "vehiculos"):
+            seccion = re.search(rf'<section[^>]*data-panel="{panel}"[^>]*>', dom)
+            self.assertIsNotNone(seccion, f"no esta la seccion de «{panel}»")
+            self.assertIn('data-fuera="si"', seccion.group(0), panel)
+
+        # Y lo que el bus si entrega no se saca: el trazado se reconstruye
+        # integrando velocidad y guiñada, y esta a la vista.
+        trazado = re.search(r'<section[^>]*data-panel="trazado"[^>]*>', dom)
+        self.assertIsNotNone(trazado)
+        self.assertNotIn("data-fuera", trazado.group(0))
+
+        # SACAR UN PANEL NO PUEDE BORRAR EL HECHO, Y ESTO LO COMPRUEBA SOBRE EL
+        # DOM DE VERDAD. La constancia se escribe desde la misma tabla que saca
+        # los paneles, de modo que lo que falta en pantalla y lo que se lee al
+        # pie son la misma declaracion. Se comprueba aca y no sobre el archivo
+        # porque el bloque lo llena el guion: un `index.html` con el hueco no
+        # demuestra que alguien lo complete.
+        bloque = re.search(
+            r'<div class="ausencias-declaradas"[^>]*>(.*?)</div>\s*</div>',
+            dom, re.S)
+        self.assertIsNotNone(bloque, "no esta el bloque de ausencias declaradas")
+        self.assertNotIn("hidden", bloque.group(0).split(">", 1)[0],
+                         "el bus saca dos paneles y el bloque quedo escondido")
+        self.assertIn("Puesta a punto", bloque.group(1))
+        self.assertIn("Vehículos", bloque.group(1))
+        self.assertIn("no hay con quién comparar", bloque.group(1))
+
 
 if __name__ == "__main__":
     unittest.main()

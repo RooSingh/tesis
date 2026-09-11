@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import subprocess
 import unittest
 from pathlib import Path
@@ -51,6 +52,55 @@ class DashboardFrontendTests(unittest.TestCase):
             estilos,
         )
         self.assertIn("grid-template-columns: repeat(4, minmax(0, 1fr));", estilos)
+
+    def test_un_panel_fuera_se_esconde_y_nada_lo_puede_revertir(self) -> None:
+        """La regla que saca un panel no puede depender del orden del archivo.
+
+        `.instrumento` y `.col-cabina` declaran su propio `display` mas abajo en
+        la misma hoja y con la misma especificidad: sin la marca, que el panel
+        se vaya o se quede lo decide cual de las dos reglas este escrita ultima.
+        """
+        estilos = ESTILOS.read_text(encoding="utf-8")
+        self.assertIn('[data-fuera="si"] { display: none !important; }', estilos)
+
+    def test_openf1_ordena_la_cabina_para_lo_que_esa_fuente_si_entrega(self) -> None:
+        """Sin el panel del vehiculo, la cabina pasa de cuatro columnas a tres.
+
+        Con la columna del medio escondida y la rejilla todavia en cuatro, la
+        cuarta queda reservada y vacia: el hueco se ve igual que se veia el
+        panel y encima no dice nada.
+        """
+        estilos = ESTILOS.read_text(encoding="utf-8")
+        inicio = estilos.index(':root[data-fuente="openf1"] .cabina {')
+        bloque = estilos[inicio:estilos.index("}", inicio)]
+        columnas = re.search(r"grid-template-columns:([^;]+);", bloque)
+        self.assertIsNotNone(columnas, bloque)
+        self.assertEqual(columnas.group(1).count("minmax(0,"), 3, bloque)
+        # Y la lista de pilotos se queda con la fila de abajo entera, porque los
+        # dos paneles que la acompañaban ---puesta a punto y aceleraciones---
+        # esta fuente no los sostiene.
+        self.assertIn(
+            ':root[data-fuente="openf1"] .tablero [data-panel="vehiculos"] {',
+            estilos,
+        )
+
+    def test_ninguna_fuente_esconde_paneles_desde_la_hoja_de_estilos(self) -> None:
+        """El selector por atributo no distingue el panel de su fila en el pie.
+
+        Las dos llevan `data-panel`: la `<section>` del instrumento y la `<tr>`
+        de la tabla «Que sostiene cada fuente», que es el registro que queda
+        cuando el panel se va. Escondiendo por atributo se borraban las dos, de
+        modo que la fuente que escondia un panel borraba ademas la constancia de
+        por que no estaba. La decision vive ahora en
+        `PANELES_QUE_LA_FUENTE_NO_TIENE`, que ademas lleva el motivo.
+        """
+        estilos = ESTILOS.read_text(encoding="utf-8")
+        sobrantes = re.findall(
+            r':root\[data-fuente="([^"]+)"\]\s*\[data-panel="([^"]+)"\]'
+            r'\s*[,{][^{}]*display:\s*none',
+            estilos,
+        )
+        self.assertEqual(sobrantes, [], sobrantes)
 
     def test_can_mapea_las_trece_senales_reales(self) -> None:
         codigo = APP.read_text(encoding="utf-8")

@@ -2814,24 +2814,45 @@ prueba("el bus no publica puesta a punto, y eso no cambio", () => {
    ------------------------------------------------------------------
    En el bus, «puesta a punto» y «vehiculos» no tienen nada que dar nunca: un
    bus de serie no publica configuracion del vehiculo, y una captura de un
-   vehiculo no tiene con quien compararse. Sacarlos de la vista esta bien; que
-   con ellos desaparezca el dato de que esa fuente no los sostiene, no.
+   vehiculo no tiene con quien compararse. En OpenF1 pasa lo mismo con clima,
+   neumaticos, puesta a punto, aceleraciones y avisos. Sacarlos de la vista esta
+   bien; que con ellos desaparezca el dato de que esa fuente no los sostiene, no.
 
-   La tabla del pie ---«Que sostiene cada fuente»--- es donde esa comparacion es
-   el tema. Cada panel que la hoja de estilos esconde por fuente tiene que tener
-   ahi su fila, y la fila lo declara nombrando el panel. Sin eso, esconder un
-   panel es perder lo que ese panel decia.
+   El registro que se ve mientras se usa el tablero es el bloque «lo que esta
+   fuente no sostiene», que se escribe desde la **misma** tabla que saca los
+   paneles: no puede discrepar con lo que falta en pantalla porque es la misma
+   declaracion leida dos veces. Eso se comprueba sobre el DOM, en
+   `tests/test_dashboard_browser.py`, que es donde se puede.
+
+   Lo que se comprueba aca es lo otro: la tabla del pie ---«Que sostiene cada
+   fuente»--- compara las tres fuentes de un vistazo, y un panel que alguna saca
+   tiene que tener ahi su fila. Es la constancia escrita, la que queda en el
+   repositorio y en las capturas del informe; sin ella, sacar un panel es perder
+   la comparacion que ese panel permitia hacer.
+
+   LA DECLARACION SE LEE DEL GUION, NO DE LA HOJA DE ESTILOS. Estaba escrita como
+   reglas `display: none` por fuente, y ahi no cabe el motivo. Peor: el selector
+   por atributo alcanzaba **tambien a las filas de la tabla del pie**, que llevan
+   el mismo `data-panel` justamente para ser el registro. La fuente que escondia
+   un panel escondia con el la unica constancia de por que no estaba, que es lo
+   que estas pruebas existen para impedir. La ultima de la seccion comprueba que
+   esas reglas no vuelvan.
    ================================================================== */
 
 const CSS = fs.readFileSync(
   path.join(__dirname, "..", "..", "dashboard", "styles.css"), "utf8");
 
-/* Los paneles que la hoja de estilos esconde nombrandolos, por fuente. */
+/* Los paneles que cada fuente declara no sostener, con su motivo. */
+const PANELES_QUE_LA_FUENTE_NO_TIENE = new Function(
+  constante("PANELES_QUE_LA_FUENTE_NO_TIENE") +
+  "\nreturn PANELES_QUE_LA_FUENTE_NO_TIENE;")();
+
 function panelesEscondidosPorFuente() {
   const escondidos = {};
-  const re = /:root\[data-fuente="([^"]+)"\]\s*\[data-panel="([^"]+)"\]/g;
-  let m;
-  while ((m = re.exec(CSS))) (escondidos[m[1]] = escondidos[m[1]] || []).push(m[2]);
+  Object.keys(PANELES_QUE_LA_FUENTE_NO_TIENE).forEach(f => {
+    const paneles = Object.keys(PANELES_QUE_LA_FUENTE_NO_TIENE[f]);
+    if (paneles.length) escondidos[f] = paneles;
+  });
   return escondidos;
 }
 
@@ -2847,6 +2868,45 @@ function panelesEnLaTabla() {
 prueba("el bus esconde puesta a punto y la comparacion entre vehiculos", () => {
   const escondidos = panelesEscondidosPorFuente();
   assert.deepStrictEqual((escondidos.can || []).sort(), ["puesta", "vehiculos"]);
+});
+
+prueba("openf1 saca lo que no publica y se queda con lo que si", () => {
+  const escondidos = panelesEscondidosPorFuente();
+  /* Lo que esta fuente no entrega nunca: clima, estado del vehiculo, puesta a
+     punto, aceleraciones y avisos. */
+  assert.deepStrictEqual((escondidos.openf1 || []).sort(),
+    ["aceleraciones", "avisos", "clima", "puesta", "vehiculo"]);
+  /* Y lo que si: el trazado sale de `track_position_*`, el motor de
+     `engine_speed` y `gear_selected`, el cronometraje de la parrilla y las
+     vueltas, y la comparacion entre vehiculos de que hay mas de uno. Sacar
+     alguno de esos seria esconder algo medido. */
+  ["trazado", "motor", "cronometraje", "vehiculos"].forEach(panel => {
+    assert.ok(!(escondidos.openf1 || []).includes(panel),
+              "openf1 sostiene «" + panel + "» y lo esta sacando de la vista");
+  });
+});
+
+prueba("cada panel sacado dice por que, y no con una cadena vacia", () => {
+  Object.keys(PANELES_QUE_LA_FUENTE_NO_TIENE).forEach(f => {
+    const tabla = PANELES_QUE_LA_FUENTE_NO_TIENE[f];
+    Object.keys(tabla).forEach(panel => {
+      assert.strictEqual(typeof tabla[panel], "string");
+      assert.ok(tabla[panel].trim().length > 20,
+                "la fuente " + f + " saca «" + panel + "» sin decir por que");
+    });
+  });
+});
+
+prueba("la hoja de estilos no esconde paneles por fuente", () => {
+  /* El selector por atributo no distingue la `<section>` del panel de la `<tr>`
+     de la tabla del pie: las dos llevan `data-panel`. Volver a escribirlo aca
+     borraria el registro junto con el panel. */
+  const re = /:root\[data-fuente="([^"]+)"\]\s*\[data-panel="([^"]+)"\]\s*[,{][^{}]*display:\s*none/g;
+  const halladas = [];
+  let m;
+  while ((m = re.exec(CSS))) halladas.push(m[1] + "/" + m[2]);
+  assert.deepStrictEqual(halladas, [],
+    "la hoja de estilos esconde paneles por fuente: " + halladas.join(", "));
 });
 
 prueba("todo panel escondido por fuente sigue declarado en la tabla del pie", () => {
