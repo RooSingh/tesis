@@ -287,7 +287,14 @@ def listar_vueltas(
         # base caida deje de explicar por que no hay vueltas, que es lo unico
         # que esta respuesta tiene para dar. Si la consulta no sale, se contesta
         # lo de siempre sin vehiculo.
+        # DOS AVERIGUACIONES INDEPENDIENTES, Y CADA UNA CAE SOLA.
+        #
+        # Envolver las dos en un mismo intento hacia que un fallo al buscar las
+        # vueltas se llevara tambien al vehiculo, que se habia averiguado bien.
+        # Son dos preguntas distintas ---quien conduce, y que vueltas hay--- y
+        # la respuesta vale aunque solo se conteste una.
         propio = None
+        vueltas_del_reloj: list[dict[str, Any]] = []
         try:
             with db.obtener_conexion() as conexion, conexion.cursor() as cursor:
                 cursor.execute("""
@@ -298,9 +305,24 @@ def listar_vueltas(
                      LIMIT 1
                 """, (fuente, session_id))
                 fila = cursor.fetchone()
-            propio = fila[0] if fila else None
+                propio = fila[0] if fila else None
         except Exception:  # noqa: BLE001
             propio = None
+        if propio:
+            try:
+                with db.obtener_conexion() as conexion, conexion.cursor() as cursor:
+                    vueltas_del_reloj = _vueltas_del_contexto(cursor, session_id, propio)
+            except Exception:  # noqa: BLE001
+                vueltas_del_reloj = []
+        if vueltas_del_reloj:
+            return {
+                "session_id": session_id,
+                "fuente": fuente,
+                "vehiculo": propio,
+                "vueltas": vueltas_del_reloj,
+                # De donde salen, porque no salen de la telemetria.
+                "medidas_por": "contexto deportivo, por reloj",
+            }
         return {
             "session_id": session_id,
             "fuente": fuente,
@@ -1532,11 +1554,31 @@ def series_por_tiempo(
     senales: Annotated[str, Query(description="Nombres de senal separados por coma")],
     vehiculos: Annotated[str | None, Query(description="Identificadores separados por coma")] = None,
     puntos: Annotated[int, Query(ge=50, le=5000)] = 600,
+    desde: Annotated[str | None, Query(
+        description="Instante ISO-8601 inclusivo: acota el tramo que se devuelve")] = None,
+    hasta: Annotated[str | None, Query(
+        description="Instante ISO-8601 inclusivo: acota el tramo que se devuelve")] = None,
     adquisicion: Annotated[str | None, Query(
         description="Que adquisicion mirar: `original`, un `replay_run_id`, o `todas`")] = None,
     fase: Annotated[int | None, Query(ge=1)] = None,
 ) -> dict[str, Any]:
-    """Series contra el reloj de sesion para fuentes sin distancia medida."""
+    """Series contra el reloj de sesion para fuentes sin distancia medida.
+
+    PEDIR UN TRAMO Y NO LA SESION ENTERA.
+
+    Sin `desde` y `hasta` esto devuelve la sesion completa repartida en `puntos`
+    muestras, y eso alcanza mientras la sesion sea corta. Sobre una carrera de
+    OpenF1 no: dos horas y media en mil doscientos puntos son **una muestra cada
+    7,8 segundos**, de modo que una ventana de veinte segundos se dibuja con dos
+    o tres puntos y el grafico sale como una recta quebrada. La fuente publica a
+    3,7 Hz ---unas treinta y cuatro mil muestras por piloto--- asi que se estaba
+    tirando el 96 % de lo medido.
+
+    Acotando el tramo, los mismos mil doscientos puntos caen sobre la vuelta que
+    se esta mirando y sobra resolucion. Y no cuesta nada: `timestamp` es la
+    dimension por la que la tabla esta particionada, de modo que un tramo acota
+    de verdad en vez de recorrerlo todo para despues descartar.
+    """
 
     fuente = _fuente_de(session_id)
     pedidas = [s.strip() for s in senales.split(",") if s.strip()]
@@ -1547,6 +1589,13 @@ def series_por_tiempo(
 
     condiciones = ["source_type = %s", "session_id = %s"]
     parametros: list[Any] = [fuente, session_id]
+    # El tramo pedido acota antes que nada: es la dimension de particion.
+    if desde:
+        condiciones.append("timestamp >= %s")
+        parametros.append(desde)
+    if hasta:
+        condiciones.append("timestamp <= %s")
+        parametros.append(hasta)
     with db.obtener_conexion() as conexion, conexion.cursor() as cursor:
         ventana = _ventana_de_alcance(cursor, fuente, session_id, adquisicion)
         fase_desde, fase_hasta = _limites_de_fase(
@@ -1946,6 +1995,61 @@ def _vueltas_por_reloj(cursor, session_id: str, vehicle_id: str | None) -> list[
          ORDER BY lap_number
     """, (int(clave), piloto))
     return [(int(n), a, b) for n, a, b in cursor.fetchall()]
+
+
+def _vueltas_del_contexto(cursor, session_id: str,
+                          vehiculo: str | None) -> list[dict[str, Any]]:
+    """Las vueltas de una fuente sin metro medido, como las declara el contexto.
+
+    NO HAY DISTANCIA, PERO HAY VUELTAS. Delimitar una vuelta con el metro es lo
+    que hace el simulador; OpenF1 no lo publica, y por eso esta ruta contestaba
+    la lista vacia. Pero las vueltas de esa carrera existen: el contexto
+    deportivo las trae con su instante de comienzo y su duracion. Son ventanas
+    de **tiempo**, que es la dimension que esta fuente si tiene.
+
+    QUE DESTRABA DECIRLAS. El tablero reparte los puntos que pide entre lo que
+    dura lo que va a dibujar. Con una sola vuelta de dos horas y media, mil
+    doscientos puntos son una muestra cada 7,8 segundos y una ventana de veinte
+    segundos se dibuja con dos o tres. Con las cincuenta y dos vueltas de
+    noventa segundos, los mismos puntos sobran. Y de paso aparecen el
+    cronometraje y la eleccion de vuelta, que sin vueltas no existian.
+
+    La duracion sale declarada y no se recalcula: es la que midio la fuente.
+    Una vuelta sin instante o sin duracion no se ofrece ---delimitar lo que no
+    se sabe donde empieza seria inventarlo---.
+    """
+
+    clave = session_id.rsplit(":", 1)[-1]
+    if not clave.isdigit() or not vehiculo or ":driver:" not in vehiculo:
+        return []
+    cola = vehiculo.rsplit(":driver:", 1)[-1]
+    if not cola.isdigit():
+        return []
+    cursor.execute("""
+        SELECT lap_number, date_start, lap_duration_seconds
+          FROM racing_laps
+         WHERE session_key = %s AND driver_number = %s
+           AND date_start IS NOT NULL AND lap_duration_seconds IS NOT NULL
+         ORDER BY lap_number
+    """, (int(clave), int(cola)))
+    salida = []
+    for numero, comienzo, duracion in cursor.fetchall():
+        desde = comienzo.isoformat() if hasattr(comienzo, "isoformat") else str(comienzo)
+        fin = None
+        if hasattr(comienzo, "isoformat"):
+            fin = (comienzo + timedelta(seconds=float(duracion))).isoformat()
+        salida.append({
+            "numero": int(numero),
+            "duracion_s": round(float(duracion), 3),
+            "desde_utc": desde,
+            "hasta_utc": fin,
+            "huecos": [],
+            "continua": True,
+            # Una vuelta de carrera esta completa por definicion: el contexto la
+            # declara con su duracion, que es lo que la cierra.
+            "completa": True,
+        })
+    return salida
 
 
 def _numerar_por_reloj(filas: list, vueltas: list[tuple]) -> list:

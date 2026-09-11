@@ -387,13 +387,24 @@ prueba("no se pide historico con el alcance sin resolver", () => {
 });
 
 prueba("la compuerta esta en las dos consultas de historico", () => {
+  /* SE MIRA LA FUNCION ENTERA, NO SUS PRIMEROS CUATROCIENTOS CARACTERES.
+     Esto cortaba en un largo fijo desde el nombre de la funcion, asi que
+     agregarle un comentario adelante ---explicar por que una condicion es la
+     que es--- empujaba la condicion fuera de la ventana y la prueba fallaba sin
+     que la compuerta se hubiera movido. Lo que se afirma es que la funcion
+     comprueba el alcance antes de pedir, y eso se mira en la funcion. */
   [["asegurarVuelta", "alcanceResuelto()"],
    ["asegurarPosiciones", "alcancePermitePedir()"]].forEach(([nombre, compuerta]) => {
     const i = fuente.indexOf("function " + nombre + "(");
     assert.ok(i > 0, "no esta " + nombre);
-    const cabeza = fuente.slice(i, i + 420);
-    assert.ok(cabeza.indexOf(compuerta) !== -1,
+    const fin = fuente.indexOf("\nfunction ", i + 10);
+    const cuerpo = fuente.slice(i, fin === -1 ? undefined : fin);
+    assert.ok(cuerpo.indexOf(compuerta) !== -1,
       nombre + " pide sin comprobar que el alcance este resuelto");
+    /* Y antes de pedir, no en cualquier lado de la funcion. */
+    const pide = cuerpo.indexOf("pedir(");
+    assert.ok(pide === -1 || cuerpo.indexOf(compuerta) < pide,
+      nombre + " comprueba el alcance despues de haber pedido");
   });
 });
 

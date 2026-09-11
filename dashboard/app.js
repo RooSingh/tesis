@@ -4083,10 +4083,33 @@ function senalDeSesion() {
   return _mandoSesion.signal;
 }
 
+/* EL TRAMO DE UNA VUELTA, PARA PEDIR SOLO ESO.
+   Sin acotar, `/series-tiempo` reparte los puntos pedidos sobre la sesion
+   entera: en una carrera de dos horas y media, mil doscientos puntos son una
+   muestra cada 7,8 segundos, y una ventana de veinte segundos se dibuja con dos
+   o tres. Acotando a la vuelta, los mismos puntos caen sobre noventa segundos y
+   sobra resolucion.
+
+   Vacio cuando la vuelta no declara sus dos instantes: entonces se pide como
+   antes, que es la sesion entera, y es mejor que pedir un tramo inventado. */
+function tramoDeLaVuelta(numero) {
+  const v = estado.vueltas.find(x => x.numero === numero);
+  if (!v || !v.desde_utc || !v.hasta_utc) return "";
+  return "desde=" + encodeURIComponent(v.desde_utc) +
+         "&hasta=" + encodeURIComponent(v.hasta_utc);
+}
+
 /* Pide una vuelta si no esta y no se esta pidiendo ya. */
 function asegurarVuelta(numero, puntos, deFondo) {
   const temporal = !hayEjeDeDistancia();
-  if (!estado.abierta || numero < 1 || (temporal && numero !== 1) ||
+  /* UNA FUENTE SIN METRO MEDIDO YA PUEDE TENER VARIAS VUELTAS.
+     Esto rechazaba cualquier vuelta que no fuera la 1 porque, sin distancia,
+     `/vueltas` contestaba la lista vacia y el tablero armaba un tramo unico.
+     OpenF1 declara sus vueltas por reloj ---cincuenta y dos, con su instante y
+     su duracion--- y ahi la restriccion dejaba cincuenta y una sin poder
+     pedirse. Lo que decide es si esa vuelta existe, no de que fuente viene. */
+  if (!estado.abierta || numero < 1 ||
+      (temporal && !estado.vueltas.some(v => v.numero === numero)) ||
       !alcanceResuelto()) {
     return Promise.resolve(null);
   }
@@ -4130,7 +4153,8 @@ function asegurarVuelta(numero, puntos, deFondo) {
   const autos = propio ? conPropio : [];
   const apertura = aperturaVigente();
   const base = "/sesiones/" + encodeURIComponent(estado.abierta.session_id) +
-               (temporal ? "/series-tiempo?" : "/series?vuelta=" + numero + "&") +
+               (temporal ? "/series-tiempo?" + tramoDeLaVuelta(numero)
+                         : "/series?vuelta=" + numero + "&") +
                (autos.length ? "&vehiculos=" + encodeURIComponent(autos.join(",")) : "") +
                "&puntos=" + quiere + sufijoDeCorrida(true) + "&senales=";
 

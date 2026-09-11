@@ -152,6 +152,7 @@ const NOMBRES = [
   "vueltasEnTramoAcumulado", "claveVehiculoPropio", "duracionDeVuelta", "duracionSesionS",
   "vueltasDeLaSesion", "iniciosDeVuelta", "calcularInstante",
   "vueltaEnFraccion", "trazadoAPath",
+  "tramoDeLaVuelta",
   "pedirTrazado",
   "senalesParaElRecorrido",
   "pieDelRecorrido",
@@ -257,6 +258,7 @@ const {
   textoDeLaValidacion,
   claveDeSesionOpenF1, parrillaDesdePilotos,
   pedirTrazado, rutasPedidas,
+  tramoDeLaVuelta,
   senalesParaElRecorrido,
   pieDelRecorrido,
   extremosDeLaTraza, _rgbDe,
@@ -3605,6 +3607,74 @@ prueba("un piloto sin nombre no entra a la parrilla", () => {
 prueba("una parrilla vacia se declara no disponible", () => {
   assert.strictEqual(parrillaDesdePilotos("openf1:session:9947", []).disponible, false);
   assert.strictEqual(parrillaDesdePilotos("openf1:session:9947", null).disponible, false);
+});
+
+/* ==================================================================
+   26. PEDIR UNA VUELTA, NO LA CARRERA ENTERA
+   ------------------------------------------------------------------
+   `/series-tiempo` reparte los puntos que se le piden sobre lo que abarca la
+   consulta. Sin acotar, en una carrera de OpenF1 eso son dos horas y media: mil
+   doscientos puntos dan **una muestra cada 7,8 segundos**, de modo que una
+   ventana de veinte segundos se dibuja con dos o tres puntos y el grafico sale
+   como una recta quebrada. La fuente publica a 3,7 Hz ---unas treinta y cuatro
+   mil muestras por piloto--- asi que se tiraba el 96 % de lo medido.
+
+   Acotando a la vuelta, los mismos puntos caen sobre noventa segundos.
+   ================================================================== */
+
+prueba("la consulta se acota al tramo de la vuelta que se mira", () => {
+  reiniciar();
+  globalThis.fuente = "openf1";
+  globalThis.estado.vueltas = [
+    { numero: 1, duracion_s: 106.134, desde_utc: "2025-07-06T14:03:49.615000+00:00",
+      hasta_utc: "2025-07-06T14:05:35.749000+00:00" },
+    { numero: 2, duracion_s: 91.2, desde_utc: "2025-07-06T14:05:35.749000+00:00",
+      hasta_utc: "2025-07-06T14:07:06.949000+00:00" },
+  ];
+  const tramo = tramoDeLaVuelta(2);
+  assert.ok(/desde=/.test(tramo) && /hasta=/.test(tramo), tramo);
+  assert.ok(tramo.indexOf(encodeURIComponent("2025-07-06T14:05:35.749000+00:00")) !== -1,
+            "no se pide desde donde empieza esa vuelta: " + tramo);
+  assert.ok(tramo.indexOf(encodeURIComponent("2025-07-06T14:07:06.949000+00:00")) !== -1,
+            "no se pide hasta donde termina: " + tramo);
+});
+
+prueba("los dos instantes van escapados, que es una direccion", () => {
+  /* Un `+` sin escapar en una consulta se lee como un espacio, y el instante
+     llega una hora corrido. */
+  reiniciar();
+  globalThis.estado.vueltas = [
+    { numero: 1, desde_utc: "2025-07-06T14:03:49+00:00", hasta_utc: "2025-07-06T14:05:35+00:00" }];
+  const tramo = tramoDeLaVuelta(1);
+  assert.ok(tramo.indexOf("+00:00") === -1,
+            "el desplazamiento horario viaja sin escapar: " + tramo);
+  assert.ok(tramo.indexOf("%2B00%3A00") !== -1, tramo);
+});
+
+prueba("una vuelta sin sus dos instantes se pide como antes", () => {
+  /* Pedir un tramo inventado seria peor que pedir la sesion entera. */
+  reiniciar();
+  globalThis.estado.vueltas = [
+    { numero: 1, duracion_s: 60, desde_utc: null, hasta_utc: null },
+    { numero: 2, duracion_s: 60, desde_utc: "2025-07-06T14:00:00+00:00", hasta_utc: null }];
+  assert.strictEqual(tramoDeLaVuelta(1), "");
+  assert.strictEqual(tramoDeLaVuelta(2), "");
+  assert.strictEqual(tramoDeLaVuelta(9), "", "una vuelta que no existe no da tramo");
+});
+
+prueba("una fuente sin metro medido ya puede tener mas de una vuelta", () => {
+  /* `asegurarVuelta` rechazaba cualquier vuelta que no fuera la 1 cuando la
+     fuente no tiene distancia. OpenF1 declara cincuenta y dos por reloj, y esa
+     restriccion dejaba cincuenta y una sin poder pedirse. Lo que decide es si
+     la vuelta existe, no de que fuente viene. */
+  const desde = fuenteApp.indexOf("function asegurarVuelta");
+  const cuerpo = fuenteApp.slice(desde, fuenteApp.indexOf("\nfunction ", desde + 10));
+  assert.ok(cuerpo.indexOf("temporal && numero !== 1") === -1,
+            "sigue rechazando toda vuelta que no sea la 1 en las fuentes " +
+            "sin metro medido");
+  assert.ok(/estado\.vueltas\.some\(v => v\.numero === numero\)/.test(cuerpo),
+            "no comprueba que la vuelta exista: " +
+            "pedir una que no esta no devuelve nada y se reintenta sin fin");
 });
 
 console.log("identidad_y_cronometraje: " + hechas + " comprobaciones");

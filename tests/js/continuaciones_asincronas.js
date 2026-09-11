@@ -230,6 +230,7 @@ const PIEZAS = [
   fn("puntosParaVueltas"),
   fn("enTandas"),
   fn("asegurarVuelta"),
+  fn("tramoDeLaVuelta"),
   /* La compuerta que decide si se puede pedir historico. Se extrae de verdad y
      no se sustituye por un `true`: lo que estas pruebas miran es justamente
      cuando sale una consulta y cuando no. */
@@ -1406,6 +1407,43 @@ prueba("con el bus abierto el historico sale por tiempo", async (b) => {
   assert.ok(PEDIDOS[0].ruta.indexOf("/series-tiempo?") !== -1, PEDIDOS[0].ruta);
   assert.ok(PEDIDOS[0].ruta.indexOf("/series?vuelta=") === -1, PEDIDOS[0].ruta);
   assert.strictEqual(b.alcancePermitePedir(), false);
+});
+
+prueba("la consulta por tiempo se acota a la vuelta que se pide", async (b) => {
+  /* Sin acotar, `/series-tiempo` reparte los puntos pedidos sobre la sesion
+     entera. En una carrera de dos horas y media eso son mil doscientos puntos
+     para 9.197 segundos ---una muestra cada 7,8--- y una ventana de veinte
+     segundos se dibuja con dos o tres puntos. */
+  conAlcance(b); dosVueltasDeclaradas(b);
+  b.fijarFuente("openf1");
+  b.asegurarVuelta(2);
+  await asentar();
+  assert.strictEqual(PEDIDOS.length, 1);
+  const ruta = PEDIDOS[0].ruta;
+  assert.ok(ruta.indexOf("desde=") !== -1, "no acota el comienzo: " + ruta);
+  assert.ok(ruta.indexOf("hasta=") !== -1, "no acota el final: " + ruta);
+  assert.ok(ruta.indexOf(encodeURIComponent("2026-09-05T00:01:40Z")) !== -1,
+            "no pide desde donde empieza la vuelta 2: " + ruta);
+});
+
+prueba("una fuente por tiempo puede pedir cualquiera de sus vueltas", async (b) => {
+  /* `asegurarVuelta` rechazaba todo lo que no fuera la vuelta 1 cuando la
+     fuente no tiene metro medido. OpenF1 declara sus vueltas por reloj, y esa
+     restriccion dejaba fuera a todas menos la primera. */
+  conAlcance(b); dosVueltasDeclaradas(b);
+  b.fijarFuente("openf1");
+  b.asegurarVuelta(2);
+  await asentar();
+  assert.strictEqual(PEDIDOS.length, 1, "la vuelta 2 no llego a pedirse");
+});
+
+prueba("y no pide una vuelta que la sesion no declara", async (b) => {
+  /* Pedir lo que no existe devuelve vacio y se reintenta sin fin. */
+  conAlcance(b); dosVueltasDeclaradas(b);
+  b.fijarFuente("openf1");
+  b.asegurarVuelta(9);
+  await asentar();
+  assert.strictEqual(PEDIDOS.length, 0);
 });
 
 prueba("la misma sesion en una fuente con eje si pide", async (b) => {

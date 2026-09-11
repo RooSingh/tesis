@@ -629,8 +629,10 @@ class SinVueltasPeroConAlguienConduciendoTests(unittest.TestCase):
             r = api_sesion.listar_vueltas("openf1:session:9947")
         self.assertEqual(r["vehiculo"], "openf1:session:9947:driver:1")
         self.assertEqual(r["vueltas"], [])
-        consulta, _ = falsa.consultas[-1]
-        self.assertIn("count(*) DESC, vehicle_id", consulta,
+        # La del vehiculo, no la ultima: despues va la de las vueltas.
+        deVehiculo = [c for c, _ in falsa.consultas if "GROUP BY vehicle_id" in c]
+        self.assertTrue(deVehiculo, "no se consulto quien conduce")
+        self.assertIn("count(*) DESC, vehicle_id", deVehiculo[0],
                       "el desempate por identificador es lo que hace que dos "
                       "llamadas seguidas contesten lo mismo")
 
@@ -653,6 +655,126 @@ class SinVueltasPeroConAlguienConduciendoTests(unittest.TestCase):
             r = api_sesion.listar_vueltas("openf1:session:9947")
         self.assertIsNone(r["vehiculo"])
         self.assertIn("no hay vueltas que delimitar", r["motivo"])
+
+
+class LasVueltasDeUnaFuenteSinMetroTests(unittest.TestCase):
+    """No hay distancia, pero hay vueltas: el contexto las trae por reloj."""
+
+    @staticmethod
+    def _filas():
+        from datetime import datetime, timezone
+        t0 = datetime(2025, 7, 6, 14, 3, 49, 615000, tzinfo=timezone.utc)
+        return [(1, t0, 106.134)]
+
+    def test_las_declara_con_sus_dos_instantes(self) -> None:
+        falsa, _ = _con(self._filas())
+        v = api_sesion._vueltas_del_contexto(
+            falsa.cursor_obj, "openf1:session:9947",
+            "openf1:session:9947:driver:1")
+        self.assertEqual(v[0]["numero"], 1)
+        self.assertEqual(v[0]["duracion_s"], 106.134)
+        self.assertEqual(v[0]["desde_utc"], "2025-07-06T14:03:49.615000+00:00")
+        self.assertEqual(v[0]["hasta_utc"], "2025-07-06T14:05:35.749000+00:00",
+                         "el final sale del comienzo mas la duracion declarada")
+
+    def test_la_duracion_es_la_declarada_y_no_se_recalcula(self) -> None:
+        """Es la que midio la fuente; deducirla de las muestras da otra."""
+        falsa, _ = _con(self._filas())
+        v = api_sesion._vueltas_del_contexto(
+            falsa.cursor_obj, "openf1:session:9947",
+            "openf1:session:9947:driver:1")
+        self.assertEqual(v[0]["duracion_s"], 106.134)
+
+    def test_sin_piloto_o_sin_clave_no_se_consulta_nada(self) -> None:
+        falsa, _ = _con([])
+        for sesion, veh in [("openf1:session:9947", None),
+                            ("openf1:session:9947", "openf1:session:9947"),
+                            ("can:segmento:sample_28", "can:rav4:sample_28")]:
+            self.assertEqual(
+                api_sesion._vueltas_del_contexto(falsa.cursor_obj, sesion, veh), [])
+        self.assertEqual(falsa.consultas, [],
+                         "se consulto el contexto sin saber de quien")
+
+    def test_la_consulta_pide_solo_las_que_declaran_comienzo_y_duracion(self) -> None:
+        """Delimitar lo que no se sabe donde empieza seria inventarlo."""
+        falsa, _ = _con(self._filas())
+        api_sesion._vueltas_del_contexto(
+            falsa.cursor_obj, "openf1:session:9947",
+            "openf1:session:9947:driver:1")
+        consulta, _ = falsa.consultas[-1]
+        self.assertIn("date_start IS NOT NULL", consulta)
+        self.assertIn("lap_duration_seconds IS NOT NULL", consulta)
+
+
+class ElPuntoDeAccesoDevuelveLasVueltasDelContextoTests(unittest.TestCase):
+    """De punta a punta: que `/vueltas` las declare, no solo que sepa buscarlas."""
+
+    @staticmethod
+    def _con_dos_respuestas():
+        from datetime import datetime, timezone
+        t0 = datetime(2025, 7, 6, 14, 3, 49, 615000, tzinfo=timezone.utc)
+        vehiculo = [("openf1:session:9947:driver:1",)]
+        vueltas = [(1, t0, 106.134), (2, t0, 91.2)]
+
+        falsa = ConexionFalsa(vehiculo)
+        original = falsa._ejecutar
+
+        def _ejecutar(consulta, parametros=None):
+            original(consulta, parametros)
+            falsa.filas = vueltas if "racing_laps" in consulta else vehiculo
+
+        falsa.cursor_obj.execute.side_effect = _ejecutar
+        return falsa, patch("backend.api_sesion.db.obtener_conexion", return_value=falsa)
+
+    def test_las_devuelve_y_dice_de_donde_salen(self) -> None:
+        falsa, parche = self._con_dos_respuestas()
+        with parche:
+            r = api_sesion.listar_vueltas("openf1:session:9947")
+        self.assertEqual(len(r["vueltas"]), 2,
+                         "el punto de acceso sabe buscarlas y no las devuelve")
+        self.assertEqual(r["vueltas"][0]["numero"], 1)
+        self.assertIn("contexto", r.get("medidas_por", ""),
+                      "no se declara que no salen de la telemetria")
+        self.assertNotIn("motivo", r,
+                         "hay vueltas y sigue explicando por que no las hay")
+
+    def test_sin_vueltas_en_el_contexto_explica_por_que(self) -> None:
+        """Una fuente sin metro medido y sin contexto sigue diciendo lo suyo."""
+        falsa, parche = _con([("can:rav4:sample_28",)])
+        with parche:
+            r = api_sesion.listar_vueltas("can:segmento:sample_28")
+        self.assertEqual(r["vueltas"], [])
+        self.assertIn("no hay vueltas que delimitar", r["motivo"])
+
+
+class SeriesPorTiempoAcotadasTests(unittest.TestCase):
+    """Pedir un tramo y no la sesion entera.
+
+    Sin acotar, mil doscientos puntos sobre una carrera de dos horas y media son
+    una muestra cada 7,8 segundos: una ventana de veinte segundos se dibuja con
+    dos o tres puntos. La fuente publica a 3,7 Hz, asi que se tiraba el 96 % de
+    lo medido.
+    """
+
+    def test_el_tramo_pedido_entra_en_la_consulta(self) -> None:
+        falsa, parche = _con([])
+        with parche:
+            api_sesion.series_por_tiempo(
+                "openf1:session:9947", senales="speed",
+                desde="2025-07-06T14:03:49+00:00",
+                hasta="2025-07-06T14:05:35+00:00")
+        consulta, parametros = falsa.consultas[-1]
+        self.assertIn("timestamp >= %s", consulta)
+        self.assertIn("timestamp <= %s", consulta)
+        self.assertIn("2025-07-06T14:03:49+00:00", [str(x) for x in parametros])
+
+    def test_sin_tramo_sigue_devolviendo_la_sesion_entera(self) -> None:
+        """El camino de siempre no puede cambiar: CAN lo usa asi."""
+        falsa, parche = _con([])
+        with parche:
+            api_sesion.series_por_tiempo("can:segmento:sample_28", senales="speed")
+        consulta, _ = falsa.consultas[-1]
+        self.assertNotIn("timestamp >= %s", consulta)
 
 
 class LosExtremosDeLaSesionLosSabeElCatalogoTests(unittest.TestCase):
