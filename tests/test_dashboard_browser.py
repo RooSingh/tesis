@@ -36,8 +36,14 @@ def volcar_dom(chrome: Path, url: str, perfil: str, presupuesto_ms: int) -> str:
         "--dump-dom", url,
     ]
     try:
+        # UTF-8 A MANO. `text=True` decodifica con la codificacion del sistema,
+        # que en Windows es cp1252: el DOM trae bytes UTF-8 que esa tabla no
+        # tiene ---el 0x81---, el hilo lector muere con `UnicodeDecodeError` y
+        # `stdout` vuelve en `None`. La prueba fallaba con «NoneType is not
+        # iterable» sin que el tablero se portara mal.
         proceso = subprocess.run(
-            comando, capture_output=True, text=True, timeout=10, check=False)
+            comando, capture_output=True, text=True, encoding="utf-8",
+            errors="replace", timeout=10, check=False)
     except subprocess.TimeoutExpired as error:
         # Chrome en macOS vuelca el DOM pero puede conservar procesos auxiliares.
         if not error.stdout:

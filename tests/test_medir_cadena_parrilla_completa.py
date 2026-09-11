@@ -23,9 +23,11 @@ class ComandoCapturadorTests(unittest.TestCase):
             "Norris,Russell,Hamilton",
         )
         archivo = comando[comando.index("--archivo-eleccion") + 1]
+        # Se compara como ruta y no como texto: `str(Path)` escribe el separador
+        # del sistema, y en Windows la misma ruta sale con barras invertidas.
         self.assertEqual(
-            archivo,
-            "logs/capturas_de_prueba/.prueba_123.pilotos.json",
+            Path(archivo),
+            Path("logs/capturas_de_prueba/.prueba_123.pilotos.json"),
         )
 
     def test_sin_pilotos_no_hereda_la_eleccion_de_produccion(self) -> None:

@@ -1671,7 +1671,6 @@ function pedirAvisos(ruta, apertura, senal) {
     .then(d => {
       if (!sigueVigente(apertura) || mio !== _pedidoDeAvisos) return;
       ubicarAvisos(d.avisos || []); estado.avisosMotivo = d.motivo_ausencia || "";
-      estado.avisosSinDato = d.motivo_sin_dato || "";
       estado.avisosFallo = ""; render();
     })
     .catch(e => {
@@ -1698,10 +1697,16 @@ function elegirPropio(id) {
   /* Los avisos tambien son de a quien se mira: ver `pedirAvisos`. Mientras
      llegan, el panel queda vacio en vez de seguir mostrando los del anterior. */
   if (estado.abierta && estadoSesion === "cargado" && id !== anterior) {
-    estado.avisos = []; estado.avisosFallo = ""; estado.avisosSinDato = "";
+    estado.avisos = []; estado.avisosFallo = "";
     pedirAvisos("/sesiones/" + encodeURIComponent(estado.abierta.session_id),
                 aperturaVigente(), senalDeSesion());
   }
+  /* EL VEHICULO TAMBIEN ES DE A QUIEN SE MIRA. El contexto ---vehiculo, clima,
+     puesta a punto--- se pedia recien al mover el cabezal, y como mucho una vez
+     cada tres segundos: con la reproduccion en pausa, elegir otro piloto dejaba
+     el panel mostrando los neumaticos del anterior. Se pide ya, sin esperar el
+     plazo, que existe para no repetir consultas y no para postergar esta. */
+  if (id !== anterior) { _contextoUltimo = 0; refrescarContexto(); }
   render();
 }
 
@@ -2500,11 +2505,7 @@ function pintarAvisos() {
       'medida que avanza la reproducción, el más reciente arriba.</p>';
     document.getElementById("canal-avisos").textContent =
       "0/" + todos.length;
-    /* Y si para este piloto hay reglas que no se pudieron evaluar, se dice
-       aca mas que en ningun lado: una lista vacia de otro vehiculo puede ser
-       falta de canal y no ausencia de incidentes. */
-    document.getElementById("motivo-avisos").textContent =
-      [motivo, estado.avisosSinDato || ""].filter(Boolean).join(" · ");
+    document.getElementById("motivo-avisos").textContent = motivo;
     return;
   }
 
@@ -2554,17 +2555,13 @@ function pintarAvisos() {
      reacciona. Medido sobre la carrera cargada: de 158 eventos, **157 no
      nombran piloto**; el unico que lo hace es una bandera azul para el coche 31.
      Decirlo evita que la quietud del panel se lea como un fallo. */
-  const deQuienSon = (declarados && derivados)
+  document.getElementById("motivo-avisos").textContent =
+    (declarados && derivados)
       ? derivados + " del piloto, derivados de su telemetría · " + declarados +
         " de la carrera, declarados por la fuente"
       : declarados ? "De la carrera, no del piloto: declarados por la fuente en " +
                      "el control de carrera"
       : "";
-  /* LO QUE NO SE PUDO EVALUAR PARA ESTE PILOTO. De otro vehiculo el juego no
-     publica el deslizamiento, y `/avisos` lo declara en `motivo_sin_dato`. Sin
-     decirlo, la falta de esos avisos se leeria como que no hubo incidentes. */
-  document.getElementById("motivo-avisos").textContent =
-    [deQuienSon, estado.avisosSinDato || ""].filter(Boolean).join(" · ");
 }
 
 /* ---------------- aceleraciones ---------------- */
@@ -7750,7 +7747,7 @@ function limpiarContextoDeSesion() {
   estado.controlDeCarrera = []; estado.controlDeCarreraCrudo = [];
   estado.vehiculo = null; estado.vehiculoMotivo = "";
   estado.puesta = null; estado.avisos = []; estado.avisosMotivo = "";
-  estado.avisosFallo = ""; estado.avisosSinDato = "";
+  estado.avisosFallo = "";
 }
 
 /* ============================================================
@@ -8646,7 +8643,6 @@ function olvidarLoDeLaCorrida() {
   estado.disponibles = new Set();
   estado.vehiculoClave = null;
   estado.climaMotivo = ""; estado.vehiculoMotivo = ""; estado.avisosMotivo = "";
-  estado.avisosSinDato = "";
   _esencialResuelta = false;
   estado.cargando = true;
   PISTA = { path: "", curvas: [], largo_m: null, desnivel_m: null, muestras: null };
@@ -9553,7 +9549,13 @@ function refrescarContexto() {
         _contextoDe = "";
         if (!fueAnulada(e) && e instanceof TypeError) console.error(e);
       })
-      .then(() => { _contextoEnVuelo = false; }));
+      .then(() => {
+        _contextoEnVuelo = false;
+        /* Si mientras volaba se eligio otro piloto, lo que llego es del
+           anterior. La clave termina en el vehiculo que se pidio. */
+        if (estado.abierta && _contextoDe &&
+            _contextoDe.split("|")[2] !== autoPropio().id) refrescarContexto();
+      }));
 
   pedirContextoDeCarrera(cuando, apertura);
 }

@@ -23,31 +23,33 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from adapters import f1_25 as adaptador_f1_25  # noqa: E402
 from backend import anotador_vivo, f1_capture, f1_udp  # noqa: E402
 
 
-#: Que canal de que paquete se convierte en que senal del contrato. Es un
-#: subconjunto deliberado: solo lo que alguna regla mira.
+#: Que campo de que paquete alimenta alguna regla. Es un subconjunto deliberado:
+#: solo lo que alguna regla mira.
+#:
+#: EL NOMBRE Y LA ESCALA DE CADA SENAL SALEN DEL ADAPTADOR, NO DE ESTA TABLA.
+#: Aca vivian escritos a mano ---`throttle` y `brake`, en fraccion de uno--- y el
+#: 2026-09-10 el anotador paso a leer los del contrato, `throttle_position` y
+#: `brake_position` en porcentaje, que es lo que llega en vivo. Esta tabla siguio
+#: emitiendo los viejos. Sin acelerador, la regla de perdida de tren trasero no se
+#: evaluaba nunca; sin freno, cada frenada parecia una caida brusca de velocidad.
+#: Las pruebas sobre las capturas reales pasaron de 9 y 15 incidentes a 32 y 37, y
+#: la de control de traccion a cero contra cero. Tomando nombre y factor del
+#: adaptador, lo que se reproduce es lo que el anotador recibe en vivo.
 CANALES = {
-    "car_telemetry": {
-        "speed_kmh": "speed", "throttle": "throttle", "brake": "brake",
-    },
-    "lap_data": {
-        "lap_distance_m": "lap_distance", "current_lap_num": "lap_number",
-        "current_lap_invalid": "lap_invalid",
-    },
-    "motion": {
-        "g_force_vertical": "g_force_vertical",
-        # El lateral no alimenta ninguna regla: alimenta el aprendizaje del
-        # circuito, que es lo que permite decir "curva 7" en lugar de "metro
-        # 2.105".
-        "g_force_lateral": "g_force_lateral",
-    },
+    "car_telemetry": ("speed_kmh", "throttle", "brake"),
+    "lap_data": ("lap_distance_m", "current_lap_num", "current_lap_invalid"),
+    # El lateral no alimenta ninguna regla: alimenta el aprendizaje del
+    # circuito, que es lo que permite decir "curva 7" en lugar de "metro 2.105".
+    "motion": ("g_force_vertical", "g_force_lateral"),
 }
 
 POR_RUEDA = {
-    "car_telemetry": {"surface_type": "surface_type"},
-    "motion_ex": {"wheel_slip_ratio": "wheel_slip_ratio"},
+    "car_telemetry": ("surface_type",),
+    "motion_ex": ("wheel_slip_ratio",),
 }
 
 SUFIJO = {
@@ -77,14 +79,25 @@ def mensajes(ruta: Path, con_deslizamiento: bool = True):
         if propio is None:
             continue
 
-        for campo, senal in CANALES.get(nombre, {}).items():
-            if campo in propio:
-                yield {"signal_name": senal, "value": propio[campo],
-                       "timestamp": marca}
+        mapa = adaptador_f1_25.MAPAS_POR_PAQUETE.get(nombre, {})
+        for campo in CANALES.get(nombre, ()):
+            if campo not in propio or campo not in mapa:
+                continue
+            senal, unidad, factor = mapa[campo]
+            crudo = propio[campo]
+            # La misma conversion que hace el adaptador al publicar.
+            if unidad == "bool":
+                valor = bool(crudo)
+            elif factor == 1.0:
+                valor = crudo
+            else:
+                valor = round(crudo * factor, 4)
+            yield {"signal_name": senal, "value": valor, "timestamp": marca}
 
-        for campo, base in POR_RUEDA.get(nombre, {}).items():
+        for campo in POR_RUEDA.get(nombre, ()):
             if campo not in propio:
                 continue
+            base = adaptador_f1_25.SENALES_POR_RUEDA[campo][0]
             if base == "wheel_slip_ratio" and not con_deslizamiento:
                 continue
             for rueda, valor in propio[campo].items():
