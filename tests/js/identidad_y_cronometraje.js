@@ -148,6 +148,7 @@ const NOMBRES = [
   "continuidadDeVuelta", "_umbralDeVuelta", "tiempoEfectivoEntre", "hayCorteEntre",
   "_antesDe", "valorContinuoEn", "valorEscalonadoEn", "abscisaContinua",
   "loQueSeSabeDelVehiculo", "faltanVehiculosPorAprender", "nombreCortoDeVehiculo",
+  "muestrasQueAporta", "idsParaComparar",
   "poblarPropio",
   "relojDeVuelta", "_armarRelojDeVuelta", "_tramosContinuos", "_tramosDeMuestras",
   "tiempoDePresentacion", "recortarConBordes",
@@ -238,6 +239,7 @@ const sacadas = new Function(
 const {
   textoSeguro, identidadDeVehiculo, anotarParrillas, parrillaVigente,
   loQueSeSabeDelVehiculo, faltanVehiculosPorAprender, nombreCortoDeVehiculo,
+  muestrasQueAporta, idsParaComparar,
   poblarPropio,
   renombrarAutos, armarAutos, tintaDeVehiculo,
   secundarioDeVehiculo, vehiculosConTelemetriaGuardada, autoPropio,
@@ -2889,6 +2891,44 @@ prueba("openf1 saca lo que no publica y se queda con lo que si", () => {
     assert.ok(!(escondidos.openf1 || []).includes(panel),
               "openf1 sostiene «" + panel + "» y lo esta sacando de la vista");
   });
+});
+
+prueba("las muestras se cuentan sobre el eje que el bloque declara", () => {
+  /* La leyenda decia «sin datos» al lado de tres lineas dibujadas: contaba
+     `distancia_m`, que OpenF1 no tiene. Su abscisa es el reloj del tramo, y es
+     la misma regla que el armado de series ya usa. */
+  globalThis.estado.series = {
+    7: { vehiculos: {
+      conReloj: { tiempo_s: new Array(401).fill(0), speed: [] },
+      conMetro: { distancia_m: new Array(300).fill(0), speed: [] },
+      sinNada: { speed: [] },
+    } },
+  };
+  assert.strictEqual(muestrasQueAporta("conReloj", [7]), 401);
+  assert.strictEqual(muestrasQueAporta("conMetro", [7]), 300);
+  assert.strictEqual(muestrasQueAporta("sinNada", [7]), 0);
+  assert.strictEqual(muestrasQueAporta("noEsta", [7]), 0);
+  /* Y suma las vueltas que se le pidan, sin romperse con las que no estan. */
+  assert.strictEqual(muestrasQueAporta("conReloj", [7, 99]), 401);
+  assert.strictEqual(muestrasQueAporta("conReloj", []), 0);
+  globalThis.estado.series = {};
+});
+
+prueba("la leyenda nombra a los mismos que el grafico dibuja", () => {
+  /* Eran dos reglas distintas: el dibujo tomaba los primeros cuatro de la
+     seleccion y la leyenda **uno solo** en la vista de detalle. La pantalla
+     mostraba tres lineas y la leyenda nombraba a una, de modo que no habia
+     como saber de quien era cada color. El detalle es de una señal, no de un
+     piloto: que se vea una magnitud no dice cuantos vehiculos se comparan. */
+  globalThis.seleccion = new Set(["a", "b", "c"]);
+  globalThis.modoDetalle = true;
+  assert.deepStrictEqual(idsParaComparar(), ["a", "b", "c"]);
+  globalThis.modoDetalle = false;
+  assert.deepStrictEqual(idsParaComparar(), ["a", "b", "c"]);
+  /* El tope de cuatro sigue: mas lineas no se distinguen entre si. */
+  globalThis.seleccion = new Set(["a", "b", "c", "d", "e", "f"]);
+  assert.deepStrictEqual(idsParaComparar(), ["a", "b", "c", "d"]);
+  globalThis.seleccion = new Set();
 });
 
 prueba("el selector de piloto no repite lo que el panel ya dice", () => {

@@ -6724,7 +6724,7 @@ function pintarEligePilotos() {
 
 function pintarPilotosComparacion() {
   pintarEligePilotos();
-  const ids = [...seleccion].slice(0, modoDetalle ? 1 : 4);
+  const ids = idsParaComparar();
   if (!ids.length) {
     document.getElementById("pilotos-comparacion").innerHTML =
       '<span style="color:var(--texto-tenue);font-size:.82rem">Ningún vehículo seleccionado.</span>';
@@ -6735,11 +6735,7 @@ function pintarPilotosComparacion() {
     const a = AUTOS.find(x => x.id === id);
     if (!a) return "";
     const numeros = vueltasParaComparar();
-    const puntos = numeros.reduce((total, numero) => {
-      const bloque = estado.series[numero];
-      const veh = bloque && bloque.vehiculos && bloque.vehiculos[id];
-      return total + (veh && veh.distancia_m ? veh.distancia_m.length : 0);
-    }, 0);
+    const puntos = muestrasQueAporta(id, numeros);
     const mejor = puntos ? cifra(puntos, 0) + " puntos" : "sin datos";
     const dif = alcanceComparacion === "una" ? "vuelta " + vueltaElegida : numeros.length + " vueltas consultadas";
     return '<div class="tarjeta-piloto" style="border-left-color:' + a.color + '">' +
@@ -6759,6 +6755,31 @@ function pintarPilotosComparacion() {
 }
 
 let arrastre = null;
+
+/* A QUIENES SE COMPARA. Lo decidian dos sitios con reglas distintas: el dibujo
+   tomaba los primeros cuatro de la seleccion y la leyenda **uno solo** en la
+   vista de detalle. De modo que la pantalla mostraba tres lineas y la leyenda
+   nombraba a uno: quien mira no tenia como saber de quien era cada color.
+
+   El detalle es de una señal, no de un piloto. Que se vea una sola magnitud no
+   dice nada sobre cuantos vehiculos se estan comparando en ella. */
+/* CUANTAS MUESTRAS APORTA UN VEHICULO, SOBRE EL EJE QUE EL BLOQUE DECLARA.
+   Se contaba `distancia_m`, que OpenF1 no tiene: su abscisa es el reloj del
+   tramo. Sobre tres pilotos con cuatrocientas una muestras cada uno, la leyenda
+   decia «sin datos» al lado de sus propias lineas dibujadas. Es la misma regla
+   que `_armarSerieDeCanal` ya declara: distancia si la hay, reloj si no. */
+function muestrasQueAporta(id, numeros) {
+  return (numeros || []).reduce((total, numero) => {
+    const bloque = estado.series[numero];
+    const veh = bloque && bloque.vehiculos && bloque.vehiculos[id];
+    const eje = veh && (veh.distancia_m || veh.tiempo_s);
+    return total + (eje ? eje.length : 0);
+  }, 0);
+}
+
+function idsParaComparar() {
+  return [...seleccion].slice(0, 4);
+}
 
 function vueltasParaComparar() {
   return alcanceComparacion === "carrera"
@@ -6902,7 +6923,7 @@ const ZONA_CON_ROTULO_PX = 26;
    que alcance, que dominio y que segmentos--- y las dos la usan. No quedan dos
    cuentas del dominio que puedan separarse, porque no queda mas que una. */
 function vistaDeComparacion() {
-  const ids = [...seleccion].slice(0, 4);
+  const ids = idsParaComparar();
   /* Las que la fuente **trajo con dato**, no las que se espera que tenga. La
      lamina filtraba por `m.fuentes`, de modo que podia reservar un panel para
      un canal que en pantalla no estaba. */
