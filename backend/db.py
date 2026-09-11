@@ -1132,10 +1132,89 @@ def obtener_serie_replay_openf1(
             return [dict(zip(columns, row)) for row in cur.fetchall()]
 
 
+# ---------------------------------------------------------------------------
+# COMO SE LEE UN CONTEXTO DE CARRERA EN UN INSTANTE
+# ---------------------------------------------------------------------------
+#
+# DOS DEFECTOS QUE COMPARTIAN CAUSA: las tres magnitudes se leian con la misma
+# regla ---la muestra **mas cercana** al instante, y un vencimiento de treinta
+# segundos para todas--- y las tres tienen naturalezas distintas. Medido sobre
+# la sesion 9947 de Silverstone 2025, piloto 1, carrera entera:
+#
+#     racing_positions       28 muestras en 9.084 s   una cada 336,5 s
+#     racing_intervals    1.153 muestras en 9.213 s   una cada   8,0 s
+#     racing_weather        155 muestras en 9.241 s   una cada  60,0 s
+#
+# EL PRIMERO: LA MAS CERCANA PUEDE SER POSTERIOR. `ORDER BY ABS(date - t)` no
+# mira hacia que lado. Sobre 193 instantes repartidos cada treinta segundos, en
+# **110** la muestra elegida estaba en el futuro del instante pedido. En el
+# puesto de carrera eso no es un redondeo: es mostrar un adelantamiento antes de
+# que ocurriera. Es el mismo error que el tablero ya corrige en sus señales
+# discretas ---una marcha no sube antes de que el dato diga que subio--- y por
+# el mismo motivo se corrige aca: se toma la ultima muestra **en o antes** del
+# instante, nunca una posterior.
+#
+# EL SEGUNDO: UN VENCIMIENTO DE TREINTA SEGUNDOS NO SIRVE PARA LAS TRES.
+#
+#   - El puesto se publica **al cambiar**: veintiocho muestras para cincuenta y
+#     dos vueltas. Entre dos cambios no es que no se sepa el puesto; es que el
+#     puesto es el mismo. Vencerlo a los treinta segundos lo borraba en el 90 %
+#     de los instantes ---nueve de sesenta utilizables--- afirmando que no se
+#     sabe algo que la fuente declaro. Un estado que se sostiene no vence: vale
+#     hasta que la fuente diga otra cosa.
+#
+#   - El intervalo es periodico, una muestra cada ocho segundos. Ahi el
+#     vencimiento si dice algo, y diez y treinta segundos son una y casi cuatro
+#     cadencias. La edad mediana de lo que se muestra es 2,7 s.
+#
+#   - El clima es periodico y lento, una muestra por minuto. Con la regla
+#     correcta ---la ultima en o antes--- la edad mediana de lo que se muestra
+#     es **49 s**, de modo que el corte de treinta lo habria borrado siempre. Se
+#     corta en una cadencia y media y en dos y media, que sobre un minuto son
+#     noventa y ciento cincuenta segundos.
+#
+# LO QUE NO CAMBIA: no se interpola nada. Un valor declarado se entrega tal cual
+# con su edad al lado, y cuando no se puede sostener se entrega en nulo. La
+# diferencia esta en cuando corresponde cada cosa, y eso ahora lo dice cada
+# magnitud por su cuenta en vez de una constante compartida.
+# ---------------------------------------------------------------------------
+
+#: Que es cada contexto de carrera y como envejece.
+#:
+#: `sostiene`  el valor se publica al cambiar y vale hasta el siguiente. No
+#:             vence con el reloj; lo unico que lo invalida es no tener todavia
+#:             una primera muestra.
+#: `vigente_s` hasta aca la muestra describe el instante pedido.
+#: `viejo_s`   hasta aca todavia sirve, declarada como vieja. Mas alla, no.
+CONTEXTOS_DE_CARRERA = {
+    "position": {
+        "sostiene": True,
+        "vigente_s": None,
+        "viejo_s": None,
+        "porque": "el puesto se publica al cambiar, no cada tanto: entre dos "
+                  "cambios el puesto es el mismo, no es que se desconozca",
+    },
+    "interval": {
+        "sostiene": False,
+        "vigente_s": 10,
+        "viejo_s": 30,
+        "porque": "una muestra cada ocho segundos; diez es una cadencia y "
+                  "treinta son casi cuatro",
+    },
+    "weather": {
+        "sostiene": False,
+        "vigente_s": 90,
+        "viejo_s": 150,
+        "porque": "una muestra por minuto; noventa es una cadencia y media y "
+                  "ciento cincuenta son dos y media",
+    },
+}
+
+
 def obtener_contexto_racing_en_instante(
     session_key: int, timestamp: str, driver_numbers: list[int]
 ) -> dict:
-    """Devuelve contexto racing cercano a un instante UTC para pilotos elegidos."""
+    """Devuelve contexto racing declarado hasta un instante UTC, sin adelantarlo."""
     if not driver_numbers:
         return {"drivers": [], "weather": None}
     query = """
@@ -1154,26 +1233,29 @@ def obtener_contexto_racing_en_instante(
             stint.tyre_age_at_start
         FROM racing_drivers AS drivers
         LEFT JOIN LATERAL (
-            SELECT position, ABS(EXTRACT(EPOCH FROM (date - %s::timestamptz))) AS age_seconds
+            SELECT position, EXTRACT(EPOCH FROM (%s::timestamptz - date)) AS age_seconds
             FROM racing_positions
             WHERE session_key = drivers.session_key
               AND driver_number = drivers.driver_number
-            ORDER BY ABS(EXTRACT(EPOCH FROM (date - %s::timestamptz)))
+              AND date <= %s::timestamptz
+            ORDER BY date DESC
             LIMIT 1
         ) AS position ON true
         LEFT JOIN LATERAL (
             SELECT gap_to_leader_seconds, gap_to_leader_text, interval_seconds, interval_text,
-                   ABS(EXTRACT(EPOCH FROM (date - %s::timestamptz))) AS age_seconds
+                   EXTRACT(EPOCH FROM (%s::timestamptz - date)) AS age_seconds
             FROM racing_intervals
             WHERE session_key = drivers.session_key
               AND driver_number = drivers.driver_number
-            ORDER BY ABS(EXTRACT(EPOCH FROM (date - %s::timestamptz)))
+              AND date <= %s::timestamptz
+            ORDER BY date DESC
             LIMIT 1
         ) AS interval ON true
         LEFT JOIN LATERAL (
             SELECT stint_number, compound, tyre_age_at_start
             FROM racing_stints AS stints
             WHERE stints.session_key = drivers.session_key
+              AND stints.driver_number = drivers.driver_number
               AND lap_start IS NOT NULL
               AND lap_end IS NOT NULL
               AND lap_start <= (
@@ -1201,10 +1283,11 @@ def obtener_contexto_racing_en_instante(
     """
     weather_query = """
         SELECT air_temperature_c, track_temperature_c, rainfall, humidity_percent,
-               ABS(EXTRACT(EPOCH FROM (date - %s::timestamptz))) AS weather_age_seconds
+               pressure_mbar, wind_speed_mps, wind_direction_degrees,
+               EXTRACT(EPOCH FROM (%s::timestamptz - date)) AS weather_age_seconds
         FROM racing_weather
-        WHERE session_key = %s
-        ORDER BY ABS(EXTRACT(EPOCH FROM (date - %s::timestamptz)))
+        WHERE session_key = %s AND date <= %s::timestamptz
+        ORDER BY date DESC
         LIMIT 1
     """
     with obtener_conexion() as conn:
@@ -1226,29 +1309,51 @@ def obtener_contexto_racing_en_instante(
     return {"drivers": drivers, "weather": weather}
 
 
-def _clasificar_frescura_contexto(context: dict, name: str, age_key: str) -> None:
-    """Marca la frescura de un contexto OpenF1 sin interpolar sus valores."""
-    age_seconds = float(context[age_key]) if context.get(age_key) is not None else None
-    context[f"{name}_freshness"] = (
-        "unavailable" if age_seconds is None or age_seconds > 30
-        else "aged" if age_seconds > 10
-        else "current"
-    )
-    if context[f"{name}_freshness"] != "unavailable":
-        return
-    if name == "position":
-        context["position"] = None
-    elif name == "interval":
-        context["gap_to_leader_seconds"] = None
-        context["gap_to_leader_text"] = None
-        context["interval_seconds"] = None
-        context["interval_text"] = None
-    elif name == "weather":
-        context["air_temperature_c"] = None
-        context["track_temperature_c"] = None
-        context["rainfall"] = None
-        context["humidity_percent"] = None
+#: Que campos se borran cuando una magnitud no se puede sostener. Un valor que
+#: no describe el instante pedido no se entrega: entregarlo con la edad al lado
+#: y confiar en que alguien la lea seria dejar el numero disponible para que lo
+#: muestren igual.
+_CAMPOS_DEL_CONTEXTO = {
+    "position": ("position",),
+    "interval": ("gap_to_leader_seconds", "gap_to_leader_text",
+                 "interval_seconds", "interval_text"),
+    "weather": ("air_temperature_c", "track_temperature_c", "rainfall",
+                "humidity_percent", "pressure_mbar", "wind_speed_mps",
+                "wind_direction_degrees"),
+}
 
+
+def _clasificar_frescura_contexto(context: dict, name: str, age_key: str) -> None:
+    """Marca la frescura de un contexto OpenF1 sin interpolar sus valores.
+
+    Cuatro estados, y el tercero es el que faltaba:
+
+    `current`     la muestra describe el instante pedido.
+    `aged`        sirve, y se declara vieja.
+    `held`        el valor se publica al cambiar y este es el ultimo declarado.
+                  No es una aproximacion: es el valor, sostenido.
+    `unavailable` no hay con que responder, y los campos se entregan en nulo.
+    """
+    regla = CONTEXTOS_DE_CARRERA[name]
+    edad = float(context[age_key]) if context.get(age_key) is not None else None
+
+    if edad is None:
+        estado = "unavailable"
+    elif regla["sostiene"]:
+        estado = "held"
+    elif edad <= regla["vigente_s"]:
+        estado = "current"
+    elif edad <= regla["viejo_s"]:
+        estado = "aged"
+    else:
+        estado = "unavailable"
+
+    context[f"{name}_freshness"] = estado
+    if estado != "unavailable":
+        return
+    for campo in _CAMPOS_DEL_CONTEXTO[name]:
+        if campo in context:
+            context[campo] = None
 
 def obtener_ejecucion_por_huella(package_fingerprint: str) -> dict | None:
     """Busca una ejecucion previa para evitar importar dos veces el mismo paquete."""
