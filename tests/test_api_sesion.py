@@ -28,6 +28,9 @@ class ConexionFalsa:
         self.cursor_obj.execute.side_effect = self._ejecutar
         self.cursor_obj.fetchall.side_effect = lambda: list(self.filas)
         self.cursor_obj.fetchone.side_effect = lambda: (self.filas[0] if self.filas else None)
+        self._lotes = [list(self.filas)] if self.filas else []
+        self.cursor_obj.fetchmany.side_effect = (
+            lambda _: self._lotes.pop(0) if self._lotes else [])
 
     def _ejecutar(self, consulta, parametros=None):
         self.consultas.append((consulta, parametros))
@@ -668,6 +671,183 @@ class LosExtremosDeLaSesionLosSabeElCatalogoTests(unittest.TestCase):
         self.assertIn("timestamp BETWEEN", extremos[0],
                       "la consulta de extremos no acota por tiempo: sin un "
                       "limite en la dimension de particion recorre todo")
+
+
+class SinNumeroDeVueltaElRelojLaDiceTests(unittest.TestCase):
+    """Un trazado sin vueltas es la sesion entera superpuesta.
+
+    El trazado agrupa por `lap_number`, que viaja en la telemetria del
+    simulador. OpenF1 no lo publica: sus nueve señales describen el coche y
+    ninguna dice en que vuelta va. Sin numero, **todas las filas caen en un solo
+    grupo** y el dibujo sale con las cincuenta y dos vueltas de la carrera
+    superpuestas, mas la de formacion y el regreso a boxes. Se vio en pantalla:
+    un ovillo donde tenia que haber un circuito.
+
+    Las vueltas existen igual, como ventanas de tiempo, en el contexto
+    deportivo.
+    """
+
+    @staticmethod
+    def _vueltas():
+        from datetime import datetime, timedelta, timezone
+        t0 = datetime(2025, 7, 6, 14, 0, tzinfo=timezone.utc)
+        return [(1, t0, t0 + timedelta(seconds=90)),
+                (2, t0 + timedelta(seconds=90), t0 + timedelta(seconds=180))]
+
+    @staticmethod
+    def _fila(segundos, vuelta=None):
+        from datetime import datetime, timedelta, timezone
+        t0 = datetime(2025, 7, 6, 14, 0, tzinfo=timezone.utc)
+        return (1.0, 2.0, None, None, vuelta, t0 + timedelta(seconds=segundos))
+
+    def test_cada_fila_recibe_la_vuelta_de_su_instante(self) -> None:
+        filas = [self._fila(10), self._fila(100), self._fila(170)]
+        salida = api_sesion._numerar_por_reloj(filas, self._vueltas())
+        self.assertEqual([f[4] for f in salida], [1, 2, 2])
+
+    def test_lo_que_cae_fuera_de_toda_vuelta_no_se_numera(self) -> None:
+        """La formacion y el regreso a boxes no son parte del circuito."""
+
+        filas = [self._fila(-30), self._fila(10), self._fila(400)]
+        salida = api_sesion._numerar_por_reloj(filas, self._vueltas())
+        self.assertEqual([f[4] for f in salida], [None, 1, None])
+
+    def test_sin_vueltas_declaradas_no_se_inventa_ninguna(self) -> None:
+        filas = [self._fila(10), self._fila(100)]
+        self.assertEqual(api_sesion._numerar_por_reloj(filas, []), filas)
+
+    def test_no_pisa_un_numero_que_la_telemetria_ya_traia(self) -> None:
+        """`_numerar_por_reloj` solo se llama cuando no hay ninguno, pero si
+        alguna vez se lo llamara con datos del simulador, no puede cambiarlos."""
+
+        filas = [self._fila(10, vuelta=7)]
+        salida = api_sesion._numerar_por_reloj(filas, [])
+        self.assertEqual(salida[0][4], 7)
+
+    def test_la_ventana_de_una_vuelta_sale_del_contexto_deportivo(self) -> None:
+        from datetime import datetime, timezone
+        t0 = datetime(2025, 7, 6, 14, 0, tzinfo=timezone.utc)
+        falsa, _ = _con([(1, t0, t0)])
+        vueltas = api_sesion._vueltas_por_reloj(
+            falsa.cursor_obj, "openf1:session:9947",
+            "openf1:session:9947:driver:1")
+        self.assertEqual(vueltas[0][0], 1)
+        consulta, parametros = falsa.consultas[-1]
+        self.assertIn("racing_laps", consulta)
+        self.assertIn("driver_number = %s", consulta,
+                      "la consulta no acota por piloto: traeria las vueltas de "
+                      "los veinte y el lazo se cortaria por donde no va")
+        self.assertEqual(parametros, (9947, 1),
+                         "las vueltas se piden de la sesion y del piloto que se "
+                         "esta dibujando: dos pilotos cruzan la meta en "
+                         "instantes distintos")
+
+    def test_sin_piloto_en_el_identificador_no_se_consulta_nada(self) -> None:
+        falsa, _ = _con([])
+        self.assertEqual(
+            api_sesion._vueltas_por_reloj(falsa.cursor_obj, "openf1:session:9947", None), [])
+        self.assertEqual(
+            api_sesion._vueltas_por_reloj(falsa.cursor_obj, "can:segmento:sample_28",
+                                          "can:rav4:sample_28"), [])
+        self.assertEqual(falsa.consultas, [],
+                         "se consulto el contexto sin saber de quien")
+
+
+class ElTrazadoDeUnaFuenteSinVueltasTests(unittest.TestCase):
+    """De punta a punta: que el punto de acceso vaya a buscar las vueltas.
+
+    Las piezas se prueban aparte; esto fija que esten conectadas. Sin la
+    conexion, cada una anda bien y el dibujo sigue siendo la sesion entera.
+    """
+
+    @staticmethod
+    def _filas():
+        from datetime import datetime, timedelta, timezone
+        t0 = datetime(2025, 7, 6, 14, 0, tzinfo=timezone.utc)
+        # x, z, y, distancia, vuelta, timestamp
+        return [(float(i), float(i), None, None, None, t0 + timedelta(seconds=i))
+                for i in range(60)]
+
+    @classmethod
+    def _con_dos_respuestas(cls, geometria):
+        """Un doble que contesta segun que se le pregunte.
+
+        `ConexionFalsa` devuelve las mismas filas a toda consulta, y aca hay dos
+        con formas distintas: la geometria trae seis columnas y las vueltas
+        tres. Un doble que contesta lo mismo a las dos no puede distinguir si el
+        punto de acceso fue a buscar las vueltas o no, que es justo lo que se
+        quiere fijar.
+        """
+
+        from datetime import datetime, timedelta, timezone
+        t0 = datetime(2025, 7, 6, 14, 0, tzinfo=timezone.utc)
+        vueltas = [(1, t0, t0 + timedelta(seconds=30)),
+                   (2, t0 + timedelta(seconds=30), t0 + timedelta(seconds=60))]
+
+        falsa = ConexionFalsa(geometria)
+        original = falsa._ejecutar
+
+        def _ejecutar(consulta, parametros=None):
+            original(consulta, parametros)
+            falsa.filas = vueltas if "racing_laps" in consulta else geometria
+
+        falsa.cursor_obj.execute.side_effect = _ejecutar
+        return falsa, patch("backend.api_sesion.db.obtener_conexion", return_value=falsa)
+
+    def test_sin_numeros_de_vuelta_va_a_buscarlas_al_contexto(self) -> None:
+        falsa, parche = self._con_dos_respuestas(self._filas())
+        with parche:
+            api_sesion.trazado("openf1:session:9947", puntos=50,
+                               vehiculo="openf1:session:9947:driver:1")
+        consultas = "\n".join(c for c, _ in falsa.consultas)
+        self.assertIn("racing_laps", consultas,
+                      "no se fue a buscar las vueltas: el trazado sale con la "
+                      "sesion entera superpuesta")
+
+    def test_el_vehiculo_que_pide_quien_consulta_acota_la_geometria(self) -> None:
+        """Sin esto se dibuja la caja que contiene a los tres, no el recorrido
+        de ninguno."""
+
+        falsa, parche = self._con_dos_respuestas(self._filas())
+        with parche:
+            api_sesion.trazado("openf1:session:9947", puntos=50,
+                               vehiculo="openf1:session:9947:driver:4")
+        parametros = [p for _, p in falsa.consultas if p]
+        planos = [str(x) for tupla in parametros for x in tupla]
+        self.assertIn("openf1:session:9947:driver:4", planos,
+                      "el vehiculo pedido no acoto ninguna consulta")
+
+    def test_si_la_telemetria_ya_trae_la_vuelta_no_se_busca_en_el_contexto(self) -> None:
+        """El contexto es el respaldo, no el primer sitio donde mirar.
+
+        Una fuente puede publicar `lap_number` y estar en el contexto igual:
+        preguntarle al contexto teniendo el numero en la propia telemetria seria
+        una consulta de mas por cada trazado.
+        """
+
+        from datetime import datetime, timedelta, timezone
+        t0 = datetime(2025, 7, 6, 14, 0, tzinfo=timezone.utc)
+        filas = [(float(i), float(i), None, None, 3.0, t0 + timedelta(seconds=i))
+                 for i in range(60)]
+        falsa, parche = self._con_dos_respuestas(filas)
+        with parche:
+            api_sesion.trazado("openf1:session:9947", puntos=50,
+                               vehiculo="openf1:session:9947:driver:1")
+        consultas = "\n".join(c for c, _ in falsa.consultas)
+        self.assertNotIn("racing_laps", consultas)
+
+    def test_con_vueltas_en_la_telemetria_no_consulta_el_contexto(self) -> None:
+        """El simulador trae `lap_number`: ese camino no puede cambiar."""
+
+        from datetime import datetime, timedelta, timezone
+        t0 = datetime(2025, 7, 6, 14, 0, tzinfo=timezone.utc)
+        filas = [(float(i), float(i), None, float(i), 1.0, t0 + timedelta(seconds=i))
+                 for i in range(60)]
+        falsa, parche = _con(filas)
+        with parche:
+            api_sesion.trazado("f1_25:session:1", puntos=50)
+        consultas = "\n".join(c for c, _ in falsa.consultas)
+        self.assertNotIn("racing_laps", consultas)
 
 
 class AvisosTests(unittest.TestCase):

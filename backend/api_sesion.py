@@ -1870,6 +1870,70 @@ def series_por_distancia(
 # 2. Trazado del circuito
 # --------------------------------------------------------------------------
 
+def _vueltas_por_reloj(cursor, session_id: str, vehicle_id: str | None) -> list[tuple]:
+    """Las vueltas de esta sesion como ventanas de tiempo, o lista vacia.
+
+    POR QUE HACE FALTA. El trazado agrupa por `lap_number`, que viaja en la
+    telemetria del simulador. OpenF1 no lo publica: sus nueve señales son
+    posicion y estado del coche, y nada dice en que vuelta va. Sin numero de
+    vuelta **todas las filas caen en un solo grupo** y el dibujo sale con las
+    cincuenta y dos vueltas de la carrera superpuestas ---mas la de formacion y
+    el regreso a boxes---, que es un ovillo y no un circuito.
+
+    Pero las vueltas existen: el contexto deportivo las trae con su instante de
+    comienzo y su duracion. Son ventanas de **tiempo**, que es la dimension que
+    esta fuente si tiene. De ahi salen.
+
+    Se piden del vehiculo que se esta dibujando: dos pilotos cruzan la meta en
+    instantes distintos, y usar las vueltas de uno para cortar el recorrido del
+    otro parte el lazo por donde no corresponde.
+    """
+
+    clave = session_id.rsplit(":", 1)[-1]
+    if not clave.isdigit():
+        return []
+    piloto = None
+    if vehicle_id and ":driver:" in vehicle_id:
+        cola = vehicle_id.rsplit(":driver:", 1)[-1]
+        if cola.isdigit():
+            piloto = int(cola)
+    if piloto is None:
+        return []
+    cursor.execute("""
+        SELECT lap_number, date_start,
+               date_start + make_interval(secs => lap_duration_seconds)
+          FROM racing_laps
+         WHERE session_key = %s AND driver_number = %s
+           AND date_start IS NOT NULL AND lap_duration_seconds IS NOT NULL
+         ORDER BY lap_number
+    """, (int(clave), piloto))
+    return [(int(n), a, b) for n, a, b in cursor.fetchall()]
+
+
+def _numerar_por_reloj(filas: list, vueltas: list[tuple]) -> list:
+    """Le pone su numero de vuelta a cada fila, por el instante en que se midio.
+
+    Las filas llegan ordenadas por tiempo y las vueltas tambien, asi que alcanza
+    con avanzar una vez por cada lista. Lo que cae fuera de toda vuelta ---la
+    formacion, el regreso a boxes--- se queda sin numero y queda fuera del
+    dibujo, que es lo correcto: no son parte del circuito.
+    """
+
+    if not vueltas:
+        return filas
+    salida = []
+    i = 0
+    for fila in filas:
+        cuando = fila[5]
+        while i < len(vueltas) and vueltas[i][2] < cuando:
+            i += 1
+        if i < len(vueltas) and vueltas[i][1] <= cuando:
+            salida.append(fila[:4] + (vueltas[i][0],) + fila[5:])
+        else:
+            salida.append(fila)
+    return salida
+
+
 def _vuelta_que_mejor_dibuja(por_vuelta: dict) -> list:
     """La vuelta que sirve de contorno del circuito: la que **cierra**.
 
@@ -1921,6 +1985,8 @@ def _vuelta_que_mejor_dibuja(por_vuelta: dict) -> list:
 def trazado(session_id: str, vuelta: int | None = None,
             puntos: Annotated[int, Query(ge=50, le=3000)] = 400,
             adquisicion: Annotated[str | None, Query()] = None,
+            vehiculo: Annotated[str | None, Query(
+                description="De quien es el recorrido; por omision, quien conduce")] = None,
             fase: Annotated[int | None, Query(ge=1)] = None) -> dict[str, Any]:
     """Trazado del circuito en el plano, con su desnivel y su sentido de giro.
 
@@ -1968,7 +2034,14 @@ def trazado(session_id: str, vuelta: int | None = None,
         # acotada: el trazado salio como una tira angosta en vez del circuito.
         # El defecto estaba desde siempre y hacia falta un segundo coche para
         # que se notara.
-        _propio = _vehiculo_propio(cursor, fuente, session_id)
+        # QUIEN CONDUCE NO SIEMPRE LO DICE LA TELEMETRIA.
+        #
+        # `_vehiculo_propio` lo lee de `player_car_index`, que viaja en la
+        # cabecera del protocolo del simulador. OpenF1 no tiene nada
+        # equivalente: sus nueve señales describen el coche y ninguna dice cual
+        # de ellos es el que se esta mirando. Quien consulta si lo sabe ---el
+        # tablero tiene su vehiculo elegido--- y por eso se lo puede decir.
+        _propio = vehiculo or _vehiculo_propio(cursor, fuente, session_id)
         _cv, _cv_par = _acotar_al_vehiculo(_propio)
         cursor.execute("""
             WITH p AS (
@@ -1983,7 +2056,7 @@ def trazado(session_id: str, vuelta: int | None = None,
                    AND (%s::timestamptz IS NULL OR timestamp BETWEEN %s AND %s)""" +
             _cv + _tramo + """
                  GROUP BY timestamp)
-            SELECT x, z, y, distancia, vuelta FROM p
+            SELECT x, z, y, distancia, vuelta, timestamp FROM p
              WHERE x IS NOT NULL AND z IS NOT NULL
              ORDER BY vuelta NULLS LAST, distancia NULLS LAST, timestamp
         """, tuple([eje_x, eje_z, fuente, session_id, interes,
@@ -1994,6 +2067,14 @@ def trazado(session_id: str, vuelta: int | None = None,
     if not filas:
         return {"session_id": session_id, "fuente": fuente, "puntos": [],
                 "motivo": "La sesion no tiene posicion persistida."}
+
+    # SIN `lap_number`, LA VUELTA SE DEDUCE DEL RELOJ.
+    # Ver `_vueltas_por_reloj`: sin esto, una fuente que no publica el numero de
+    # vuelta dibuja la sesion entera superpuesta.
+    if all(f[4] is None for f in filas):
+        with db.obtener_conexion() as conexion, conexion.cursor() as cursor:
+            _vs = _vueltas_por_reloj(cursor, session_id, _propio)
+        filas = _numerar_por_reloj(filas, _vs)
 
     if vuelta is not None:
         filas = [f for f in filas if f[4] is not None and int(f[4]) == vuelta]
@@ -2299,13 +2380,14 @@ def _ultimos_valores(cursor, fuente: str, session_id: str, senales: list[str],
     # acotada por tiempo, que es la dimension de particion, y es barata.
     if ventana_alcance or _cf:
         condicion_ventana = ""
-        parametros_extremos: list[Any] = [fuente, session_id] + _cfp
+        parametros_extremos: list[Any] = [fuente, session_id, senales] + _cfp
         if ventana_alcance:
             condicion_ventana = " AND timestamp BETWEEN %s AND %s"
             parametros_extremos.extend(ventana_alcance)
         cursor.execute("""
             SELECT min(timestamp), max(timestamp) FROM telemetry_messages
-             WHERE source_type = %s AND session_id = %s""" + _cf + condicion_ventana,
+             WHERE source_type = %s AND session_id = %s
+               AND signal_name = ANY(%s)""" + _cf + condicion_ventana,
             tuple(parametros_extremos))
         fila = cursor.fetchone()
         piso = _iso(fila[0]) if fila else None
@@ -3198,7 +3280,8 @@ def _avisos_reproducidos(cursor, fuente: str, session_id: str,
 
 @router.get("/sesiones/{session_id}/avisos")
 def avisos(session_id: str,
-           limite: Annotated[int, Query(ge=1, le=300)] = 60,
+           limite: Annotated[int, Query(
+               ge=1, le=anotador_vivo.ANOTACIONES_CONSERVADAS)] = 60,
            adquisicion: Annotated[str | None, Query()] = None,
            fase: Annotated[int | None, Query(ge=1)] = None) -> dict[str, Any]:
     """Avisos de una sesion ya corrida, con la vuelta y el metro en que ocurren.
@@ -3250,157 +3333,6 @@ def avisos(session_id: str,
         "reglas_evaluadas": anotador_vivo.CANTIDAD_REGLAS,
         "criterio": ("mismas reglas, umbrales, agrupamiento y textos que el flujo "
                      "vivo, reproducidos sobre las muestras persistidas"),
-    }
-    _AVISOS_CACHE[clave] = respuesta
-    _AVISOS_CACHE.move_to_end(clave)
-    while len(_AVISOS_CACHE) > AVISOS_EN_CACHE:
-        _AVISOS_CACHE.popitem(last=False)
-    return dict(respuesta, de_cache=False)
-
-    canales = [r["canal"] for r in REGLAS_DE_AVISO]
-    superficies = ["surface_type_%s" % e for e in ESQUINAS]
-
-    with db.obtener_conexion() as conexion, conexion.cursor() as cursor:
-        # DE QUIEN SON ESTOS AVISOS. De quien conduce, y hay que decirlo con un
-        # `vehicle_id` y no darlo por sentado: desde que se puede escuchar a
-        # varios pilotos, la sesion tiene mas de un vehiculo y girar la tabla sin
-        # acotar mezcla los canales de todos.
-        propio = _vehiculo_propio(cursor, fuente, session_id)
-        _cl, _pv = _acotar_al_vehiculo(propio)
-        ventana = _ventana_de_alcance(cursor, fuente, session_id, adquisicion)
-        f0, f1 = _limites_de_fase(cursor, fuente, session_id, adquisicion, fase)
-        _ca, _pa = _clausula_de_tramo(f0, f1)
-        if ventana:
-            _ca = " AND timestamp BETWEEN %s AND %s" + _ca
-            _pa = [ventana[0], ventana[1]] + _pa
-        alcance = (_ca, tuple(_pa))
-        cursor.execute("""
-            WITH p AS (
-                SELECT timestamp,
-                       max(value_numeric) FILTER (WHERE signal_name = 'lap_number')  AS vuelta,
-                       max(value_numeric) FILTER (WHERE signal_name = 'lap_distance') AS metro,
-                       signal_name, max(value_numeric) AS valor
-                  FROM telemetry_messages
-                 WHERE source_type = %s AND session_id = %s
-                   AND signal_name = ANY(%s)""" + _cl + _ca + """
-                 GROUP BY timestamp, signal_name)
-            SELECT signal_name, min(timestamp) FILTER (WHERE valor IS NOT NULL) AS primero,
-                   max(valor) AS pico
-              FROM p GROUP BY signal_name
-        """, tuple([fuente, session_id,
-                   canales + superficies + ["lap_number", "lap_distance"]] + _pv + _pa))
-        picos = {f[0]: {"primero": f[1], "pico": f[2]} for f in cursor.fetchall()}
-
-        # El momento exacto de cada condicion: una consulta por regla que se
-        # cumple, no por regla declarada.
-        encontrados = []
-        for regla in REGLAS_DE_AVISO:
-            info = picos.get(regla["canal"])
-            if not info or info["pico"] is None or info["pico"] < regla["umbral"]:
-                continue
-            cursor.execute("""
-                WITH p AS (
-                    SELECT timestamp,
-                           max(value_numeric) FILTER (WHERE signal_name = %s) AS v,
-                           max(value_numeric) FILTER (WHERE signal_name = 'lap_number') AS vuelta,
-                           max(value_numeric) FILTER (WHERE signal_name = 'lap_distance') AS metro
-                      FROM telemetry_messages
-                     WHERE source_type = %s AND session_id = %s
-                       AND signal_name IN (%s, 'lap_number', 'lap_distance')""" + _cl + _ca + """
-                     GROUP BY timestamp)
-                SELECT vuelta, metro, v, timestamp FROM p
-                 WHERE v >= %s ORDER BY timestamp LIMIT 1
-            """, tuple([regla["canal"], fuente, session_id, regla["canal"]]
-                       + _pv + _pa + [regla["umbral"]]))
-            fila = cursor.fetchone()
-            if not fila:
-                continue
-            encontrados.append({
-                "nivel": regla["nivel"],
-                "que": regla["que"],
-                "valor": round(fila[2], 2) if fila[2] is not None else None,
-                "unidad": regla["unidad"],
-                "vuelta": int(fila[0]) if fila[0] is not None else None,
-                "metro": round(fila[1], 1) if fila[1] is not None else None,
-                "instante": fila[3].isoformat() if fila[3] else None,
-                "canal": regla["canal"],
-                "umbral": regla["umbral"],
-            })
-
-        # FUERA DE PISTA, QUE HASTA AHORA SOLO EXISTIA EN VIVO.
-        #
-        # Las catorce reglas de arriba miran **un canal contra un umbral**, y la
-        # salida de pista no es eso: es una condicion sobre los cuatro a la vez
-        # ---ninguna rueda sobre asfalto--- de modo que no entra en esa forma y
-        # por eso no estaba. Medido sobre la sesion de Abu Dabi: veintitres
-        # cuadros con las cuatro ruedas fuera, y la respuesta traia cero avisos.
-        fila = _primera_salida_de_pista(cursor, fuente, session_id, propio, alcance)
-        if fila is not None:
-            vuelta, metro, codigos, instante = fila
-            nombres = sorted({f1_udp.SUPERFICIES.get(c, "id-%d" % c) for c in codigos})
-            # Sobre piano se deja la pista **sin perder agarre**, que es la
-            # trazada normal de muchas curvas. Se anota igual ---el reglamento no
-            # distingue--- y se dice, porque no es lo mismo pisar un piano que
-            # irse al cesped.
-            con_agarre = all(c in f1_udp.SUPERFICIES_CON_AGARRE for c in codigos)
-            encontrados.append({
-                "nivel": "info" if con_agarre else REGLA_FUERA_DE_PISTA["nivel"],
-                "que": REGLA_FUERA_DE_PISTA["que"],
-                "valor": None,
-                "unidad": "",
-                "vuelta": int(vuelta) if vuelta is not None else None,
-                "metro": round(metro, 1) if metro is not None else None,
-                "instante": instante.isoformat() if instante else None,
-                "canal": REGLA_FUERA_DE_PISTA["canal"],
-                "umbral": REGLA_FUERA_DE_PISTA["umbral"],
-                "detalle": "las cuatro ruedas sobre %s%s" % (
-                    "/".join(nombres),
-                    "; sobre superficie con agarre" if con_agarre else ""),
-            })
-
-        # Las fisicas, que hasta hoy solo existian sobre el flujo en vivo.
-        for regla, buscar, formato in (
-                (REGLAS_FISICAS[0], _primera_perdida_de_tren_trasero,
-                 lambda v: "%.0f %% de deslizamiento en el eje trasero" % (abs(v) * 100)),
-                (REGLAS_FISICAS[1], _primer_trompo,
-                 lambda v: "%.2f rad/s de giro contra el volante" % abs(v)),
-                (REGLAS_FISICAS[2], _primer_impacto_vertical,
-                 lambda v: "%+.2f g" % v),
-                (REGLAS_FISICAS[3], _primera_caida_brusca,
-                 lambda v: "-%.0f km/h en %.1f s sin frenar"
-                           % (v, anotador_vivo.VENTANA_CAIDA_S))):
-            fila = buscar(cursor, fuente, session_id, propio, alcance)
-            if not fila:
-                continue
-            vuelta, metro, valor, instante = fila[:4]
-            encontrados.append({
-                "nivel": regla["nivel"],
-                "que": regla["que"],
-                "valor": round(valor, 2) if valor is not None else None,
-                "unidad": regla["unidad"],
-                "vuelta": int(vuelta) if vuelta is not None else None,
-                "metro": round(metro, 1) if metro is not None else None,
-                "instante": instante.isoformat() if instante else None,
-                "canal": regla["canal"],
-                "umbral": regla["umbral"],
-                "detalle": formato(valor) if valor is not None else None,
-            })
-
-    encontrados.sort(key=lambda a: (-(a["vuelta"] or 0), -(a["metro"] or 0)))
-    respuesta = {
-        "session_id": session_id,
-        "fuente": fuente,
-        # De quien son. Con una sola sesion de un vehiculo la pregunta no
-        # existia; desde que se escucha a varios pilotos, un aviso sin dueno es
-        # una afirmacion sin sujeto.
-        "vehiculo": propio,
-        "avisos": encontrados[:limite],
-        # Las de canal contra umbral, mas la de superficie y las fisicas, que no
-        # tienen esa forma. Contar solo las primeras seria decir que se
-        # evaluaron catorce cuando se evaluaron diecinueve.
-        "reglas_evaluadas": len(REGLAS_DE_AVISO) + 1 + len(REGLAS_FISICAS),
-        "criterio": ("primer instante en que cada condicion se cumple; cada aviso "
-                     "declara su canal y su umbral"),
     }
     _AVISOS_CACHE[clave] = respuesta
     _AVISOS_CACHE.move_to_end(clave)

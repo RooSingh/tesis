@@ -420,6 +420,24 @@ class RepresentacionDeDatosVivosTests(unittest.TestCase):
         self.assertIn("lote.forEach", cuerpo)
         self.assertIn("incorporarTelemetriaViva(m)", cuerpo)
 
+    def test_detener_la_escucha_cierra_el_flujo_antes_de_abrir_el_historico(self) -> None:
+        cuerpo = self.codigo[self.codigo.index("function terminarEscucha("):]
+        cuerpo = cuerpo[:cuerpo.index("\n}")]
+        self.assertIn("cerrarFlujoEnVivo();", cuerpo)
+        self.assertIn("vaciarVivo(null);", cuerpo)
+        self.assertLess(cuerpo.index("cerrarFlujoEnVivo();"),
+                        cuerpo.index("abrirCuandoEste"))
+
+    def test_el_contexto_inicial_se_acota_al_instante_visible(self) -> None:
+        cuerpo = self.codigo[self.codigo.index("function cargarDatosDeSesion("):]
+        cuerpo = cuerpo[:cuerpo.index("function instanteUtc(")]
+        self.assertIn('"?hasta=" + encodeURIComponent(cuando)', cuerpo)
+
+    def test_la_marca_viva_lee_la_posicion_movil_y_no_el_circuito_congelado(self) -> None:
+        cuerpo = self.codigo[self.codigo.index("function pintarPista("):]
+        cuerpo = cuerpo[:cuerpo.index("function pintarValidacionDeLaForma(")]
+        self.assertIn("vivo.posicionMundo.get(clave)", cuerpo)
+
     def test_el_catalogo_no_pisa_una_sesion_viva(self) -> None:
         """El catalogo llega despues que la primera muestra del flujo.
 

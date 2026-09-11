@@ -359,6 +359,23 @@ def catalogo_de_senales() -> list[dict[str, str]]:
     return sorted(catalogo, key=lambda s: (s["paquete"], s["signal_name"]))
 
 
+def orden_de_publicacion() -> list[str]:
+    """Orden estable de las señales dentro de cada paquete normalizado."""
+
+    salida: list[str] = []
+    for paquete, mapa in MAPAS_POR_PAQUETE.items():
+        salida.extend(f"{paquete}:{nombre}" for nombre, _, _ in mapa.values())
+        for _, (base, _, paquete_ruedas) in SENALES_POR_RUEDA.items():
+            if paquete_ruedas == paquete:
+                salida.extend(f"{paquete}:{base}_{sufijo}"
+                              for sufijo in SUFIJO_RUEDA.values())
+        salida.extend(f"{paquete}:{nombre}" for nombre, (_, _, _, p) in
+                      SENALES_COMPUESTAS.items() if p == paquete)
+        salida.extend(f"{paquete}:{nombre}" for _, (nombre, _, _, p) in
+                      SENALES_ANIDADAS.items() if p == paquete)
+    return salida
+
+
 class ErrorNormalizacion(Exception):
     """El paquete decodificado no permite construir mensajes canonicos."""
 

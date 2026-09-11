@@ -149,6 +149,13 @@ class SenalesTests(unittest.TestCase):
         self.assertEqual(senales["throttle_position"]["unit"], "%")
         self.assertAlmostEqual(senales["brake_position"]["value"], 0.0, places=2)
 
+    def test_el_orden_de_publicacion_se_puede_reconstruir(self):
+        mensajes = f1_25.mensajes_desde_paquete(_telemetria(), INICIO)
+        paquete = mensajes[0]["metadata"]["extra"]["paquete"]
+        orden = f1_25.orden_de_publicacion()
+        posiciones = [orden.index(f"{paquete}:{m['signal_name']}") for m in mensajes]
+        self.assertEqual(posiciones, sorted(posiciones))
+
     def test_la_velocidad_pasa_sin_alterarse(self):
         senales = self._por_senal(
             f1_25.mensajes_desde_paquete(_telemetria(indice_propio=3), INICIO))

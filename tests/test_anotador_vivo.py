@@ -88,6 +88,24 @@ def desde_captura(captura: Path):
     return modulo.mensajes(captura)
 
 
+class CanalesDeReproduccionTests(unittest.TestCase):
+    def test_todo_canal_literal_consumido_se_pide_al_reproducir(self) -> None:
+        """Agregar una regla viva no puede dejar al histórico sin su señal."""
+        import inspect
+        import re
+
+        codigo = inspect.getsource(anotador_vivo.Anotador)
+        literales = set(re.findall(r'_(?:fresco|pedal)\("([^"]+)"', codigo))
+        esperados = literales | {
+            "lap_invalid", "g_force_lateral",
+            *(f"surface_type_{rueda}" for rueda in anotador_vivo.RUEDAS),
+            *(f"wheel_slip_ratio_{rueda}" for rueda in ("rear_left", "rear_right")),
+            *(canal for canal, _ in anotador_vivo.PARTES_DANADAS),
+        }
+        self.assertTrue(esperados.issubset(anotador_vivo.CANALES_PARA_ANOTAR),
+                        esperados - set(anotador_vivo.CANALES_PARA_ANOTAR))
+
+
 def anotar_captura(captura: Path) -> list[dict]:
     anotador = anotador_vivo.Anotador()
     for m in desde_captura(captura):

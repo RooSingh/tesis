@@ -9196,9 +9196,15 @@ function pedirTrazado(ruta) {
   if (!hayCoordenadasMedidas()) { pedirRecorridoDelBus(); return; }
   const buena = estado.vueltas.find(v => v.continua !== false && v.completa);
   const cual = buena ? "&vuelta=" + buena.numero : "";
+  /* De quien es el recorrido. La fuente deportiva no publica quien conduce
+     ---no tiene nada como `player_car_index`--- y sin decirlo el punto de
+     acceso no puede saber de cual de los tres pilotos dibujar. */
+  const deQuien = claveVehiculoPropio()
+    ? "&vehiculo=" + encodeURIComponent(claveVehiculoPropio()) : "";
   TESTIGO.trazadosPedidos++;
   conCarga("trazado", () =>
-  pedir(ruta + "/trazado?puntos=600" + cual + sufijoDeCorrida(true), { senal: senalDeSesion() })
+  pedir(ruta + "/trazado?puntos=600" + cual + deQuien + sufijoDeCorrida(true),
+        { senal: senalDeSesion() })
     .then(t => {
       if (!t || !t.puntos || !t.puntos.length) { TESTIGO.trazadosDescartados++; return; }
       TESTIGO.trazadosAplicados++;

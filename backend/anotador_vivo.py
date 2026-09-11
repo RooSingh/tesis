@@ -144,6 +144,19 @@ PARTES_DANADAS = (
     ("sidepod_damage", "pontones"),
 )
 
+# Una reproducción histórica debe alimentar al mismo anotador con exactamente
+# los canales que éste consume. La lista vive acá, junto a las reglas, para que
+# la consulta histórica no mantenga un segundo catálogo que pueda divergir.
+CANALES_PARA_ANOTAR = tuple(dict.fromkeys((
+    "lap_number", "lap_distance", "lap_invalid", "g_force_lateral",
+    "speed", "throttle_position", "brake_position", "g_force_vertical",
+    "wheel_slip_ratio_rear_left", "wheel_slip_ratio_rear_right",
+    "surface_type_rear_left", "surface_type_rear_right",
+    "surface_type_front_left", "surface_type_front_right",
+    "drs_activation_distance", "drs_allowed", "delta_to_car_in_front",
+    "fia_flag", "fuel_remaining_laps", "ers_stored_energy",
+) + tuple(canal for canal, _ in PARTES_DANADAS)))
+
 #: Limite de energia electrica almacenada, en julios. Es el del reglamento, que
 #: el juego respeta, y no un numero elegido aca.
 ENERGIA_MAXIMA_J = 4e6
@@ -163,6 +176,10 @@ VENTANA_ALERON_MS = 1000
 BANDERAS = {2: "azul, dejar pasar al que viene doblando",
             3: "amarilla, levantar y prohibido adelantar",
             4: "roja, sesion detenida"}
+
+# Cuatro familias de incidentes, dos estados de DRS, su ventana reglamentaria,
+# las banderas accionables, combustible, batería y cada pieza dañada.
+CANTIDAD_REGLAS = 4 + 2 + 1 + len(BANDERAS) + 2 + len(PARTES_DANADAS)
 
 
 class Anotador:

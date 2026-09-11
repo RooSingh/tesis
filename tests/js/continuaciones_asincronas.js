@@ -64,6 +64,7 @@ const preludio = `
   let vueltaElegida = 1;
   let estadoSesion = "cargado";
   let alcanceComparacion = "vuelta";
+  let velocidadRep = 1;
   let _mandoSesion = null;
   let _aperturaActual = 0;
   let _selloSeries = 0;
@@ -148,9 +149,9 @@ const preludio = `
   function pintarAvisos() {}
   function refrescarContexto() {}
   function dibujarComparacion() {}
+  function instanteUtc() { return null; }
   let _ultimaComparacion = 0;
   let _ultimaVueltaDibujada = -1;
-  let _relojSiguiente = null;
   let _relojPedidos = null;
   let cabezal = 0;
   let ventanaTraza = 1200;
@@ -243,6 +244,9 @@ const PIEZAS = [
   fn("alcanceResuelto"),
   fn("alcancePermitePedir"),
   fn("vueltaSiguienteDeclarada"),
+  constanteNumerica("HORIZONTE_PRECARGA_S"),
+  fn("vueltasParaPrecargar"),
+  fn("precargarVueltas"),
   fn("anotarEnPantalla"),
   fn("moverCabezal"),
   fn("vueltaEnFraccion"),
@@ -305,6 +309,7 @@ function nuevoBanco(opciones) {
                              enTandas, podarVueltas,
                              fijarVuelta: (v) => { vueltaElegida = v; },
                              corrida, alcancePermitePedir, vueltaSiguienteDeclarada,
+                             vueltasParaPrecargar,
                              conCarga, vales: () => [..._vales.values()],
                              faltaLoImprescindible, vueltaEnFraccion,
                              anotarEspera, soltarEspera,
@@ -314,6 +319,7 @@ function nuevoBanco(opciones) {
                              anotarEnPantalla, limiteDeDetalle: () => LIMITE_DE_DETALLE_PUNTOS,
                              limpiarLoDeLaCorrida: () => { _vueltasEnPantalla = []; },
                              asegurarPosiciones, moverCabezal,
+                             fijarVelocidad: (v) => { velocidadRep = v; },
                              fijarCabezal: (f) => { cabezal = f; },
                              leerCabezal: () => cabezal,
                              cargarDatosDeSesion, relojDeVuelta, tiempoDePresentacion,
@@ -875,6 +881,23 @@ function dosVueltasDeclaradas(b) {
     { numero: 2, duracion_s: 100, desde_utc: "2026-09-05T00:01:40Z", hasta_utc: "2026-09-05T00:03:20Z" },
   ];
 }
+
+prueba("a 10x se precargan las vueltas que entran en los proximos veinte segundos", (b) => {
+  b.estado.vueltas = [1, 2, 3, 4].map(numero => ({ numero, duracion_s: 100 }));
+  b.fijarVelocidad(1);
+  assert.deepStrictEqual(b.vueltasParaPrecargar(1), [2],
+    "a velocidad normal se pidio mas de una vuelta futura");
+  b.fijarVelocidad(10);
+  assert.deepStrictEqual(b.vueltasParaPrecargar(1), [2, 3],
+    "a 10x no se cubrieron los veinte segundos siguientes");
+});
+
+prueba("sin duraciones medidas la precarga queda acotada a la siguiente", (b) => {
+  b.estado.vueltas = [1, 2, 3, 4].map(numero => ({ numero }));
+  b.fijarVelocidad(10);
+  assert.deepStrictEqual(b.vueltasParaPrecargar(1), [2],
+    "sin plazo medido se intento traer la carrera entera");
+});
 
 prueba("se pregunta por donde se va a pisar, no por donde se piso", async (b) => {
   /* EL DEFECTO QUE ESTO CUIDA. Comprobandolo despues de mover, el cabezal ya
