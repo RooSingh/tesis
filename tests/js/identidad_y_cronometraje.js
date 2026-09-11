@@ -2872,17 +2872,38 @@ prueba("el bus esconde puesta a punto y la comparacion entre vehiculos", () => {
 
 prueba("openf1 saca lo que no publica y se queda con lo que si", () => {
   const escondidos = panelesEscondidosPorFuente();
-  /* Lo que esta fuente no entrega nunca: clima, estado del vehiculo, puesta a
-     punto, aceleraciones y avisos. */
+  /* Lo que esta fuente no entrega nunca: el estado del vehiculo ---de la
+     telemetria llegan seis canales y ninguno lo es---, la puesta a punto y las
+     aceleraciones. */
   assert.deepStrictEqual((escondidos.openf1 || []).sort(),
-    ["aceleraciones", "avisos", "clima", "puesta", "vehiculo"]);
-  /* Y lo que si: el trazado sale de `track_position_*`, el motor de
-     `engine_speed` y `gear_selected`, el cronometraje de la parrilla y las
-     vueltas, y la comparacion entre vehiculos de que hay mas de uno. Sacar
-     alguno de esos seria esconder algo medido. */
+    ["aceleraciones", "puesta", "vehiculo"]);
+  /* Y lo que si: el trazado sale de las coordenadas medidas, el motor del
+     regimen y la marcha, el cronometraje de la parrilla y las vueltas, y la
+     comparacion entre vehiculos de que hay mas de uno. Sacar alguno de esos
+     seria esconder algo medido. */
   ["trazado", "motor", "cronometraje", "vehiculos"].forEach(panel => {
     assert.ok(!(escondidos.openf1 || []).includes(panel),
               "openf1 sostiene «" + panel + "» y lo esta sacando de la vista");
+  });
+});
+
+prueba("lo que la fuente publica y el tablero todavia no trae no se declara ausente", () => {
+  /* LA CORRECCION QUE ESTO FIJA. `clima` y `avisos` estaban declarados como
+     ausencias de OpenF1, y el motivo de avisos lo copie de lo que contesta
+     `/avisos`, que decide por fuente ---`if fuente != "f1_25_udp_simulation"`---
+     y da el mismo texto para el bus y para OpenF1. Para el bus es cierto.
+
+     Para OpenF1 es falso, y el dato esta en esta misma base: el propio backend
+     cuenta 155 muestras de clima y 158 eventos de control de carrera para la
+     sesion 9947, y `context-at` ya los devuelve resueltos en un instante.
+
+     Esta tabla dice «nunca». Decir «nunca» sobre algo que esta guardado es
+     esconderlo, que es justo lo que la seccion entera existe para impedir. */
+  const escondidos = panelesEscondidosPorFuente();
+  ["clima", "avisos"].forEach(panel => {
+    assert.ok(!(escondidos.openf1 || []).includes(panel),
+      "openf1 declara «" + panel + "» como ausencia de la fuente, y la fuente " +
+      "lo publica: lo que falta es que el tablero lo pida");
   });
 });
 

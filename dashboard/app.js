@@ -558,22 +558,37 @@ function porQueNoHayDistancia(cual) {
    ============================================================ */
 const PANELES_QUE_LA_FUENTE_NO_TIENE = {
   f1: {},
+  /* CLIMA Y AVISOS SALIERON DE ESTA TABLA, Y LA CORRECCION VALE ANOTARLA.
+     Estaban declarados aca como ausencias de la fuente, con estos dos motivos:
+     «el clima no viaja en la telemetría de esta fuente» y «OpenF1 no publica
+     banderas, daño ni tipo de superficie». El segundo lo copie de lo que
+     contesta `/avisos`, que responde lo mismo para el bus y para OpenF1 porque
+     lo decide por fuente ---`if fuente != "f1_25_udp_simulation"`--- y para el
+     bus es cierto.
+
+     Para OpenF1 es falso, y el dato esta en esta misma base. El propio backend
+     lo cuenta en `/racing/sessions/9947`: **155 muestras de clima y 158 eventos
+     de control de carrera**, de los cuales 89 son banderas ---32 amarillas, 12
+     dobles, 41 de pista libre, 1 azul, la verde y la de cuadros--- mas ocho de
+     coche de seguridad. Y `/racing/sessions/{key}/context-at` ya los devuelve
+     resueltos en un instante, junto con la diferencia al lider, el compuesto y
+     la edad del neumatico, declarando ademas que tan fresco es cada uno.
+
+     Lo que falta no es el dato: es que el tablero llame a esa ruta. Una
+     ausencia que se puede llenar no pertenece a esta tabla, porque esta tabla
+     dice «nunca», y decir «nunca» sobre algo que esta guardado es lo mismo que
+     esconderlo. */
   openf1: {
-    /* Lo dice `/clima` de esta fuente con estas palabras: el clima no viaja en
-       la telemetría, llega por el contexto de sesión, aparte. Es un dato de la
-       sesión, no una señal que se pueda seguir contra el reloj de la captura. */
-    clima: "el clima no viaja en la telemetría de esta fuente: llega por el " +
-           "contexto de sesión, aparte",
+    /* Esto si es estructural: `car_data` entrega seis canales ---velocidad,
+       acelerador, freno, regimen, marcha y DRS--- y ninguno es del estado del
+       vehiculo. De los neumaticos, OpenF1 publica compuesto y edad en
+       `stints`, que no es lo que este panel muestra: ni temperatura por
+       esquina, ni presion, ni desgaste, ni daño por parte. */
     vehiculo: "OpenF1 no publica temperatura ni presión de neumáticos, ni daño " +
-              "por parte: de car_data llegan seis canales y ninguno es del " +
+              "por parte: de la telemetría llegan seis canales y ninguno es del " +
               "estado del vehículo",
     puesta: "OpenF1 no publica la configuración del vehículo",
     aceleraciones: "OpenF1 no publica aceleraciones en ningún eje",
-    /* Este lo dice la propia API al pedirle los avisos de una sesión de esta
-       fuente: «no publica banderas, daño ni tipo de superficie: no hay con qué
-       levantar un aviso». No es que esta sesión salió limpia. */
-    avisos: "OpenF1 no publica banderas, daño ni tipo de superficie: no hay " +
-            "con qué levantar un aviso",
   },
   can: {
     puesta: "un bus vehicular de serie no publica la configuración del vehículo",
