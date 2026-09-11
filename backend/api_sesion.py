@@ -2324,6 +2324,140 @@ def _vuelta_que_mejor_dibuja(por_vuelta: dict) -> list:
     return min(candidatas, key=cierre)
 
 
+def _sectores_del_trazado(cursor, fuente: str, session_id: str,
+                          vehiculo: str | None, filas: list,
+                          recorte: list) -> dict[str, Any]:
+    """Donde empieza cada sector sobre el trazado que se acaba de armar.
+
+    LOS SECTORES NO SE ANOTAN: SE MIDEN. Es la diferencia con el nombre de una
+    curva, que no esta en ningun canal y por eso vive en `catalogo_curvas` con
+    su origen declarado. Un limite de sector si esta en el dato, y cada fuente
+    lo declara a su manera:
+
+    - El simulador publica `sector_index` en **cada muestra** del paquete de
+      vuelta. El limite es donde ese indice cambia, y esa misma muestra trae su
+      metro y su posicion. No hay nada que estimar.
+
+    - OpenF1 no publica sector por muestra, pero el contexto deportivo trae las
+      **tres duraciones** de cada vuelta ---820 de 827 vueltas de la sesion 9947
+      las tienen completas, y suman exactamente la duracion de la vuelta---. Con
+      el instante de largada eso da el instante en que termina cada sector, y
+      ahi se lee la posicion. El limite es igual de medido; lo que cambia es por
+      que dimension se lo alcanza.
+
+    POR QUE SE DEVUELVE EL INDICE Y NO SOLO EL PUNTO. Con el punto solo se
+    puede marcar una senal sobre la linea; con el indice se puede ademas partir
+    el trazado en tres tramos y pintarlos por separado, que es lo que hace
+    falta para que se vean los sectores y no tres marcas sueltas.
+
+    `desde_m` va en nulo cuando la fuente no mide metros. Poner ahi un numero
+    estimado seria darle a una posicion el respaldo de una medicion que nadie
+    hizo.
+
+    EL LIMITE SE BUSCA EN LAS FILAS CRUDAS Y SE DIBUJA EN EL RECORTE. Buscarlo
+    directamente en el recorte parece lo mismo y no lo es: el recorte toma una
+    muestra de cada N ---con 60.468 filas en 363 puntos, una de cada 167, que a
+    esa velocidad son unos once metros--- de modo que el metro declarado habria
+    quedado cuantizado al paso del dibujo. El dibujo puede redondear; el metro
+    que la respuesta declara como medido, no.
+    """
+
+    if not recorte or not filas:
+        return {"sectores": [], "sectores_origen": ""}
+
+    # De la fila cruda al punto dibujado mas cercano. El recorte conserva el
+    # orden, asi que alcanza con recorrer las dos listas una vez.
+    def punto_dibujado(cuando) -> int:
+        mejor, i = 0, 0
+        for i, f in enumerate(recorte):
+            if f[5] > cuando:
+                break
+            mejor = i
+        return mejor
+
+    limites: list[tuple[int, float | None]] = []
+    origen = ""
+
+    if fuente == "f1_25_udp_simulation":
+        # La muestra trae su propio sector: el limite es donde el indice cambia.
+        anterior = None
+        for fila in filas:
+            sec = fila[6] if len(fila) > 6 else None
+            if sec is None:
+                continue
+            if anterior is None or int(sec) != anterior:
+                limites.append((punto_dibujado(fila[5]), fila[3]))
+                anterior = int(sec)
+        origen = ("medido: `sector_index`, que el paquete de vuelta del simulador "
+                  "declara en cada muestra, con el metro de esa misma muestra")
+    else:
+        # Sin sector por muestra: los instantes salen de las duraciones que el
+        # contexto deportivo declara para esa vuelta y ese piloto.
+        cortes = _instantes_de_sector(cursor, session_id, vehiculo, filas)
+        if cortes:
+            limites.append((0, filas[0][3]))
+            for corte in cortes:
+                # La primera muestra que ya pertenece al sector nuevo.
+                fila = next((f for f in filas if f[5] >= corte), None)
+                if fila is not None:
+                    limites.append((punto_dibujado(fila[5]), fila[3]))
+            origen = ("derivado: instante de largada mas las duraciones de sector que "
+                      "el contexto deportivo declara para esa vuelta; la posicion es "
+                      "la de la muestra medida en ese instante")
+
+    # Dos limites en el mismo punto dibujado serian dos marcas encimadas.
+    limpios: list[tuple[int, float | None]] = []
+    for i, d in limites:
+        if not limpios or i != limpios[-1][0]:
+            limpios.append((i, d))
+    if len(limpios) < 2:
+        return {"sectores": [], "sectores_origen": ""}
+
+    return {
+        "sectores": [
+            {"sector": n + 1, "indice": i,
+             "punto": [round(recorte[i][0], 2), round(recorte[i][1], 2)],
+             "desde_m": round(d, 1) if d is not None else None}
+            for n, (i, d) in enumerate(limpios)
+        ],
+        "sectores_origen": origen,
+    }
+
+
+def _instantes_de_sector(cursor, session_id: str, vehiculo: str | None,
+                         filas: list) -> list:
+    """Los instantes en que terminan el sector 1 y el 2, para una fuente sin metro.
+
+    Se pide la vuelta que el trazado efectivamente dibujo ---la que contiene su
+    primera muestra--- y no la mas rapida ni la primera: marcar sobre un dibujo
+    los sectores de otra vuelta seria poner lineas donde no se midieron.
+    """
+
+    clave = session_id.rsplit(":", 1)[-1]
+    if not clave.isdigit() or not vehiculo or ":driver:" not in vehiculo:
+        return []
+    cola = vehiculo.rsplit(":driver:", 1)[-1]
+    if not cola.isdigit():
+        return []
+    cursor.execute("""
+        SELECT date_start, duration_sector_1_seconds, duration_sector_2_seconds
+          FROM racing_laps
+         WHERE session_key = %s AND driver_number = %s
+           AND date_start IS NOT NULL
+           AND duration_sector_1_seconds IS NOT NULL
+           AND duration_sector_2_seconds IS NOT NULL
+           AND date_start <= %s
+         ORDER BY date_start DESC
+         LIMIT 1
+    """, (int(clave), int(cola), filas[0][5]))
+    fila = cursor.fetchone()
+    if not fila:
+        return []
+    inicio, s1, s2 = fila
+    return [inicio + timedelta(seconds=float(s1)),
+            inicio + timedelta(seconds=float(s1) + float(s2))]
+
+
 @router.get("/sesiones/{session_id}/trazado")
 def trazado(session_id: str, vuelta: int | None = None,
             puntos: Annotated[int, Query(ge=50, le=3000)] = 400,
@@ -2351,7 +2485,9 @@ def trazado(session_id: str, vuelta: int | None = None,
     if senal_distancia:
         interes.append(senal_distancia)
     if fuente == "f1_25_udp_simulation":
-        interes += ["world_position_y", "lap_number"]
+        # `sector_index` viaja en cada muestra del paquete de vuelta y es lo que
+        # hace que los sectores sean medicion y no anotacion.
+        interes += ["world_position_y", "lap_number", "sector_index"]
 
     with db.obtener_conexion() as conexion, conexion.cursor() as cursor:
         # Sin acotar, el recorrido de Spa mezcla el de la captura original con
@@ -2393,13 +2529,14 @@ def trazado(session_id: str, vuelta: int | None = None,
                        max(value_numeric) FILTER (WHERE signal_name = %s) AS z,
                        max(value_numeric) FILTER (WHERE signal_name = 'world_position_y') AS y,
                        max(value_numeric) FILTER (WHERE signal_name = 'lap_distance') AS distancia,
-                       max(value_numeric) FILTER (WHERE signal_name = 'lap_number') AS vuelta
+                       max(value_numeric) FILTER (WHERE signal_name = 'lap_number') AS vuelta,
+                       max(value_numeric) FILTER (WHERE signal_name = 'sector_index') AS sector
                   FROM telemetry_messages
                  WHERE source_type = %s AND session_id = %s AND signal_name = ANY(%s)
                    AND (%s::timestamptz IS NULL OR timestamp BETWEEN %s AND %s)""" +
             _cv + _tramo + """
                  GROUP BY timestamp)
-            SELECT x, z, y, distancia, vuelta, timestamp FROM p
+            SELECT x, z, y, distancia, vuelta, timestamp, sector FROM p
              WHERE x IS NOT NULL AND z IS NOT NULL
              ORDER BY vuelta NULLS LAST, distancia NULLS LAST, timestamp
         """, tuple([eje_x, eje_z, fuente, session_id, interes,
@@ -2434,6 +2571,12 @@ def trazado(session_id: str, vuelta: int | None = None,
     recorte, _reducido = _reducir(filas, puntos)
     pts = [[round(f[0], 2), round(f[1], 2)] for f in recorte]
 
+    # Los sectores se calculan sobre el recorte y no sobre las filas crudas,
+    # porque lo que se devuelve es un indice dentro de `puntos`: un limite
+    # ubicado en la lista larga no señala nada en la que se dibuja.
+    with db.obtener_conexion() as conexion, conexion.cursor() as cursor:
+        _sec = _sectores_del_trazado(cursor, fuente, session_id, _propio, filas, recorte)
+
     area = 0.0
     for i in range(len(pts)):
         j = (i + 1) % len(pts)
@@ -2448,6 +2591,12 @@ def trazado(session_id: str, vuelta: int | None = None,
         "vuelta": int(recorte[0][4]) if recorte[0][4] is not None else None,
         "puntos": pts,
         "senales": {"x": eje_x, "y": eje_z},
+        # DONDE EMPIEZA CADA SECTOR, Y DE DONDE SALE ESE LIMITE. Va con su
+        # origen escrito porque las dos fuentes lo alcanzan por dimensiones
+        # distintas ---una por muestra, la otra por duracion declarada--- y
+        # quien lo dibuje tiene que poder decir cual esta mirando.
+        "sectores": _sec["sectores"],
+        "sectores_origen": _sec["sectores_origen"],
         # CUIDADO CON ESTE CAMPO. Es el sentido **en el plano crudo de la
         # fuente**, no el sentido en que se corre el circuito. El juego usa un
         # sistema de coordenadas propio, y Spa ---que se corre en sentido

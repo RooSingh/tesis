@@ -917,6 +917,144 @@ class SinNumeroDeVueltaElRelojLaDiceTests(unittest.TestCase):
                          "se consulto el contexto sin saber de quien")
 
 
+class LosSectoresDelTrazadoTests(unittest.TestCase):
+    """Donde empieza cada sector, y de donde sale ese limite.
+
+    LOS SECTORES NO SE ANOTAN: SE MIDEN. Es la diferencia con el nombre de una
+    curva, que no esta en ningun canal y por eso vive en `catalogo_curvas` con
+    su origen declarado. Cada fuente alcanza el limite por una dimension
+    distinta y la respuesta tiene que decir por cual.
+    """
+
+    @staticmethod
+    def _filas(sectores, desde=0):
+        """Geometria cruda: x, z, y, distancia, vuelta, instante, sector."""
+        from datetime import datetime, timedelta, timezone
+        t0 = datetime(2025, 7, 6, 14, 0, tzinfo=timezone.utc)
+        return [(float(i), float(i), None, float(i) * 10, 1,
+                 t0 + timedelta(seconds=i), s)
+                for i, s in enumerate(sectores, start=desde)]
+
+    def test_el_limite_es_donde_el_indice_de_sector_cambia(self) -> None:
+        filas = self._filas([0] * 10 + [1] * 10 + [2] * 10)
+        d = api_sesion._sectores_del_trazado(
+            MagicMock(), "f1_25_udp_simulation", "f1_25:session:1", None, filas, filas)
+        self.assertEqual([s["sector"] for s in d["sectores"]], [1, 2, 3])
+        self.assertEqual([s["desde_m"] for s in d["sectores"]], [0.0, 100.0, 200.0])
+
+    def test_el_metro_es_el_de_la_muestra_cruda_y_no_el_del_dibujo(self) -> None:
+        """EL DEFECTO QUE ESTA PRUEBA FIJA, y que la primera version tuvo.
+
+        El trazado devuelve como mucho `puntos` posiciones, que salen de tomar
+        una de cada N. Buscar el limite directamente en esa lista reducida
+        parece lo mismo y no lo es: con 60.468 filas en 363 puntos se toma una
+        de cada 167, que a esa velocidad son unos once metros, y el metro
+        declarado habria quedado cuantizado al paso del dibujo.
+
+        El dibujo puede redondear. El metro que la respuesta declara como
+        medido, no.
+        """
+
+        filas = self._filas([0] * 10 + [1] * 10)     # el limite cae en el metro 100
+        recorte = filas[::7]                          # el dibujo solo tiene 0, 70, 140...
+        d = api_sesion._sectores_del_trazado(
+            MagicMock(), "f1_25_udp_simulation", "f1_25:session:1", None, filas, recorte)
+        metros = [s["desde_m"] for s in d["sectores"]]
+        self.assertEqual(metros, [0.0, 100.0],
+                         "el metro salio del recorte: quedo cuantizado al paso del dibujo")
+        # Y el indice si es del dibujo, porque es donde hay que marcar.
+        self.assertTrue(all(0 <= s["indice"] < len(recorte) for s in d["sectores"]))
+
+    def test_una_fuente_sin_metro_no_inventa_uno(self) -> None:
+        """OpenF1 ubica el limite en el tiempo. Escribirle un metro seria darle
+        a esa posicion el respaldo de una medicion que nadie hizo."""
+
+        from datetime import datetime, timedelta, timezone
+        t0 = datetime(2025, 7, 6, 14, 0, tzinfo=timezone.utc)
+        filas = [(float(i), float(i), None, None, 1, t0 + timedelta(seconds=i), None)
+                 for i in range(30)]
+        cursor = MagicMock()
+        cursor.fetchone.return_value = (t0, 10.0, 10.0)
+        d = api_sesion._sectores_del_trazado(
+            cursor, "openf1_historical_replay", "openf1:session:9947",
+            "openf1:session:9947:driver:1", filas, filas)
+        self.assertEqual([s["sector"] for s in d["sectores"]], [1, 2, 3])
+        self.assertEqual([s["desde_m"] for s in d["sectores"]], [None, None, None])
+        self.assertEqual([s["indice"] for s in d["sectores"]], [0, 10, 20])
+
+    def test_sin_con_que_ubicarlos_no_se_devuelven_sectores(self) -> None:
+        """Tres marcas inventadas sobre un circuito son peores que ninguna."""
+
+        from datetime import datetime, timedelta, timezone
+        t0 = datetime(2025, 7, 6, 14, 0, tzinfo=timezone.utc)
+        filas = [(float(i), float(i), None, None, 1, t0 + timedelta(seconds=i), None)
+                 for i in range(30)]
+        cursor = MagicMock()
+        cursor.fetchone.return_value = None          # el contexto no tiene esa vuelta
+        d = api_sesion._sectores_del_trazado(
+            cursor, "openf1_historical_replay", "openf1:session:9947",
+            "openf1:session:9947:driver:1", filas, filas)
+        self.assertEqual(d["sectores"], [])
+        self.assertEqual(d["sectores_origen"], "")
+        # Y una fuente cuya geometria no trae sector tampoco los inventa.
+        sin_sector = self._filas([None] * 20)
+        d2 = api_sesion._sectores_del_trazado(
+            MagicMock(), "f1_25_udp_simulation", "f1_25:session:1", None,
+            sin_sector, sin_sector)
+        self.assertEqual(d2["sectores"], [])
+
+    def test_un_solo_limite_no_es_un_sector(self) -> None:
+        """Un tramo que no cambia de sector da **un** limite, y una marca sola
+        rotulada «sector 1» afirma que hay un sector 2 y un sector 3 en algun
+        lado. No los hay en lo que se dibujo: un circuito con una raya y nada
+        mas dice menos que uno sin rayas, porque ademas confunde.
+        """
+
+        un_tramo = self._filas([1] * 20)
+        d = api_sesion._sectores_del_trazado(
+            MagicMock(), "f1_25_udp_simulation", "f1_25:session:1", None,
+            un_tramo, un_tramo)
+        self.assertEqual(d["sectores"], [])
+        self.assertEqual(d["sectores_origen"], "",
+                         "se declara el origen de una lista vacia")
+
+    def test_dos_limites_en_el_mismo_punto_no_son_dos_marcas(self) -> None:
+        """Con pocos puntos de dibujo dos limites pueden caer en el mismo, y dos
+        marcas encimadas se leen como una sola mal puesta."""
+
+        filas = self._filas([0] * 2 + [1] * 2 + [2] * 16)
+        recorte = [filas[0], filas[10], filas[19]]
+        d = api_sesion._sectores_del_trazado(
+            MagicMock(), "f1_25_udp_simulation", "f1_25:session:1", None, filas, recorte)
+        indices = [s["indice"] for s in d["sectores"]]
+        self.assertEqual(len(indices), len(set(indices)), indices)
+
+    def test_si_hay_sectores_la_respuesta_dice_de_donde_salen(self) -> None:
+        """Las dos fuentes los alcanzan por dimensiones distintas ---una por
+        muestra, la otra por duracion declarada--- y quien los dibuje tiene que
+        poder decir cual esta mirando."""
+
+        filas = self._filas([0] * 10 + [1] * 10)
+        d = api_sesion._sectores_del_trazado(
+            MagicMock(), "f1_25_udp_simulation", "f1_25:session:1", None, filas, filas)
+        self.assertIn("sector_index", d["sectores_origen"])
+        self.assertIn("medido", d["sectores_origen"])
+
+        from datetime import datetime, timedelta, timezone
+        t0 = datetime(2025, 7, 6, 14, 0, tzinfo=timezone.utc)
+        of1 = [(float(i), float(i), None, None, 1, t0 + timedelta(seconds=i), None)
+               for i in range(30)]
+        cursor = MagicMock()
+        cursor.fetchone.return_value = (t0, 10.0, 10.0)
+        d2 = api_sesion._sectores_del_trazado(
+            cursor, "openf1_historical_replay", "openf1:session:9947",
+            "openf1:session:9947:driver:1", of1, of1)
+        self.assertIn("duraciones de sector", d2["sectores_origen"])
+        self.assertNotIn("medido:", d2["sectores_origen"],
+                         "una posicion alcanzada por tiempo no se declara igual que "
+                         "una que la muestra trae")
+
+
 class ElTrazadoDeUnaFuenteSinVueltasTests(unittest.TestCase):
     """De punta a punta: que el punto de acceso vaya a buscar las vueltas.
 
@@ -928,32 +1066,46 @@ class ElTrazadoDeUnaFuenteSinVueltasTests(unittest.TestCase):
     def _filas():
         from datetime import datetime, timedelta, timezone
         t0 = datetime(2025, 7, 6, 14, 0, tzinfo=timezone.utc)
-        # x, z, y, distancia, vuelta, timestamp
-        return [(float(i), float(i), None, None, None, t0 + timedelta(seconds=i))
+        # x, z, y, distancia, vuelta, timestamp, sector
+        return [(float(i), float(i), None, None, None, t0 + timedelta(seconds=i), None)
                 for i in range(60)]
 
     @classmethod
     def _con_dos_respuestas(cls, geometria):
         """Un doble que contesta segun que se le pregunte.
 
-        `ConexionFalsa` devuelve las mismas filas a toda consulta, y aca hay dos
-        con formas distintas: la geometria trae seis columnas y las vueltas
-        tres. Un doble que contesta lo mismo a las dos no puede distinguir si el
-        punto de acceso fue a buscar las vueltas o no, que es justo lo que se
-        quiere fijar.
+        `ConexionFalsa` devuelve las mismas filas a toda consulta, y aca hay
+        tres con formas distintas: la geometria trae siete columnas, las
+        ventanas de vuelta tres, y los cortes de sector tres de otra clase. Un
+        doble que contesta lo mismo a todas no puede distinguir cual se hizo,
+        que es justo lo que se quiere fijar.
+
+        NO ALCANZA CON ENRUTAR POR EL NOMBRE DE LA TABLA. Dos de las tres
+        preguntan a `racing_laps` y piden cosas distintas: una las ventanas de
+        cada vuelta, la otra las duraciones de sector de una sola. Enrutar por
+        «racing_laps» le daba a la segunda las filas de la primera, y el primer
+        campo ---un numero de vuelta donde se esperaba un instante--- reventaba
+        al sumarle la duracion. Se enruta por la columna que cada una pide.
         """
 
         from datetime import datetime, timedelta, timezone
         t0 = datetime(2025, 7, 6, 14, 0, tzinfo=timezone.utc)
         vueltas = [(1, t0, t0 + timedelta(seconds=30)),
                    (2, t0 + timedelta(seconds=30), t0 + timedelta(seconds=60))]
+        # Una vuelta de 30 s partida en tres sectores de 10.
+        sectores = [(t0, 10.0, 10.0)]
 
         falsa = ConexionFalsa(geometria)
         original = falsa._ejecutar
 
         def _ejecutar(consulta, parametros=None):
             original(consulta, parametros)
-            falsa.filas = vueltas if "racing_laps" in consulta else geometria
+            if "duration_sector_1_seconds" in consulta:
+                falsa.filas = sectores
+            elif "lap_duration_seconds" in consulta:
+                falsa.filas = vueltas
+            else:
+                falsa.filas = geometria
 
         falsa.cursor_obj.execute.side_effect = _ejecutar
         return falsa, patch("backend.api_sesion.db.obtener_conexion", return_value=falsa)
@@ -964,9 +1116,10 @@ class ElTrazadoDeUnaFuenteSinVueltasTests(unittest.TestCase):
             api_sesion.trazado("openf1:session:9947", puntos=50,
                                vehiculo="openf1:session:9947:driver:1")
         consultas = "\n".join(c for c, _ in falsa.consultas)
-        self.assertIn("racing_laps", consultas,
-                      "no se fue a buscar las vueltas: el trazado sale con la "
-                      "sesion entera superpuesta")
+        self.assertIn("lap_duration_seconds", consultas,
+                      "no se fue a buscar las ventanas de vuelta: el trazado sale "
+                      "con la sesion entera superpuesta. Se nombra la columna y no "
+                      "la tabla porque los cortes de sector preguntan a la misma")
 
     def test_el_vehiculo_que_pide_quien_consulta_acota_la_geometria(self) -> None:
         """Sin esto se dibuja la caja que contiene a los tres, no el recorrido
@@ -991,14 +1144,18 @@ class ElTrazadoDeUnaFuenteSinVueltasTests(unittest.TestCase):
 
         from datetime import datetime, timedelta, timezone
         t0 = datetime(2025, 7, 6, 14, 0, tzinfo=timezone.utc)
-        filas = [(float(i), float(i), None, None, 3.0, t0 + timedelta(seconds=i))
+        filas = [(float(i), float(i), None, None, 3.0, t0 + timedelta(seconds=i), None)
                  for i in range(60)]
         falsa, parche = self._con_dos_respuestas(filas)
         with parche:
             api_sesion.trazado("openf1:session:9947", puntos=50,
                                vehiculo="openf1:session:9947:driver:1")
         consultas = "\n".join(c for c, _ in falsa.consultas)
-        self.assertNotIn("racing_laps", consultas)
+        # Se nombra la columna de las ventanas y no la tabla: los cortes de
+        # sector preguntan a `racing_laps` tambien, y son otra pregunta ---esta
+        # fuente no publica sector por muestra, asi que ese si es el unico sitio
+        # donde estan---. Prohibir la tabla entera prohibiria las dos.
+        self.assertNotIn("lap_duration_seconds", consultas)
 
     def test_con_vueltas_en_la_telemetria_no_consulta_el_contexto(self) -> None:
         """El simulador trae `lap_number`: ese camino no puede cambiar."""

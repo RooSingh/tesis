@@ -1305,7 +1305,8 @@ let vueltaElegida = 1;
    El nombre es anotacion, no medicion: se declara en la interfaz. */
 /* El trazado y sus curvas llegan con la sesion. Hasta que llegan, el panel
    se dibuja vacio y dice que esta cargando: no hay un trazado por omision. */
-let PISTA = { path: "", curvas: [], largo_m: null, desnivel_m: null, muestras: null };
+let PISTA = { path: "", curvas: [], largo_m: null, desnivel_m: null, muestras: null,
+          sectores: [], sectoresOrigen: "", puntos: [] };
 let CURVAS = [];
 
 const raiz = document.documentElement;
@@ -3102,6 +3103,30 @@ function pintarPista() {
      recorrer el dibujo hasta ese metro. Asi el nombre sigue siendo anotacion
      citada y la posicion sigue siendo medicion, que es la separacion que el
      trabajo sostiene en todos lados. */
+  /* LAS RAYAS DE SECTOR VAN ANTES QUE LAS CURVAS.
+     Se dibujan primero para que queden **debajo**: una raya cruza el trazo de
+     lado a lado y taparia el numero de una curva que cayera cerca. El numero
+     es lo que se consulta; la raya es contexto. */
+  if (rehacer && PISTA.sectores && PISTA.sectores.length > 1) {
+    const NS = "http://www.w3.org/2000/svg";
+    marcasDeSector(PISTA.sectores, PISTA.puntos, PISTA.proyectarMundo).forEach(m => {
+      const raya = document.createElementNS(NS, "line");
+      raya.setAttribute("class", "raya-sector");
+      raya.setAttribute("x1", m.x1); raya.setAttribute("y1", m.y1);
+      raya.setAttribute("x2", m.x2); raya.setAttribute("y2", m.y2);
+      const cual = document.createElementNS(NS, "title");
+      cual.textContent = "Empieza el sector " + m.sector +
+        (m.desde_m !== null && m.desde_m !== undefined ? " · metro " + cifra(m.desde_m, 0) : "");
+      raya.appendChild(cual);
+      g.appendChild(raya);
+      const rot = document.createElementNS(NS, "text");
+      rot.setAttribute("class", "rotulo-sector");
+      rot.setAttribute("x", m.tx); rot.setAttribute("y", m.ty);
+      rot.textContent = "S" + m.sector;
+      g.appendChild(rot);
+    });
+  }
+
   if (rehacer && CURVAS.length && PISTA.largo_m) {
     const zonas = CURVAS.map((c, i) => {
       const p = linea.getPointAtLength(largo * Math.max(0, Math.min(1, c.metro_medido / PISTA.largo_m)));
@@ -7703,7 +7728,8 @@ function terminarEscucha() {
 function prepararEscucha() {
   estadoSesion = "escuchando";
   nuevaSesionEnCurso();
-  PISTA = { path: "", curvas: [], largo_m: null, desnivel_m: null, muestras: null };
+  PISTA = { path: "", curvas: [], largo_m: null, desnivel_m: null, muestras: null,
+          sectores: [], sectoresOrigen: "", puntos: [] };
   CURVAS = [];
   vaciarVivo(null);
   sesionAbierta = null;
@@ -8042,7 +8068,8 @@ function incorporarTelemetriaViva(m, recuperando) {
     /* Y el dibujo de la pista tambien: es de la sesion que se deja. Sin esto,
        el circuito anterior queda debajo del coche de la sesion nueva, que es
        una afirmacion falsa sobre donde esta el vehiculo. */
-    PISTA = { path: "", curvas: [], largo_m: null, desnivel_m: null, muestras: null };
+    PISTA = { path: "", curvas: [], largo_m: null, desnivel_m: null, muestras: null,
+          sectores: [], sectoresOrigen: "", puntos: [] };
     CURVAS = [];
     vaciarVivo(m.session_id);
     fuente = "f1";
@@ -8697,7 +8724,8 @@ function olvidarLoDeLaCorrida() {
   estado.climaMotivo = ""; estado.vehiculoMotivo = ""; estado.avisosMotivo = "";
   _esencialResuelta = false;
   estado.cargando = true;
-  PISTA = { path: "", curvas: [], largo_m: null, desnivel_m: null, muestras: null };
+  PISTA = { path: "", curvas: [], largo_m: null, desnivel_m: null, muestras: null,
+          sectores: [], sectoresOrigen: "", puntos: [] };
   CURVAS = [];
   vivo.recorrido.clear();
   vivo.recorridoDibujado = 0;
@@ -9471,16 +9499,7 @@ function cargarDatosDeSesion(ruta, apertura, senal, s) {
     pedirTrazado(ruta);
     if (trazado && trazado.puntos && trazado.puntos.length) {
       estado.trazado = trazado;
-      const armado = trazadoAPath(trazado.puntos,
-        /invertir/i.test(trazado.para_dibujarlo || "") &&
-        !/no invertir/i.test(trazado.para_dibujarlo || ""));
-      PISTA = {
-        path: armado.path,
-        largo_m: trazado.largo_m,
-        desnivel_m: trazado.desnivel_m,
-        muestras: trazado.muestras_originales,
-        curvas: [],
-      };
+      PISTA = armarPista(trazado, CURVAS);
     }
 
     // Los avisos llegan por su cuenta; aca solo se recolocan los que ya haya,
@@ -10230,33 +10249,8 @@ function pedirRecorridoDelBus() {
       const puntos = (r && r.puntos) || [];
       if (puntos.length < 3) { TESTIGO.trazadosDescartados++; return; }
       TESTIGO.trazadosAplicados++;
-      /* Sin invertir: la reconstruccion ya entrega el plano en el sentido en
-         que se recorrio, y darlo vuelta espejaria las curvas.
-
-         Y SIN CERRAR. `trazadoAPath` cierra el camino con `Z` porque un
-         circuito vuelve a su largada. Un tramo de ruta no vuelve: cerrarlo
-         dibuja una recta del final al principio que nadie recorrio, y en un
-         tramo casi recto esa recta es todo el dibujo otra vez. */
-      const armado = trazadoAPath(puntos.map(q => [q.x, q.y]), false, false);
-      PISTA = {
-        path: armado.path,
-        proyectar: armado.proyectar,
-        proyectarMundo: armado.proyectarMundo,
-        mundo: puntos.map(q => [q.x, q.y]),
-        largo_m: r.recorrido_m,
-        desnivel_m: null,
-        muestras: puntos.length,
-        curvas: [],
-        /* Lo que hace falta para ubicar un instante sobre esta forma. */
-        marcas_ms: puntos.map(q => q.t_ms),
-        origen_utc: (r.eje_temporal || {}).origen_utc || null,
-        derivado: true,
-        advertencia: r.advertencia || "",
-        /* La comprobacion mas fuerte que esta fuente admite, y viajaba sin que
-           nadie la leyera. Ver `textoDeLaValidacion`. */
-        validacion: r.validacion_guinada || null,
-      };
-      estado.trazado = r;
+      estado.trazado = t;
+      PISTA = armarPista(t, CURVAS);
       const svg = document.getElementById("linea-pista");
       if (svg && svg.ownerSVGElement) delete svg.ownerSVGElement.dataset.reserva;
       const g = document.getElementById("marcas-pista");
@@ -10272,6 +10266,103 @@ function pedirRecorridoDelBus() {
    con tramos que no se recorrieron: el circuito se ve deformado. Se elige la
    primera vuelta que sea continua y completa; si no hay ninguna, se pide sin
    elegir y se declara. */
+/* LA PISTA SE ARMA EN UN SOLO SITIO.
+   ---------------------------------------------------------------------
+   Habia dos. `cargarDatosDeSesion` armaba una con lo que ya tenia en la mano y
+   `pedirTrazado` armaba otra al volver su consulta, las dos desde la **misma**
+   respuesta de `/trazado`. La segunda era la completa; la primera se olvidaba
+   de `proyectarMundo`, de `invertirY` y de la vuelta, y se quedaba con las
+   curvas vacias.
+
+   Mientras lo unico que se dibujaba era la linea, las dos servian y la
+   diferencia no se veia. Al agregar los sectores dejo de servir: el dibujo
+   salia sin rayas porque la copia que ganaba no los traia, y no habia forma de
+   saber cual de las dos habia ganado.
+
+   Es el mismo defecto que este tablero ya tuvo dos veces ---`estado.clima` y el
+   pie de avisos---: dos escritores para un mismo dato. El arreglo es el mismo,
+   y es estructural: un solo constructor, y los dos sitios lo llaman. */
+function armarPista(t, curvas) {
+  const invertir = /invertir/i.test(t.para_dibujarlo || "") &&
+                   !/no invertir/i.test(t.para_dibujarlo || "");
+  const armado = trazadoAPath(t.puntos, invertir);
+  return {
+    path: armado.path,
+    largo_m: t.largo_m,
+    desnivel_m: t.desnivel_m,
+    muestras: t.muestras_originales,
+    vuelta: t.vuelta,
+    curvas: curvas || [],
+    /* La transformacion que llevo estos puntos al dibujo, guardada. La armaba
+       `trazadoAPath` y uno de los dos sitios la tiraba, de modo que una
+       coordenada medida no se podia poner sobre el trazo aunque se tuviera. */
+    proyectarMundo: armado.proyectarMundo,
+    /* LOS SECTORES SON MEDICION, A DIFERENCIA DEL NOMBRE DE UNA CURVA. El
+       nombre no esta en ningun canal y viene del catalogo externo; el limite de
+       sector si esta en el dato, y cada fuente lo alcanza por su dimension
+       ---el simulador lo declara en cada muestra, la fuente deportiva por las
+       duraciones de la vuelta---. La respuesta trae escrito cual de las dos. */
+    sectores: t.sectores || [],
+    sectoresOrigen: t.sectores_origen || "",
+    /* Los puntos crudos, para poder orientar la marca de sector: una raya que
+       marca un limite tiene que cruzar la pista, y para eso hace falta saber
+       hacia donde va la pista en ese punto. */
+    puntos: t.puntos || [],
+    invertirY: invertir,
+  };
+}
+
+/* DONDE Y COMO CRUZA CADA RAYA DE SECTOR.
+   ---------------------------------------------------------------------
+   Una raya que marca un limite tiene que **cruzar** la pista, no correr a lo
+   largo de ella: puesta en cualquier direccion se lee como un tramo del
+   circuito y no como una division. La direccion sale de por donde va la pista
+   en ese punto, que se saca de los dos puntos vecinos del propio trazado.
+
+   Se extrae del dibujo para poder ejercerla: lo unico que decide es geometria,
+   y eso se puede comprobar sin un navegador.
+
+   EL PRIMER SECTOR NO LLEVA RAYA. Su limite es la linea de meta, que es donde
+   el trazado empieza y termina: dibujarla ahi marcaria el corte del dibujo y
+   no un limite de sector, y ademas caeria encima del final del lazo. */
+const LARGO_RAYA_SECTOR = 7;
+
+function marcasDeSector(sectores, puntos, proyectar) {
+  if (!proyectar || !puntos || puntos.length < 2) return [];
+  const salida = [];
+  (sectores || []).forEach(s => {
+    const i = s.indice;
+    /* EL LIMITE QUE CAE EN EL COMIENZO DEL DIBUJO NO LLEVA RAYA, y el motivo es
+       el comienzo y no el numero de sector: ahi el trazado empieza y termina, de
+       modo que una raya marcaria el corte del lazo y no un limite, y ademas
+       caeria encima del cierre. Si alguna vez una fuente declarara el primer
+       sector empezando en otro sitio, ahi si corresponde la raya. */
+    if (!(i > 0) || i >= puntos.length) return;
+    const antes = puntos[Math.max(0, i - 1)];
+    const despues = puntos[Math.min(puntos.length - 1, i + 1)];
+    /* `proyectarMundo` devuelve un **arreglo** `[x, y]`, no un objeto. Leerlo
+       como `.x` daba `undefined`, la resta daba `NaN`, y `if (!largo)` lo
+       descartaba en silencio: cero rayas y ningun error. */
+    const a = proyectar(antes[0], antes[1]);
+    const b = proyectar(despues[0], despues[1]);
+    const c = proyectar(puntos[i][0], puntos[i][1]);
+    const dx = b[0] - a[0], dy = b[1] - a[1];
+    const largo = Math.hypot(dx, dy);
+    if (!largo) return;
+    // La normal de la direccion de marcha, escalada a la mitad a cada lado.
+    const nx = -dy / largo * (LARGO_RAYA_SECTOR / 2);
+    const ny = dx / largo * (LARGO_RAYA_SECTOR / 2);
+    salida.push({
+      sector: s.sector, desde_m: s.desde_m,
+      x1: +(c[0] - nx).toFixed(2), y1: +(c[1] - ny).toFixed(2),
+      x2: +(c[0] + nx).toFixed(2), y2: +(c[1] + ny).toFixed(2),
+      // El rotulo va del lado de afuera de la raya, para no pisar el trazo.
+      tx: +(c[0] + nx * 1.9).toFixed(2), ty: +(c[1] + ny * 1.9).toFixed(2),
+    });
+  });
+  return salida;
+}
+
 function pedirTrazado(ruta) {
   /* EL BUS NO PUBLICA COORDENADAS, Y AUN ASI TIENE UNA FORMA.
      `/trazado` sale de `world_position_*`, que la simulacion declara y el bus
@@ -10314,6 +10405,18 @@ function pedirTrazado(ruta) {
            coordenada medida no se podia poner sobre el trazo aunque se tuviera:
            habia que conformarse con repartir la vuelta por tiempo. */
         proyectarMundo: armado.proyectarMundo,
+        /* LOS SECTORES SON MEDICION, A DIFERENCIA DEL NOMBRE DE UNA CURVA.
+           El nombre no esta en ningun canal y viene del catalogo externo; el
+           limite de sector si esta en el dato, y cada fuente lo alcanza por su
+           dimension ---el simulador lo declara en cada muestra, la fuente
+           deportiva por las duraciones de la vuelta---. La respuesta trae
+           escrito cual de las dos, y se guarda para poder decirlo. */
+        sectores: t.sectores || [],
+        sectoresOrigen: t.sectores_origen || "",
+        /* Los puntos crudos, para poder orientar la marca de sector: una raya
+           sobre el trazo tiene que cruzarlo, y para eso hace falta saber hacia
+           donde va la pista en ese punto. */
+        puntos: t.puntos || [],
         invertirY: /invertir/i.test(t.para_dibujarlo || "") &&
                    !/no invertir/i.test(t.para_dibujarlo || ""),
       };

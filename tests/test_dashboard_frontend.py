@@ -309,6 +309,11 @@ class AyudantesDeSerieTests(unittest.TestCase):
 
         self._correr("el_velo_de_arranque.js")
 
+    def test_las_rayas_de_sector_cruzan_la_pista(self) -> None:
+        """Geometria de la marca: cruza, gira con la pista y no da NaN."""
+
+        self._correr("las_rayas_de_sector.js")
+
     def test_todo_el_tablero_muestra_el_mismo_instante(self) -> None:
         """Un solo tiempo de presentacion para instrumentos, coche y graficos.
 

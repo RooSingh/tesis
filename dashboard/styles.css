@@ -481,6 +481,21 @@
   }
   .fuentes-legal b { color: var(--texto-medio); font-weight: 600; }
 
+  /* ---------- los sectores sobre el trazado ----------
+     UNA RAYA FINA Y UN ROTULO CHICO, A PROPOSITO. El limite de sector es
+     contexto: dice en que tramo cronometrado esta el coche. Lo que se consulta
+     mirando el trazado es donde esta el coche y que curva es esta, y una raya
+     gruesa o de color fuerte competiria con las dos. */
+  .raya-sector {
+    stroke: var(--texto-tenue); stroke-width: 1.2; stroke-dasharray: 2 1.6;
+    fill: none; pointer-events: stroke;
+  }
+  .rotulo-sector {
+    font-family: var(--cifra); font-size: 5.5px; font-weight: 600;
+    fill: var(--texto-tenue); text-anchor: middle; dominant-baseline: middle;
+    pointer-events: none;
+  }
+
   /* ---------- la traza, como bloque principal ---------- */
   .panel-traza { order: -1; }
   .lienzo-traza { width: 100%; height: 420px; display: block; cursor: crosshair; }
