@@ -3473,7 +3473,7 @@ def _avisos_reproducidos(cursor, fuente: str, session_id: str,
          WHERE source_type = %s AND session_id = %s
            AND signal_name = ANY(%s)""" + clausula_vehiculo + clausula_ventana
                    + clausula_fase + """
-         ORDER BY COALESCE(replay_seq, """ + _captura_us() + "), """
+         ORDER BY COALESCE(replay_seq, """ + _orden_dentro_de_la_sesion() + "), """
                    "array_position(%s::text[], "
                    "COALESCE(metadata->'extra'->>'paquete', '') || ':' || signal_name), "
                    "timestamp, signal_name",
