@@ -2294,17 +2294,82 @@ let _firmaClima = "";
 /* El clima es el que la fuente publico en la sesion: temperatura de aire y
    de pista, codigo de clima y bandera. No hay humedad ni viento porque el
    paquete de sesion no los trae; se muestran los que hay. */
+/* ============================================================
+   EL PANEL DE CLIMA MUESTRA LO QUE LA FUENTE TRAE, NO CUATRO CASILLAS FIJAS
+   ------------------------------------------------------------
+   Eran cuatro escritas a mano ---pista, aire, bandera y coche de seguridad---
+   porque el simulador publica esas cuatro. OpenF1 publica otras: temperatura de
+   aire y de pista tambien, y ademas humedad, presion, viento y si llueve; y no
+   publica ni bandera de sesion ni retraso del coche de seguridad.
+
+   Con la lista fija, abrir OpenF1 daba dos casillas con una raya ---afirmando
+   que no se sabe algo que la fuente no publica--- y escondia cuatro magnitudes
+   que si estaban medidas.
+
+   QUE DECIDE QUE CASILLA VA. Que la respuesta **traiga la clave**, no que el
+   valor no sea nulo. Son dos cosas distintas y el tablero se apoya en la
+   diferencia en todos lados: una clave presente con valor nulo es «esto existe
+   en esta fuente y ahora no se sabe», y se dibuja con su raya; una clave que no
+   viene es «esta fuente no lo publica», y entonces no hay casilla que dibujar.
+   Asi no hace falta una tabla por fuente: cada respuesta declara lo suyo. */
+const CASILLAS_DEL_CLIMA = [
+  ["temperatura_pista_c", "Pista", "°C", 1],
+  ["temperatura_aire_c", "Aire", "°C", 1],
+  ["bandera_texto", "Bandera", "", null],
+  ["retraso_del_coche_de_seguridad_s", "Coche de seg.", "s", 1],
+  ["lluvia", "Lluvia", "", null],
+  ["humedad_pct", "Humedad", "%", 0],
+  ["viento_m_s", "Viento", "m/s", 1],
+  ["presion_mbar", "Presión", "mbar", 1],
+];
+
+function celdasDelClima(d) {
+  if (!d) return [];
+  return CASILLAS_DEL_CLIMA
+    .filter(c => Object.prototype.hasOwnProperty.call(d, c[0]))
+    .map(([clave, rotulo, unidad, decimales]) => {
+      const v = d[clave];
+      /* Un booleano no es una cifra: «llueve» y «no llueve» son los dos un
+         dato, y `0` no es ninguno de los dos. */
+      if (typeof v === "boolean") return [rotulo, v ? "sí" : "no"];
+      /* Sin valor, la raya sola. «— °C» se lee como «no se cuantos grados»,
+         y eso dice de mas: lo que no se sabe es el dato, no su unidad. */
+      if (v === null || v === undefined) return [rotulo, "—"];
+      if (decimales === null) return [rotulo, String(v)];
+      return [rotulo, cifra(v, decimales) + (unidad ? " " + unidad : "")];
+    });
+}
+
+/* DE DONDE SALE EL CLIMA QUE SE DIBUJA.
+   Son dos consultas distintas y llegan cuando llegan: `/contexto` trae el clima
+   que viaja **en la telemetria** de la sesion, y `context-at` el que la fuente
+   declara **aparte**, en su propia tabla. Las dos escribian `estado.clima`, de
+   modo que la que contestaba ultima borraba a la otra: sobre OpenF1 el clima
+   aparecia y desaparecia segun cual ganara la carrera, y perdia siempre la
+   unica que lo tenia.
+
+   No se ordenan las respuestas: se guardan en campos distintos y la eleccion se
+   hace al dibujar. El de la telemetria manda cuando existe ---es el de la
+   sesion abierta, muestra a muestra--- y el declarado es el respaldo. */
+function climaQueSeMuestra() {
+  return estado.clima || estado.climaDeCarrera || null;
+}
+
 function pintarClima() {
   const c = document.getElementById("clima");
   if (!c) return;
-  const d = estado.clima;
+  const d = climaQueSeMuestra();
   if (!d) { c.innerHTML = ""; return; }
 
   const iconos = {
     "despejado": "sol", "nubes ligeras": "nube", "cubierto": "nube",
     "lluvia ligera": "lluvia", "lluvia fuerte": "lluvia", "tormenta": "lluvia"
   };
-  const cual = iconos[d.clima] || "nube";
+  /* El dibujo sale de un campo y no de la prosa. Con `iconos[d.clima]` el icono
+     dependia de que la frase coincidiera con una clave escrita aca, de modo que
+     una fuente que dice «llueve» con otras palabras caia en la nube por defecto
+     teniendo el dato. */
+  const cual = d.icono || iconos[d.clima] || "nube";
   const dibujo = cual === "sol"
     ? '<svg class="icono" viewBox="0 0 48 48" role="img" aria-label="Despejado">' +
       '<circle cx="24" cy="24" r="10" fill="var(--alerta)"></circle>' +
@@ -2324,24 +2389,21 @@ function pintarClima() {
   const banderas = { "ninguna": "ok", "verde": "ok", "amarilla": "alerta",
                      "roja": "critico", "azul": "info" };
   const bandera = d.bandera_texto || "ninguna";
-  const celdas = [
-    ["Pista", d.temperatura_pista_c, "°C"],
-    ["Aire", d.temperatura_aire_c, "°C"],
-    ["Bandera", null, null],
-    ["Coche de seg.", d.retraso_del_coche_de_seguridad_s, "s"]
-  ];
+  /* La chapa de la bandera solo va donde la fuente declara una. */
+  const chapa = Object.prototype.hasOwnProperty.call(d, "bandera_texto")
+    ? '<span class="bandera ' + (banderas[bandera] || "ok") + '">' + bandera + '</span>'
+    : "";
 
   c.innerHTML =
     '<div class="clima-principal">' + dibujo +
       '<div><span class="cifra-grande">' + cifra(d.temperatura_aire_c, 1) + '</span>' +
       '<span class="unidad-grande">°C</span>' +
-      '<p class="eyebrow">' + (d.clima || "sin declarar") + '</p></div>' +
-      '<span class="bandera ' + (banderas[bandera] || "ok") + '">' + bandera + '</span>' +
+      '<p class="eyebrow">' + textoSeguro(d.clima || "sin declarar") + '</p></div>' +
+      chapa +
     '</div>' +
     '<dl class="clima-rejilla">' +
-      celdas.map(f => '<div><dt>' + f[0] + '</dt><dd>' +
-        (f[0] === "Bandera" ? bandera : cifra(f[1], 1) + "&nbsp;" + f[2]) +
-        '</dd></div>').join("") +
+      celdasDelClima(d).map(f => '<div><dt>' + textoSeguro(f[0]) + '</dt><dd>' +
+        textoSeguro(f[1]).replace(/ /g, "&nbsp;") + '</dd></div>').join("") +
     '</dl>';
 }
 
@@ -7309,6 +7371,9 @@ function vaciarVivo(sesion) {
 
 function limpiarContextoDeSesion() {
   estado.clima = null; estado.climaMotivo = "";
+  /* El contexto de carrera se va con la sesion: es de esa carrera y de esos
+     pilotos, y sobrevivir a un cambio dejaria el puesto de otro en pantalla. */
+  estado.contextoCarrera = null; estado.climaDeCarrera = null;
   estado.vehiculo = null; estado.vehiculoMotivo = "";
   estado.puesta = null; estado.avisos = []; estado.avisosMotivo = "";
   estado.avisosFallo = "";
@@ -8201,6 +8266,7 @@ function olvidarLoDeLaCorrida() {
      aproximado guardado antes de que llegaran las vueltas. */
   cambiaronLasSeries();
   estado.trazado = null; estado.curvas = []; estado.clima = null; estado.vehiculo = null;
+  estado.contextoCarrera = null; estado.climaDeCarrera = null;
   estado.puesta = null; estado.avisos = []; estado.avisosFallo = "";
   estado.disponibles = new Set();
   estado.vehiculoClave = null;
@@ -9119,6 +9185,122 @@ function refrescarContexto() {
         if (!fueAnulada(e) && e instanceof TypeError) console.error(e);
       })
       .then(() => { _contextoEnVuelo = false; }));
+
+  pedirContextoDeCarrera(cuando, apertura);
+}
+
+/* ============================================================
+   EL CONTEXTO DE CARRERA DE OPENF1, QUE YA ESTABA GUARDADO Y NADIE PEDIA
+   ------------------------------------------------------------
+   El tablero mostraba rayas en POSICION y AL LIDER, y el panel de clima decia
+   que esta fuente no publica clima. Las tres cosas estaban en la base desde la
+   importacion. Contado por el propio backend sobre la sesion 9947:
+
+       racing_weather        155 muestras
+       racing_intervals   19.943 filas
+       racing_positions      538 filas
+       racing_stints          55 filas
+
+   Y `/racing/sessions/{key}/context-at` ya las resolvia en un instante. Lo que
+   faltaba era pedirla: el tablero no la nombraba en ninguna linea.
+
+   NO ES LA MISMA CONSULTA QUE `/contexto`, Y POR ESO VA APARTE. Aquella trae lo
+   que viaja **en la telemetria** de la sesion abierta. Esta trae lo que la
+   fuente declara **alrededor** de la telemetria y que vive en otras tablas. Van
+   al mismo instante y se piden juntas, pero una fuente puede tener una y no la
+   otra, y mezclarlas obligaria a cada una a saber de la otra.
+   ============================================================ */
+
+/* El contexto de carrera del vehiculo propio, o `null` si esta fuente no tiene.
+   Se busca por numero de carrera porque es la llave con la que vuelve. */
+function contextoDelPropio() {
+  const porNumero = estado.contextoCarrera;
+  if (!porNumero) return null;
+  const n = identidadDeVehiculo(claveVehiculoPropio()).numero;
+  return (n !== null && n !== undefined) ? (porNumero[String(n)] || null) : null;
+}
+
+/* Cuanto hace que se declaro, en palabras y entre parentesis. Cadena vacia si
+   no se sabe: un parentesis vacio en un titulo es peor que no ponerlo. */
+function edadEnPalabras(segundos) {
+  /* `Number(null)` es cero, no un no-numero: sin esta linea una edad que no
+     se sabe se anunciaba como «hace 0 s», que es la afirmacion contraria. */
+  if (segundos === null || segundos === undefined || segundos === "") return "";
+  const s = Number(segundos);
+  if (!Number.isFinite(s) || s < 0) return "";
+  if (s < 90) return ", hace " + Math.round(s) + " s";
+  return ", hace " + Math.round(s / 60) + " min";
+}
+
+/* Los numeros de carrera de los que se quiere contexto. Son numeros y no las
+   claves internas: `context-at` habla el vocabulario de OpenF1. */
+function numerosDePilotoDelContexto() {
+  const vistos = [];
+  const sumar = clave => {
+    const n = identidadDeVehiculo(clave).numero;
+    if (Number.isFinite(Number(n)) && vistos.indexOf(Number(n)) === -1) vistos.push(Number(n));
+  };
+  sumar(claveVehiculoPropio());
+  [...seleccion].forEach(sumar);
+  return vistos;
+}
+
+/* Lo que `context-at` contesta, indexado por numero de carrera. */
+function contextoPorPiloto(d) {
+  const porNumero = {};
+  ((d && d.drivers) || []).forEach(p => { porNumero[String(p.driver_number)] = p; });
+  return porNumero;
+}
+
+/* El clima de la carrera, con los nombres que el panel ya usa.
+   Solo se copian las claves que la respuesta trae: una clave ausente es «esta
+   fuente no lo publica» y el panel no le dibuja casilla. */
+function climaDeLaCarrera(w) {
+  if (!w) return null;
+  const d = {};
+  const copiar = (desde, hacia) => {
+    if (w[desde] !== undefined) d[hacia] = w[desde];
+  };
+  copiar("track_temperature_c", "temperatura_pista_c");
+  copiar("air_temperature_c", "temperatura_aire_c");
+  copiar("rainfall", "lluvia");
+  copiar("humidity_percent", "humedad_pct");
+  copiar("wind_speed_mps", "viento_m_s");
+  copiar("pressure_mbar", "presion_mbar");
+  /* Esta fuente declara si llueve, no como esta el cielo. Decir «despejado»
+     porque no llueve seria afirmar algo que nadie midio. */
+  d.clima = w.rainfall === true ? "llueve"
+          : w.rainfall === false ? "sin lluvia"
+          : "sin declarar";
+  d.icono = w.rainfall === true ? "lluvia" : "nube";
+  d.frescura = w.weather_freshness || null;
+  return d;
+}
+
+function pedirContextoDeCarrera(cuando, apertura) {
+  const clave = claveDeSesionOpenF1(estado.abierta && estado.abierta.session_id);
+  if (!clave) return;
+  const numeros = numerosDePilotoDelContexto();
+  if (!numeros.length) return;
+  conCarga(["clima", "cronometraje"], () =>
+    pedir("/racing/sessions/" + clave + "/context-at?timestamp=" +
+          encodeURIComponent(cuando) + numeros.map(n => "&drivers=" + n).join(""),
+          { senal: senalDeSesion() })
+      .then(d => {
+        if (!sigueVigente(apertura)) return;
+        estado.contextoCarrera = contextoPorPiloto(d);
+        const clima = climaDeLaCarrera(d && d.weather);
+        if (clima) {
+          estado.climaDeCarrera = clima;
+          estado.climaMotivo = "";
+          estado.disponibles.add("air_temperature");
+          aplicarDisponibilidad();
+          _firmaClima = "";
+          pintarClima();
+        }
+        pintarCronometraje();
+      })
+      .catch(e => { if (!fueAnulada(e) && e instanceof TypeError) console.error(e); }));
 }
 
 /* ============================================================
@@ -10632,16 +10814,30 @@ function pintarCronometraje() {
           yo.indiceInterno + "» es el índice interno del vehículo en el " +
           "protocolo, no su número de carrera.");
 
-  /* EN QUE PUESTO. Es `track_position_order`, medida y discreta. Sin muestra
-     no hay puesto: una raya, nunca un P0 ni el puesto de hace un rato. */
-  const puesto = t.posicion;
+  /* EN QUE PUESTO.
+     En el simulador es `track_position_order`, una señal que llega en cada
+     muestra. En OpenF1 el puesto no es una señal: la fuente lo publica **al
+     cambiar**, veintiocho veces en cincuenta y dos vueltas, y vive en otra
+     tabla. Ahi el puesto no se mide en el instante, se sostiene desde el
+     ultimo cambio declarado, y eso se dice en vez de presentarlo como una
+     medicion de ahora. Lo que no cambia: sin dato, una raya. */
+  const delContexto = contextoDelPropio();
+  const puesto = t.posicion !== null && t.posicion !== undefined
+    ? t.posicion
+    : (delContexto ? delContexto.position : null);
+  const sostenido = (t.posicion === null || t.posicion === undefined) &&
+                    !!delContexto && delContexto.position_freshness === "held";
   const hayPuesto = puesto !== null && puesto !== undefined &&
-                    Number.isFinite(puesto) && puesto >= 1;
+                    Number.isFinite(Number(puesto)) && Number(puesto) >= 1;
   pon("crono-posicion",
-      hayPuesto ? "P" + Math.round(puesto) : "—",
-      hayPuesto
-        ? "Puesto en carrera medido por la fuente en este instante"
-        : "La fuente no declara puesto en carrera en este instante");
+      hayPuesto ? "P" + Math.round(Number(puesto)) : "—",
+      !hayPuesto
+        ? "La fuente no declara puesto en carrera en este instante"
+        : sostenido
+          ? "Puesto declarado por la fuente en el último cambio" +
+            edadEnPalabras(delContexto.position_age_seconds) +
+            ". Esta fuente publica el puesto al cambiar, no en cada muestra."
+          : "Puesto en carrera medido por la fuente en este instante");
 
   /* EN QUE VUELTA. */
   pon("crono-vuelta",
@@ -10674,7 +10870,18 @@ function pintarCronometraje() {
      es la que se muestra, se dice que no se sabe en vez de escribir el numero
      bajo un rotulo que no le corresponde. */
   const enSegundos = estaEnLaUnidadQueSeMuestra("gap", t.vuelta, claveVehiculoPropio());
-  const dif = enSegundos ? diferenciaEnSegundos(t.diferencia) : null;
+  let dif = enSegundos ? diferenciaEnSegundos(t.diferencia) : null;
+  let crudo = t.diferencia;
+  let deLaCarrera = false;
+  /* Y donde la diferencia no es una señal, sale del contexto de carrera, que la
+     publica ya en segundos. Es la misma magnitud por otro camino: OpenF1 la
+     entrega en `intervals`, una muestra cada ocho segundos. */
+  if (dif === null && delContexto && delContexto.gap_to_leader_seconds !== null &&
+      delContexto.gap_to_leader_seconds !== undefined) {
+    crudo = Number(delContexto.gap_to_leader_seconds);
+    dif = diferenciaEnSegundos(crudo);
+    deLaCarrera = true;
+  }
   const celdaDif = document.getElementById("crono-diferencia");
   pon("crono-diferencia",
       dif === null ? "—" : textoSeguro(dif) + ' <span class="unidad">s</span>',
@@ -10682,9 +10889,12 @@ function pintarCronometraje() {
         ? (enSegundos
             ? "La fuente no declara diferencia con el líder en este instante"
             : "La diferencia llegó en una unidad que este tablero no sabe mostrar")
-        : "Diferencia con el líder de la carrera (delta_to_race_leader)");
+        : deLaCarrera
+          ? "Diferencia con el líder declarada por la fuente (intervals)" +
+            edadEnPalabras(delContexto.interval_age_seconds)
+          : "Diferencia con el líder de la carrera (delta_to_race_leader)");
   if (celdaDif) {
-    celdaDif.className = (dif !== null && t.diferencia < 0) ? "negativo" : "";
+    celdaDif.className = (dif !== null && crudo < 0) ? "negativo" : "";
   }
 
   /* LA COBERTURA NO ES LA IDENTIDAD. Conocer los nombres de los rivales no es

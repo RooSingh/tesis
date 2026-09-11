@@ -209,6 +209,17 @@ class AyudantesDeSerieTests(unittest.TestCase):
 
         self._correr("un_reintento_que_no_avanza.js")
 
+    def test_el_contexto_de_carrera_muestra_lo_que_la_fuente_trae(self) -> None:
+        """Clima, puesto y diferencia al lider de OpenF1, que ya estaban en la base.
+
+        El panel de clima tenia cuatro casillas escritas a mano porque son las
+        que publica el simulador; OpenF1 publica otras seis. Y el puesto, que en
+        OpenF1 se publica al cambiar, se sostiene entre cambios en vez de
+        presentarse como una medicion del instante.
+        """
+
+        self._correr("el_contexto_de_carrera.js")
+
 
 class IdentidadYUnidadesTests(unittest.TestCase):
     """Lo que no puede volver, por como se rompio.
