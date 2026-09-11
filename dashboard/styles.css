@@ -481,6 +481,44 @@
   }
   .fuentes-legal b { color: var(--texto-medio); font-weight: 600; }
 
+  /* ---------- el trazado, grande ----------
+     El `viewBox` es el mismo que el del panel chico, asi que todo escala junto
+     y lo que se ve grande es el mismo dibujo. El alto se acota a la ventana
+     para que el circuito entero entre sin scrollear: un trazado que hay que
+     recorrer con la rueda no se lee de una mirada, que es justamente lo que
+     esta vista viene a dar. */
+  .lienzo-trazado-grande {
+    width: 100%; height: auto; max-height: calc(100vh - 260px);
+    display: block; margin-inline: auto;
+  }
+  .rotulo-sector.grande { font-size: 3.4px; letter-spacing: .04em; }
+  .punto-curva-grande { fill: var(--acento); }
+  .nombre-curva-grande {
+    font-family: var(--cuerpo); font-size: 3.6px; font-weight: 600;
+    fill: var(--texto-medio); paint-order: stroke;
+    stroke: var(--superficie); stroke-width: 1.1px; stroke-linejoin: round;
+  }
+  .coche-grande { stroke: var(--superficie); stroke-width: .8; }
+  /* Una posicion que sale de la fraccion de tiempo y no de una coordenada
+     medida se dibuja hueca: es la misma distincion que el panel chico hace,
+     y sin ella el trazado grande afirmaria que midio algo que estimo. */
+  .coche-grande.estimado { fill: none !important; stroke-width: 1.1; }
+  /* EL COLOR DEL PILOTO VA EN UN PUNTO, NO EN LA LETRA.
+     Ponerlo como color de texto lo dejaba ilegible en el estado encendido, que
+     pinta el fondo con el acento: se veia una pastilla llena sin nombre. El
+     punto se lee en los dos estados, y es ademas el mismo color con el que ese
+     vehiculo sale en el trazado y en las graficas ---el mismo coche no puede
+     ser de un color aca y de otro alla---. */
+  #elige-pilotos-trazado button::before {
+    content: ""; display: inline-block; width: 8px; height: 8px;
+    border-radius: 50%; margin-right: 7px; vertical-align: -1px;
+    background: var(--tinta-piloto, var(--texto-tenue));
+    box-shadow: 0 0 0 1px var(--superficie);
+  }
+  /* Apagado, el nombre baja de peso: la lista dice de un vistazo cuantos se
+     estan mirando sin tener que comparar fondos. */
+  #elige-pilotos-trazado button[aria-pressed="false"] { opacity: .55; }
+
   /* ---------- los sectores sobre el trazado ----------
      UNA RAYA FINA Y UN ROTULO CHICO, A PROPOSITO. El limite de sector es
      contexto: dice en que tramo cronometrado esta el coche. Lo que se consulta

@@ -314,6 +314,56 @@ class AyudantesDeSerieTests(unittest.TestCase):
 
         self._correr("las_rayas_de_sector.js")
 
+    def test_el_trazado_grande_es_el_mismo_dibujo_escalado(self) -> None:
+        """EL INVARIANTE QUE HACE QUE LA VISTA GRANDE SEA CONFIABLE.
+
+        Las dos vistas comparten `viewBox`, de modo que el circuito grande es
+        el mismo camino, la misma proyeccion y las mismas rayas, agrandados por
+        el navegador. Si se recalculara la geometria para la vista grande
+        habria **dos** circuitos para la misma vuelta, y nada garantizaria que
+        coincidan: un limite de sector podria caer en un sitio en el panel y en
+        otro en la ampliacion, y las dos afirmaciones no pueden ser ciertas.
+
+        Se comprueba sobre el marcado porque es ahi donde vive la decision.
+        """
+
+        indice = INDICE.read_text(encoding="utf-8")
+        cajas = re.findall(r'viewBox="([^"]+)"', indice)
+        chico = re.search(r'<svg viewBox="([^"]+)"[^>]*\n?[^>]*Trazado real', indice)
+        grande = re.search(r'id="trazado-grande"[^>]*viewBox="([^"]+)"', indice)
+        self.assertIsNotNone(grande, "no esta el lienzo del trazado grande")
+        self.assertIn(grande.group(1), cajas)
+        # El del panel chico: el unico `viewBox` que acompaña a `linea-pista`.
+        i = indice.index('id="linea-pista"')
+        antes = indice[:i]
+        del_panel = re.findall(r'viewBox="([^"]+)"', antes)[-1]
+        self.assertEqual(grande.group(1), del_panel,
+                         "la vista grande usa otro sistema de coordenadas: el mismo "
+                         "limite de sector caeria en dos sitios distintos")
+
+    def test_el_trazado_grande_declara_de_donde_sale_cada_cosa(self) -> None:
+        """El trazo y las rayas son medicion; el nombre de una curva es
+        anotacion externa citada. Verlas juntas sin decirlo le daria a las dos
+        el respaldo de una sola."""
+
+        codigo = APP.read_text(encoding="utf-8")
+        i = codigo.index("function pintarTrazadoGrande()")
+        cuerpo = codigo[i:codigo.index("\n}", i)]
+        self.assertIn("sectoresOrigen", cuerpo,
+                      "la vista grande no dice de donde salen los sectores")
+        self.assertIn("anotaci", cuerpo,
+                      "la vista grande no declara que el nombre de curva es anotacion")
+
+    def test_el_filtro_de_pilotos_no_puede_dejar_el_trazado_sin_nadie(self) -> None:
+        """Un trazado sin ningun coche no dice donde esta nadie, y el boton que
+        lo dejo asi parece roto."""
+
+        codigo = APP.read_text(encoding="utf-8")
+        i = codigo.index("function pintarEligePilotosDelTrazado()")
+        cuerpo = codigo[i:codigo.index("\n}", i)]
+        self.assertIn("seleccion.size > 1", cuerpo,
+                      "se puede apagar el ultimo piloto y el trazado queda vacio")
+
     def test_todo_el_tablero_muestra_el_mismo_instante(self) -> None:
         """Un solo tiempo de presentacion para instrumentos, coche y graficos.
 

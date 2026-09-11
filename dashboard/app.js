@@ -6569,11 +6569,25 @@ function abrirDetalle() {
 document.getElementById("btn-cerrar-comparacion").addEventListener("click", () => {
   document.getElementById("velo-comparacion").dataset.abierto = "no";
 });
+(function engancharTrazadoGrande() {
+  const abrir = document.getElementById("btn-ampliar-trazado");
+  if (abrir) abrir.addEventListener("click", () => {
+    pintarEligePilotosDelTrazado();
+    abrirTrazadoGrande();
+  });
+  const cerrar = document.getElementById("btn-cerrar-trazado");
+  if (cerrar) cerrar.addEventListener("click", () => {
+    const v = document.getElementById("velo-trazado");
+    if (v) v.dataset.abierto = "no";
+  });
+})();
 document.addEventListener("keydown", e => {
   if (e.key === "Escape") {
     document.getElementById("velo-comparacion").dataset.abierto = "no";
     const s = document.getElementById("velo-sesiones");
     if (s) s.dataset.abierto = "no";
+    const tz = document.getElementById("velo-trazado");
+    if (tz) tz.dataset.abierto = "no";
     cerrarModal();
   }
 });
@@ -10266,6 +10280,197 @@ function pedirRecorridoDelBus() {
    con tramos que no se recorrieron: el circuito se ve deformado. Se elige la
    primera vuelta que sea continua y completa; si no hay ninguna, se pide sin
    elegir y se declara. */
+/* ============================================================
+   EL TRAZADO, GRANDE
+   ------------------------------------------------------------
+   El panel chico entra en una columna de la cabina, y ahi conviven quince
+   numeros de curva, dos rayas de sector y hasta seis coches. Alcanza para
+   saber donde esta el coche; no alcanza para leer el circuito.
+
+   REUSA LA MISMA GEOMETRIA, ESCALADA. El `viewBox` es el mismo ---360 por
+   170--- asi que el dibujo grande es el mismo camino, la misma proyeccion y
+   las mismas rayas, agrandados por el navegador. No se recalcula nada: una
+   segunda version de la geometria podria discrepar de la primera, y entonces
+   habria dos circuitos distintos para la misma vuelta.
+
+   LO QUE SI CAMBIA ES LO QUE ENTRA. Con espacio, el nombre de cada curva se
+   escribe sobre el dibujo; en el panel chico se superponen ---las dobles caen
+   a pocos metros una de otra--- y por eso alli viven en el globo.
+   ============================================================ */
+function trazadoGrandeAbierto() {
+  const v = document.getElementById("velo-trazado");
+  return !!v && v.dataset.abierto === "si";
+}
+
+function abrirTrazadoGrande() {
+  const v = document.getElementById("velo-trazado");
+  if (!v) return;
+  v.dataset.abierto = "si";
+  pintarTrazadoGrande();
+  const cerrar = document.getElementById("btn-cerrar-trazado");
+  if (cerrar) cerrar.focus();
+}
+
+/* Los mismos vehiculos que el resto del tablero, con el mismo color. Un piloto
+   que aca fuera de otro color que en las graficas obligaria a recordar dos
+   leyendas para mirar una sola carrera. */
+function pintarEligePilotosDelTrazado() {
+  const c = document.getElementById("elige-pilotos-trazado");
+  const grupo = document.getElementById("grupo-pilotos-trazado");
+  if (!c) return;
+  if (grupo) grupo.hidden = AUTOS.length <= 1;
+  c.innerHTML = "";
+  AUTOS.forEach(a => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.textContent = a.nombre;
+    b.style.setProperty("--tinta-piloto", a.color);
+    b.setAttribute("aria-pressed", seleccion.has(a.id) ? "true" : "false");
+    b.addEventListener("click", () => {
+      if (seleccion.has(a.id)) {
+        // No se puede apagar el ultimo: un trazado sin ningun coche no dice
+        // donde esta nadie, y el boton parecería roto.
+        if (seleccion.size > 1) seleccion.delete(a.id);
+      } else {
+        seleccion.add(a.id);
+      }
+      pintarEligePilotosDelTrazado();
+      pintarTrazadoGrande();
+      render();
+    });
+    c.appendChild(b);
+  });
+}
+
+function pintarTrazadoGrande() {
+  const svg = document.getElementById("trazado-grande");
+  if (!svg || !trazadoGrandeAbierto()) return;
+  const NS = "http://www.w3.org/2000/svg";
+  svg.innerHTML = "";
+
+  const sub = document.getElementById("sub-trazado");
+  if (sub) {
+    sub.textContent = PISTA.largo_m
+      ? " · " + cifra(PISTA.largo_m, 0) + " m" +
+        (PISTA.vuelta ? " · vuelta " + PISTA.vuelta : "")
+      : "";
+  }
+
+  if (!PISTA.path) {
+    const aviso = document.createElementNS(NS, "text");
+    aviso.setAttribute("x", "180"); aviso.setAttribute("y", "85");
+    aviso.setAttribute("class", "rotulo-sector");
+    aviso.textContent = "Sin trazado para esta sesión.";
+    svg.appendChild(aviso);
+    return;
+  }
+
+  const linea = document.createElementNS(NS, "path");
+  linea.setAttribute("class", "trazado");
+  linea.setAttribute("d", PISTA.path);
+  svg.appendChild(linea);
+
+  // Las rayas de sector, con la misma funcion que el panel chico.
+  marcasDeSector(PISTA.sectores, PISTA.puntos, PISTA.proyectarMundo).forEach(m => {
+    const raya = document.createElementNS(NS, "line");
+    raya.setAttribute("class", "raya-sector");
+    raya.setAttribute("x1", m.x1); raya.setAttribute("y1", m.y1);
+    raya.setAttribute("x2", m.x2); raya.setAttribute("y2", m.y2);
+    svg.appendChild(raya);
+    const rot = document.createElementNS(NS, "text");
+    rot.setAttribute("class", "rotulo-sector grande");
+    rot.setAttribute("x", m.tx); rot.setAttribute("y", m.ty);
+    rot.textContent = "S" + m.sector +
+      (m.desde_m !== null && m.desde_m !== undefined ? " · " + cifra(m.desde_m, 0) + " m" : "");
+    svg.appendChild(rot);
+  });
+
+  /* EL NOMBRE DE CADA CURVA, ESCRITO. Se ubica por su metro sobre el camino
+     dibujado, igual que en el panel chico: el nombre sigue siendo anotacion
+     citada y la posicion sigue siendo medicion. */
+  const largo = linea.getTotalLength ? linea.getTotalLength() : 0;
+  if (largo && CURVAS.length && PISTA.largo_m) {
+    const puestos = [];
+    CURVAS.forEach((cu, i) => {
+      const f = Math.max(0, Math.min(1, cu.metro_medido / PISTA.largo_m));
+      const q = linea.getPointAtLength(largo * f);
+      const punto = document.createElementNS(NS, "circle");
+      punto.setAttribute("class", "punto-curva-grande");
+      punto.setAttribute("cx", q.x.toFixed(2));
+      punto.setAttribute("cy", q.y.toFixed(2));
+      punto.setAttribute("r", "1.6");
+      svg.appendChild(punto);
+      /* DOS CURVAS PUEDEN CAER A POCOS METROS. En Spa el catalogo trae dos
+         «Les Combes» y dos «Fagnes» separadas por menos de ciento cincuenta
+         metros, y sus rotulos se encimaban hasta ser ilegibles ---que es el
+         motivo por el que el panel chico los manda al globo---. Aca hay
+         espacio, asi que el que choca se corre en vez de desaparecer. */
+      let y = q.y - 2.2;
+      while (puestos.some(o => Math.abs(o.x - q.x) < 26 && Math.abs(o.y - y) < 4.6)) {
+        y += 4.8;
+      }
+      puestos.push({ x: q.x, y: y });
+      const rot = document.createElementNS(NS, "text");
+      rot.setAttribute("class", "nombre-curva-grande");
+      rot.setAttribute("x", (q.x + 2.6).toFixed(2));
+      rot.setAttribute("y", y.toFixed(2));
+      rot.textContent = (i + 1) + ". " + cu.nombre;
+      svg.appendChild(rot);
+    });
+  }
+
+  /* Y LOS COCHES, EN EL INSTANTE QUE EL RESTO DEL TABLERO ESTA MOSTRANDO.
+     `puntoMedidoDe` devuelve un objeto `{x, y}` y `proyectarMundo` un arreglo
+     `[x, y]`: dos formas para lo mismo, a diez lineas de distancia, y las dos
+     se usan aca. Escrito de memoria se confunde ---paso en este mismo archivo
+     con las rayas de sector--- asi que va nombrado.
+
+     EL RESPALDO ES EL MISMO QUE EL DEL PANEL CHICO. Sin posicion medida ---en
+     una vuelta cuyas series todavia no llegaron--- el coche se ubica por la
+     fraccion recorrida sobre el camino dibujado. No es lo mismo y por eso el
+     panel chico lo distingue; lo que no puede pasar es que el trazado grande
+     muestre el circuito vacio mientras el chico muestra el coche. */
+  const t = calcularInstante().tUtcMs;
+  const largoDelCamino = linea.getTotalLength ? linea.getTotalLength() : 0;
+  // La misma fraccion que usa el panel chico como respaldo: `instante()` la
+  // publica y es de tiempo, no de recorrido. Por eso la marca que sale de aca
+  // se declara estimada.
+  const frac = Math.max(0, Math.min(1, instante().fraccion || 0));
+  [...seleccion].forEach(id => {
+    const a = AUTOS.find(x => x.id === id);
+    if (!a) return;
+    const medido = puntoMedidoDe(a.clave || id, t);
+    const q = medido || (largoDelCamino
+      ? linea.getPointAtLength(largoDelCamino * frac) : null);
+    if (!q) return;
+    const c = document.createElementNS(NS, "circle");
+    c.setAttribute("class", "coche-grande");
+    c.setAttribute("cx", q.x.toFixed(2));
+    c.setAttribute("cy", q.y.toFixed(2));
+    c.setAttribute("r", "2.6");
+    c.setAttribute("fill", a.color);
+    if (!medido) c.setAttribute("class", "coche-grande estimado");
+    const cual = document.createElementNS(NS, "title");
+    cual.textContent = a.nombre + (medido ? "" : " · posición estimada por fracción de vuelta");
+    c.appendChild(cual);
+    svg.appendChild(c);
+  });
+
+  /* DE DONDE SALE CADA COSA DEL DIBUJO, ESCRITO DEBAJO. El trazo y las rayas
+     son medicion; el nombre de una curva es anotacion externa citada. Verlas
+     juntas sin decirlo le daria a las dos el respaldo de una sola. */
+  const nota = document.getElementById("nota-trazado");
+  if (nota) {
+    const partes = [];
+    if (PISTA.sectoresOrigen) partes.push("<b>Sectores:</b> " + textoSeguro(PISTA.sectoresOrigen) + ".");
+    if (CURVAS.length) {
+      partes.push("<b>Nombres de curva:</b> anotación externa citada; el metro " +
+                  "en que se ubica cada una es medido sobre la vuelta.");
+    }
+    nota.innerHTML = partes.join(" ");
+  }
+}
+
 /* LA PISTA SE ARMA EN UN SOLO SITIO.
    ---------------------------------------------------------------------
    Habia dos. `cargarDatosDeSesion` armaba una con lo que ya tenia en la mano y
@@ -11892,6 +12097,10 @@ function pintarValores() {
 
 function pintarTrazas() {
   pintarPista(); dibujarTraza(); moverCabezalesGraficos();
+  /* Con la vista grande abierta, el coche tiene que moverse ahi tambien: son
+     el mismo instante mirado dos veces, y dos posiciones distintas para el
+     mismo momento serian un tablero contandose dos cosas. */
+  if (trazadoGrandeAbierto()) pintarTrazadoGrande();
   /* En vivo la comparacion no lee nada de lo que llega ---trabaja sobre
      vueltas cerradas--- asi que repintarla en cada muestra es trabajo por un
      dibujo identico. Se la repinta cuando cambia lo que si lee. */

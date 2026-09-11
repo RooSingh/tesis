@@ -226,7 +226,16 @@
     <!-- Dónde está y en qué vuelta va. -->
     <div class="col-cabina izquierda">
       <section class="instrumento pista en-cabina" data-panel="trazado">
-      <header><h2>Trazado</h2><span class="fuente-canal" id="canal-pista"></span></header>
+      <header><h2>Trazado</h2><span class="fuente-canal" id="canal-pista"></span>
+        <span class="acciones-grafico">
+          <button class="boton-icono" id="btn-ampliar-trazado" type="button"
+                  title="Ampliar el trazado" aria-label="Ampliar el trazado">
+            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"
+                 stroke-linecap="round" stroke-linejoin="round">
+              <path d="M9.5 2 h4.5 v4.5 M6.5 14 H2 V9.5 M14 2 L9 7 M2 14 L7 9"></path>
+            </svg>
+          </button>
+        </span></header>
       <div class="cuerpo-instrumento">
         <svg viewBox="0 0 360 170" role="img"
              aria-label="Trazado real del circuito, acostado sobre su eje principal">
@@ -704,6 +713,35 @@
      la original, fases separadas por reinicios del reloj. Mezcladas no son una
      carrera continua, asi que se elige. Reusa el mismo velo y las mismas
      clases que el buscador de sesiones. -->
+<!-- ================= EL TRAZADO, GRANDE =================
+     El trazado chico entra en una columna de la cabina y ahi conviven quince
+     numeros de curva, dos rayas de sector y hasta seis coches en movimiento.
+     Alcanza para saber donde esta el coche; no alcanza para leer el circuito.
+
+     REUSA LA MISMA GEOMETRIA, ESCALADA. El `viewBox` es el mismo que el del
+     panel chico, de modo que lo que se ve grande es exactamente lo que se ve
+     chico y no una segunda version que podria discrepar. Lo unico que cambia
+     es lo que entra: aca los nombres de curva se escriben sobre el dibujo, que
+     en el panel chico se superponen y por eso viven en el globo.
+     ============================================================ -->
+<div class="velo-comparacion" id="velo-trazado" role="dialog" aria-modal="true"
+     aria-label="Trazado del circuito" data-abierto="no">
+  <div class="cab-comparacion">
+    <h3>Trazado<small id="sub-trazado"></small></h3>
+    <div class="grupo-control" id="grupo-pilotos-trazado">
+      <label>Pilotos</label>
+      <div class="segmentado" id="elige-pilotos-trazado" role="group"
+           aria-label="Qué pilotos se muestran en el trazado"></div>
+    </div>
+    <button class="boton secundario" id="btn-cerrar-trazado" type="button">Cerrar</button>
+  </div>
+  <div class="panel-comparacion">
+    <svg class="lienzo-trazado-grande" id="trazado-grande" viewBox="0 0 360 170"
+         role="img" aria-label="Trazado del circuito, ampliado"></svg>
+    <p class="nota" id="nota-trazado"></p>
+  </div>
+</div>
+
 <div class="velo-comparacion" id="velo-corridas" role="dialog" aria-modal="true"
      aria-label="Adquisiciones de la sesión" data-abierto="no">
   <div class="cab-comparacion">
