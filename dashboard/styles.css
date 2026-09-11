@@ -423,6 +423,32 @@
   .ancho-total { grid-column: 1 / -1; }
   .tablero.cierre { margin-top: 30px; }
 
+  /* ---------- el velo de arranque ----------
+     Tapa con el fondo de la pagina y no con un negro translucido: lo de abajo
+     no es contenido a medio ver, es un tablero vacio que todavia no dice nada.
+     Dejarlo entrever seria mostrar justo lo que el velo existe para tapar.
+
+     Se va con `visibility` ademas de `opacity` para que no quede una capa
+     invisible comiendose los clics. Con movimiento reducido la hoja anula toda
+     transicion mas abajo, y entonces se va de golpe, que esta bien. */
+  .velo-arranque {
+    position: fixed; inset: 0; z-index: 200;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 16px; background: var(--fondo);
+    transition: opacity .3s ease, visibility 0s linear .3s;
+  }
+  .velo-arranque[data-abierto="no"] { opacity: 0; visibility: hidden; pointer-events: none; }
+  .velo-arranque p {
+    margin: 0; font-family: var(--titulo); font-size: .8rem; font-weight: 600;
+    letter-spacing: .12em; text-transform: uppercase; color: var(--texto-tenue);
+  }
+  .giro-arranque {
+    width: 30px; height: 30px; border-radius: 50%;
+    border: 2px solid var(--linea); border-top-color: var(--acento);
+    animation: gira-arranque 900ms linear infinite;
+  }
+  @keyframes gira-arranque { to { transform: rotate(360deg); } }
+
   /* ---------- condiciones de uso de las fuentes ----------
      NO ES UN PANEL. Los instrumentos tienen superficie, borde y sombra porque
      cada uno es una lectura separada que se compara con las de al lado. Esto

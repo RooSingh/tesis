@@ -8,6 +8,37 @@
 <link rel="stylesheet" href="styles.css">
 </head>
 <body>
+
+<!-- ================= EL VELO DE ARRANQUE =================
+     Entre que la pagina pinta y que el tablero tiene algo que mostrar se ven
+     veinte paneles vacios con rayas, y eso no se lee como «esta cargando»:
+     se lee como un tablero roto.
+
+     VIENE TAPADO EN EL MARCADO, no lo abre el guion. Si el velo naciera abierto
+     y `app.js` lo cerrara, habria un destello de tablero vacio entre el primer
+     pintado y la primera linea del guion, que es exactamente lo que se quiere
+     evitar.
+
+     EL TECHO ESTA ACA Y NO EN `app.js` A PROPOSITO. Un velo que solo `app.js`
+     sabe levantar deja la pagina tapada para siempre el dia que ese archivo no
+     cargue ---un error de red, un cambio que lo rompa--- y una pagina tapada es
+     peor que una rota, porque no se ve que esta rota. Este guion es en linea:
+     corre si o si, antes de pedir nada.
+     ============================================================ -->
+<div class="velo-arranque" id="velo-de-arranque" data-abierto="si"
+     role="status" aria-live="polite">
+  <div class="giro-arranque" aria-hidden="true"></div>
+  <p>Abriendo el tablero…</p>
+</div>
+<script>
+  setTimeout(function () {
+    var v = document.getElementById("velo-de-arranque");
+    if (!v) return;
+    v.dataset.abierto = "no";
+    v.hidden = true;
+  }, 35000);
+</script>
+
 <div class="lienzo">
 
   <p class="aviso-descarga" id="aviso-descarga" role="status" aria-live="polite" data-visible="no"></p>

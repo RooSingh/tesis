@@ -189,7 +189,18 @@ class DashboardBrowserTests(unittest.TestCase):
         hilo.start()
         puerto = servidor.server_address[1]
         try:
-            url = f"http://127.0.0.1:{puerto}/index.html?api=http://127.0.0.1:{puerto}"
+            # LA SESION SE PIDE POR NOMBRE, PORQUE YA NO SE ABRE NINGUNA SOLA.
+            #
+            # Antes, sin nada recordado, el tablero abria la sesion mas grande
+            # del catalogo y esta prueba se apoyaba en eso. Ahora sin recuerdo
+            # no se abre nada ---abrir de prepo una carrera que nadie pidio hace
+            # creer que eso es «lo suyo» cuando es la que mas filas tiene--- y
+            # el perfil del navegador es temporal, asi que no hay recuerdo que
+            # valga. `?sesion=` es el camino explicito, y es el que esta prueba
+            # tiene que recorrer: lo que comprueba es que el tablero **dibuje**
+            # una sesion, no cual elige cuando no le dicen.
+            url = (f"http://127.0.0.1:{puerto}/index.html"
+                   f"?api=http://127.0.0.1:{puerto}&sesion=f1_25:session:prueba")
             with tempfile.TemporaryDirectory() as perfil:
                 dom = volcar_dom(chrome, url, perfil, 3000)
         finally:
