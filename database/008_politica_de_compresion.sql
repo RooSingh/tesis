@@ -48,6 +48,20 @@
 -- tarea a competir con la captura por el fragmento en curso. No se gana nada y
 -- se arriesga lo unico que no se puede perder, que es el dato entrando.
 --
+-- MEDIDO DESPUES, Y ACOTA LO DE ARRIBA SIN CONTRADECIRLO. En la Pi, con
+-- TimescaleDB 2.28.3, una insercion dentro del rango de un fragmento **ya
+-- comprimido** fue aceptada: la fila quedo legible, se borro, y el fragmento
+-- siguio comprimido. O sea que en esta version el rechazo no ocurre. El texto
+-- de arriba dice «segun la version del motor» justamente por esto, y el dia de
+-- margen se sostiene igual por el otro motivo, que es no poner la tarea a
+-- competir con la captura por el fragmento que se esta escribiendo.
+--
+-- Y UNA TRAMPA DE ESA MISMA MEDICION, PORQUE COSTO DOS INTENTOS: las dos
+-- primeras pruebas parecieron decir «rechazada» y era falso. Fallaban por
+-- columnas NOT NULL sin llenar ---`driver_id`, despues `quality_flag`---, no
+-- por la compresion. Contar la excepcion en vez de leer su texto respondia que
+-- no a una pregunta que nadie habia hecho.
+--
 -- ---------------------------------------------------------------------------
 -- QUE NO HACE ESTA MIGRACION
 -- ---------------------------------------------------------------------------
