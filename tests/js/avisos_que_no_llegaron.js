@@ -74,6 +74,9 @@ const cuerpo = [
   extraer("textoSeguro"),
   extraer("fueAnulada"),
   extraer("avisosDeLaFuente"),
+  /* Cada entrada declara de donde sale: una medicion con umbral o un hecho
+     que la fuente declaro. Va en el titulo y lo arma esta funcion. */
+  extraer("procedenciaDelAviso"),
   extraer("pintarAvisos"),
   extraer("anotarFalloDeAvisos"),
   "return { pintarAvisos, anotarFalloDeAvisos };",

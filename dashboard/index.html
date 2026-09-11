@@ -330,7 +330,15 @@
       </dl>
       <p class="pie-instrumento" id="crono-cobertura"></p>
     </section>
-      <section class="instrumento panel-avisos en-cabina" data-panel="avisos" data-necesita="tyre_temperature_surface_front_left">
+      <!-- ESTE PANEL NO DEPENDE DE UNA SEÑAL, Y DEPENDIA DE LA EQUIVOCADA.
+           Llevaba `data-necesita="tyre_temperature_surface_front_left"`, que
+           es la temperatura de un neumatico y no tiene nada que ver con los
+           avisos: era una copia del panel de al lado. Sobre una fuente sin
+           neumaticos eso tapaba el panel con la capa de ausencia, de modo
+           que el encabezado contaba «5 graves · 13 leves» mientras el cuerpo
+           decia «sin avisos». Lo que llena este panel es una lista, y cuando
+           esta vacia el propio cuerpo lo explica con sus palabras. -->
+      <section class="instrumento panel-avisos en-cabina" data-panel="avisos">
       <header>
         <h2>Avisos</h2>
         <span class="fuente-canal" id="canal-avisos"></span>
@@ -349,10 +357,11 @@
       <div class="cuerpo-instrumento">
         <div class="linea-avisos" id="lista-avisos"></div>
       </div>
-      <div class="capa-ausente">
-        <strong>Sin avisos</strong>
-        <span id="motivo-avisos"></span>
-      </div>
+      <!-- Que puede llegar a anotar esta fuente. Estaba dentro de la capa de
+           ausencia, o sea que solo se leia cuando el panel estaba tapado; es
+           justamente lo que hace falta para interpretar la lista cuando la
+           lista existe. -->
+      <p class="pie-instrumento" id="motivo-avisos"></p>
     </section>
     </div>
 

@@ -134,6 +134,12 @@ const preludio = `
   function nombreDeSesion() { return "sesion"; }
   function pedirCurvas() {}
   function pedirTrazado() {}
+  /* El control de carrera es otra consulta y otra lista: lo que este arnes
+     persigue es que una respuesta atrasada no pise la sesion vigente, y esa
+     ruta tiene la suya. Queda muda para no meter una segunda respuesta en un
+     banco que resuelve las suyas a mano. */
+  function pedirControlDeCarrera() {}
+  function ubicarControlDeCarrera() {}
   function pintarClima() {}
   function pintarEsquinas() {}
   function pintarPuestaAPunto() {}

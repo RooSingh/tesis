@@ -1355,6 +1355,79 @@ def _clasificar_frescura_contexto(context: dict, name: str, age_key: str) -> Non
         if campo in context:
             context[campo] = None
 
+# ---------------------------------------------------------------------------
+# EL CONTROL DE CARRERA ES UN HECHO DECLARADO, NO UNO DERIVADO
+# ---------------------------------------------------------------------------
+#
+# `/avisos` declara en su propia respuesta que cada entrada salio de aplicar una
+# regla con un umbral sobre la telemetria, y cuenta cuantas reglas evaluo. Una
+# bandera de control de carrera no se derivo de nada: la fuente la declaro. Si
+# las dos listas viajaran juntas por esa ruta, ese `criterio` quedaria mintiendo
+# para la mitad de las entradas y `reglas_evaluadas` contaria reglas que no
+# evaluaron nada. Es la misma distincion que el catalogo de curvas ya hace entre
+# el nombre ---anotacion--- y el metro ---medicion---.
+#
+# Asi que esto es una ruta aparte, y este lector no interpreta: entrega los
+# campos tal como OpenF1 los publica. Que una bandera amarilla se pinte como
+# alerta y una verde como normal es una decision de presentacion, y vive donde
+# se presenta. Aca se copia y se declara la procedencia.
+#
+# LO QUE HAY EN LA BASE: los once campos viven dentro de `raw_payload`, porque
+# `racing_events` solo tiene columnas para el instante, el piloto y la vuelta.
+# Se abren aca en vez de dejar que cada consumidor sepa que la bandera esta
+# escondida dentro de un jsonb.
+# ---------------------------------------------------------------------------
+
+#: Tope de eventos por sesion. Silverstone 2025 tiene 158, y una sesion larga
+#: con muchas intervenciones no deberia pasar de unos pocos cientos: el tope
+#: existe para que una respuesta rara no llegue como un volcado.
+LIMITE_CONTROL_DE_CARRERA = 2000
+
+
+def obtener_control_de_carrera(session_key: int, limite: int | None = None) -> dict:
+    """Devuelve los eventos de control de carrera que la fuente declaro."""
+
+    tope = LIMITE_CONTROL_DE_CARRERA if limite is None else max(1, int(limite))
+    consulta = """
+        SELECT event_time,
+               driver_number,
+               lap_number,
+               raw_payload->>'category'  AS category,
+               raw_payload->>'flag'      AS flag,
+               raw_payload->>'scope'     AS scope,
+               raw_payload->>'message'   AS message,
+               raw_payload->>'sector'    AS sector
+        FROM racing_events
+        WHERE session_key = %s AND event_type = 'race_control'
+        ORDER BY event_time
+        LIMIT %s
+    """
+    with obtener_conexion() as conexion:
+        with conexion.cursor() as cursor:
+            cursor.execute(consulta, (session_key, tope + 1))
+            columnas = [d[0] for d in cursor.description]
+            filas = [dict(zip(columnas, fila)) for fila in cursor.fetchall()]
+
+    truncado = len(filas) > tope
+    if truncado:
+        filas = filas[:tope]
+    for fila in filas:
+        instante = fila.pop("event_time")
+        fila["instante"] = instante.isoformat() if hasattr(instante, "isoformat") else instante
+        fila["sector"] = int(fila["sector"]) if fila["sector"] is not None else None
+
+    return {
+        "session_key": session_key,
+        "eventos": filas,
+        "total_devuelto": len(filas),
+        "truncado": truncado,
+        # La procedencia viaja con la respuesta y no en la cabeza de quien la
+        # lea: es lo que distingue esta lista de la de `/avisos`.
+        "procedencia": "declarado por la fuente en el control de carrera; "
+                       "no se derivo de la telemetria ni se evaluo ningun umbral",
+    }
+
+
 def obtener_ejecucion_por_huella(package_fingerprint: str) -> dict | None:
     """Busca una ejecucion previa para evitar importar dos veces el mismo paquete."""
 

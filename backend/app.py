@@ -61,6 +61,7 @@ from backend.db import (
     obtener_ultimos_por_senal,
     obtener_comparacion_pilotos_racing,
     obtener_contexto_racing_en_instante,
+    obtener_control_de_carrera,
     obtener_pilotos_racing,
     obtener_replay_openf1,
     obtener_serie_replay_openf1,
@@ -579,6 +580,21 @@ def racing_context_at(
     """Expone contexto racing mas cercano a un instante UTC de telemetria."""
 
     return obtener_contexto_racing_en_instante(session_key, timestamp, drivers)
+
+
+@app.get("/racing/sessions/{session_key}/race-control")
+def racing_control_de_carrera(session_key: int, limite: int | None = None) -> dict:
+    """Expone los eventos de control de carrera que la fuente declaro.
+
+    Va aparte de `/sesiones/{id}/avisos` a proposito. Aquella respuesta declara
+    que cada entrada salio de aplicar una regla con un umbral sobre la
+    telemetria, y cuenta cuantas reglas evaluo; una bandera no se derivo de
+    nada, la fuente la declaro. Juntarlas dejaria ese criterio mintiendo para la
+    mitad de las entradas. La respuesta lleva su procedencia escrita para que
+    quien las muestre juntas pueda decir de donde sale cada una.
+    """
+
+    return obtener_control_de_carrera(session_key, limite)
 
 
 @app.get("/racing/sessions/{session_key}/replay")

@@ -238,6 +238,17 @@ class AyudantesDeSerieTests(unittest.TestCase):
 
         self._correr("el_contexto_de_carrera.js")
 
+    def test_las_banderas_declaradas_no_se_confunden_con_las_derivadas(self) -> None:
+        """Dos listas en un panel, y cada entrada dice de donde sale.
+
+        `/avisos` declara que cada entrada salio de aplicar una regla con un
+        umbral sobre la telemetria. Una bandera de control de carrera no se
+        derivo de nada: la fuente la declaro. Viajan por rutas distintas y se
+        juntan al dibujar, sin perder la procedencia.
+        """
+
+        self._correr("las_banderas_que_declara_la_fuente.js")
+
 
 class IdentidadYUnidadesTests(unittest.TestCase):
     """Lo que no puede volver, por como se rompio.

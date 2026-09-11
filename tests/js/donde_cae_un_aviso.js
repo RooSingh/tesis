@@ -81,6 +81,10 @@ const cuerpo = [
   extraer("iniciosDeVuelta"),
   extraer("numeroMedido"),
   extraer("fraccionDentroDeLaVuelta"),
+  /* Ubicar es la misma cuenta para las dos listas de avisos ---la derivada de
+     la telemetria y la declarada por el control de carrera--- y por eso vive
+     en una sola funcion. `ubicarAvisos` la usa y guarda el resultado. */
+  extraer("conFraccionDeSesion"),
   extraer("ubicarAvisos"),
   "return { ubicarAvisos, iniciosDeVuelta, duracionSesionS, duracionDeVuelta };",
 ].join("\n");

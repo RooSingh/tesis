@@ -233,7 +233,9 @@ const estado = {
   vehiculo: null,      // de /sesiones/{id}/vehiculo
   vehiculoMotivo: "",
   puesta: null,        // de /sesiones/{id}/puesta-a-punto
-  avisos: [],          // de /sesiones/{id}/avisos
+  avisos: [],          // de /sesiones/{id}/avisos, derivados de la telemetria
+  controlDeCarrera: [],     // de /racing/.../race-control, declarados por la fuente
+  controlDeCarreraCrudo: [],
   avisosMotivo: "",
   /* Por que la consulta de avisos no contesto, si no contesto. Distinto de
      «llego vacia», igual que `fallo` lo es para las vueltas: sin esta marca el
@@ -2179,8 +2181,120 @@ const SUPERFICIES = { 0: "asfalto", 1: "hierba", 2: "grava", 3: "arena", 4: "tie
    dispara y el umbral. Antes habia doce avisos escritos en este archivo con
    posiciones inventadas; el unico dato real de aquello era el nombre del
    canal. */
+/* ============================================================
+   DOS LISTAS EN UN PANEL, Y CADA ENTRADA DICE DE DONDE SALE
+   ------------------------------------------------------------
+   `/avisos` declara en su respuesta que cada entrada salio de aplicar una regla
+   con un umbral sobre la telemetria, y cuenta cuantas reglas evaluo. Una
+   bandera de control de carrera no se derivo de nada: la fuente la declaro. Por
+   eso viajan por rutas distintas ---meterlas en la misma dejaria ese criterio
+   mintiendo para la mitad de las entradas--- y se juntan recien aca, que es
+   donde verlas juntas sirve.
+
+   Lo que no se pierde al juntarlas es de donde sale cada una. `origen` viaja en
+   cada entrada y el panel lo escribe: «derivado de la telemetria» o «declarado
+   por la fuente». Es la misma distincion que el catalogo de curvas hace entre
+   el nombre, que es anotacion, y el metro, que es medicion.
+   ============================================================ */
+/* La procedencia de un aviso, en una frase. Es lo que distingue una medicion
+   con umbral de un hecho que la fuente declaro, y va en el titulo de la entrada
+   para que se pueda discutir cada una por lo que es. */
+function procedenciaDelAviso(a) {
+  if (a && a.origen === "declarado") {
+    return "Declarado por la fuente en el control de carrera (" + (a.canal || "") +
+           "). No se derivó de la telemetría ni se evaluó ningún umbral.";
+  }
+  const umbral = (a && a.umbral !== undefined && a.umbral !== null)
+    ? " · umbral " + a.umbral : "";
+  return "Derivado de la telemetría: canal " + ((a && a.canal) || "") + umbral + ".";
+}
+
 function avisosDeLaFuente() {
-  return estado.avisos;
+  const derivados = estado.avisos || [];
+  const declarados = estado.controlDeCarrera || [];
+  if (!declarados.length) return derivados;
+  return derivados.concat(declarados).sort((a, b) => a.en - b.en);
+}
+
+/* QUE TAN GRAVE ES UNA BANDERA, Y POR QUE.
+   La fuente declara la bandera; que color se le pone en pantalla es una
+   decision de presentacion y vive aca, no en el backend, que se limita a
+   copiar lo que OpenF1 publica.
+
+   Se escribe con el motivo porque no todas son obvias: la azul no es una
+   advertencia de peligro sino una instruccion a un piloto que va a ser doblado,
+   y la de cuadros no alerta de nada, cierra la sesion. */
+const GRAVEDAD_DE_LA_BANDERA = {
+  "RED": { nivel: "critico", porque: "sesion detenida" },
+  "DOUBLE YELLOW": { nivel: "critico", porque: "peligro en pista, listo para detenerse" },
+  "YELLOW": { nivel: "alerta", porque: "peligro en el sector" },
+  "BLUE": { nivel: "info", porque: "aviso a un piloto que va a ser doblado" },
+  "GREEN": { nivel: "ok", porque: "pista despejada" },
+  "CLEAR": { nivel: "ok", porque: "fin de la condicion anterior" },
+  "CHEQUERED": { nivel: "info", porque: "fin de la sesion" },
+};
+
+/* Y las categorias que no traen bandera: coche de seguridad y estado de sesion
+   tambien son hechos que cambian como se corre. */
+const GRAVEDAD_DE_LA_CATEGORIA = {
+  "SafetyCar": "alerta",
+  "SessionStatus": "info",
+  "Drs": "info",
+  "Other": "info",
+};
+
+function nivelDelControl(evento) {
+  const porBandera = GRAVEDAD_DE_LA_BANDERA[(evento && evento.flag) || ""];
+  if (porBandera) return porBandera.nivel;
+  return GRAVEDAD_DE_LA_CATEGORIA[(evento && evento.category) || ""] || "info";
+}
+
+/* En que vuelta del **vehiculo propio** cae un instante.
+   No se usa el `lap_number` que trae el control de carrera: esa numeracion es
+   de la sesion y arranca antes de la largada ---los primeros eventos de
+   Silverstone dicen «vuelta 1» a las 13:19, cuarenta minutos antes de que la
+   carrera empiece---. Ubicar un aviso por ese numero lo pondria dentro de la
+   ventana de la vuelta 1 del piloto, que es otro momento. */
+function vueltaDelInstante(iso) {
+  const t = Date.parse(iso);
+  if (!Number.isFinite(t)) return null;
+  const vs = estado.vueltas || [];
+  for (let i = 0; i < vs.length; i++) {
+    const d = Date.parse(vs[i].desde_utc), h = Date.parse(vs[i].hasta_utc);
+    if (Number.isFinite(d) && Number.isFinite(h) && t >= d && t <= h) return vs[i].numero;
+  }
+  return null;
+}
+
+/* Un evento de control de carrera con la forma que el panel ya sabe dibujar.
+   Lo que no existe no se rellena: un hecho declarado no tiene umbral ni valor
+   medido, y escribirle uno seria inventarle un origen. */
+function avisoDeControlDeCarrera(evento) {
+  const vuelta = vueltaDelInstante(evento.instante);
+  const detalle = [evento.flag, evento.scope,
+                   evento.sector === null || evento.sector === undefined
+                     ? null : "sector " + evento.sector]
+    .filter(Boolean).join(" · ");
+  return {
+    nivel: nivelDelControl(evento),
+    que: evento.message || evento.category || "control de carrera",
+    detalle: detalle || (evento.category || ""),
+    vuelta: vuelta,
+    metro: null,
+    instante: evento.instante,
+    canal: "race_control",
+    origen: "declarado",
+  };
+}
+
+/* Los eventos que caen dentro de alguna vuelta de la sesion. Los de antes de la
+   largada ---cuarenta minutos de preparativos en esta carrera--- no tienen
+   donde ubicarse en una reproduccion que empieza con la vuelta 1, y ponerlos en
+   la fraccion cero seria apilarlos todos en el arranque. */
+function avisosDelControlDeCarrera(eventos) {
+  return (eventos || [])
+    .map(avisoDeControlDeCarrera)
+    .filter(a => a.vuelta !== null);
 }
 
 /* UNA CONSULTA QUE NO CONTESTO NO ES UNA SESION SIN INCIDENTES.
@@ -2227,9 +2341,18 @@ function pintarAvisos() {
   const recienLlego = avisos.length > _cuantosAvisos;
   _firmaAvisos = firma;
   _cuantosAvisos = avisos.length;
-  const motivo = fuente === "openf1"
-    ? "OpenF1 no publica banderas, daño ni tipo de superficie: no hay con qué levantar un aviso."
-    : "El bus del vehículo no declara estado de carrera ni daño de carrocería.";
+  /* EL MOTIVO LO ESCRIBE LA API, NO UNA TABLA POR FUENTE.
+     Aca habia dos frases escritas a mano y la de OpenF1 era falsa: decia que
+     esa fuente no publica banderas cuando publica ochenta y nueve en esta
+     sesion. El texto salia de lo que contesta `/avisos`, que decide por fuente
+     ---`if fuente != "f1_25_udp_simulation"`--- y da el mismo motivo para el
+     bus, donde si es cierto. Se usa el que la respuesta declare.
+     Y si la respuesta no declaro ninguno, no se escribe ninguno: el respaldo
+     que puse primero ---«esta fuente no declara incidentes que se puedan
+     anotar»--- aparecia sobre la simulacion, que declara veinticuatro, cada vez
+     que `/avisos` todavia no habia contestado. El cuerpo ya dice lo unico
+     cierto en ese momento, que es que hasta aca no ocurrio nada. */
+  const motivo = estado.avisosMotivo || "";
 
   /* El orden importa: mientras la consulta no haya vuelto, lo unico cierto es
      que no se sabe. Preguntar primero por la lista vacia haria que el panel
@@ -2266,8 +2389,14 @@ function pintarAvisos() {
       // sigue disponible para quien lo necesite, sin competir con el aviso.
       // El detalle es el valor medido contra su umbral: es lo que sostiene el
       // aviso, y el canal queda en el titulo para quien quiera discutirlo.
-      '<span class="canal" title="Canal: ' + a.canal + ' · umbral ' + a.umbral + '">' +
-        (a.detalle || (cifra(a.valor, 1) + ' ' + (a.unidad || "") +
+      /* DE DONDE SALE ESTE AVISO, Y ES LA MITAD DE LO QUE AFIRMA.
+         Uno derivado de la telemetria se sostiene en un valor contra un umbral,
+         y ese umbral se puede discutir. Uno declarado por el control de carrera
+         no tiene umbral ni valor medido: lo afirmo la fuente. Escribirle un
+         umbral inventado, o presentarlos sin distinguir, seria darle a los dos
+         el respaldo de uno solo. */
+      '<span class="canal" title="' + textoSeguro(procedenciaDelAviso(a)) + '">' +
+        textoSeguro(a.detalle || (cifra(a.valor, 1) + ' ' + (a.unidad || "") +
         (a.umbral !== undefined && a.umbral !== null ? ' · umbral ' + a.umbral : ''))) +
       '</span>' +
     '</div>').join("");
@@ -2280,10 +2409,19 @@ function pintarAvisos() {
   document.getElementById("canal-avisos").textContent =
     plural(graves, "grave", "graves") + " · " + plural(leves, "leve", "leves") +
     " · " + avisos.length + "/" + todos.length;
+  /* EL MOTIVO EXPLICA UNA AUSENCIA, ASI QUE NO VA DEBAJO DE UNA LISTA.
+     Con la lista llena, escribir «esta fuente no declara incidentes» debajo de
+     cinco graves y trece leves seria contradecir lo que esta justo arriba. Lo
+     que corresponde decir aca es de donde salen: el panel mezcla lo derivado de
+     la telemetria con lo que la fuente declaro, y el recuento no lo distingue. */
+  const declarados = avisos.filter(a => a.origen === "declarado").length;
+  const derivados = avisos.length - declarados;
   document.getElementById("motivo-avisos").textContent =
-    fuente === "openf1"
-      ? "OpenF1 no publica banderas, daño ni tipo de superficie: no hay con qué levantar un aviso."
-      : "El bus del vehículo no declara estado de carrera ni daño de carrocería.";
+    (declarados && derivados)
+      ? derivados + " derivados de la telemetría y " + declarados +
+        " declarados por la fuente"
+      : declarados ? "Declarados por la fuente en el control de carrera"
+      : "";
 }
 
 /* ---------------- aceleraciones ---------------- */
@@ -7374,6 +7512,7 @@ function limpiarContextoDeSesion() {
   /* El contexto de carrera se va con la sesion: es de esa carrera y de esos
      pilotos, y sobrevivir a un cambio dejaria el puesto de otro en pantalla. */
   estado.contextoCarrera = null; estado.climaDeCarrera = null;
+  estado.controlDeCarrera = []; estado.controlDeCarreraCrudo = [];
   estado.vehiculo = null; estado.vehiculoMotivo = "";
   estado.puesta = null; estado.avisos = []; estado.avisosMotivo = "";
   estado.avisosFallo = "";
@@ -8267,6 +8406,7 @@ function olvidarLoDeLaCorrida() {
   cambiaronLasSeries();
   estado.trazado = null; estado.curvas = []; estado.clima = null; estado.vehiculo = null;
   estado.contextoCarrera = null; estado.climaDeCarrera = null;
+  estado.controlDeCarrera = []; estado.controlDeCarreraCrudo = [];
   estado.puesta = null; estado.avisos = []; estado.avisosFallo = "";
   estado.disponibles = new Set();
   estado.vehiculoClave = null;
@@ -8894,6 +9034,12 @@ function cargarDatosDeSesion(ruta, apertura, senal, s) {
       anotarFalloDeAvisos(e); render();
     })));
 
+  /* Y lo que la fuente declara por su cuenta, que es otra ruta porque es otra
+     clase de hecho. Se pide una vez por sesion ---son ciento cincuenta y ocho
+     eventos en una carrera, no una serie--- y falla sola: que no haya control
+     de carrera no puede dejar sin avisos derivados a quien si los tiene. */
+  pedirControlDeCarrera((s || {}).session_id, apertura);
+
   /* UNA CONSULTA ANULADA NO ES UNA CONSULTA QUE FALLO.
      Estos `catch` convertian cualquier error en una respuesta de respaldo
      ---vueltas vacias, clima nulo--- y la cadena seguia. Con la anulacion eso
@@ -9066,8 +9212,10 @@ function cargarDatosDeSesion(ruta, apertura, senal, s) {
     }
 
     // Los avisos llegan por su cuenta; aca solo se recolocan los que ya haya,
-    // porque ubicarlos necesita las vueltas y recien ahora estan.
+    // porque ubicarlos necesita las vueltas y recien ahora estan. Y son dos
+    // listas: los derivados de la telemetria y los que declaro la fuente.
     ubicarAvisos(estado.avisos.map(a => a));
+    ubicarControlDeCarrera(estado.controlDeCarreraCrudo || []);
     pedirCurvas(s);
     const primera = estado.vueltas.length ? estado.vueltas[0].numero : 1;
     vueltaElegida = primera;
@@ -9439,16 +9587,47 @@ function fraccionDentroDeLaVuelta(aviso, numero, largo) {
   return 0;
 }
 
-function ubicarAvisos(lista) {
+/* Donde cae cada aviso en la reproduccion. Lo usan las dos listas ---la
+   derivada de la telemetria y la declarada por el control de carrera--- porque
+   ubicar es la misma cuenta: se apoya en el instante que cada una trae, y dos
+   copias de esta cuenta se desfasarian el dia que una cambie. */
+function conFraccionDeSesion(lista) {
   const inicios = iniciosDeVuelta();
   const total = duracionSesionS();
   const largo = (PISTA.largo_m || 1);
-  estado.avisos = lista.map(a => {
+  return lista.map(a => {
     const v = Math.max(1, Math.min(estado.vueltas.length || 1, a.vuelta || 1));
     const ini = inicios[v - 1] || 0;
     const parte = total > 0 ? duracionDeVuelta(v) / total : 0;
     return Object.assign({}, a, { en: ini + parte * fraccionDentroDeLaVuelta(a, v, largo) });
   }).sort((x, y) => x.en - y.en);
+}
+
+function ubicarAvisos(lista) {
+  estado.avisos = conFraccionDeSesion(lista);
+}
+
+/* Se pide una vez por sesion y solo donde existe. `claveDeSesionOpenF1`
+   contesta `null` para las otras dos fuentes, que no tienen control de carrera
+   que declarar, y entonces no sale ninguna consulta. */
+function pedirControlDeCarrera(sessionId, apertura) {
+  const clave = claveDeSesionOpenF1(sessionId);
+  if (!clave) return;
+  conCarga("avisos", () =>
+    pedir("/racing/sessions/" + clave + "/race-control", { senal: senalDeSesion() })
+      .then(d => {
+        if (!sigueVigente(apertura)) return;
+        estado.controlDeCarreraCrudo = (d && d.eventos) || [];
+        ubicarControlDeCarrera(estado.controlDeCarreraCrudo);
+        render();
+      })
+      /* Un fallo aca no puede vaciar los avisos derivados: son dos listas y una
+         no responde por la otra. Se anota y se sigue. */
+      .catch(e => { if (!fueAnulada(e) && e instanceof TypeError) console.error(e); }));
+}
+
+function ubicarControlDeCarrera(eventos) {
+  estado.controlDeCarrera = conFraccionDeSesion(avisosDelControlDeCarrera(eventos));
 }
 
 /* Con que señales se puede pintar el recorrido: las que este tablero sabe

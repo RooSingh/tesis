@@ -249,5 +249,101 @@ class LoQueLaConsultaTraeTests(unittest.TestCase):
                 self.assertIsNotNone(clima[campo])
 
 
+@unittest.skipUnless(
+    hay_base_con_la_sesion(),
+    "hace falta la base con la sesion 9947 importada",
+)
+class ControlDeCarreraTests(unittest.TestCase):
+    """Lo que la fuente declara viaja por su propia ruta, y entero.
+
+    Va aparte de `/sesiones/{id}/avisos` porque aquella respuesta declara que
+    cada entrada salio de aplicar una regla con un umbral sobre la telemetria.
+    Una bandera no se derivo de nada: la fuente la declaro.
+    """
+
+    def _eventos(self, limite: int | None = None) -> dict:
+        from backend.db import obtener_control_de_carrera
+        return obtener_control_de_carrera(SESION, limite)
+
+    def test_llegan_los_ciento_cincuenta_y_ocho_eventos(self) -> None:
+        datos = self._eventos()
+        self.assertEqual(datos["total_devuelto"], 158)
+        self.assertFalse(datos["truncado"])
+
+    def test_las_ochenta_y_nueve_banderas_llegan_con_su_color(self) -> None:
+        """Los once campos viven dentro de `raw_payload` y hay que abrirlos.
+
+        `racing_events` solo tiene columnas para el instante, el piloto y la
+        vuelta: la bandera, el alcance, el sector y el mensaje estan en el jsonb.
+        """
+        from collections import Counter
+        eventos = self._eventos()["eventos"]
+        banderas = Counter(e["flag"] for e in eventos if e["flag"])
+        self.assertEqual(dict(banderas), {
+            "YELLOW": 32, "CLEAR": 41, "DOUBLE YELLOW": 12,
+            "GREEN": 2, "BLUE": 1, "CHEQUERED": 1,
+        })
+        categorias = Counter(e["category"] for e in eventos)
+        self.assertEqual(categorias["Flag"], 89)
+        self.assertEqual(categorias["SafetyCar"], 8)
+
+    def test_cada_evento_trae_su_mensaje_y_su_instante(self) -> None:
+        eventos = self._eventos()["eventos"]
+        self.assertTrue(all(e["instante"] for e in eventos))
+        self.assertTrue(all(e["message"] for e in eventos))
+        # El instante viaja como texto, que es lo que el tablero sabe leer.
+        self.assertIsInstance(eventos[0]["instante"], str)
+
+    def test_vienen_en_orden_de_ocurrencia(self) -> None:
+        instantes = [e["instante"] for e in self._eventos()["eventos"]]
+        self.assertEqual(instantes, sorted(instantes))
+
+    def test_la_respuesta_declara_de_donde_sale(self) -> None:
+        """Sin esto, dos listas con la misma forma se leerian como la misma cosa."""
+        procedencia = self._eventos()["procedencia"]
+        self.assertIn("declarado por la fuente", procedencia)
+        self.assertIn("no se derivo de la telemetria", procedencia)
+
+    def test_un_tope_acota_y_lo_dice(self) -> None:
+        """Una respuesta acotada no puede confundirse con una sesion tranquila."""
+        datos = self._eventos(limite=10)
+        self.assertEqual(datos["total_devuelto"], 10)
+        self.assertTrue(datos["truncado"])
+
+    def test_solo_vuelven_eventos_de_control_de_carrera(self) -> None:
+        """Y hoy esta prueba no puede fallar, lo cual es parte de lo que dice.
+
+        `racing_events` guarda un `event_type` por fila y el importador solo
+        escribe `race_control`, de modo que quitar el filtro de la consulta no
+        cambia nada: lo comprobe mutandolo y ningun caso murio. Se deja escrita
+        igual, comparando contra el recuento de ese tipo, porque el dia que se
+        importe otra clase de evento ---adelantamientos, radio--- esta es la que
+        avisa que se estan colando. Una prueba que hoy no distingue y mañana si
+        vale mas que una nota en un comentario.
+        """
+        from backend import db
+        with db.obtener_conexion() as conexion:
+            with conexion.cursor() as cursor:
+                cursor.execute(
+                    "SELECT count(*) FROM racing_events "
+                    "WHERE session_key = %s AND event_type = 'race_control'", (SESION,))
+                del_tipo = cursor.fetchone()[0]
+                cursor.execute(
+                    "SELECT count(DISTINCT event_type) FROM racing_events "
+                    "WHERE session_key = %s", (SESION,))
+                tipos = cursor.fetchone()[0]
+        self.assertEqual(self._eventos()["total_devuelto"], del_tipo)
+        if tipos == 1:
+            self.skipTest(
+                "la sesion tiene un solo tipo de evento: con estos datos, quitar "
+                "el filtro de la consulta daria el mismo resultado")
+
+    def test_una_sesion_que_no_existe_no_es_un_fallo(self) -> None:
+        from backend.db import obtener_control_de_carrera
+        datos = obtener_control_de_carrera(999999999)
+        self.assertEqual(datos["eventos"], [])
+        self.assertFalse(datos["truncado"])
+
+
 if __name__ == "__main__":
     unittest.main()
