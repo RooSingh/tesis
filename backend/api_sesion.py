@@ -3704,12 +3704,28 @@ def _avisos_reproducidos(cursor, fuente: str, session_id: str,
     return salida[-limite:]
 
 
+def _canales_solo_del_propio() -> list[str]:
+    """Los canales del anotador que el protocolo publica solo de quien conduce.
+
+    Salen del catalogo del adaptador y no de una lista escrita aca: son las
+    senales de los paquetes de bloque unico ---`motion_ex` y `session`--- que
+    ademas consume alguna regla. Si manana entra otra senal privada, aparece
+    sola; una lista a mano quedaria vieja sin avisar.
+    """
+    del_propio = {s["signal_name"] for s in adaptador_f1_25.catalogo_de_senales()
+                  if s["paquete"] in adaptador_f1_25.PAQUETES_DE_BLOQUE_UNICO}
+    return sorted(del_propio & set(anotador_vivo.CANALES_PARA_ANOTAR))
+
+
 @router.get("/sesiones/{session_id}/avisos")
 def avisos(session_id: str,
            limite: Annotated[int, Query(
                ge=1, le=anotador_vivo.ANOTACIONES_CONSERVADAS)] = 60,
            adquisicion: Annotated[str | None, Query()] = None,
-           fase: Annotated[int | None, Query(ge=1)] = None) -> dict[str, Any]:
+           fase: Annotated[int | None, Query(ge=1)] = None,
+           vehiculo: Annotated[str | None, Query(
+               description="De que vehiculo: `<session_id>:car:<indice>`. Sin "
+                           "elegir, el de quien conduce")] = None) -> dict[str, Any]:
     """Avisos de una sesion ya corrida, con la vuelta y el metro en que ocurren.
 
     Existe `/live/anotaciones` para el flujo en vivo. Esto es lo mismo para una
@@ -3719,13 +3735,26 @@ def avisos(session_id: str,
     La secuencia persistida pasa por el mismo `Anotador` del flujo vivo. Esto
     conserva no sólo los umbrales, sino también su agrupamiento, silencios,
     textos y avisos transitorios.
+
+    LOS AVISOS SON DE UN VEHICULO, Y SE PUEDE ELEGIR CUAL. Se calculaban siempre
+    sobre el de quien conduce, y el tablero ya decia que eran «del piloto que se
+    mira»: al elegir otro piloto el panel seguia mostrando los del primero.
+    Medido el 2026-09-11 sobre Red Bull Ring con dos conductores: con el 19
+    elegido, los sesenta avisos eran del 18. Con `vehiculo` se calculan sobre el
+    que se pide; sin el, sobre quien conduce, como antes.
+
+    Y SE DICE QUE NO SE PUEDE EVALUAR. De otro vehiculo el protocolo no publica
+    `motion_ex`, de modo que las reglas que dependen de esos canales ---el
+    deslizamiento--- no tienen con que evaluarse. La respuesta lo declara en
+    `canales_sin_dato`: que falten esos avisos no dice que no hayan ocurrido.
     """
     # El recorrido es el mismo cada vez sobre una sesion guardada: se guarda.
-    # LA CLAVE DE LA CACHE LLEVA EL ALCANCE.
+    # LA CLAVE DE LA CACHE LLEVA EL ALCANCE, Y EL VEHICULO.
     # Sin el, la respuesta de `?adquisicion=original` se serviria despues a quien
     # pida la sesion entera, y al reves: una cache que ignora el alcance es peor
-    # que no tener cache, porque la mezcla queda escondida.
-    clave = (session_id, limite, adquisicion or "todas", fase)
+    # que no tener cache, porque la mezcla queda escondida. Lo mismo con el
+    # vehiculo: los avisos de uno servidos como si fueran de otro.
+    clave = (session_id, limite, adquisicion or "todas", fase, vehiculo or "propio")
     if clave in _AVISOS_CACHE:
         _AVISOS_CACHE.move_to_end(clave)
         guardado = dict(_AVISOS_CACHE[clave])
@@ -3737,6 +3766,12 @@ def avisos(session_id: str,
         return {"session_id": session_id, "fuente": fuente, "avisos": [],
                 "motivo": ("Esta fuente no publica banderas, dano ni tipo de "
                             "superficie: no hay con que levantar un aviso.")}
+    # Un vehiculo de otra sesion no es un descuido inofensivo: la consulta no
+    # encontraria filas y el panel afirmaria que no paso nada.
+    if vehiculo is not None and not vehiculo.startswith(session_id + ":car:"):
+        raise HTTPException(status_code=422, detail={
+            "motivo": "ese vehiculo no es de esta sesion",
+            "vehiculo": vehiculo, "session_id": session_id})
 
     with db.obtener_conexion() as conexion:
         with conexion.cursor() as cursor:
@@ -3744,22 +3779,35 @@ def avisos(session_id: str,
             ventana = _ventana_de_alcance(cursor, fuente, session_id, adquisicion)
             limites_fase = _limites_de_fase(
                 cursor, fuente, session_id, adquisicion, fase)
+        elegido = vehiculo or propio
         # Un cursor del servidor evita materializar toda la carrera en la RAM de
         # la API. `fetchmany` mantiene acotado también el lote de Python.
         with conexion.cursor(name="avisos_reproducidos") as cursor_avisos:
             encontrados = _avisos_reproducidos(
-                cursor_avisos, fuente, session_id, propio, ventana,
+                cursor_avisos, fuente, session_id, elegido, ventana,
                 limites_fase, limite)
 
     respuesta = {
         "session_id": session_id,
         "fuente": fuente,
-        "vehiculo": propio,
+        "vehiculo": elegido,
+        "vehiculo_propio": propio,
         "avisos": encontrados,
         "reglas_evaluadas": anotador_vivo.CANTIDAD_REGLAS,
         "criterio": ("mismas reglas, umbrales, agrupamiento y textos que el flujo "
                      "vivo, reproducidos sobre las muestras persistidas"),
     }
+    # Solo se declara cuando se sabe quien conduce: sin eso no hay con que decir
+    # cual es el vehiculo que tiene los canales privados.
+    if propio is not None and elegido != propio:
+        sin_dato = _canales_solo_del_propio()
+        if sin_dato:
+            respuesta["canales_sin_dato"] = sin_dato
+            respuesta["motivo_sin_dato"] = (
+                "El juego publica %s solo del vehiculo de quien conduce: para "
+                "este vehiculo las reglas que dependen de esos canales no pueden "
+                "evaluarse, y que no haya avisos de ellas no dice que no hayan "
+                "ocurrido." % ", ".join(sin_dato))
     _AVISOS_CACHE[clave] = respuesta
     _AVISOS_CACHE.move_to_end(clave)
     while len(_AVISOS_CACHE) > AVISOS_EN_CACHE:

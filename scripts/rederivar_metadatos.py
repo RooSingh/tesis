@@ -32,8 +32,10 @@ from __future__ import annotations
 
 import argparse
 import json
+import shutil
+import struct
 import sys
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -41,10 +43,44 @@ sys.path.insert(0, str(ROOT))
 
 from backend import f1_capture, f1_udp
 from scripts.capturar_f1_25 import (
-    AyudasEnMarcha, _perfil_declarado, derivar_procedencia, nombre_derivado,
+    AyudasEnMarcha, SesionesDeLaCaptura, _perfil_declarado, derivar_procedencia,
+    nombre_derivado,
 )
 
 CAPTURAS = ROOT / "datasets" / "f1_25" / "capturas"
+
+#: Los numeros de paquete que la procedencia por sesion lee. Se filtra por la
+#: cabecera antes de decodificar: recorrer 4,75 GB de capturas decodificando
+#: movimiento y danos que la procedencia no usa seria pagar por nada.
+_PAQUETES_DE_PROCEDENCIA = frozenset(
+    i for i, p in f1_udp.PAQUETES.items()
+    if p["nombre"] in SesionesDeLaCaptura.PAQUETES)
+
+#: Hasta el identificador de sesion: formato, tres versiones, version de
+#: paquete, numero de paquete y `session_uid`.
+_CABECERA = struct.Struct("<HBBBBBQ")
+
+
+def releer_sesiones(ruta: Path) -> list[dict]:
+    """Cada sesion que atraviesa la captura, con su propia procedencia.
+
+    Cuenta **todos** los datagramas para el tramo de cada sesion, leyendo solo
+    la cabecera, y decodifica unicamente los paquetes que la procedencia usa.
+    """
+    sesiones = SesionesDeLaCaptura()
+    for datagrama in f1_capture.leer_captura(ruta):
+        carga = datagrama.carga
+        if len(carga) < _CABECERA.size:
+            continue
+        cabecera = _CABECERA.unpack_from(carga)
+        decodificado = None
+        if cabecera[5] in _PAQUETES_DE_PROCEDENCIA:
+            try:
+                decodificado = f1_udp.decodificar(carga)
+            except f1_udp.ErrorDecodificacion:
+                decodificado = None
+        sesiones.anotar(cabecera[6], datagrama.desplazamiento_us, decodificado)
+    return sesiones.resumen()
 
 
 def releer(ruta: Path) -> dict:
@@ -165,17 +201,75 @@ def procesar(ruta: Path, renombrar: bool) -> dict:
     return resultado
 
 
+def agregar_sesiones(ruta: Path, respaldo: Path) -> dict:
+    """Agrega a los metadatos la procedencia de cada sesion, **y nada mas**.
+
+    POR QUE UN MODO APARTE. `procesar` vuelve a derivar la procedencia principal
+    con el decodificador de hoy y puede renombrar el par. Para nombrar las
+    sesiones que faltaban no hace falta ninguna de las dos cosas, y hacerlas de
+    paso cambiaria metadatos que nadie pidio revisar. Este modo lee el crudo,
+    escribe `sesiones_en_la_captura` y deja intacto el resto del archivo.
+
+    Antes de escribir copia el metadato a `respaldo`. Los metadatos no estan en
+    el control de versiones, y reescribirlos sin copia seria un camino de ida. Si
+    la copia ya existe no se pisa: la que vale es la anterior a la primera
+    pasada.
+    """
+    meta_ruta = ruta.with_suffix(ruta.suffix + ".meta.json")
+    if not meta_ruta.exists():
+        return {"archivo": ruta.name, "estado": "sin metadatos: no se toca"}
+    datos = json.loads(meta_ruta.read_text(encoding="utf-8"))
+
+    respaldo.mkdir(parents=True, exist_ok=True)
+    copia = respaldo / meta_ruta.name
+    if not copia.exists():
+        shutil.copy2(meta_ruta, copia)
+
+    sesiones = releer_sesiones(ruta)
+    datos["sesiones_en_la_captura"] = sesiones
+    datos["sesiones_derivadas"] = {
+        "utc": datetime.now(timezone.utc).isoformat(),
+        "version_decodificador": f1_udp.VERSION_DECODIFICADOR,
+        "como": ("el tramo, de la cabecera de cada datagrama; la procedencia, de "
+                 "los paquetes de sesion, participantes, eventos, telemetria y "
+                 "estado de esa sesion"),
+    }
+    meta_ruta.write_text(json.dumps(datos, indent=2, ensure_ascii=False),
+                         encoding="utf-8")
+    nombradas = sum(1 for s in sesiones if s["procedencia"].get("disponible"))
+    return {"archivo": ruta.name, "sesiones": len(sesiones),
+            "con_procedencia": nombradas}
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("capturas", nargs="*", type=Path,
                         help="Archivos .f1raw. Por defecto, todos los del repositorio.")
     parser.add_argument("--renombrar", action="store_true",
                         help="Renombra el par si el nombre derivado cambio.")
+    parser.add_argument("--solo-sesiones", action="store_true",
+                        help="Solo agrega la procedencia de cada sesion de la "
+                             "captura. No toca la procedencia principal ni renombra.")
+    parser.add_argument("--respaldo", type=Path,
+                        default=(ROOT / "datasets" / "f1_25" / "respaldos" /
+                                 ("metadatos_" + datetime.now().strftime("%Y%m%d_%H%M"))),
+                        help="Donde copiar cada metadato antes de reescribirlo.")
     args = parser.parse_args()
 
     rutas = args.capturas or sorted(CAPTURAS.glob("*.f1raw"))
     if not rutas:
         raise SystemExit("No hay capturas para releer.")
+
+    if args.solo_sesiones:
+        for ruta in rutas:
+            r = agregar_sesiones(ruta, args.respaldo)
+            if r.get("estado"):
+                print(f"{r['archivo']}: {r['estado']}", flush=True)
+            else:
+                print(f"{r['archivo']}: {r['sesiones']} sesiones, "
+                      f"{r['con_procedencia']} con procedencia", flush=True)
+        print(f"\nrespaldo de los metadatos: {args.respaldo}")
+        return
 
     for ruta in rutas:
         r = procesar(ruta, args.renombrar)

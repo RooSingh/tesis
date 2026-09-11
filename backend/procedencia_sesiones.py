@@ -147,14 +147,63 @@ def _ventana_de_captura(datos: dict) -> tuple[str | None, float | None]:
             float(duracion) if isinstance(duracion, (int, float)) else None)
 
 
-def _leer_uno(ruta: Path) -> tuple[str, dict, dict | None] | None:
-    """Lee un metadato de captura y devuelve su sesion y su procedencia."""
+def _leer_uno(ruta: Path) -> list[tuple[str, dict, dict | None]]:
+    """Lee un metadato de captura y devuelve **cada** sesion que declara.
+
+    UNA CAPTURA NO ES UNA SESION. El juego le da otro `session_uid` a cada
+    sesion nueva y el capturador sigue escribiendo el mismo archivo. La
+    procedencia se derivaba una vez por captura, de modo que solo la sesion de
+    esa lectura quedaba nombrada. Medido el 2026-09-11: de las 222 sesiones de
+    F1 25 del catalogo, **170 sin procedencia**, y 168 de ellas con su
+    identificador dentro de algun crudo. Pasa en los dos modos: 7 de 26 capturas
+    de un conductor y 25 de 43 de dos conductores atraviesan mas de una sesion.
+
+    `sesiones_en_la_captura` trae la procedencia de cada una, derivada de sus
+    propios paquetes: el tipo de sesion y la parrilla pueden cambiar de una a
+    otra. La procedencia principal se sigue leyendo como antes, de modo que un
+    metadato sin la lista nueva declara exactamente lo mismo que declaraba.
+    """
     try:
         datos = json.loads(ruta.read_text(encoding="utf-8"))
     except (OSError, ValueError):
-        return None
+        return []
 
+    salida = []
     proc = datos.get("procedencia") or {}
+    principal = _una_sesion(datos, proc, datos.get("duracion_s"))
+    if principal is not None:
+        salida.append(principal)
+
+    vistos = {proc.get("session_uid")}
+    for tramo in datos.get("sesiones_en_la_captura") or []:
+        if not isinstance(tramo, dict):
+            continue
+        propia = tramo.get("procedencia") or {}
+        uid = tramo.get("session_uid", propia.get("session_uid"))
+        # Una sesion que no declaro su tipo ---un menu, un arranque vacio--- no
+        # tiene nada que describir, y la principal ya describe la suya.
+        if uid is None or uid in vistos or not propia.get("disponible"):
+            continue
+        vistos.add(uid)
+        desde, hasta = tramo.get("desde_s"), tramo.get("hasta_s")
+        duracion = (hasta - desde if isinstance(desde, (int, float))
+                    and isinstance(hasta, (int, float)) else None)
+        una = _una_sesion(datos, dict(propia, session_uid=uid), duracion,
+                          tramo=(desde, hasta))
+        if una is not None:
+            salida.append(una)
+    return salida
+
+
+def _una_sesion(datos: dict, proc: dict, duracion: Any,
+                tramo: tuple | None = None) -> tuple[str, dict, dict | None] | None:
+    """La procedencia y la parrilla de una sesion de la captura.
+
+    `duracion` es la de la sesion y no la del archivo: con varias sesiones en
+    una captura, «gana la mas larga» tiene que comparar lo que duro cada una.
+    La ventana con que la parrilla se ata a una adquisicion sigue siendo la del
+    archivo, porque es con ese reloj que entran sus filas a la base.
+    """
     uid = proc.get("session_uid")
     if uid is None:
         return None
@@ -164,14 +213,17 @@ def _leer_uno(ruta: Path) -> tuple[str, dict, dict | None] | None:
 
     parrilla = _parrilla_legible(proc)
     if parrilla is not None:
-        inicio, duracion = _ventana_de_captura(datos)
+        # Nombres propios y no `duracion`: con ese nombre esta linea pisaba la
+        # duracion de la sesion con la del archivo, y la ficha de una sesion de
+        # siete minutos declaraba los catorce de su captura.
+        inicio_captura, duracion_captura = _ventana_de_captura(datos)
         # Con que se la puede atar a una adquisicion. Ninguno de los tres es
         # una ruta local: el nombre del archivo ya viajaba en la procedencia.
         parrilla["captura"] = {
             "archivo": datos.get("archivo"),
             "sha256": datos.get("sha256"),
-            "inicio_utc": inicio,
-            "duracion_s": duracion,
+            "inicio_utc": inicio_captura,
+            "duracion_s": duracion_captura,
         }
 
     return "f1_25:session:%s" % uid, {
@@ -188,9 +240,12 @@ def _leer_uno(ruta: Path) -> tuple[str, dict, dict | None] | None:
         "vueltas_totales": proc.get("vueltas_totales"),
         "dificultad_ia": proc.get("dificultad_ia"),
         "capturado_utc": datos.get("inicio_utc"),
-        "duracion_capturada_s": datos.get("duracion_s"),
+        "duracion_capturada_s": duracion,
         "archivo": datos.get("archivo"),
         "origen": "metadato de captura, derivado del paquete de sesion",
+        # En que parte del archivo esta esta sesion, en segundos de captura. Solo
+        # la declaran las que salen de la lista por sesion.
+        **({"tramo_de_la_captura_s": list(tramo)} if tramo is not None else {}),
     }, parrilla
 
 
@@ -214,16 +269,13 @@ def _releer() -> tuple[dict[str, dict], dict[str, list[dict]]]:
         return procedencias, candidatas
 
     for ruta in sorted(DIRECTORIO.glob("*.meta.json")):
-        leido = _leer_uno(ruta)
-        if not leido:
-            continue
-        sesion, proc, parrilla = leido
-        previo = procedencias.get(sesion)
-        if not (previo and (previo.get("duracion_capturada_s") or 0) >= (
-                proc.get("duracion_capturada_s") or 0)):
-            procedencias[sesion] = proc
-        if parrilla is not None:
-            candidatas.setdefault(sesion, []).append(parrilla)
+        for sesion, proc, parrilla in _leer_uno(ruta):
+            previo = procedencias.get(sesion)
+            if not (previo and (previo.get("duracion_capturada_s") or 0) >= (
+                    proc.get("duracion_capturada_s") or 0)):
+                procedencias[sesion] = proc
+            if parrilla is not None:
+                candidatas.setdefault(sesion, []).append(parrilla)
     return procedencias, candidatas
 
 

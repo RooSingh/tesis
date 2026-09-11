@@ -266,6 +266,84 @@ class AyudasEnMarcha:
         return estado
 
 
+class SesionesDeLaCaptura:
+    """Cada sesion que atraviesa una captura, con su propia procedencia.
+
+    UNA CAPTURA NO ES UNA SESION. El juego le da otro `session_uid` a cada
+    sesion nueva y el capturador sigue escribiendo el mismo archivo hasta el
+    silencio. La procedencia se derivaba una vez por captura, y solo la sesion
+    de esa lectura quedaba nombrada. Medido el 2026-09-11 sobre las 69 capturas:
+    224 identificadores con datos y 54 declarados; de las 222 sesiones de F1 25
+    del catalogo, 170 sin procedencia. No es cosa de un modo de juego: 7 de 26
+    capturas de un conductor y 25 de 43 de dos conductores atraviesan mas de
+    una sesion.
+
+    Va **por sesion** todo lo que puede cambiar entre ellas: el tipo, la
+    parrilla ---quien ocupa cada asiento, que en las pruebas de dos conductores
+    cambio de una pasada a otra--- y las ayudas, con su propio acumulador.
+
+    Recibe la cabecera y, cuando lo hay, el paquete decodificado. Asi la
+    rederivacion puede contar cada datagrama leyendo solo la cabecera y
+    decodificar unicamente los paquetes que la procedencia usa.
+    """
+
+    #: Los paquetes que la procedencia lee. El resto solo cuenta para el tramo.
+    PAQUETES = frozenset({"session", "participants", "event",
+                          "car_telemetry", "car_status"})
+
+    def __init__(self) -> None:
+        self._por_uid: dict[int, dict] = {}
+
+    def anotar(self, session_uid: int | None, desplazamiento_us: int,
+               decodificado: dict | None = None) -> None:
+        # El cero es la cabecera que el emisor todavia no lleno: no es una sesion.
+        if not session_uid:
+            return
+        s = self._por_uid.get(session_uid)
+        if s is None:
+            s = self._por_uid[session_uid] = {
+                "desde_us": desplazamiento_us, "hasta_us": desplazamiento_us,
+                "datagramas": 0, "cabecera": None, "sesion": None,
+                "participantes": None, "ayudas": AyudasEnMarcha(),
+                "secundarios": {},
+            }
+        s["hasta_us"] = desplazamiento_us
+        s["datagramas"] += 1
+        if decodificado is None:
+            return
+
+        cabecera = decodificado.get("cabecera") or {}
+        if s["cabecera"] is None:
+            s["cabecera"] = cabecera
+        # El mismo criterio que la captura entera: ver `_segundo_sostenido`.
+        if cabecera.get("frame_identifier"):
+            sec = cabecera.get("secondary_player_car_index")
+            s["secundarios"][sec] = s["secundarios"].get(sec, 0) + 1
+        paquete = decodificado.get("paquete")
+        # El ultimo que declara un tipo, como la procedencia principal: el
+        # primero llega antes de que el juego cargue la configuracion.
+        if paquete == "session" and decodificado["sesion"]["session_type"] != 0:
+            s["sesion"] = decodificado["sesion"]
+        elif paquete == "participants":
+            s["participantes"] = decodificado
+        s["ayudas"].ver(decodificado)
+
+    def resumen(self) -> list[dict]:
+        """Una entrada por sesion, en el orden en que aparecen en la captura."""
+        salida = []
+        for uid, s in sorted(self._por_uid.items(), key=lambda par: par[1]["desde_us"]):
+            salida.append({
+                "session_uid": uid,
+                "desde_s": round(s["desde_us"] / 1e6, 3),
+                "hasta_s": round(s["hasta_us"] / 1e6, 3),
+                "datagramas": s["datagramas"],
+                "procedencia": derivar_procedencia(
+                    s["sesion"], s["ayudas"].estado(), s["cabecera"],
+                    s["participantes"], s["secundarios"]),
+            })
+        return salida
+
+
 #: Fraccion de cabeceras que tiene que declarar el mismo segundo participante
 #: para darlo por real. No es un umbral calibrado: con dos conductores el valor
 #: aparece en **todas** las cabeceras utiles, y con la cabecera sin poblar en un
@@ -825,6 +903,9 @@ def capturar_sesion(sock: socket.socket, primer_datagrama: bytes,
     sesion = cabecera = participantes = None
     secundarios: dict = {}
     ayudas_vistas = AyudasEnMarcha()
+    # La procedencia de cada sesion que atraviese la captura, ademas de la
+    # principal: ver `SesionesDeLaCaptura`.
+    sesiones_de_la_captura = SesionesDeLaCaptura()
     # El primer paquete de sesion llega antes de que el juego tenga cargada la
     # configuracion: declara todo en cero. Tomar ese es lo que hacia que una
     # carrera con dano en simulacion se archivara como "dano desactivado".
@@ -914,6 +995,9 @@ def capturar_sesion(sock: socket.socket, primer_datagrama: bytes,
                                              cabecera, participantes,
                                              secundarios))
                 ayudas_vistas.ver(decodificado)
+                sesiones_de_la_captura.anotar(
+                    decodificado["cabecera"].get("session_uid"), desplazamiento,
+                    decodificado)
                 publicador.publicar(decodificado, inicio_utc, desplazamiento)
 
             try:
@@ -987,6 +1071,10 @@ def capturar_sesion(sock: socket.socket, primer_datagrama: bytes,
         ],
         "datagramas_no_decodificables": descartados,
         "procedencia": procedencia,
+        # La procedencia de cada sesion que atraveso la captura. La principal de
+        # arriba nombra una sola; sin esta lista, las otras quedaban como
+        # «Sesión sin procedencia declarada». Ver `SesionesDeLaCaptura`.
+        "sesiones_en_la_captura": sesiones_de_la_captura.resumen(),
         # Lo descartado va **en los metadatos de la captura**, no solo en la
         # pantalla: una captura cuyos mensajes no llegaron a la base tiene que
         # poder decirlo despues, cuando alguien se pregunte por que faltan filas.

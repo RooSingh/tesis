@@ -170,6 +170,13 @@ const preludio = `
   const performance = { now: () => Date.now() };
   function trazadoAPath() { return { path: "" }; }
   function ubicarAvisos() {}
+  /* \`cargarDatosDeSesion\` pide los avisos por \`pedirAvisos\`, que pregunta de
+     quien son. Va la de verdad, con lo minimo que necesita alrededor: el
+     contador de pedidos y un vehiculo propio que puede no estar todavia. */
+  let _pedidoDeAvisos = 0;
+  function autoPropio() { return AUTOS.find(a => a.propio) || AUTOS[0] || { id: null }; }
+  function anotarFalloDeAvisos() {}
+  ${fn("pedirAvisos")}
   let PISTA = { path: "", curvas: [], largo_m: null };
   /* Y lo que hace falta para leer el reloj. */
   let fuente = "f1";

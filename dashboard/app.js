@@ -1648,6 +1648,38 @@ function autoPropio() {
    de sesion, donde la clave ni siquiera existe. */
 let propioAMano = null;
 
+/* LOS AVISOS SON DEL PILOTO QUE SE MIRA.
+   El pie del panel ya lo decia ---«del piloto, derivados de su telemetría»--- y
+   no era cierto: `/avisos` se calculaba siempre sobre quien conduce y se pedia
+   una sola vez al abrir. Medido el 2026-09-11 sobre Red Bull Ring con dos
+   conductores: con el 19 elegido, los sesenta avisos eran del 18.
+   Se piden del piloto elegido y se vuelven a pedir al elegir otro. Una
+   respuesta que llega tarde, de un piloto que ya no se mira, se descarta:
+   mostrarla le atribuiria a uno los incidentes de otro.
+   Solo viaja una clave con forma de vehiculo. Antes de que haya lista de autos
+   `autoPropio` devuelve un vehiculo vacio, y entonces no se elige: la API usa a
+   quien conduce, que es lo mismo que se hacia antes. */
+let _pedidoDeAvisos = 0;
+
+function pedirAvisos(ruta, apertura, senal) {
+  const mio = ++_pedidoDeAvisos;
+  const quien = autoPropio().id;
+  const alcance = sufijoDeCorrida(false);
+  const deQuien = (typeof quien === "string" && quien.indexOf(":car:") !== -1)
+    ? (alcance ? "&" : "?") + "vehiculo=" + encodeURIComponent(quien) : "";
+  conCarga("avisos", () => pedir(ruta + "/avisos" + alcance + deQuien, { senal: senal })
+    .then(d => {
+      if (!sigueVigente(apertura) || mio !== _pedidoDeAvisos) return;
+      ubicarAvisos(d.avisos || []); estado.avisosMotivo = d.motivo_ausencia || "";
+      estado.avisosSinDato = d.motivo_sin_dato || "";
+      estado.avisosFallo = ""; render();
+    })
+    .catch(e => {
+      if (!sigueVigente(apertura) || mio !== _pedidoDeAvisos) return;
+      anotarFalloDeAvisos(e); render();
+    }));
+}
+
 function elegirPropio(id) {
   const anterior = autoPropio().id;
   propioAMano = id;
@@ -1663,6 +1695,13 @@ function elegirPropio(id) {
   if (seleccion.size === 1 && seleccion.has(anterior)) seleccion = new Set([id]);
   else seleccion.add(id);
   olvidarCaches();
+  /* Los avisos tambien son de a quien se mira: ver `pedirAvisos`. Mientras
+     llegan, el panel queda vacio en vez de seguir mostrando los del anterior. */
+  if (estado.abierta && estadoSesion === "cargado" && id !== anterior) {
+    estado.avisos = []; estado.avisosFallo = ""; estado.avisosSinDato = "";
+    pedirAvisos("/sesiones/" + encodeURIComponent(estado.abierta.session_id),
+                aperturaVigente(), senalDeSesion());
+  }
   render();
 }
 
@@ -2461,7 +2500,11 @@ function pintarAvisos() {
       'medida que avanza la reproducción, el más reciente arriba.</p>';
     document.getElementById("canal-avisos").textContent =
       "0/" + todos.length;
-    document.getElementById("motivo-avisos").textContent = motivo;
+    /* Y si para este piloto hay reglas que no se pudieron evaluar, se dice
+       aca mas que en ningun lado: una lista vacia de otro vehiculo puede ser
+       falta de canal y no ausencia de incidentes. */
+    document.getElementById("motivo-avisos").textContent =
+      [motivo, estado.avisosSinDato || ""].filter(Boolean).join(" · ");
     return;
   }
 
@@ -2511,13 +2554,17 @@ function pintarAvisos() {
      reacciona. Medido sobre la carrera cargada: de 158 eventos, **157 no
      nombran piloto**; el unico que lo hace es una bandera azul para el coche 31.
      Decirlo evita que la quietud del panel se lea como un fallo. */
-  document.getElementById("motivo-avisos").textContent =
-    (declarados && derivados)
+  const deQuienSon = (declarados && derivados)
       ? derivados + " del piloto, derivados de su telemetría · " + declarados +
         " de la carrera, declarados por la fuente"
       : declarados ? "De la carrera, no del piloto: declarados por la fuente en " +
                      "el control de carrera"
       : "";
+  /* LO QUE NO SE PUDO EVALUAR PARA ESTE PILOTO. De otro vehiculo el juego no
+     publica el deslizamiento, y `/avisos` lo declara en `motivo_sin_dato`. Sin
+     decirlo, la falta de esos avisos se leeria como que no hubo incidentes. */
+  document.getElementById("motivo-avisos").textContent =
+    [deQuienSon, estado.avisosSinDato || ""].filter(Boolean).join(" · ");
 }
 
 /* ---------------- aceleraciones ---------------- */
@@ -7703,7 +7750,7 @@ function limpiarContextoDeSesion() {
   estado.controlDeCarrera = []; estado.controlDeCarreraCrudo = [];
   estado.vehiculo = null; estado.vehiculoMotivo = "";
   estado.puesta = null; estado.avisos = []; estado.avisosMotivo = "";
-  estado.avisosFallo = "";
+  estado.avisosFallo = ""; estado.avisosSinDato = "";
 }
 
 /* ============================================================
@@ -8599,6 +8646,7 @@ function olvidarLoDeLaCorrida() {
   estado.disponibles = new Set();
   estado.vehiculoClave = null;
   estado.climaMotivo = ""; estado.vehiculoMotivo = ""; estado.avisosMotivo = "";
+  estado.avisosSinDato = "";
   _esencialResuelta = false;
   estado.cargando = true;
   PISTA = { path: "", curvas: [], largo_m: null, desnivel_m: null, muestras: null };
@@ -9205,17 +9253,7 @@ function cargarDatosDeSesion(ruta, apertura, senal, s) {
 
   /* Los avisos no hacen falta para dibujar y su consulta puede durar veinte
      segundos reteniendo una conexion. Se piden cuando ya hay un grafico. */
-  cuandoHayaGrafico(() =>
-  conCarga("avisos", () => pedir(ruta + "/avisos" + sufijoDeCorrida(false), { senal: senal })
-    .then(d => {
-      if (!sigueVigente(apertura)) return;
-      ubicarAvisos(d.avisos || []); estado.avisosMotivo = d.motivo_ausencia || "";
-      estado.avisosFallo = ""; render();
-    })
-    .catch(e => {
-      if (!sigueVigente(apertura)) return;
-      anotarFalloDeAvisos(e); render();
-    })));
+  cuandoHayaGrafico(() => pedirAvisos(ruta, apertura, senal));
 
   /* Y lo que la fuente declara por su cuenta, que es otra ruta porque es otra
      clase de hecho. Se pide una vez por sesion ---son ciento cincuenta y ocho
