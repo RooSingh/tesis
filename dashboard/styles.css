@@ -186,6 +186,21 @@
      tomada en el guion con su motivo, y no hay nada que pueda revertirla. */
   [data-fuera="si"] { display: none !important; }
 
+  /* Y `hidden` TIENE QUE OCULTAR, QUE ES LO UNICO QUE ESE ATRIBUTO HACE.
+     El navegador lo aplica con `[hidden] { display: none }` en su hoja de
+     usuario, y **cualquier** regla de esta hoja con la misma especificidad le
+     gana: `.boton { display: flex }` alcanza. El resultado es un elemento que
+     el guion cree escondido y que se ve.
+
+     Se veian dos: el boton de etapa ---una pastilla vacia de 30 px entre
+     «Abrir sesion guardada» y «Comparar pilotos», que solo tiene texto cuando
+     la sesion guarda mas de una adquisicion--- y la franja «a quien escuchar»,
+     1.480 px de alto 27 sobre la cabina. Los dos con `hidden` puesto.
+
+     Es la misma trampa que la regla de arriba: lo que decide esconder algo no
+     puede depender de que regla este escrita despues. */
+  [hidden] { display: none !important; }
+
   /* CINCO CELDAS, Y NO SE MUEVEN CUANDO CAMBIAN LAS CIFRAS.
      Identidad, puesto, vuelta, cronometro y diferencia son cinco hechos de
      distinta naturaleza y cada uno tiene su celda: antes «Vehículo» cargaba con
@@ -441,6 +456,38 @@
   .nota code { font-family: var(--cifra); font-size: .76rem; color: var(--acento); }
   .ancho-total { grid-column: 1 / -1; }
   .tablero.cierre { margin-top: 30px; }
+
+  /* ---------- condiciones de uso de las fuentes ----------
+     NO ES UN PANEL. Los instrumentos tienen superficie, borde y sombra porque
+     cada uno es una lectura separada que se compara con las de al lado. Esto
+     no se compara con nada: se lee una vez. Con la caja de un instrumento
+     competia por atencion con las mediciones, que es justo lo contrario de lo
+     que un aviso al pie tiene que hacer.
+
+     LA LINEA DE ARRIBA ES TODO EL SEPARADOR QUE HACE FALTA. Marca que lo que
+     sigue ya no es el tablero, sin agregar un bloque mas. */
+  .pie-legal {
+    margin-top: 44px; padding-top: 22px; border-top: 1px solid var(--linea);
+    color: var(--texto-tenue);
+  }
+  .pie-legal h2 {
+    margin: 0 0 4px; font-family: var(--titulo); font-size: .82rem; font-weight: 700;
+    letter-spacing: .1em; text-transform: uppercase; color: var(--texto-medio);
+  }
+  .pie-legal .nota { max-width: 104ch; }
+  /* Tres bloques de ancho parejo: ninguna fuente es la principal, y un ancho
+     distinto diria que si. Se acomodan solos porque `auto-fit` reparte lo que
+     hay: tres columnas en pantalla ancha, dos al achicar, una en el telefono,
+     sin una consulta de medios por cada escalon. */
+  .fuentes-legal {
+    display: grid; gap: 20px 28px; margin-top: 20px;
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr));
+  }
+  .fuentes-legal h3 { margin: 0 0 8px; }
+  .fuentes-legal p {
+    margin: 0; font-size: .78rem; line-height: 1.6; color: var(--texto-tenue);
+  }
+  .fuentes-legal b { color: var(--texto-medio); font-weight: 600; }
 
   /* ---------- la traza, como bloque principal ---------- */
   .panel-traza { order: -1; }

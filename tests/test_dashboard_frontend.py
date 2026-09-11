@@ -11,6 +11,7 @@ from pathlib import Path
 RAIZ = Path(__file__).resolve().parents[1]
 APP = RAIZ / "dashboard" / "app.js"
 ESTILOS = RAIZ / "dashboard" / "styles.css"
+INDICE = RAIZ / "dashboard" / "index.html"
 
 
 class DashboardFrontendTests(unittest.TestCase):
@@ -79,6 +80,19 @@ class DashboardFrontendTests(unittest.TestCase):
         )
         self.assertIn("grid-template-columns: repeat(4, minmax(0, 1fr));", estilos)
 
+    def test_hidden_esconde_y_nada_lo_puede_revertir(self) -> None:
+        """`hidden` es lo unico que ese atributo hace, y esta hoja lo anulaba.
+
+        El navegador lo aplica con `[hidden] { display: none }` en su hoja de
+        usuario, y cualquier regla de esta con la misma especificidad le gana:
+        `.boton { display: flex }` alcanza. Medido en el navegador, dos
+        elementos con `hidden` puesto se veian igual: el boton de etapa ---una
+        pastilla vacia de 30 px entre dos botones--- y la franja «a quien
+        escuchar», de 1.480 px por 27.
+        """
+        estilos = ESTILOS.read_text(encoding="utf-8")
+        self.assertIn("[hidden] { display: none !important; }", estilos)
+
     def test_un_panel_fuera_se_esconde_y_nada_lo_puede_revertir(self) -> None:
         """La regla que saca un panel no puede depender del orden del archivo.
 
@@ -145,6 +159,78 @@ class DashboardFrontendTests(unittest.TestCase):
             estilos,
         )
         self.assertEqual(sobrantes, [], sobrantes)
+
+    def _fuentes_declaradas(self) -> list[str]:
+        """Las claves cortas de `FUENTES`, que es la tabla que manda."""
+        codigo = APP.read_text(encoding="utf-8")
+        inicio = codigo.index("const FUENTES = {")
+        bloque = codigo[inicio:codigo.index("\n};", inicio)]
+        return re.findall(r"^  (\w+): \{$", bloque, re.MULTILINE)
+
+    def test_toda_fuente_que_el_tablero_ofrece_declara_sus_condiciones(self) -> None:
+        """El pie legal se compara contra `FUENTES`, no contra una lista escrita.
+
+        El informe analiza la licencia de las tres fuentes, pero el informe no
+        viaja con el tablero: esta pagina se publica sola. Y el riesgo no es que
+        el pie se escriba mal hoy, sino que manana entre una cuarta fuente y
+        nadie se acuerde de este archivo. Por eso la lista no se copia: se lee
+        de `FUENTES` y se exige un bloque por cada una.
+        """
+        fuentes = self._fuentes_declaradas()
+        self.assertEqual(sorted(fuentes), ["can", "f1", "openf1"], fuentes)
+
+        indice = INDICE.read_text(encoding="utf-8")
+        bloques = re.findall(r'data-fuente-legal="([^"]+)"', indice)
+        self.assertEqual(sorted(bloques), sorted(fuentes),
+                         f"declaradas {fuentes}, con condiciones {bloques}")
+
+    def test_el_pie_nombra_cada_fuente_como_la_nombra_el_tablero(self) -> None:
+        """Un bloque que nombra una fuente que ya no se llama asi no ampara nada.
+
+        `ETIQUETA_FUENTE` es el nombre que el tablero muestra. Si cambia y el
+        pie se queda con el viejo, el aviso queda hablando de un modo que el
+        usuario no ve por ningun lado.
+        """
+        codigo = APP.read_text(encoding="utf-8")
+        linea = re.search(r"const ETIQUETA_FUENTE = \{([^}]*)\}", codigo)
+        self.assertIsNotNone(linea)
+        etiquetas = dict(re.findall(r'(\w+): "([^"]+)"', linea.group(1)))
+        self.assertEqual(sorted(etiquetas), sorted(self._fuentes_declaradas()))
+
+        indice = INDICE.read_text(encoding="utf-8")
+        for corta, nombre in etiquetas.items():
+            bloque = re.search(
+                r'data-fuente-legal="' + corta + r'">(.*?)</section>',
+                indice, re.DOTALL)
+            self.assertIsNotNone(bloque, corta)
+            self.assertIn(
+                f'<span class="pastilla-fuente {corta}">{nombre}</span>',
+                bloque.group(1), corta)
+
+    def test_el_pie_legal_no_depende_de_la_fuente_abierta(self) -> None:
+        """Las condiciones son de las tres fuentes, siempre, y el guion no las toca.
+
+        El tablero cambia de fuente sin recargar. Un aviso que apareciera y
+        desapareciera con el modo elegido se leeria como una nota de la sesion
+        ---«esto vale para lo que estas mirando ahora»--- y no como lo que es.
+        Ademas dejaria de existir si el guion no llega a correr.
+        """
+        indice = INDICE.read_text(encoding="utf-8")
+        # Se toma la etiqueta de apertura entera, no solo lo que encierra: la
+        # marca que ataria el pie a una fuente iria justamente ahi. Y se busca
+        # por la clase y no por la etiqueta exacta, para que agregarle un
+        # atributo legitimo ---un `role`, por ejemplo--- no reviente la prueba
+        # con un error en lugar de un fallo.
+        pie = re.search(r'<footer[^>]*class="pie-legal".*?</footer>',
+                        indice, re.DOTALL)
+        self.assertIsNotNone(pie)
+        pie = pie.group(0)
+        for marca in ("hidden", "data-fuera", "capa-ausente", "data-necesita"):
+            self.assertNotIn(marca, pie, marca)
+
+        codigo = APP.read_text(encoding="utf-8")
+        for marca in ("pie-legal", "fuente-legal", "fuentes-legal"):
+            self.assertNotIn(marca, codigo, marca)
 
     def test_can_mapea_las_trece_senales_reales(self) -> None:
         codigo = APP.read_text(encoding="utf-8")

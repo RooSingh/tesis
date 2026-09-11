@@ -417,10 +417,16 @@ function enTandas(lista, cuantas, hacer) {
    un motivo escrito para OpenF1 y un consejo de reintentar que no podia
    funcionar: la fuente no va a declarar distancia por intentarlo otra vez.
 
-   Otros paneles ya se cuidaban ---la comparacion se apaga con `fuente !== "f1"`,
-   el trazado dice «recorrido reconstruido»--- y este no. Ahora hay una sola
-   declaracion de que fuentes tienen el eje, la compuerta la mira antes de
-   pedir, y el reproductor dice por que no hay reproduccion en vez de fallar.
+   Otros paneles ya se cuidaban ---la comparacion se apagaba con
+   `fuente !== "f1"`, el trazado dice «recorrido reconstruido»--- y este no.
+   Ahora hay una sola declaracion de que fuentes tienen el eje, la compuerta la
+   mira antes de pedir, y el reproductor dice por que no hay reproduccion en vez
+   de fallar.
+
+   Aquella guarda de la comparacion ya no esta, y vale decir por que: apagarla
+   por fuente era cuidar lo correcto con el criterio equivocado. Lo que la
+   comparacion necesita son dos vehiculos con telemetria, y eso no depende de
+   quien la publique; el eje, cuando no hay metro, lo resuelve `ejeVigente`.
 
    QUE NO ES ESTO. No se inventa una distancia integrando la velocidad para que
    el eje aparezca. Se podria ---el recorrido del bus ya se reconstruye asi y se
@@ -794,6 +800,19 @@ function loQueSeSabeDelVehiculo(a, conSerie, senales) {
     clase: a.propio ? "propio" : "senales",
     texto: (a.propio ? "propio · " : "") + cifra(senales, 0) + " señales",
   };
+}
+
+/* COMPARAR SE HABILITA POR LO QUE HAY, NO POR DE DONDE VIENE.
+   La condicion llevaba `fuente !== "f1"`, de cuando comparar era cosa del
+   simulador: sobre OpenF1 el boton quedaba apagado con tres pilotos cargados y
+   telemetria de los tres ---310.881, 310.881 y 310.863 filas---. Lo que hace
+   falta para comparar son dos vehiculos, y de donde vengan no cambia eso.
+
+   Sale de la condicion en linea para poder ejercerla: dentro del pintado solo
+   se la podia comprobar buscando su texto en el archivo, y este codigo tiene
+   los comentarios llenos de las formas que se estan buscando. */
+function sePuedeComparar() {
+  return estadoSesion !== "vacio" && AUTOS.length >= 2;
 }
 
 function identidadDeVehiculo(clave) {
@@ -1588,7 +1607,7 @@ function pintarCiclo() {
   acc.textContent = (estadoSesion === "vivo" || estadoSesion === "escuchando")
     ? f.accionVivo : f.accion;
   document.getElementById("btn-limpiar").disabled = estadoSesion === "vacio";
-  document.getElementById("btn-comparar").disabled = estadoSesion === "vacio" || fuente !== "f1" || AUTOS.length < 2;
+  document.getElementById("btn-comparar").disabled = !sePuedeComparar();
 }
 
 /* ---------------- alcance y traza ---------------- */
@@ -6389,12 +6408,23 @@ let modoDetalle = false;
 function abrirComparacion() {
   modoDetalle = false;
   if (seleccion.size < 2) seleccion = new Set(AUTOS.slice(0, 2).map(a => a.id));
-  if (fuente !== "f1" || seleccion.size < 2) {
-    avisar("Esta comparación requiere al menos dos vehículos F1 25 con distancia medida.", true);
+  /* LO QUE HACE FALTA PARA COMPARAR SON DOS VEHICULOS, NO UNA FUENTE.
+     Decia `fuente !== "f1"` y avisaba «requiere al menos dos vehiculos F1 25
+     con distancia medida», que a esta altura es falso dos veces: la vista
+     dibuja contra el reloj desde que existe el eje temporal, y OpenF1 trae tres
+     pilotos con telemetria. Era la tercera copia de la misma guarda por fuente
+     ---el boton, esta, y la que pedia los datos--- y las tres decidian sobre la
+     procedencia en vez de sobre el dato. */
+  if (seleccion.size < 2) {
+    avisar("Comparar necesita al menos dos vehículos con telemetría. " +
+           "Esta sesión trae uno.", true);
     return;
   }
   document.getElementById("velo-comparacion").dataset.abierto = "si";
-  document.querySelector("#velo-comparacion .cab-comparacion h3").firstChild.textContent = "Comparación por distancia";
+  /* Y el titulo dice el eje que se esta usando, no el del simulador. */
+  document.querySelector("#velo-comparacion .cab-comparacion h3").firstChild.textContent =
+    ejeVigente() === "distancia" ? "Comparación por distancia"
+                                 : "Comparación contra el reloj";
   pintarElectorDelEje(); pintarMetricas(); pintarPilotosComparacion(); dibujarComparacion();
   document.getElementById("btn-cerrar-comparacion").focus();
 }
@@ -6724,7 +6754,7 @@ function pintarEligePilotos() {
 
 function pintarPilotosComparacion() {
   pintarEligePilotos();
-  const ids = [...seleccion].slice(0, modoDetalle ? 1 : 4);
+  const ids = idsParaComparar();
   if (!ids.length) {
     document.getElementById("pilotos-comparacion").innerHTML =
       '<span style="color:var(--texto-tenue);font-size:.82rem">Ningún vehículo seleccionado.</span>';
@@ -6735,11 +6765,7 @@ function pintarPilotosComparacion() {
     const a = AUTOS.find(x => x.id === id);
     if (!a) return "";
     const numeros = vueltasParaComparar();
-    const puntos = numeros.reduce((total, numero) => {
-      const bloque = estado.series[numero];
-      const veh = bloque && bloque.vehiculos && bloque.vehiculos[id];
-      return total + (veh && veh.distancia_m ? veh.distancia_m.length : 0);
-    }, 0);
+    const puntos = muestrasQueAporta(id, numeros);
     const mejor = puntos ? cifra(puntos, 0) + " puntos" : "sin datos";
     const dif = alcanceComparacion === "una" ? "vuelta " + vueltaElegida : numeros.length + " vueltas consultadas";
     return '<div class="tarjeta-piloto" style="border-left-color:' + a.color + '">' +
@@ -6759,6 +6785,31 @@ function pintarPilotosComparacion() {
 }
 
 let arrastre = null;
+
+/* A QUIENES SE COMPARA. Lo decidian dos sitios con reglas distintas: el dibujo
+   tomaba los primeros cuatro de la seleccion y la leyenda **uno solo** en la
+   vista de detalle. De modo que la pantalla mostraba tres lineas y la leyenda
+   nombraba a uno: quien mira no tenia como saber de quien era cada color.
+
+   El detalle es de una señal, no de un piloto. Que se vea una sola magnitud no
+   dice nada sobre cuantos vehiculos se estan comparando en ella. */
+/* CUANTAS MUESTRAS APORTA UN VEHICULO, SOBRE EL EJE QUE EL BLOQUE DECLARA.
+   Se contaba `distancia_m`, que OpenF1 no tiene: su abscisa es el reloj del
+   tramo. Sobre tres pilotos con cuatrocientas una muestras cada uno, la leyenda
+   decia «sin datos» al lado de sus propias lineas dibujadas. Es la misma regla
+   que `_armarSerieDeCanal` ya declara: distancia si la hay, reloj si no. */
+function muestrasQueAporta(id, numeros) {
+  return (numeros || []).reduce((total, numero) => {
+    const bloque = estado.series[numero];
+    const veh = bloque && bloque.vehiculos && bloque.vehiculos[id];
+    const eje = veh && (veh.distancia_m || veh.tiempo_s);
+    return total + (eje ? eje.length : 0);
+  }, 0);
+}
+
+function idsParaComparar() {
+  return [...seleccion].slice(0, 4);
+}
 
 function vueltasParaComparar() {
   return alcanceComparacion === "carrera"
@@ -6902,7 +6953,7 @@ const ZONA_CON_ROTULO_PX = 26;
    que alcance, que dominio y que segmentos--- y las dos la usan. No quedan dos
    cuentas del dominio que puedan separarse, porque no queda mas que una. */
 function vistaDeComparacion() {
-  const ids = [...seleccion].slice(0, 4);
+  const ids = idsParaComparar();
   /* Las que la fuente **trajo con dato**, no las que se espera que tenga. La
      lamina filtraba por `m.fuentes`, de modo que podia reservar un panel para
      un canal que en pantalla no estaba. */
