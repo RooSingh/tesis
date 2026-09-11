@@ -121,6 +121,9 @@ def main() -> int:
                    help="segundos de corrida limpia antes de provocar la falla")
     p.add_argument("--dura", type=float, default=8.0,
                    help="cuanto dura la falla")
+    p.add_argument("--por-segundo", type=float, default=2000.0,
+                   help="ritmo del publicador. Sin acotarlo, la corrida limpia "
+                        "ya pierde y ninguna falla se puede atribuir.")
     p.add_argument("--json", action="store_true")
     args = p.parse_args()
 
@@ -164,7 +167,8 @@ def main() -> int:
 
     publicador = subprocess.Popen(
         [sys.executable, str(RAIZ / "scripts" / "republicar_captura.py"),
-         str(args.captura), "--por-broker"],
+         str(args.captura), "--por-broker",
+         "--por-segundo", str(args.por_segundo)],
         stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
 
     linea_tiempo = []

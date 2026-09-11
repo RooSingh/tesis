@@ -270,7 +270,24 @@ def escribir(ruta: Path, inicio_utc: str, sha256: str | None,
 
 
 def publicar(ruta: Path, inicio_utc: str, sha256: str | None,
-             faltantes: set[str], total: int, run_id: str) -> int:
+             faltantes: set[str], total: int, run_id: str,
+             por_segundo: float = 0.0) -> int:
+    """Publica por el intermediario, opcionalmente a un ritmo acotado.
+
+    POR QUE EXISTE EL LIMITE DE RITMO. Sin el, este camino publica mas rapido de
+    lo que el consumidor escribe, el intermediario descarta, y **la corrida sin
+    ninguna falla ya pierde**. Medido el 2026-09-11 sobre una captura de 404.972
+    filas: llegaron 100.490 una vez y 271.982 otra, con la misma captura y el
+    mismo equipo. Esa varianza es el aviso de arriba hecho numero.
+
+    Para rellenar no importa ---se reintenta y `ON CONFLICT DO NOTHING` hace el
+    resto---. Importa para **medir**: sin una corrida limpia que pierda cerca de
+    cero no se le puede atribuir a una falla provocada la diferencia de filas,
+    porque la diferencia se pierde dentro de la variacion normal.
+
+    Cero deja el comportamiento de siempre: publicar tan rapido como se pueda.
+    """
+
     import paho.mqtt.client as mqtt
 
     cliente = mqtt.Client()
@@ -309,6 +326,15 @@ def publicar(ruta: Path, inicio_utc: str, sha256: str | None,
                 mensaje["metadata"]["extra"]["replay_seq"] = mensaje_seq
                 ultimo = cliente.publish(MQTT_REPLAY_TOPIC, json.dumps(mensaje), qos=1)
                 publicados += 1
+                # EL RITMO SE MIDE CONTRA EL COMIENZO, NO ENTRE MENSAJES. Un
+                # `sleep` fijo por mensaje acumula el error de cada espera y el
+                # ritmo real termina siendo menor que el pedido. Contra el
+                # comienzo, lo que se atrasa un mensaje lo recupera el siguiente.
+                if por_segundo > 0:
+                    debido = publicados / por_segundo
+                    atraso = debido - (time.perf_counter() - inicio)
+                    if atraso > 0:
+                        time.sleep(atraso)
                 # Se confirma de a bloques y no mensaje por mensaje: alcanza
                 # para que la cola del cliente no crezca sin limite, que es el
                 # motivo real de esperar.
@@ -719,6 +745,12 @@ def main() -> None:
                         help="Escribe los rivales de la sesion, diferidos. "
                              "Es el complemento de capturar en vivo solo el "
                              "vehiculo propio.")
+    parser.add_argument("--por-segundo", type=float, default=0.0,
+                        help="Acota el ritmo de publicacion, en mensajes por "
+                             "segundo. Cero ---por omision--- publica tan "
+                             "rapido como se pueda. Solo aplica a --por-broker, "
+                             "y sirve para medir: sin una corrida limpia que no "
+                             "pierda, ninguna perdida se puede atribuir.")
     parser.add_argument("--vehiculos", default=None,
                         help="Indices separados por coma ---por ejemplo "
                              "`13,0,3,11,7`--- para escribir solo esos rivales "
@@ -828,7 +860,7 @@ def main() -> None:
                   "para rellenar.\n")
             inicio = time.perf_counter()
             publicados = publicar(args.captura, inicio_utc, meta.get("sha256"),
-                                  faltantes, total, run_id)
+                                  faltantes, total, run_id, args.por_segundo)
             transcurrido = time.perf_counter() - inicio
             print(f"\npublicados : {publicados:,}")
             print(f"duracion   : {transcurrido / 60:.1f} min "
