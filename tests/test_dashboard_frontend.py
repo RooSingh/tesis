@@ -79,6 +79,19 @@ class DashboardFrontendTests(unittest.TestCase):
         )
         self.assertIn("grid-template-columns: repeat(4, minmax(0, 1fr));", estilos)
 
+    def test_hidden_esconde_y_nada_lo_puede_revertir(self) -> None:
+        """`hidden` es lo unico que ese atributo hace, y esta hoja lo anulaba.
+
+        El navegador lo aplica con `[hidden] { display: none }` en su hoja de
+        usuario, y cualquier regla de esta con la misma especificidad le gana:
+        `.boton { display: flex }` alcanza. Medido en el navegador, dos
+        elementos con `hidden` puesto se veian igual: el boton de etapa ---una
+        pastilla vacia de 30 px entre dos botones--- y la franja «a quien
+        escuchar», de 1.480 px por 27.
+        """
+        estilos = ESTILOS.read_text(encoding="utf-8")
+        self.assertIn("[hidden] { display: none !important; }", estilos)
+
     def test_un_panel_fuera_se_esconde_y_nada_lo_puede_revertir(self) -> None:
         """La regla que saca un panel no puede depender del orden del archivo.
 

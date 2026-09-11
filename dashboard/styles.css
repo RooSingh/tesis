@@ -186,6 +186,21 @@
      tomada en el guion con su motivo, y no hay nada que pueda revertirla. */
   [data-fuera="si"] { display: none !important; }
 
+  /* Y `hidden` TIENE QUE OCULTAR, QUE ES LO UNICO QUE ESE ATRIBUTO HACE.
+     El navegador lo aplica con `[hidden] { display: none }` en su hoja de
+     usuario, y **cualquier** regla de esta hoja con la misma especificidad le
+     gana: `.boton { display: flex }` alcanza. El resultado es un elemento que
+     el guion cree escondido y que se ve.
+
+     Se veian dos: el boton de etapa ---una pastilla vacia de 30 px entre
+     «Abrir sesion guardada» y «Comparar pilotos», que solo tiene texto cuando
+     la sesion guarda mas de una adquisicion--- y la franja «a quien escuchar»,
+     1.480 px de alto 27 sobre la cabina. Los dos con `hidden` puesto.
+
+     Es la misma trampa que la regla de arriba: lo que decide esconder algo no
+     puede depender de que regla este escrita despues. */
+  [hidden] { display: none !important; }
+
   /* CINCO CELDAS, Y NO SE MUEVEN CUANDO CAMBIAN LAS CIFRAS.
      Identidad, puesto, vuelta, cronometro y diferencia son cinco hechos de
      distinta naturaleza y cada uno tiene su celda: antes «Vehículo» cargaba con

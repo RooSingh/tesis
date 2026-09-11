@@ -148,7 +148,7 @@ const NOMBRES = [
   "continuidadDeVuelta", "_umbralDeVuelta", "tiempoEfectivoEntre", "hayCorteEntre",
   "_antesDe", "valorContinuoEn", "valorEscalonadoEn", "abscisaContinua",
   "loQueSeSabeDelVehiculo", "faltanVehiculosPorAprender", "nombreCortoDeVehiculo",
-  "muestrasQueAporta", "idsParaComparar",
+  "muestrasQueAporta", "idsParaComparar", "sePuedeComparar",
   "poblarPropio",
   "relojDeVuelta", "_armarRelojDeVuelta", "_tramosContinuos", "_tramosDeMuestras",
   "tiempoDePresentacion", "recortarConBordes",
@@ -239,7 +239,7 @@ const sacadas = new Function(
 const {
   textoSeguro, identidadDeVehiculo, anotarParrillas, parrillaVigente,
   loQueSeSabeDelVehiculo, faltanVehiculosPorAprender, nombreCortoDeVehiculo,
-  muestrasQueAporta, idsParaComparar,
+  muestrasQueAporta, idsParaComparar, sePuedeComparar,
   poblarPropio,
   renombrarAutos, armarAutos, tintaDeVehiculo,
   secundarioDeVehiculo, vehiculosConTelemetriaGuardada, autoPropio,
@@ -2891,6 +2891,35 @@ prueba("openf1 saca lo que no publica y se queda con lo que si", () => {
     assert.ok(!(escondidos.openf1 || []).includes(panel),
               "openf1 sostiene «" + panel + "» y lo esta sacando de la vista");
   });
+});
+
+prueba("comparar se habilita por lo que hay, no por de donde viene", () => {
+  /* La condicion llevaba `fuente !== "f1"`, de cuando comparar era cosa del
+     simulador: sobre OpenF1 el boton quedaba apagado con tres pilotos cargados
+     y telemetria de los tres. Lo que hace falta son dos vehiculos. */
+  const antesFuente = globalThis.fuente, antesEstado = globalThis.estadoSesion;
+  const antesAutos = globalThis.AUTOS;
+  try {
+    globalThis.estadoSesion = "cargado";
+    globalThis.AUTOS = [{ id: "a" }, { id: "b" }, { id: "c" }];
+    ["openf1", "can", "f1"].forEach(f => {
+      globalThis.fuente = f;
+      assert.strictEqual(sePuedeComparar(), true,
+        "con tres vehiculos no se puede comparar en " + f);
+    });
+    /* Con uno no hay con quien comparar, venga de donde venga. */
+    globalThis.AUTOS = [{ id: "a" }];
+    globalThis.fuente = "f1";
+    assert.strictEqual(sePuedeComparar(), false);
+    /* Y sin sesion abierta tampoco, aunque queden vehiculos de la anterior. */
+    globalThis.AUTOS = [{ id: "a" }, { id: "b" }];
+    globalThis.estadoSesion = "vacio";
+    assert.strictEqual(sePuedeComparar(), false);
+  } finally {
+    globalThis.fuente = antesFuente;
+    globalThis.estadoSesion = antesEstado;
+    globalThis.AUTOS = antesAutos;
+  }
 });
 
 prueba("las muestras se cuentan sobre el eje que el bloque declara", () => {
