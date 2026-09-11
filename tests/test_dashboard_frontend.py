@@ -31,6 +31,32 @@ class DashboardFrontendTests(unittest.TestCase):
         self.assertNotIn("d.sesiones_cerradas", codigo)
         self.assertNotIn("d.filas_borradas", codigo)
 
+    def test_el_piso_de_puntos_del_tablero_es_el_que_la_api_acepta(self) -> None:
+        """Dos pisos para lo mismo, y el del cliente mas bajo que el del servidor.
+
+        `/series` y `/series-tiempo` declaran `ge=50`. El tablero tenia 20, de
+        modo que con el reparto del presupuesto podia construir por su cuenta
+        una consulta que la API rechaza: a partir de 49 vueltas el pedido cae
+        por debajo de cincuenta. Con las 52 de Silverstone 2025 pedia 46 y la
+        vista de carrera entera fallaba con «Input should be greater than or
+        equal to 50».
+
+        Se comprueba contra lo que la ruta declara y no contra un 50 escrito
+        aca: copiar una cifra sin comprobarla es como no tenerla.
+        """
+        api = (RAIZ / "backend" / "api_sesion.py").read_text(encoding="utf-8")
+        pisos = {
+            int(m)
+            for m in re.findall(r"puntos:\s*Annotated\[int,\s*Query\(ge=(\d+)", api)
+        }
+        self.assertTrue(pisos, "ninguna ruta declara un piso para `puntos`")
+        codigo = APP.read_text(encoding="utf-8")
+        piso = re.search(r"const PUNTOS_MINIMOS_POR_VUELTA = (\d+);", codigo)
+        self.assertIsNotNone(piso, "no esta el piso de puntos del tablero")
+        self.assertGreaterEqual(
+            int(piso.group(1)), max(pisos),
+            "el tablero puede pedir menos puntos de los que la API acepta")
+
     def test_no_hay_fallback_de_series_entre_vehiculos(self) -> None:
         codigo = APP.read_text(encoding="utf-8")
         self.assertNotIn("bloque.vehiculos[claveVehiculoPropio()]", codigo)
