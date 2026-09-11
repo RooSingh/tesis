@@ -201,12 +201,33 @@ prueba("el marcador no se redondea a un escalon mas grande que un cuadro", () =>
 prueba("una posicion estimada por tiempo se declara como tal", () => {
   /* Un coche no recorre el circuito a ritmo parejo: la fraccion temporal de la
      vuelta no es la fraccion recorrida, y usarla sin decirlo presenta una
-     suposicion como una medicion. */
-  const i = fuente.indexOf("const medida = enPistaAhora && enPistaAhora[clave] !== undefined;");
-  assert.ok(i > 0, "no se distingue una posicion medida de una estimada");
-  const bloque = fuente.slice(i, i + 400);
-  assert.ok(bloque.indexOf("dataset.estimada") !== -1,
-    "la marca no declara cuando su posicion es estimada");
+     suposicion como una medicion.
+
+     ESTO SE ANCLABA EN UN RENGLON Y SE ROMPIO AL AGREGAR LA SEGUNDA VIA. Decia
+     `indexOf("const medida = enPistaAhora && ...")` y miraba los cuatrocientos
+     caracteres siguientes, de modo que medía **donde estaba escrita** la
+     decision y no cual era. Ahora hay dos maneras de ubicar midiendo ---la
+     distancia de vuelta, y las coordenadas que la fuente publica--- y la
+     comprobacion es que la marca se declare estimada salvo que alguna de las
+     dos haya funcionado. */
+  const i = fuente.indexOf("grupo.dataset.estimada =");
+  assert.ok(i > 0, "la marca no declara cuando su posicion es estimada");
+
+  /* La asignacion misma tiene que llevar la condicion. Mirarla «por ahi cerca»
+     dejaba pasar un `dataset.estimada = "no"` fijo con la variable declarada
+     tres renglones mas arriba: la mutacion sobrevivia. */
+  const asignacion = fuente.slice(i, fuente.indexOf(";", i) + 1);
+  assert.ok(/seUbicoMidiendo\s*\?/.test(asignacion),
+    "la marca se declara sin mirar si se ubico midiendo: " + asignacion);
+  const origen = fuente.indexOf("const seUbicoMidiendo =");
+  assert.ok(origen > 0, "no esta la decision de si se ubico midiendo");
+  const cuenta = fuente.slice(origen, origen + 120);
+  assert.ok(/medida/.test(cuenta) && /medidaDeVerdad/.test(cuenta),
+    "la decision ignora una de las dos formas de ubicar midiendo: " + cuenta);
+
+  /* Y lo dice con palabras, no solo con un atributo. */
+  assert.ok(/posición estimada por tiempo, no medida/.test(fuente),
+    "la marca estimada no lo dice en su etiqueta accesible");
 });
 
 if (process.exitCode) {

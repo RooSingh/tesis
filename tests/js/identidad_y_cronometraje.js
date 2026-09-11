@@ -147,6 +147,7 @@ const NOMBRES = [
   "esCanalEscalonado", "_cacheTemporal", "serieTemporal", "_serieTemporalCruda",
   "continuidadDeVuelta", "_umbralDeVuelta", "tiempoEfectivoEntre", "hayCorteEntre",
   "_antesDe", "valorContinuoEn", "valorEscalonadoEn", "abscisaContinua",
+  "loQueSeSabeDelVehiculo", "faltanVehiculosPorAprender",
   "relojDeVuelta", "_armarRelojDeVuelta", "_tramosContinuos", "_tramosDeMuestras",
   "tiempoDePresentacion", "recortarConBordes",
   "serieDeCanal", "serieAcumuladaDeCanal", "tramoAcumuladoDeVuelta",
@@ -235,6 +236,7 @@ const sacadas = new Function(
 
 const {
   textoSeguro, identidadDeVehiculo, anotarParrillas, parrillaVigente,
+  loQueSeSabeDelVehiculo, faltanVehiculosPorAprender,
   renombrarAutos, armarAutos, tintaDeVehiculo,
   secundarioDeVehiculo, vehiculosConTelemetriaGuardada, autoPropio,
   camposDeIdentidad, quienConduce,
@@ -2885,6 +2887,51 @@ prueba("openf1 saca lo que no publica y se queda con lo que si", () => {
     assert.ok(!(escondidos.openf1 || []).includes(panel),
               "openf1 sostiene «" + panel + "» y lo esta sacando de la vista");
   });
+});
+
+prueba("cada vehiculo se rotula por lo que tiene, no por el papel que cumple", () => {
+  /* EL DEFECTO. La lista decia «propio · N señales» para uno y «cronometraje»
+     para todos los demas. Es cierto en la simulacion ---la telemetria privada
+     es la del coche que se conduce, y de los rivales llega posicion--- y falso
+     en OpenF1, donde los tres pilotos cargados traen las mismas nueve señales:
+     el rotulo decia «cronometraje» sobre dos vehiculos con 310.881 filas. */
+  const conSerie = ["a", "b"];
+  assert.deepStrictEqual(
+    loQueSeSabeDelVehiculo({ id: "a", propio: true }, conSerie, 9),
+    { clase: "propio", texto: "propio · 9 señales" });
+  assert.deepStrictEqual(
+    loQueSeSabeDelVehiculo({ id: "b", propio: false }, conSerie, 9),
+    { clase: "senales", texto: "9 señales" });
+  /* Y de quien solo aporta posicion se sigue diciendo lo que hay. */
+  assert.deepStrictEqual(
+    loQueSeSabeDelVehiculo({ id: "c", propio: false }, conSerie, 9),
+    { clase: "senales", texto: "cronometraje" });
+});
+
+prueba("el propio se rotula por sus señales aunque la vuelta no haya llegado", () => {
+  /* Es el que la sesion declara mas muestreado: tiene serie por definicion.
+     Sin esto el rotulo parpadeaba a «cronometraje» mientras la vuelta viajaba. */
+  assert.deepStrictEqual(
+    loQueSeSabeDelVehiculo({ id: "a", propio: true }, [], 113),
+    { clase: "propio", texto: "propio · 113 señales" });
+});
+
+prueba("se aprende quienes son mientras falten, y despues no", () => {
+  /* El catalogo declara cuantos vehiculos con telemetria tiene la sesion. */
+  globalThis.estado.abierta = { vehiculos: 3 };
+  globalThis.AUTOS = [{ id: "a" }];
+  assert.strictEqual(faltanVehiculosPorAprender(), true);
+  globalThis.AUTOS = [{ id: "a" }, { id: "b" }, { id: "c" }];
+  assert.strictEqual(faltanVehiculosPorAprender(), false);
+  /* Con uno declarado ---la simulacion y el bus--- no hay nada que aprender:
+     los rivales de F1 25 viajan por posiciones, no por telemetria. */
+  globalThis.estado.abierta = { vehiculos: 1 };
+  globalThis.AUTOS = [];
+  assert.strictEqual(faltanVehiculosPorAprender(), false);
+  /* Y una sesion que no declara cuantos son no dispara consultas abiertas. */
+  globalThis.estado.abierta = {};
+  assert.strictEqual(faltanVehiculosPorAprender(), false);
+  globalThis.AUTOS = [];
 });
 
 prueba("lo que la fuente publica y el tablero todavia no trae no se declara ausente", () => {

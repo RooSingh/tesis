@@ -764,6 +764,24 @@ function vehiculosConTelemetriaGuardada() {
    `etiqueta` es lo que entra en la marca del circuito, donde hay sitio para
    tres letras; `completa` es lo que se lee en voz alta y lo que va al titulo
    accesible. Las dos salen del mismo sitio para que no puedan discrepar. */
+/* QUE SE TIENE DE ESTE VEHICULO, Y NO QUE PAPEL CUMPLE.
+   El rotulo de la lista decia «propio · N señales» para uno y «cronometraje»
+   para todos los demas. Es cierto en la simulacion ---la telemetria privada es
+   la del coche que se conduce, y de los rivales llega posicion--- y falso en
+   OpenF1, donde los tres pilotos cargados traen las mismas nueve señales: el
+   rotulo decia «cronometraje» sobre dos vehiculos con 310.881 filas cada uno.
+
+   Se dice lo que hay. El propio tiene serie por definicion ---es el que la
+   sesion declara mas muestreado--- y de los demas se mira si la trajeron. */
+function loQueSeSabeDelVehiculo(a, conSerie, senales) {
+  const tiene = a.propio || (conSerie || []).indexOf(a.id) !== -1;
+  if (!tiene) return { clase: "senales", texto: "cronometraje" };
+  return {
+    clase: a.propio ? "propio" : "senales",
+    texto: (a.propio ? "propio · " : "") + cifra(senales, 0) + " señales",
+  };
+}
+
 function identidadDeVehiculo(clave) {
   const indice = claveCorta(clave);
   const parrilla = parrillaVigente();
@@ -1033,7 +1051,17 @@ const SENAL_DE = {
    las trae, el panel escribe una raya. */
 const LECTURAS = [
   { id: "cronometro", fuentes: ["f1"] },
-  { id: "posicion", fuentes: ["f1"] }
+  { id: "posicion", fuentes: ["f1"] },
+  /* LAS COORDENADAS MEDIDAS, PARA PODER UBICAR A CADA VEHICULO DE VERDAD.
+     OpenF1 no tiene metro de vuelta, asi que `/posiciones` ---que ubica sobre
+     un eje de metros--- contesta 422 con su motivo, y el tablero colocaba a
+     cada coche por la **fraccion de tiempo** de la vuelta. Con un piloto eso
+     pasaba por bueno; con tres se ve lo que siempre fue: los tres quedan en el
+     mismo punto, porque la fraccion es la misma para todos.
+     Estas dos son las que dibujan el circuito, y llegan a 3,9 Hz con su
+     instante. Son lecturas y no metricas: no se grafican, se leen. */
+  { id: "posX", fuentes: ["openf1"] },
+  { id: "posY", fuentes: ["openf1"] }
 ];
 
 /* ============================================================
@@ -1087,7 +1115,8 @@ const SENAL_CAN = {
   wheelRL: "wheel_speed_rear_left", wheelRR: "wheel_speed_rear_right"
 };
 
-const SENAL_OPENF1 = { brake: "brake_applied", drs: "drs_state_code" };
+const SENAL_OPENF1 = { brake: "brake_applied", drs: "drs_state_code",
+                       posX: "track_position_x", posY: "track_position_y" };
 
 function nombreDeSenal(id) {
   if (fuente === "can" && SENAL_CAN[id]) return SENAL_CAN[id];
@@ -1645,9 +1674,11 @@ function pintarAutos() {
         (a.numero === null || a.numero === undefined ? ""
           : '<span class="dorsal">#' + textoSeguro(a.numero) + "</span>") +
         '<small>' + textoSeguro(secundarioDeVehiculo(a)) + '</small></span>' +
-      (a.propio
-        ? '<span class="propio">propio · ' + cifra((estado.abierta || {}).senales, 0) + ' señales</span>'
-        : '<span class="senales">cronometraje</span>');
+      (function () {
+        const q = loQueSeSabeDelVehiculo(a, vehiculosConTraza(),
+                                         (estado.abierta || {}).senales);
+        return '<span class="' + q.clase + '">' + textoSeguro(q.texto) + '</span>';
+      })();
     const alternar = () => {
       if (seleccion.has(a.id)) seleccion.delete(a.id); else seleccion.add(a.id);
       if (seleccion.size === 0) seleccion.add(a.id);
@@ -2850,6 +2881,28 @@ function metroDeCurva(cu) {
   return Number.isFinite(m) ? m : null;
 }
 
+/* DONDE ESTUVO UN VEHICULO EN UN INSTANTE, SEGUN SUS COORDENADAS MEDIDAS.
+   Las dos series llegan con su propio instante y se interpolan igual que
+   cualquier continua: entre dos muestras separadas 0,26 s, el punto del medio
+   es el punto del medio. No se extrapola ni se sostiene: sin las dos
+   coordenadas no hay posicion, y quien llama se entera y coloca por tiempo,
+   declarandolo.
+
+   La proyeccion es **la misma** que dibujo el circuito. Usar otra pondria al
+   coche fuera de su propio trazo. */
+function puntoMedidoDe(clave, tUtcMs) {
+  if (!PISTA.proyectarMundo || tUtcMs === null || tUtcMs === undefined) return null;
+  const vuelta = instante().vuelta;
+  const sx = serieTemporal("posX", vuelta, clave);
+  const sy = serieTemporal("posY", vuelta, clave);
+  if (!sx || !sy) return null;
+  const x = valorContinuoEn(sx, tUtcMs);
+  const y = valorContinuoEn(sy, tUtcMs);
+  if (x === null || y === null) return null;
+  const q = PISTA.proyectarMundo(x, y);
+  return { x: q[0], y: q[1] };
+}
+
 /* ---------------- trazado real ---------------- */
 function pintarPista() {
   const linea = document.getElementById("linea-pista");
@@ -3035,13 +3088,10 @@ function pintarPista() {
        mostrando por donde va la vuelta. Pero se declara ---`data-estimada`--- y
        se dibuja distinto, porque una posicion supuesta y una medida no pueden
        verse igual. */
-    const medida = enPistaAhora && enPistaAhora[clave] !== undefined;
+    let medida = enPistaAhora && enPistaAhora[clave] !== undefined;
+    let medidaDeVerdad = false;
     if (medida) {
       frac = Math.max(0, Math.min(1, enPistaAhora[clave] / largoVuelta));
-    }
-    if (grupo.dataset.estimada !== (medida ? "no" : "si")) {
-      grupo.dataset.estimada = medida ? "no" : "si";
-      grupo.setAttribute("aria-label", medida ? "" : "posición estimada por tiempo, no medida");
     }
     /* MIENTRAS SE MIDE EL RECORRIDO, EL COCHE VA POR SU POSICION.
        El camino dibujado se rehace cada veinticinco puntos ---rehacerlo en cada
@@ -3065,6 +3115,15 @@ function pintarPista() {
       const q = puntoDelBusEn(instante().tUtcMs);
       if (q) p = q;
     }
+    /* SOBRE UN CIRCUITO MEDIDO, CADA UNO VA DONDE SE LO MIDIO.
+       Es lo mismo que hace el bus con su recorrido reconstruido, pero con
+       coordenadas que la fuente publica en vez de integradas. Y es lo unico que
+       separa a tres vehiculos: la fraccion de vuelta es la misma para los tres,
+       de modo que sin esto los tres se dibujan en el mismo punto. */
+    if (!p) {
+      const q = puntoMedidoDe(clave, instante().tUtcMs);
+      if (q) { p = q; medidaDeVerdad = true; }
+    }
     if (!p) p = linea.getPointAtLength(largo * frac);
     /* Por etiqueta y no por posicion: el grupo lleva ademas un `<title>` con la
        identidad completa, y `firstChild` dejo de ser el circulo el dia que se
@@ -3077,6 +3136,14 @@ function pintarPista() {
        escalon. La marca avanzaba entonces cero o un escalon por cuadro, en un
        patron irregular que se ve como un temblor. Con dos decimales el escalon
        es de 0,10 m, la novena parte de lo que se mueve en un cuadro. */
+    /* Se declara **despues** de colocarlo: hasta aca no se sabia si la
+       coordenada medida estaba disponible para este instante. */
+    const seUbicoMidiendo = medida || medidaDeVerdad;
+    if (grupo.dataset.estimada !== (seUbicoMidiendo ? "no" : "si")) {
+      grupo.dataset.estimada = seUbicoMidiendo ? "no" : "si";
+      grupo.setAttribute("aria-label",
+        seUbicoMidiendo ? "" : "posición estimada por tiempo, no medida");
+    }
     const px = p.x.toFixed(2), py = p.y.toFixed(2);
     /* Se compara contra lo que el elemento ya tenia. Escribir el mismo valor
        no mueve nada, y contar ese pintado como movimiento es justo el error
@@ -4354,6 +4421,15 @@ function recortarConBordes(serie, ini, fin, escalonada) {
    ============================================================ */
 const VUELTAS_EN_MEMORIA = 8;
 
+/* Si el catalogo declara mas vehiculos con telemetria de los que el tablero
+   conoce. Se compara contra lo que la sesion declara y no contra un numero
+   escrito aca: cuantos hay depende de que se haya cargado, no de la fuente. */
+function faltanVehiculosPorAprender() {
+  const declarados = Number((estado.abierta || {}).vehiculos);
+  if (!Number.isFinite(declarados) || declarados <= 1) return false;
+  return AUTOS.length < declarados;
+}
+
 function podarVueltas() {
   const centro = instante().vuelta || 1;
   const enComparacion = compAbierta() ? new Set(vueltasParaComparar()) : new Set();
@@ -4539,11 +4615,26 @@ function asegurarVuelta(numero, puntos, deFondo) {
      estaba en la base.
 
      Se pide siempre por el vehiculo del que hay serie. Si todavia no se sabe
-     cual es, no se acota y la API los devuelve todos, que es como se aprende. */
+     cual es, no se acota y la API los devuelve todos, que es como se aprende.
+
+     Y TAMPOCO SE ACOTA MIENTRAS FALTE APRENDER QUIENES SON LOS DEMAS. Esa
+     regla solo miraba si se conocia **el propio**, y en OpenF1 se conoce desde
+     el principio: `/vueltas` declara el vehiculo mas muestreado. De modo que la
+     primera consulta ya salia acotada a ese uno y las otras dos nunca
+     aparecian: la sesion tiene telemetria de tres pilotos ---310.881, 310.881 y
+     310.863 filas--- y el tablero mostraba uno solo, sin forma de elegir a los
+     otros, porque para ofrecerlos en la lista primero hay que saber que
+     existen.
+
+     El catalogo declara cuantos son ---tres en esta sesion, uno en el bus y uno
+     en la simulacion, donde los rivales viajan por `/posiciones` y no por
+     telemetria---. Mientras lo aprendido sea menos que lo declarado, la
+     consulta no se acota y la respuesta ensena el resto. Es una sola vez por
+     sesion: con la primera vuelta ya estan los tres. */
   const propio = estado.vehiculoClave;
   const conPropio = (estado.series[numero] ? faltantes : pedidos).slice();
   if (propio && conPropio.indexOf(propio) === -1) conPropio.push(propio);
-  const autos = propio ? conPropio : [];
+  const autos = (propio && !faltanVehiculosPorAprender()) ? conPropio : [];
   const apertura = aperturaVigente();
   const base = "/sesiones/" + encodeURIComponent(estado.abierta.session_id) +
                (temporal ? "/series-tiempo?" + tramoDeLaVuelta(numero)
@@ -10031,6 +10122,13 @@ function pedirTrazado(ruta) {
         muestras: t.muestras_originales,
         vuelta: t.vuelta,
         curvas: CURVAS,
+        /* La transformacion que llevo estos puntos al dibujo, guardada. La
+           armaba `trazadoAPath` y este sitio la tiraba, de modo que una
+           coordenada medida no se podia poner sobre el trazo aunque se tuviera:
+           habia que conformarse con repartir la vuelta por tiempo. */
+        proyectarMundo: armado.proyectarMundo,
+        invertirY: /invertir/i.test(t.para_dibujarlo || "") &&
+                   !/no invertir/i.test(t.para_dibujarlo || ""),
       };
       const svg = document.getElementById("linea-pista");
       if (svg && svg.ownerSVGElement) delete svg.ownerSVGElement.dataset.reserva;
