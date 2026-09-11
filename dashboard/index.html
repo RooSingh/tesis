@@ -636,6 +636,75 @@
       </div>
     </section>
   </div>
+
+  <!-- ================= CONDICIONES DE USO DE LAS FUENTES =================
+       POR QUE ESTA ACA Y NO SOLO EN EL INFORME. El capitulo 4 del trabajo
+       analiza la licencia de cada fuente, pero el informe no viaja con el
+       tablero: esta pagina se publica sola, y quien la abre no tiene forma de
+       saber bajo que condiciones esta mirando estos datos.
+
+       LO QUE DICE CADA BLOQUE ES LO QUE LA FUENTE DECLARA, no lo que este
+       trabajo supone. Las tres se leyeron: MIT para el conjunto CAN,
+       CC BY-NC-SA 4.0 para OpenF1, y el acuerdo de usuario del editor para el
+       simulador ---cuya especificacion de red no regula el uso del dato: su
+       aviso legal es solamente atribucion de marcas---.
+
+       UNA FUENTE NUEVA TIENE QUE APARECER ACA. La marca `data-fuente-legal`
+       lleva la misma clave corta que `FUENTES` en `app.js`, y una prueba
+       compara las dos listas: agregar una cuarta fuente sin declarar sus
+       condiciones rompe la prueba, que es exactamente lo que se quiere.
+
+       ES ESTATICO A PROPOSITO. No depende de la fuente abierta: el tablero
+       cambia de fuente sin recargar, y un aviso que aparece y desaparece con
+       el modo elegido se lee como una nota de la sesion y no como lo que es.
+       ============================================================ -->
+  <footer class="pie-legal">
+    <h2>Condiciones de uso de las fuentes</h2>
+    <p class="nota">Este tablero es la parte experimental de un trabajo final de grado, y su uso
+    es <b>académico y no comercial</b>. No es un instrumento de medición homologado, no sustituye
+    a los flujos de datos oficiales ni a los productos comerciales de telemetría, y no debe usarse
+    para decisiones de seguridad. El trabajo no está afiliado, avalado ni patrocinado por ninguna
+    de las organizaciones que se nombran abajo.</p>
+
+    <div class="fuentes-legal">
+      <section data-fuente-legal="f1">
+        <h3><span class="pastilla-fuente f1">F1 25</span></h3>
+        <p>Producto de Electronic Arts Inc. y Codemasters. Las marcas <b>F1</b>, <b>FORMULA 1</b>,
+        <b>FIA FORMULA ONE WORLD CHAMPIONSHIP</b>, <b>GRAND PRIX</b> y las asociadas pertenecen a
+        Formula One Licensing B.V. La telemetría se toma de la salida de red que el propio programa
+        publica, documenta y habilita desde su menú. El acuerdo de usuario del editor otorga una
+        licencia <b>personal y no comercial</b>, y bajo ella se captura en red local, con un solo
+        participante humano y sin intervenir el programa. No se publica ningún conjunto derivado
+        con nombres de pilotos o equipos, identidad de marca ni identificadores de jugador.</p>
+      </section>
+
+      <section data-fuente-legal="openf1">
+        <h3><span class="pastilla-fuente openf1">OpenF1</span></h3>
+        <p>Proyecto comunitario <b>no oficial</b>, sin asociación ni aval de Formula One World
+        Championship Limited, Formula One Management ni Formula One Licensing B.V. Sus datos se
+        usan bajo <b>Creative Commons Atribución-NoComercial-CompartirIgual 4.0</b>: se acredita la
+        fuente, el uso es no comercial y una obra derivada llevaría la misma licencia. Esa licencia
+        alcanza a la compilación que OpenF1 publica, y <b>no constituye autorización sobre los datos
+        deportivos ni sobre las marcas</b> del campeonato, que son de su titular. Se consumen
+        sesiones históricas del plan gratuito, dentro de sus límites de solicitudes.</p>
+      </section>
+
+      <section data-fuente-legal="can">
+        <h3><span class="pastilla-fuente can">CAN real</span></h3>
+        <p>Los registros provienen de <b>commaCarSegments</b>, el conjunto de conducción real que
+        comma.ai publica en Hugging Face bajo <b>licencia MIT</b>, y se decodifican con las
+        definiciones abiertas de <b>openDBC</b>. Son vehículos de personas reales: no se intenta
+        identificar usuarios, conductores, dispositivos ni recorridos, y no se publican
+        identificadores, rutas, coordenadas ni registros crudos. La licencia del conjunto no es
+        garantía de calidad, de adecuación a un fin ni de ausencia de derechos de terceros, y las
+        políticas de privacidad del proveedor corren por separado.</p>
+      </section>
+    </div>
+
+    <p class="nota">Las tres fuentes se entregan <b>sin garantía</b> de exactitud, y este trabajo
+    no certifica jurídicamente derechos de terceros. Si alguien titular de un derecho entiende que
+    algo de lo publicado aquí lo excede, alcanza con pedirlo para que se retire.</p>
+  </footer>
 </div>
 
 <!-- ================= MODAL DE CAMBIO DE MODO ================= -->
