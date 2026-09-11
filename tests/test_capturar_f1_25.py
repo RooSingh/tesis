@@ -6,7 +6,11 @@ decodificados en la procedencia de la captura, que es donde esta la logica.
 
 from __future__ import annotations
 
+import json
+import tempfile
 import unittest
+from pathlib import Path
+from unittest.mock import patch
 
 import scripts.capturar_f1_25 as capturar_f1_25
 
@@ -125,6 +129,60 @@ class ProcedenciaDerivadaTests(unittest.TestCase):
         self.assertIn("steering_assist", p["ayudas"])
         self.assertNotIn("traction_control", p["ayudas"])
         self.assertNotIn("anti_lock_brakes", p["ayudas"])
+
+
+class CierreSolicitadoTests(unittest.TestCase):
+    """Detener la escucha cierra la captura aunque el juego siga emitiendo."""
+
+    def test_sigint_dentro_de_la_sesion_conserva_y_cierra_el_archivo(self):
+        class SocketInterrumpido:
+            def recvfrom(self, _tamano):
+                raise KeyboardInterrupt
+
+        class PublicadorFalso:
+            activa = False
+            mensajes = 0
+            descartados = 0
+            motivos_descarte = {}
+            motivo = "prueba"
+
+            def publicar(self, *_args):
+                pass
+
+        cabecera = {
+            "session_uid": 123,
+            "frame_identifier": 1,
+            "secondary_player_car_index": 255,
+            "game_major_version": 1,
+            "game_minor_version": 0,
+        }
+        decodificado = {
+            "cabecera": cabecera,
+            "paquete": "session",
+            "sesion": _sesion(session_type=15, track_id=13),
+        }
+
+        with tempfile.TemporaryDirectory() as temporal:
+            destino = Path(temporal)
+            with patch.object(capturar_f1_25, "MINIMO_UTIL_S", 0):
+                with patch.object(capturar_f1_25.f1_udp, "decodificar",
+                                  return_value=decodificado):
+                    resultado = capturar_f1_25.capturar_sesion(
+                        SocketInterrumpido(), b"datagrama", destino,
+                        PublicadorFalso())
+
+            self.assertTrue(resultado["conservada"])
+            self.assertEqual(
+                resultado["motivo_corte"],
+                "detencion solicitada mientras la sesion seguia activa")
+            captura = destino / resultado["archivo"]
+            self.assertTrue(captura.exists())
+            self.assertFalse(any(destino.glob(".captura_en_curso_*.f1raw")))
+            metadatos = json.loads(
+                captura.with_name(captura.name + ".meta.json").read_text(
+                    encoding="utf-8"))
+            self.assertNotIn("en_curso", metadatos)
+            self.assertEqual(metadatos["motivo_corte"], resultado["motivo_corte"])
 
 
 class SinListaDuplicadaTests(unittest.TestCase):

@@ -920,6 +920,13 @@ def capturar_sesion(sock: socket.socket, primer_datagrama: bytes,
                 datos, _ = sock.recvfrom(4096)
             except socket.timeout:
                 break
+            except KeyboardInterrupt:
+                # Detener la escucha no invalida lo ya recibido. Si SIGINT sale
+                # de esta funcion, el bloque de cierre no renombra el provisional
+                # ni escribe sus metadatos y el tablero queda esperando una
+                # captura terminada que nunca aparece.
+                motivo = "detencion solicitada mientras la sesion seguia activa"
+                break
 
     transcurrido = time.perf_counter() - inicio
     procedencia = derivar_procedencia(
