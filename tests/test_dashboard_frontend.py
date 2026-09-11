@@ -75,7 +75,22 @@ class DashboardFrontendTests(unittest.TestCase):
         bloque = estilos[inicio:estilos.index("}", inicio)]
         columnas = re.search(r"grid-template-columns:([^;]+);", bloque)
         self.assertIsNotNone(columnas, bloque)
-        self.assertEqual(columnas.group(1).count("minmax(0,"), 3, bloque)
+        # Cuatro: trazado, motor, cronometraje con avisos, y clima. Ninguno
+        # comparte, porque compartir columna era repartir el alto y los cuatro
+        # necesitan alto.
+        self.assertEqual(columnas.group(1).count("minmax(0,"), 4, bloque)
+        # El envoltorio de la izquierda se disuelve para que sus dos paneles
+        # sean celdas de la cabina y no mitades de una columna.
+        self.assertIn(
+            ':root[data-fuente="openf1"] .cabina .col-cabina.izquierda { display: contents; }',
+            estilos,
+        )
+        # Y al apilar se deshace, o quedarian huecos donde habia paneles.
+        self.assertIn(
+            ':root[data-fuente="openf1"] .cabina .col-cabina.izquierda {\n'
+            '      display: flex; grid-column: auto; grid-row: auto;\n    }',
+            estilos,
+        )
         # Y la lista de pilotos se queda con la fila de abajo entera, porque los
         # dos paneles que la acompañaban ---puesta a punto y aceleraciones---
         # esta fuente no los sostiene.

@@ -848,17 +848,72 @@
      ahora hay mas alto para lo que se midio. */
   :root[data-fuente="openf1"] .cabina {
     grid-template-columns:
-      minmax(0, 1.25fr) minmax(0, 1fr) minmax(0, .8fr);
-    /* Y la fila de abajo pesa mas que la de arriba, al reves que en la cabina
-       de carrera. Arriba quedaron tres paneles ---dos de ellos, motor y
-       cronometraje, de alto fijo--- y lo que esta fuente si entrega son las
-       seis señales del coche, que viven abajo. */
-    grid-template-rows: minmax(0, .82fr) minmax(0, 1.18fr);
+      minmax(0, 1.38fr) minmax(0, .88fr) minmax(0, 1.04fr) minmax(0, .8fr);
+    /* La fila de arriba pesa un poco mas que la de abajo. Los cuatro paneles
+       de arriba son los que necesitan alto ---una figura, dos rejillas y una
+       lista---; los graficos de abajo son trazos anchos, y quitarles un diez
+       por ciento de alto no les cambia lo que se lee. */
+    grid-template-rows: minmax(0, 1.18fr) minmax(0, .82fr);
   }
-  /* Con el clima fuera, el trazado es lo unico de su columna y se queda con el
-     alto entero: es una figura, y el alto es lo que le faltaba. Y la columna
-     de la derecha se queda con el cronometraje solo ---esta fuente no levanta
-     avisos---, que son cinco renglones: es la que menos ancho necesita. */
+
+  /* NADIE COMPARTE COLUMNA, PORQUE COMPARTIRLA ERA REPARTIR EL ALTO.
+     El trazado y el clima estaban uno encima del otro y se quedaban con media
+     fila cada uno: el circuito entraba en un sello y las seis casillas del
+     clima se cortaban por la mitad. Y no es que sobrara alto, es que estaban
+     apilados.
+
+     La columna de la izquierda deja de ser una columna: con `display: contents`
+     el envoltorio desaparece del reparto y sus dos paneles pasan a ser celdas
+     de la cabina, cada uno con la fila entera. El trazado se queda a la
+     izquierda y el clima a la derecha, que es lo que hace que los dos crezcan.
+
+     Se declara donde va cada uno, y no se deja al orden del documento: con el
+     envoltorio disuelto, el orden pondria el clima segundo y empujaria todo lo
+     demas un lugar. */
+  :root[data-fuente="openf1"] .cabina .col-cabina.izquierda { display: contents; }
+  :root[data-fuente="openf1"] .cabina [data-panel="trazado"] { grid-column: 1; grid-row: 1; }
+  :root[data-fuente="openf1"] .cabina .col-cabina.motor     { grid-column: 2; grid-row: 1; }
+  :root[data-fuente="openf1"] .cabina .col-cabina.derecha   { grid-column: 3; grid-row: 1; }
+  :root[data-fuente="openf1"] .cabina [data-panel="clima"]  { grid-column: 4; grid-row: 1; }
+
+  /* Con columna propia, las casillas del clima dejan de apretarse en una fila
+     de cuatro ---que con seis magnitudes se partia en dos y desbordaba--- y se
+     reparten de a dos, que es lo que entra sin cortar ningun rotulo. */
+  :root[data-fuente="openf1"] .cabina .clima-mini .clima-rejilla {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  :root[data-fuente="openf1"] .cabina .clima-mini .clima-rejilla dd { font-size: .95rem; }
+  :root[data-fuente="openf1"] .cabina .clima-mini .clima-principal .cifra-grande {
+    font-size: 1.8rem;
+  }
+
+  /* EL TOPE DE ALTO DEL DIBUJO ERA DE CUANDO COMPARTIA COLUMNA.
+     `.pista svg` esta acotado a 320 px para que, compartiendo columna con el
+     clima, el dibujo no se comiera la mitad del otro. Con columna propia ese
+     tope es lo unico que lo frena: el panel mide 414 y el dibujo se quedaba en
+     293. Sin el, crece hasta donde llegue su propia proporcion. */
+  :root[data-fuente="openf1"] .cabina .pista svg { max-height: none; }
+
+  /* Y el clima reparte su alto en vez de amontonar las casillas abajo. Con la
+     columna entera quedaba medio panel vacio en el medio: la temperatura
+     arriba, un hueco, y las seis casillas apoyadas en el pie. */
+  :root[data-fuente="openf1"] .cabina .clima-mini .clima-rejilla {
+    flex: 1; min-height: 0; align-content: stretch;
+    grid-auto-rows: minmax(0, 1fr);
+  }
+  :root[data-fuente="openf1"] .cabina .clima-mini .clima-rejilla div {
+    display: flex; flex-direction: column; justify-content: center;
+  }
+
+  /* Y los avisos se quedan con lo que el cronometraje no usa. El cronometraje
+     son cinco renglones de alto fijo; sin esto, los dos se repartian la columna
+     en partes iguales y la lista de avisos quedaba en una ventanita. */
+  :root[data-fuente="openf1"] .cabina .col-cabina.derecha > [data-panel="cronometraje"] {
+    flex: 0 0 auto;
+  }
+  :root[data-fuente="openf1"] .cabina .col-cabina.derecha > [data-panel="avisos"] {
+    flex: 1; min-height: 0;
+  }
 
   /* ABAJO, LA LISTA DE PILOTOS SOLA EN SU FILA.
      Puesta a punto y aceleraciones ocupaban tres de las cuatro celdas y
@@ -1286,6 +1341,18 @@
     :root[data-fuente="openf1"] .cabina {
       grid-template-columns: minmax(0, 1fr) minmax(0, 1.25fr);
       grid-template-rows: auto auto auto auto;
+    }
+    /* Apilado no hay columnas que repartir, asi que el envoltorio vuelve a
+       serlo y las celdas fluyen: colocarlas a mano dejaria huecos donde antes
+       habia paneles. */
+    :root[data-fuente="openf1"] .cabina .col-cabina.izquierda {
+      display: flex; grid-column: auto; grid-row: auto;
+    }
+    :root[data-fuente="openf1"] .cabina [data-panel="trazado"],
+    :root[data-fuente="openf1"] .cabina [data-panel="clima"],
+    :root[data-fuente="openf1"] .cabina .col-cabina.motor,
+    :root[data-fuente="openf1"] .cabina .col-cabina.derecha {
+      grid-column: auto; grid-row: auto;
     }
   }
   @media (max-width: 860px) {
