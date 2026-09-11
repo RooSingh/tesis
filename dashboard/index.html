@@ -577,64 +577,6 @@
         prohíbe. Quedan como trabajo futuro con instrumentación del piloto.</p>
       </div>
     </section>
-
-    <!-- ============================================================
-         QUÉ VIGILAR SI SE CORTA
-         ------------------------------------------------------------
-         La contracara de la tabla de arriba. Aquella dice qué sostiene
-         cada fuente **en general** y está escrita a mano; ésta se mide
-         sobre la sesión abierta y responde otra pregunta: qué pasa si un
-         canal deja de llegar.
-
-         No es la pregunta de un tablero de competición. Allí se alarma
-         sobre valores anómalos ---presión de aceite baja, agua alta---
-         porque el sensor y el tablero están cableados juntos y un canal
-         que no llega significa que el auto se apagó. Acá el canal puede
-         desaparecer con el auto perfecto, y entonces la ausencia de dato
-         se parece a un dato tranquilo.
-
-         DOS EJES QUE NO SE FUNDEN EN UN COLOR. Cada fila dice el nivel
-         **y por qué eje**: «crítica por análisis» no es «crítica por
-         seguridad». Sin esa distinción la velocidad del vehículo saldría
-         en rojo ---inhabilita tres herramientas--- y se leería como un
-         peligro que no es.
-         ============================================================ -->
-    <section class="instrumento ancho-total" id="panel-vigilancia">
-      <header>
-        <h2>Qué vigilar si se corta</h2>
-        <span class="fuente-canal" id="canal-vigilancia">—</span>
-      </header>
-      <div class="cuerpo-instrumento">
-        <div class="conteo-vigilancia" id="conteo-vigilancia"></div>
-        <div class="envoltura-tabla">
-          <table class="vigilancia">
-            <thead>
-              <tr>
-                <th>Señal</th>
-                <th>Si deja de llegar</th>
-                <th>Qué aviso se pierde</th>
-                <th class="num">Frecuencia</th>
-                <th class="num">Silencio que la da por perdida</th>
-              </tr>
-            </thead>
-            <tbody id="cuerpo-vigilancia"></tbody>
-          </table>
-        </div>
-        <p class="nota" id="nota-vigilancia"></p>
-        <p class="nota"><strong>El umbral no se elige, se deriva.</strong> Cada canal se juzga
-        contra <b>su propio período</b>: cuatro, que son tres muestras perdidas más una de margen
-        por el ruido del sistema operativo, que este trabajo midió ---un <code>sleep</code> de
-        50 ms llegó a tardar 90,27---. Por eso el mismo medio segundo de silencio es una alarma en
-        un canal de 20 Hz y no es nada en uno de 3,7.</p>
-        <p class="nota"><strong>De dónde sale el criterio.</strong> El eje de análisis está
-        <b>medido</b>: cuántas de las siete herramientas quedan sin insumo. El eje de seguridad es
-        <b>criterio propio de este trabajo</b> y así se declara: una señal perdida es crítica cuando
-        era el único aviso que el conductor no puede darse a sí mismo. La bibliografía consultada
-        respalda la premisa ---dos registradores comerciales declaran alarmas, y las dos veces son
-        alarmas de valor, ninguno alarma por un canal que deja de llegar--- pero no reparte señal
-        por señal.</p>
-      </div>
-    </section>
   </div>
 
   <!-- ================= CONDICIONES DE USO DE LAS FUENTES =================

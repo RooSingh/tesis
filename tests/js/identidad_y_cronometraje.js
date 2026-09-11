@@ -200,7 +200,6 @@ const sacadas = new Function(
   "let _mandoSesion = null;\n" +
   "let PISTA = {};\n" +
   "let CURVAS = [];\n" +
-  "let _vigilanciaPedida = null;\n" +
   "let _esencialResuelta = false;\n" +
   "let _vueltasEnPantalla = [];\n" +
   "let _instanteClave = null;\n" +

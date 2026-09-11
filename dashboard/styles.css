@@ -418,40 +418,6 @@
   td.si { color: var(--ok); font-weight: 600; } td.parcial { color: var(--alerta); font-weight: 600; } td.no { color: var(--texto-tenue); }
   table.disponibilidad code { font-family: var(--cifra); font-size: .72rem; color: var(--texto-medio); }
 
-  /* ---- qué vigilar si se corta ----
-     Los tres niveles reusan los mismos tokens que el resto del tablero
-     (--critico, --alerta) para que un color signifique lo mismo en todos
-     los paneles. El eje viaja SIEMPRE escrito al lado del punto: el color
-     dice cuánto, la palabra dice de qué, y sin la palabra un canal crítico
-     para el análisis se leería como un peligro. */
-  .conteo-vigilancia { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
-  .pastilla-nivel { font-family: var(--cifra); font-size: .74rem; font-weight: 600;
-    padding: 4px 10px; border-radius: 999px; border: 1px solid var(--linea-fuerte);
-    background: var(--superficie-2); color: var(--texto-medio); }
-  .pastilla-nivel.critica { color: var(--critico); border-color: color-mix(in srgb, var(--critico) 45%, transparent); }
-  .pastilla-nivel.atencion { color: var(--alerta); border-color: color-mix(in srgb, var(--alerta) 45%, transparent); }
-
-  table.vigilancia { width: 100%; border-collapse: collapse; min-width: 760px; }
-  table.vigilancia th, table.vigilancia td { padding: 9px 12px; text-align: left;
-    border-bottom: 1px solid var(--linea); vertical-align: top; }
-  table.vigilancia thead th { font-family: var(--titulo); font-size: .76rem;
-    letter-spacing: .09em; text-transform: uppercase; color: var(--texto-tenue); font-weight: 600; }
-  table.vigilancia th.num, table.vigilancia td.num { text-align: right;
-    font-family: var(--cifra); white-space: nowrap; }
-  table.vigilancia td small { display: block; margin-top: 3px; font-size: .72rem;
-    color: var(--texto-tenue); font-weight: 400; }
-  table.vigilancia td code { font-family: var(--cifra); font-size: .72rem; color: var(--texto-medio); }
-  table.vigilancia td.aviso { max-width: 42ch; font-size: .82rem; color: var(--texto-medio); }
-  table.vigilancia td.nivel { white-space: nowrap; font-size: .78rem; font-weight: 600;
-    color: var(--texto-tenue); }
-  .punto-nivel { display: inline-block; width: 8px; height: 8px; border-radius: 50%;
-    margin-right: 7px; background: var(--texto-tenue); vertical-align: middle; }
-  tr[data-nivel="critica"] td.nivel { color: var(--critico); }
-  tr[data-nivel="critica"] .punto-nivel { background: var(--critico); }
-  tr[data-nivel="atencion"] td.nivel { color: var(--alerta); }
-  tr[data-nivel="atencion"] .punto-nivel { background: var(--alerta); }
-  #panel-vigilancia[data-vacio="si"] .envoltura-tabla { display: none; }
-
   .nota { margin: 10px 0 0; color: var(--texto-medio); font-size: .82rem; max-width: 82ch; }
   .nota code { font-family: var(--cifra); font-size: .76rem; color: var(--acento); }
   .ancho-total { grid-column: 1 / -1; }

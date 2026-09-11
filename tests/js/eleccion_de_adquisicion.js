@@ -574,8 +574,12 @@ prueba("el olvido no borra la identidad de la sesion", () => {
   const cuerpo = fuente.slice(i, j);
   assert.ok(cuerpo.indexOf("estado.abierta") === -1, "el olvido borra la sesión abierta");
   assert.ok(cuerpo.indexOf("sesionAbierta") === -1, "el olvido borra el identificador");
-  assert.ok(cuerpo.indexOf("_vigilanciaPedida") !== -1,
-    "sin soltar la vigilancia, el panel seguiría mostrando lo de la etapa anterior");
+  /* El trinquete de «lo esencial ya termino» es de una apertura, no de la
+     sesion: si no se soltara, la etapa siguiente lo encontraria ya levantado y
+     lanzaria sus consultas secundarias encima de `/vueltas`, que es la
+     contencion que la espera existe para evitar. */
+  assert.ok(cuerpo.indexOf("_esencialResuelta = false") !== -1,
+    "sin soltar el trinquete, lo secundario de la etapa siguiente no espera a nada");
 });
 
 prueba("hay un boton para volver a elegir, y se oculta si no hay que elegir", () => {

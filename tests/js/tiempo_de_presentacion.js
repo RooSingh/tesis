@@ -67,7 +67,6 @@ globalThis.olvidarCaches = () => { globalThis._instanteClave = null; };
 globalThis.AUTOS = [];
 globalThis.seleccion = new Set();
 globalThis.CURVAS = [];
-globalThis._vigilanciaPedida = null;
 globalThis._esencialResuelta = false;
 globalThis.PISTA = { largo_m: 7000 };
 globalThis.HUECO_DE_CAPTURA_MS = 2000;

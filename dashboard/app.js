@@ -8599,11 +8599,6 @@ function olvidarLoDeLaCorrida() {
   estado.disponibles = new Set();
   estado.vehiculoClave = null;
   estado.climaMotivo = ""; estado.vehiculoMotivo = ""; estado.avisosMotivo = "";
-  estado.vigilancia = null; estado.vigilanciaMotivo = "";
-  /* La vigilancia se pide una vez por sesion y se recuerda cual. Al cambiar de
-     etapa la sesion es la misma, asi que sin esto no se volveria a pedir y el
-     panel seguiria mostrando lo medido sobre la etapa anterior. */
-  _vigilanciaPedida = null;
   _esencialResuelta = false;
   estado.cargando = true;
   PISTA = { path: "", curvas: [], largo_m: null, desnivel_m: null, muestras: null };
@@ -11361,34 +11356,6 @@ function pintarMatriz() {
   }
 }
 
-/* ---------------- qué vigilar si se corta ---------------- */
-
-/* LA ÚNICA CONSULTA DEL TABLERO QUE NO MIRA EL VALOR DEL DATO.
-   Las demás preguntan qué dice la telemetría; ésta pregunta qué pasa si deja
-   de decir algo. Es una pregunta que un auto no tiene ---allí el sensor y el
-   tablero están cableados juntos--- y que sólo aparece cuando el dato viaja.
-
-   SE PIDE UNA VEZ POR SESIÓN, NO EN CADA RENDER. Mide la frecuencia real de
-   cada canal sobre una ventana del final de la sesión, y eso cuesta unos tres
-   segundos contra la tabla de ochenta y siete millones de filas. Es una
-   propiedad de la sesión y no del cabezal: no cambia mientras se reproduce. */
-let _vigilanciaPedida = null;
-
-/* NO SE PIDE MIENTRAS LA SESION SE ESTA ABRIENDO.
-   Medido en el navegador el 2026-09-08, sobre la sesion de Spa y con el backend
-   recien arrancado: esta consulta tarda 29,8 s en frio, y mientras corre
-   **bloquea a todas las demas**. `/fuentes/matriz`, que sola tarda 0,01 s,
-   tardo 30 s en esa misma corrida; `/vueltas`, que sola tarda 1,4 s, tardo 16,7.
-   No es la base: es trabajo de Python sobre muchas filas, que retiene el
-   interprete mientras dura.
-
-   Es un panel secundario ---que senales, si se pierden, merecen alarma--- y no
-   hace falta para dibujar nada. Se pide despues, cuando el tablero ya tiene su
-   primer trazo y las consultas que si hacen falta ya volvieron.
-
-   Es una espera declarada, no un descarte: el panel dice que la esta esperando,
-   y la respuesta se guarda en el backend, de modo que la segunda visita a la
-   misma sesion la tiene enseguida. */
 /* ============================================================
    LO SECUNDARIO ESPERA A QUE HAYA UN GRAFICO
    ------------------------------------------------------------
@@ -11412,6 +11379,15 @@ let _vigilanciaPedida = null;
    Asi que lo secundario espera. No se cancela ni se descarta: se pide en cuanto
    hay un trazo dibujado, o a los doce segundos si no llega a haberlo, para que
    un tablero sin datos no deje de pedir lo que si podria mostrar.
+
+   EL PANEL DE VIGILANCIA YA NO EXISTE EN EL TABLERO, y su consulta tampoco se
+   pide desde aca. Las cifras de arriba y las de abajo se dejan como se
+   midieron, con ella adentro, porque asi fue la medicion y reescribirla sin la
+   consulta que la produjo seria contar otra cosa. El endpoint sigue en el
+   backend, con su modulo de analisis y sus pruebas: lo que se quito es el
+   panel. Lo que la medicion demuestra ---que lo secundario tiene que esperar
+   a que lo esencial termine--- no depende de cual sea lo secundario, y hoy lo
+   son `/avisos`, `/contexto` y `/fuentes/matriz`.
    ============================================================ */
 /* DOCE SEGUNDOS NO ERAN LA CONDICION CORRECTA.
    La espera se soltaba por reloj, y en una sesion grande eso cae **en medio**
@@ -11464,110 +11440,6 @@ function cuandoHayaGrafico(hacer) {
     _relojCortesia = setTimeout(mirar, 250);
   };
   _relojCortesia = setTimeout(mirar, 250);
-}
-
-const ESPERA_ANTES_DE_VIGILANCIA_MS = 4000;
-let _relojVigilancia = null;
-
-function asegurarVigilancia() {
-  if (!estado.abierta) return;
-  const id = estado.abierta.session_id;
-  if (_vigilanciaPedida === id) return;
-  _vigilanciaPedida = id;
-  clearTimeout(_relojVigilancia);
-  cuandoHayaGrafico(() => {
-    _relojVigilancia = setTimeout(() => pedirVigilancia(id), ESPERA_ANTES_DE_VIGILANCIA_MS);
-  });
-}
-
-function pedirVigilancia(id) {
-  if (_vigilanciaPedida !== id) return;
-  pedir("/analisis/" + encodeURIComponent(id) + "/vigilancia", { senal: senalDeSesion() })
-    .then(d => {
-      if (_vigilanciaPedida !== id) return;   // cambió la sesión mientras tanto
-      estado.vigilancia = d;
-      estado.vigilanciaMotivo = "";
-      render();
-    })
-    .catch(e => {
-      if (_vigilanciaPedida !== id || fueAnulada(e)) return;
-      estado.vigilancia = null;
-      /* El backend explica por qué no puede, y ese motivo está escrito para
-         leerse. Reemplazarlo por «no disponible» sería perder la explicación. */
-      estado.vigilanciaMotivo = (e && (e.motivo || e.message)) || "";
-      render();
-    });
-}
-
-/* Sin abreviar el eje. «crítica» a secas volvería a fundir los dos ejes, que
-   es exactamente lo que el módulo separa: la velocidad del vehículo es crítica
-   **para el análisis** y no es un peligro. */
-function textoNivel(v) {
-  const eje = v.eje === "seguridad" ? "seguridad" : "análisis";
-  if (v.nivel === "critica") return "alarma · " + eje;
-  if (v.nivel === "atencion") return "aviso · " + eje;
-  return "informativa";
-}
-
-function pintarVigilancia() {
-  const panel = document.getElementById("panel-vigilancia");
-  if (!panel) return;
-  const cuerpo = document.getElementById("cuerpo-vigilancia");
-  const canal = document.getElementById("canal-vigilancia");
-  const conteo = document.getElementById("conteo-vigilancia");
-  const nota = document.getElementById("nota-vigilancia");
-
-  if (!estado.abierta) {
-    panel.dataset.vacio = "si";
-    cuerpo.innerHTML = "";
-    conteo.innerHTML = "";
-    canal.textContent = "—";
-    nota.textContent = "Se calcula sobre una sesión abierta: sin sesión no hay frecuencias que medir.";
-    return;
-  }
-
-  asegurarVigilancia();
-  const d = estado.vigilancia;
-
-  if (!d) {
-    panel.dataset.vacio = "si";
-    cuerpo.innerHTML = "";
-    conteo.innerHTML = "";
-    canal.textContent = estado.vigilanciaMotivo ? "no se pudo medir" : "midiendo…";
-    nota.textContent = estado.vigilanciaMotivo ||
-      "Midiendo la frecuencia real de cada canal sobre el final de la sesión.";
-    return;
-  }
-
-  panel.dataset.vacio = "no";
-  const c = d.conteo || {};
-  conteo.innerHTML =
-    '<span class="pastilla-nivel critica">' + (c.critica || 0) + ' de alarma</span>' +
-    '<span class="pastilla-nivel atencion">' + (c.atencion || 0) + ' de aviso</span>' +
-    '<span class="pastilla-nivel informativa">' + (c.informativa || 0) + ' informativas</span>';
-
-  cuerpo.innerHTML = (d.vigilancias || []).map(v => {
-    const hz = v.hz == null ? "—" : cifra(v.hz, 1) + " Hz";
-    const sil = v.silencio_para_alarmar_s == null
-      ? "sin medir"
-      : cifra(v.silencio_para_alarmar_s, 2) + " s";
-    return '<tr data-nivel="' + v.nivel + '">' +
-      '<td><b>' + v.magnitud + '</b><small><code>' + (v.senal || "—") + '</code></small></td>' +
-      '<td class="nivel"><span class="punto-nivel"></span>' + textoNivel(v) + '</td>' +
-      '<td class="aviso">' + v.aviso_perdido +
-        '<small>' + v.percepcion_del_conductor + '</small></td>' +
-      '<td class="num">' + hz + '</td>' +
-      '<td class="num">' + sil + '</td>' +
-    '</tr>';
-  }).join("");
-
-  canal.textContent = (d.vigilancias || []).length + " canales medidos";
-  /* La terna medida viaja con las cifras y no aparte: una frecuencia medida
-     sobre un recorte que no se nombra no es verificable, y en este trabajo esa
-     omisión ya produjo dos cifras plausibles y falsas. */
-  nota.innerHTML = d.medido_sobre
-    ? '<strong>Medido sobre:</strong> <code>' + d.medido_sobre + '</code>, en una ventana del final de la sesión.'
-    : "";
 }
 
 /* ============================================================
@@ -11746,7 +11618,7 @@ function pintarValores() {
   if (estadoSesion !== "vacio") vueltaElegida = instante().vuelta;
   pintarEsquinas(); pintarTransporte(); pintarCronometraje();
   pintarMedidores(); pintarClima(); pintarAvisos(); pintarG();
-  pintarVigilancia(); pintarPuestaAPunto();
+  pintarPuestaAPunto();
 }
 
 function pintarTrazas() {
