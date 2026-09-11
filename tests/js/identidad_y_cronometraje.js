@@ -2758,7 +2758,7 @@ prueba("la simulacion enciende el mismo panel con su propio nombre", () => {
   const pide = loQuePidenLosPaneles();
   globalThis.estadoSesion = "cargado";
   globalThis.fuente = "f1";
-  globalThis.estado.disponibles = new Set(["g_force_lateral", "brake_bias_front"]);
+  globalThis.estado.disponibles = new Set(["g_force_lateral", "setup_front_wing"]);
   assert.strictEqual(panelEstaPresente(pide.aceleraciones), true);
   assert.strictEqual(panelEstaPresente(pide.puesta), true);
 });
@@ -2791,7 +2791,7 @@ prueba("una señal cruda que no es un canal atraviesa la traduccion intacta", ()
      no se pueden romper por traducir los que si son canales. */
   ["f1", "openf1", "can"].forEach(f => {
     globalThis.fuente = f;
-    ["air_temperature", "brake_bias_front",
+    ["air_temperature", "setup_front_wing",
      "tyre_temperature_surface_front_left", "engine_speed"].forEach(n => {
       assert.strictEqual(nombreDeSenal(n), n, n + " se tradujo en " + f);
     });
@@ -2800,10 +2800,10 @@ prueba("una señal cruda que no es un canal atraviesa la traduccion intacta", ()
 
 prueba("el bus no publica puesta a punto, y eso no cambio", () => {
   /* La comprobacion complementaria: lo que si esta ausente de verdad tiene que
-     seguir ausente. `brake_bias_front` no viaja en un bus de serie. */
+     seguir ausente. `setup_front_wing` no viaja en un bus de serie. */
   const pide = loQuePidenLosPaneles();
   globalThis.fuente = "can";
-  assert.strictEqual(nombreDeSenal(pide.puesta), "brake_bias_front");
+  assert.strictEqual(nombreDeSenal(pide.puesta), "setup_front_wing");
 });
 
 /* ==================================================================

@@ -1327,22 +1327,76 @@ class UltimosValoresAcotados(unittest.TestCase):
 
 
 class PuestaAPuntoDeclarada(unittest.TestCase):
-    """Tres de los cinco campos son codigos de la especificacion del juego que
-    el trabajo no cita. Devolverlos como si fueran valores legibles pondria una
-    anotacion sin fuente donde hoy hay una medicion."""
+    """El reglaje aplicado se separa del menu y de una referencia externa."""
 
-    def test_declara_cuales_no_estan_decodificados(self):
-        sin = [c for c, m in api_sesion.UNIDADES_PUESTA_A_PUNTO.items()
-               if not m["decodificado"]]
-        self.assertEqual(sorted(sin),
-                         ["compuesto", "mezcla_de_combustible", "modo_de_despliegue_ers"])
+    @staticmethod
+    def _valores(instante="2026-09-10T12:00:00+00:00"):
+        return {
+            canal: {"valor": i, "unidad": "", "instante": instante}
+            for i, canal in enumerate(api_sesion.CANALES_PUESTA_A_PUNTO.values())
+        }
 
-    def test_los_decodificados_llevan_unidad_real(self):
+    def test_el_reglaje_es_completo_solo_si_todo_viene_del_mismo_paquete(self):
+        _, campos, instante, completa = api_sesion._armar_puesta_a_punto(
+            self._valores())
+        self.assertEqual(len(campos), 23)
+        self.assertEqual(instante, "2026-09-10T12:00:00+00:00")
+        self.assertTrue(completa)
+
+        mezclados = self._valores()
+        mezclados["setup_rear_wing"]["instante"] = "2026-09-10T12:00:01+00:00"
+        _, _, instante, completa = api_sesion._armar_puesta_a_punto(mezclados)
+        self.assertIsNone(instante)
+        self.assertFalse(completa)
+
+    def test_el_reglaje_se_asienta_con_rodaje_posterior(self):
+        cursor = MagicMock()
+        cursor.fetchone.return_value = (True,)
+        self.assertTrue(api_sesion._hay_rodaje_despues(
+            cursor, "f1_25_udp_simulation", "f1_25:session:1",
+            "f1_25:session:1:car:0", "2026-09-10T12:00:00+00:00"))
+        consulta, parametros = cursor.execute.call_args[0]
+        self.assertIn("signal_name = 'speed'", consulta)
+        self.assertIn("value_numeric > 0", consulta)
+        self.assertIn("timestamp > %s", consulta)
+        self.assertIn("vehicle_id = %s", consulta)
+        self.assertEqual(consulta.count("%s"), len(parametros))
+
+    def test_la_referencia_solo_se_compara_con_un_reglaje_asentado(self):
+        puesta = {"aleron_delantero": 4, "aleron_trasero": 1}
+        with patch.object(api_sesion.procedencia_sesiones, "de",
+                          return_value={"circuito": "spa"}):
+            referencia, diferencias = api_sesion._comparar_con_referencia(
+                "f1_25:session:1", puesta, False)
+            self.assertIsNotNone(referencia)
+            self.assertEqual(diferencias, [])
+            _, diferencias = api_sesion._comparar_con_referencia(
+                "f1_25:session:1", puesta, True)
+        self.assertEqual(diferencias, [
+            {"clave": "aleron_delantero", "aplicado": 4,
+             "referencia": 3, "diferencia": 1},
+            {"clave": "aleron_trasero", "aplicado": 1,
+             "referencia": 0, "diferencia": 1},
+        ])
+
+    def test_contexto_entrega_reglaje_asentado_y_referencia(self) -> None:
+        valores = self._valores()
+        falsa, parche_db = _con([])
+        with parche_db, \
+             patch.object(api_sesion, "_ultimos_valores", return_value=valores), \
+             patch.object(api_sesion, "_vehiculo_propio", return_value="car:0"), \
+             patch.object(api_sesion, "_ventana_de_alcance", return_value=None), \
+             patch.object(api_sesion, "_limites_de_fase", return_value=(None, None)), \
+             patch.object(api_sesion, "_hay_rodaje_despues", return_value=True), \
+             patch.object(api_sesion.procedencia_sesiones, "de",
+                          return_value={"circuito": "spa"}):
+            respuesta = api_sesion.contexto("f1_25:session:1")
+
+        self.assertTrue(respuesta["puesta_completa"])
+        self.assertTrue(respuesta["puesta_asentada"])
         self.assertEqual(
-            api_sesion.UNIDADES_PUESTA_A_PUNTO["sesgo_de_freno_pct"]["unidad"], "%")
-        self.assertEqual(
-            api_sesion.UNIDADES_PUESTA_A_PUNTO["edad_del_neumatico_vueltas"]["unidad"],
-            "vueltas")
+            respuesta["referencia_puesta"]["valores"]["aleron_delantero"], 3)
+        self.assertEqual(len(respuesta["campos"]), 23)
 
     def test_cada_campo_del_catalogo_tiene_unidad(self):
         self.assertEqual(sorted(api_sesion.CANALES_PUESTA_A_PUNTO),

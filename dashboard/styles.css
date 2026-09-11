@@ -1780,8 +1780,15 @@
     color: var(--texto-tenue); font-family: var(--cifra);
     padding: 1px 7px; border: 1px dashed var(--linea-fuerte); border-radius: 6px;
   }
+  #lista-puesta { grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: 24px; }
   #lista-puesta div { padding-bottom: 7px; }
+  #lista-puesta dd { display: flex; align-items: baseline; gap: 8px; }
+  .valor-referencia { color: var(--acento); font-size: .62rem; font-weight: 600; white-space: nowrap; }
   #nota-puesta { margin-top: 10px; }
+  #referencia-puesta a { color: var(--acento); font-weight: 700; }
+  @media (max-width: 720px) {
+    #lista-puesta { grid-template-columns: minmax(0, 1fr); }
+  }
 
   /* Una vuelta que no se rodo de corrido se marca en la linea de tiempo: el
      salto es del dato, no de la reproduccion, y quien mira tiene que poder

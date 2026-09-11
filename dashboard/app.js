@@ -7424,11 +7424,29 @@ function incorporarTelemetriaViva(m, recuperando) {
 }
 
 const CAMPOS_PUESTA_VIVA = [
-  ["sesgo_de_freno_pct", "brake_bias_front", "%", true],
-  ["mezcla_de_combustible", "fuel_mix_mode", "codigo", false],
-  ["modo_de_despliegue_ers", "ers_deploy_mode", "codigo", false],
-  ["compuesto", "tyre_compound", "codigo", false],
-  ["edad_del_neumatico_vueltas", "tyre_age", "vueltas", true],
+  ["aleron_delantero", "setup_front_wing", "nivel", true],
+  ["aleron_trasero", "setup_rear_wing", "nivel", true],
+  ["diferencial_con_acelerador_pct", "setup_differential_on_throttle", "%", true],
+  ["diferencial_sin_acelerador_pct", "setup_differential_off_throttle", "%", true],
+  ["caida_delantera_deg", "setup_camber_front", "deg", true],
+  ["caida_trasera_deg", "setup_camber_rear", "deg", true],
+  ["convergencia_delantera_deg", "setup_toe_front", "deg", true],
+  ["convergencia_trasera_deg", "setup_toe_rear", "deg", true],
+  ["suspension_delantera", "setup_suspension_front", "nivel", true],
+  ["suspension_trasera", "setup_suspension_rear", "nivel", true],
+  ["barra_delantera", "setup_anti_roll_bar_front", "nivel", true],
+  ["barra_trasera", "setup_anti_roll_bar_rear", "nivel", true],
+  ["altura_delantera", "setup_ride_height_front", "nivel", true],
+  ["altura_trasera", "setup_ride_height_rear", "nivel", true],
+  ["presion_de_freno_pct", "setup_brake_pressure", "%", true],
+  ["sesgo_de_freno_pct", "setup_brake_bias_front", "%", true],
+  ["freno_motor_pct", "setup_engine_braking", "%", true],
+  ["presion_neumatico_trasero_izq_psi", "setup_tyre_pressure_rear_left", "psi", true],
+  ["presion_neumatico_trasero_der_psi", "setup_tyre_pressure_rear_right", "psi", true],
+  ["presion_neumatico_delantero_izq_psi", "setup_tyre_pressure_front_left", "psi", true],
+  ["presion_neumatico_delantero_der_psi", "setup_tyre_pressure_front_right", "psi", true],
+  ["lastre", "setup_ballast", "nivel", true],
+  ["combustible_inicial_kg", "setup_fuel_load", "kg", true],
 ];
 
 const CAMPOS_CARROCERIA_VIVA = {
@@ -7519,17 +7537,28 @@ function sincronizarContextoVivo() {
 
   const campos = [];
   const puesta = {};
+  const instantesPuesta = [];
   CAMPOS_PUESTA_VIVA.forEach(([nombre, canal, unidad, decodificado]) => {
-    const medido = valor(canal);
+    const muestra = ultimos.get(canal);
+    const medido = muestra ? numeroMedido(muestra.value) : null;
     if (medido === null) return;
     puesta[nombre] = medido;
     campos.push({ clave: nombre, canal: canal, valor: medido,
                   unidad: unidad, decodificado: decodificado });
+    if (muestra.timestamp) instantesPuesta.push(new Date(muestra.timestamp).getTime());
   });
+  const completa = campos.length === CAMPOS_PUESTA_VIVA.length &&
+    instantesPuesta.length === campos.length && new Set(instantesPuesta).size === 1;
+  const rodajePosterior = ultimos.get("speed");
+  const asentada = completa && rodajePosterior && rodajePosterior.timestamp &&
+    numeroMedido(rodajePosterior.value) > 0 &&
+    new Date(rodajePosterior.timestamp).getTime() > instantesPuesta[0];
   estado.puesta = campos.length ? {
     puesta_a_punto: puesta,
     campos: campos,
-    sin_decodificar: campos.filter(c => !c.decodificado).map(c => c.clave),
+    puesta_completa: completa,
+    puesta_asentada: !!asentada,
+    sin_decodificar: [],
   } : null;
   estado.avisos = (vivo.anotaciones.get(clave) || []).slice();
 }
@@ -8495,7 +8524,7 @@ function cargarDatosDeSesion(ruta, apertura, senal, s) {
         estado.puesta = (ctx.campos && ctx.campos.length) ? ctx : null;
         if (estado.clima) estado.disponibles.add("air_temperature");
         if (estado.vehiculo) estado.disponibles.add("tyre_temperature_surface_front_left");
-        if (estado.puesta) estado.disponibles.add("brake_bias_front");
+        if (estado.puesta) estado.disponibles.add("setup_front_wing");
         aplicarDisponibilidad();
         _firmaClima = ""; _firmaEsquinas = ""; _firmaPuesta = "";
         pintarClima(); pintarEsquinas(); pintarPuestaAPunto();
@@ -8735,7 +8764,7 @@ function refrescarContexto() {
         estado.puesta = (d.campos && d.campos.length) ? d : null;
         if (estado.clima) estado.disponibles.add("air_temperature");
         if (estado.vehiculo) estado.disponibles.add("tyre_temperature_surface_front_left");
-        if (estado.puesta) estado.disponibles.add("brake_bias_front");
+        if (estado.puesta) estado.disponibles.add("setup_front_wing");
         aplicarDisponibilidad();
         _firmaClima = ""; _firmaEsquinas = ""; _firmaPuesta = "";
         pintarClima(); pintarEsquinas(); pintarPuestaAPunto();
@@ -8752,17 +8781,33 @@ function refrescarContexto() {
 /* ============================================================
    LA PUESTA A PUNTO
    ------------------------------------------------------------
-   Cinco campos, y la mitad del valor de este panel esta en decir cuales de
-   ellos son una medicion legible y cuales son un codigo que el trabajo
-   todavia no puede traducir. Un panel que muestra «compuesto: 7» sin decir
-   que 7 es un codigo invita a leerlo como una cantidad.
+   El paquete completo declara la condicion del vehiculo. Un valor observado en
+   el menu no se presenta como aplicado hasta que exista rodaje posterior.
    ============================================================ */
 const ROTULO_PUESTA = {
+  aleron_delantero: "Alerón delantero",
+  aleron_trasero: "Alerón trasero",
+  diferencial_con_acelerador_pct: "Diferencial con acelerador",
+  diferencial_sin_acelerador_pct: "Diferencial sin acelerador",
+  caida_delantera_deg: "Caída delantera",
+  caida_trasera_deg: "Caída trasera",
+  convergencia_delantera_deg: "Convergencia delantera",
+  convergencia_trasera_deg: "Convergencia trasera",
+  suspension_delantera: "Suspensión delantera",
+  suspension_trasera: "Suspensión trasera",
+  barra_delantera: "Barra delantera",
+  barra_trasera: "Barra trasera",
+  altura_delantera: "Altura delantera",
+  altura_trasera: "Altura trasera",
+  presion_de_freno_pct: "Presión de freno",
   sesgo_de_freno_pct: "Sesgo de freno",
-  mezcla_de_combustible: "Mezcla de combustible",
-  modo_de_despliegue_ers: "Modo de ERS",
-  compuesto: "Compuesto",
-  edad_del_neumatico_vueltas: "Edad del neumático",
+  freno_motor_pct: "Freno motor",
+  presion_neumatico_trasero_izq_psi: "Presión trasera izq.",
+  presion_neumatico_trasero_der_psi: "Presión trasera der.",
+  presion_neumatico_delantero_izq_psi: "Presión delantera izq.",
+  presion_neumatico_delantero_der_psi: "Presión delantera der.",
+  lastre: "Lastre",
+  combustible_inicial_kg: "Combustible inicial",
 };
 
 let _firmaPuesta = "";
@@ -8772,7 +8817,9 @@ function pintarPuestaAPunto() {
   if (!cont) return;
   const d = estado.puesta;
   const campos = (d && d.campos) || [];
-  const firma = [estadoSesion, JSON.stringify(campos), tinta("--acento")].join("|");
+  const diferencias = (d && (d.diferencias_puesta || d.diferencias)) || [];
+  const firma = [estadoSesion, JSON.stringify(campos), JSON.stringify(diferencias),
+                 d && (d.puesta_asentada || d.asentada), tinta("--acento")].join("|");
   if (firma === _firmaPuesta) return;
   _firmaPuesta = firma;
 
@@ -8780,26 +8827,48 @@ function pintarPuestaAPunto() {
   if (motivo) motivo.textContent = (d && d.motivo_ausencia) ||
     "Esta fuente no publica configuración del vehículo.";
 
+  const porClave = new Map(diferencias.map(x => [x.clave, x]));
   cont.innerHTML = campos.map(c => {
     const rot = ROTULO_PUESTA[c.clave] || c.clave;
     const valor = c.decodificado
       ? cifra(c.valor, c.clave === "sesgo_de_freno_pct" ? 0 : 0) + " " + (c.unidad || "")
       : '<span class="codigo-crudo">' + cifra(c.valor, 0) + '</span>';
-    return '<div title="Canal: ' + c.canal + '"><dt>' + rot + '</dt><dd>' + valor + '</dd></div>';
+    const comparada = porClave.get(c.clave);
+    const referencia = comparada
+      ? '<small class="valor-referencia">ref. ' + cifra(comparada.referencia, 0) + '</small>' : '';
+    return '<div title="Canal: ' + c.canal + '"><dt>' + rot + '</dt><dd>' +
+      valor + referencia + '</dd></div>';
   }).join("");
 
   const sinDecodificar = (d && d.sin_decodificar) || [];
   const nota = document.getElementById("nota-puesta");
   if (nota) {
-    nota.textContent = sinDecodificar.length
-      ? "Los valores en gris son códigos de la especificación del juego. El " +
-        "trabajo todavía no cita la tabla que los traduce, y traducirlos de " +
-        "memoria pondría una anotación sin fuente donde hoy hay una medición."
-      : "";
+    nota.textContent = !campos.length ? "" :
+      ((d.puesta_asentada || d.asentada)
+        ? "Configuración asentada: se observó rodaje posterior con este paquete completo."
+        : "Configuración observada, todavía no confirmada por rodaje posterior.");
+  }
+  const bloqueReferencia = document.getElementById("referencia-puesta");
+  if (bloqueReferencia) {
+    bloqueReferencia.textContent = "";
+    const referencia = d && (d.referencia_puesta || d.referencia);
+    if (referencia) {
+      bloqueReferencia.append(document.createTextNode(
+        "Referencia: " + referencia.fuente.titulo + ". " + referencia.alcance + " "));
+      try {
+        const url = new URL(referencia.fuente.url);
+        if (url.protocol === "https:" || url.protocol === "http:") {
+          const enlace = document.createElement("a");
+          enlace.href = url.href; enlace.target = "_blank"; enlace.rel = "noreferrer";
+          enlace.textContent = "Ver fuente";
+          bloqueReferencia.append(enlace);
+        }
+      } catch (_) { /* La referencia sigue identificada por titulo. */ }
+    }
   }
   const cab = document.getElementById("canal-puesta");
   if (cab) cab.textContent = campos.length
-    ? campos.length + " campos · " + (campos.length - sinDecodificar.length) + " legibles"
+    ? campos.length + " ajustes · " + ((d.puesta_asentada || d.asentada) ? "asentada" : "observada")
     : "—";
 }
 

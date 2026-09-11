@@ -34,8 +34,8 @@ from typing import Annotated, Any
 from fastapi import APIRouter, HTTPException, Query
 
 from adapters import f1_25 as adaptador_f1_25
-from backend import (anotador_vivo, catalogo_curvas, catalogo_sesiones, db,
-                     f1_udp, procedencia_sesiones)
+from backend import (anotador_vivo, catalogo_curvas, catalogo_reglajes,
+                     catalogo_sesiones, db, f1_udp, procedencia_sesiones)
 
 router = APIRouter()
 
@@ -2176,11 +2176,29 @@ CANALES_CARROCERIA = {
 }
 
 CANALES_PUESTA_A_PUNTO = {
-    "sesgo_de_freno_pct": "brake_bias_front",
-    "mezcla_de_combustible": "fuel_mix_mode",
-    "modo_de_despliegue_ers": "ers_deploy_mode",
-    "compuesto": "tyre_compound",
-    "edad_del_neumatico_vueltas": "tyre_age",
+    "aleron_delantero": "setup_front_wing",
+    "aleron_trasero": "setup_rear_wing",
+    "diferencial_con_acelerador_pct": "setup_differential_on_throttle",
+    "diferencial_sin_acelerador_pct": "setup_differential_off_throttle",
+    "caida_delantera_deg": "setup_camber_front",
+    "caida_trasera_deg": "setup_camber_rear",
+    "convergencia_delantera_deg": "setup_toe_front",
+    "convergencia_trasera_deg": "setup_toe_rear",
+    "suspension_delantera": "setup_suspension_front",
+    "suspension_trasera": "setup_suspension_rear",
+    "barra_delantera": "setup_anti_roll_bar_front",
+    "barra_trasera": "setup_anti_roll_bar_rear",
+    "altura_delantera": "setup_ride_height_front",
+    "altura_trasera": "setup_ride_height_rear",
+    "presion_de_freno_pct": "setup_brake_pressure",
+    "sesgo_de_freno_pct": "setup_brake_bias_front",
+    "freno_motor_pct": "setup_engine_braking",
+    "presion_neumatico_trasero_izq_psi": "setup_tyre_pressure_rear_left",
+    "presion_neumatico_trasero_der_psi": "setup_tyre_pressure_rear_right",
+    "presion_neumatico_delantero_izq_psi": "setup_tyre_pressure_front_left",
+    "presion_neumatico_delantero_der_psi": "setup_tyre_pressure_front_right",
+    "lastre": "setup_ballast",
+    "combustible_inicial_kg": "setup_fuel_load",
 }
 
 
@@ -2492,21 +2510,90 @@ def estado_del_vehiculo(
     }
 
 
-#: Que unidad tiene cada campo de la puesta a punto, y si esta decodificado.
-#:
-#: TRES DE LOS CINCO SON CODIGOS SIN DECODIFICAR, Y SE DECLARA.
-#: El compuesto, la mezcla de combustible y el modo de despliegue de ERS llegan
-#: como enteros que solo significan algo contra la tabla de la especificacion
-#: oficial del juego. Esa tabla **no esta citada en el trabajo**, y traducirla
-#: de memoria pondria una anotacion sin fuente donde hoy hay una medicion. Se
-#: devuelve el codigo, se dice que es un codigo, y queda como tarea citarla.
+# Unidades del reglaje declarado. A diferencia del estado operativo que ocupaba
+# antes este panel, ningun campo es un codigo sin interpretar.
 UNIDADES_PUESTA_A_PUNTO = {
-    "sesgo_de_freno_pct": {"unidad": "%", "decodificado": True},
-    "edad_del_neumatico_vueltas": {"unidad": "vueltas", "decodificado": True},
-    "compuesto": {"unidad": "codigo", "decodificado": False},
-    "mezcla_de_combustible": {"unidad": "codigo", "decodificado": False},
-    "modo_de_despliegue_ers": {"unidad": "codigo", "decodificado": False},
+    clave: {"unidad": unidad, "decodificado": True}
+    for clave, unidad in {
+        "aleron_delantero": "nivel", "aleron_trasero": "nivel",
+        "diferencial_con_acelerador_pct": "%",
+        "diferencial_sin_acelerador_pct": "%",
+        "caida_delantera_deg": "deg", "caida_trasera_deg": "deg",
+        "convergencia_delantera_deg": "deg", "convergencia_trasera_deg": "deg",
+        "suspension_delantera": "nivel", "suspension_trasera": "nivel",
+        "barra_delantera": "nivel", "barra_trasera": "nivel",
+        "altura_delantera": "nivel", "altura_trasera": "nivel",
+        "presion_de_freno_pct": "%", "sesgo_de_freno_pct": "%",
+        "freno_motor_pct": "%",
+        "presion_neumatico_trasero_izq_psi": "psi",
+        "presion_neumatico_trasero_der_psi": "psi",
+        "presion_neumatico_delantero_izq_psi": "psi",
+        "presion_neumatico_delantero_der_psi": "psi",
+        "lastre": "nivel", "combustible_inicial_kg": "kg",
+    }.items()
 }
+
+
+def _armar_puesta_a_punto(valores: dict[str, dict]) -> tuple[dict, list, str | None, bool]:
+    """Reconstruye un paquete completo sin mezclar instantes."""
+
+    datos, campos, instantes = {}, [], set()
+    for clave, canal in CANALES_PUESTA_A_PUNTO.items():
+        v = valores.get(canal)
+        if v is None:
+            continue
+        datos[clave] = v["valor"]
+        meta = UNIDADES_PUESTA_A_PUNTO[clave]
+        campos.append({"clave": clave, "canal": canal, "valor": v["valor"],
+                       "unidad": meta["unidad"], "decodificado": True,
+                       "instante": v.get("instante")})
+        if v.get("instante") is not None:
+            instantes.add(v["instante"])
+    completa = len(datos) == len(CANALES_PUESTA_A_PUNTO) and len(instantes) == 1
+    instante = next(iter(instantes)) if completa else None
+    return datos, campos, instante, completa
+
+
+def _hay_rodaje_despues(cursor, fuente: str, session_id: str,
+                        vehiculo: str | None, desde: str,
+                        hasta: str | None = None,
+                        ventana: tuple[str, str] | None = None,
+                        limites_fase: tuple[int | None, int | None] = (None, None),
+                        ) -> bool:
+    """Confirma que el reglaje observado llego a una vuelta conducida."""
+
+    cv, pv = _acotar_al_vehiculo(vehiculo)
+    cf, pf = _clausula_de_tramo(*limites_fase)
+    condicion_ventana = " AND timestamp BETWEEN %s AND %s" if ventana else ""
+    parametros = [fuente, session_id] + pv + pf + list(ventana or ()) + [desde,
+                  hasta, hasta]
+    cursor.execute("""
+        SELECT EXISTS (
+            SELECT 1 FROM telemetry_messages
+             WHERE source_type = %s AND session_id = %s
+               AND signal_name = 'speed' AND value_numeric > 0""" + cv + cf + condicion_ventana + """
+               AND timestamp > %s
+               AND (%s::timestamptz IS NULL OR timestamp <= %s)
+             LIMIT 1)
+    """, tuple(parametros))
+    fila = cursor.fetchone()
+    return bool(fila and fila[0])
+
+
+def _comparar_con_referencia(session_id: str, puesta: dict,
+                             asentada: bool) -> tuple[dict | None, list[dict]]:
+    procedencia = procedencia_sesiones.de(session_id) or {}
+    referencia = catalogo_reglajes.referencia_de(procedencia.get("circuito"))
+    diferencias = []
+    if referencia and asentada:
+        for clave, esperado in referencia["valores"].items():
+            if clave not in puesta:
+                continue
+            aplicado = puesta[clave]
+            diferencias.append({"clave": clave, "aplicado": aplicado,
+                                "referencia": esperado,
+                                "diferencia": aplicado - esperado})
+    return referencia, diferencias
 
 
 @router.get("/sesiones/{session_id}/puesta-a-punto")
@@ -2515,49 +2602,36 @@ def puesta_a_punto(
         hasta: Annotated[str | None, Query(
             description="Instante ISO-8601: la configuracion vigente hasta ahi")] = None,
         ) -> dict[str, Any]:
-    """Configuracion asentada del vehiculo.
+    """Reglaje observado y confirmacion de que luego se condujo con el.
 
-    IMPORTANTE. Se devuelve el ultimo valor persistido, que es la
-    configuracion **con la que se rodo**. El menu del juego publica valores
-    intermedios mientras se navega, y mostrarlos seria declarar como puesta a
-    punto algo que nunca se llevo a la pista.
-
-    Con `hasta` se devuelve la que estaba vigente en ese instante, que es lo que
-    necesita un tablero que se recorre: el sesgo de freno y el modo de ERS se
-    cambian **en marcha**, y decir siempre el ultimo seria decir el del final de
-    la carrera durante toda la reproduccion.
-
-    Cada campo declara su unidad y si esta decodificado. Tres de los cinco son
-    codigos de la especificacion del juego que el trabajo todavia no cita; se
-    devuelven como codigos y se dice que lo son.
+    El menu publica valores intermedios. Por eso observar un paquete no alcanza:
+    se lo llama `asentado` solamente si sus veintitres señales pertenecen al
+        mismo instante y existe una muestra posterior con el vehiculo en marcha.
     """
     fuente = _fuente_de(session_id)
     with db.obtener_conexion() as conexion, conexion.cursor() as cursor:
+        propio = _vehiculo_propio(cursor, fuente, session_id)
         valores = _ultimos_valores(cursor, fuente, session_id,
-                                   list(CANALES_PUESTA_A_PUNTO.values()), hasta)
-    datos = {}
-    campos = []
-    for clave, canal in CANALES_PUESTA_A_PUNTO.items():
-        v = valores.get(canal)
-        if v is None:
-            continue
-        datos[clave] = v["valor"]
-        meta = UNIDADES_PUESTA_A_PUNTO.get(clave, {})
-        campos.append({
-            "clave": clave,
-            "canal": canal,
-            "valor": v["valor"],
-            "unidad": meta.get("unidad", v.get("unidad")),
-            "decodificado": meta.get("decodificado", True),
-            "instante": v.get("instante"),
-        })
+                                   list(CANALES_PUESTA_A_PUNTO.values()), hasta,
+                                   vehiculo=propio)
+        datos, campos, instante, completa = _armar_puesta_a_punto(valores)
+        asentada = bool(completa and _hay_rodaje_despues(
+            cursor, fuente, session_id, propio, instante, hasta))
+    referencia, diferencias = _comparar_con_referencia(
+        session_id, datos, asentada)
     return {
         "session_id": session_id,
         "fuente": fuente,
         "puesta_a_punto": datos,
         "campos": campos,
-        "criterio": "ultimo valor persistido hasta el instante pedido: la configuracion con la que se rodo",
-        "sin_decodificar": [c["clave"] for c in campos if not c["decodificado"]],
+        "completa": completa,
+        "asentada": asentada,
+        "instante_observado": instante,
+        "referencia": referencia,
+        "diferencias": diferencias,
+        "criterio": ("paquete completo observado antes de una muestra posterior "
+                     "con velocidad positiva: configuracion llevada a la pista"),
+        "sin_decodificar": [],
         "motivo_ausencia": None if datos else "Esta fuente no publica configuracion del vehiculo.",
     }
 
@@ -2638,11 +2712,11 @@ def contexto(
         # canal. Por eso el panel mostraba las cuatro esquinas identicas y «sin
         # dano» sobre un coche que termino con los dos alerones rotos.
         #
-        # El clima y la puesta a punto **no son de un vehiculo**: los publica el
-        # paquete de sesion, que el protocolo entrega solo para el propio. Por
-        # eso la consulta base va siempre acotada al propio, y solo cuando se
-        # pide otro se hace una segunda para sus canales. Mirar a un rival no
-        # tiene por que costar el clima.
+        # El clima es de la sesion y el reglaje es telemetria privada del propio.
+        # Ambos llegan atados a su identificador porque toda fila canonica exige
+        # vehiculo. Por eso la consulta base va siempre acotada al propio, y solo
+        # cuando se pide otro se reemplazan sus canales fisicos. Mirar a un rival
+        # no tiene por que costar ni el clima ni el reglaje propio.
         propio = _vehiculo_propio(cursor, fuente, session_id)
         valores = _ultimos_valores(cursor, fuente, session_id, senales, hasta,
                                    ventana_alcance=_cv, vehiculo=propio,
@@ -2653,6 +2727,10 @@ def contexto(
                                         ventana_alcance=_cv, vehiculo=vehiculo,
                                         limites_fase=_lf)
             valores = {**valores, **del_otro}
+        puesta, campos, instante_puesta, completa = _armar_puesta_a_punto(valores)
+        asentada = bool(completa and _hay_rodaje_despues(
+            cursor, fuente, session_id, propio, instante_puesta, hasta,
+            ventana=_cv, limites_fase=_lf))
 
     clima = {}
     for clave, canal in CANALES_CLIMA.items():
@@ -2680,16 +2758,8 @@ def contexto(
         if v is not None:
             carroceria[clave] = v["valor"]
 
-    puesta, campos = {}, []
-    for clave, canal in CANALES_PUESTA_A_PUNTO.items():
-        v = valores.get(canal)
-        if v is None:
-            continue
-        puesta[clave] = v["valor"]
-        meta = UNIDADES_PUESTA_A_PUNTO.get(clave, {})
-        campos.append({"clave": clave, "canal": canal, "valor": v["valor"],
-                       "unidad": meta.get("unidad", v.get("unidad")),
-                       "decodificado": meta.get("decodificado", True)})
+    referencia, diferencias = _comparar_con_referencia(
+        session_id, puesta, asentada)
 
     return {
         "session_id": session_id,
@@ -2703,9 +2773,16 @@ def contexto(
                             else "Esta fuente no publica estado de neumaticos ni de daño."),
         "puesta_a_punto": puesta,
         "campos": campos,
-        "sin_decodificar": [c["clave"] for c in campos if not c["decodificado"]],
+        "puesta_completa": completa,
+        "puesta_asentada": asentada,
+        "puesta_instante_observado": instante_puesta,
+        "referencia_puesta": referencia,
+        "diferencias_puesta": diferencias,
+        "puesta_motivo": (None if puesta else
+                           "Esta fuente no publica configuracion del vehiculo."),
+        "sin_decodificar": [],
         "criterio": ("ultimo valor de cada señal hasta el instante pedido; "
-                     "las tres partes son del mismo instante por construccion"),
+                     "el reglaje solo se declara asentado si despues se rodo"),
     }
 
 

@@ -100,7 +100,7 @@ class AyudantesDeSerieTests(unittest.TestCase):
     def test_el_contexto_historico_habilita_la_puesta_a_punto(self) -> None:
         codigo = APP.read_text(encoding="utf-8")
         self.assertGreaterEqual(
-            codigo.count('if (estado.puesta) estado.disponibles.add("brake_bias_front");'),
+            codigo.count('if (estado.puesta) estado.disponibles.add("setup_front_wing");'),
             2,
         )
         self.assertGreaterEqual(codigo.count("aplicarDisponibilidad();"), 3)

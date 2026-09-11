@@ -149,6 +149,7 @@ function nuevoBanco() {
                              leerPista: () => PISTA, fijarPista: (p) => { PISTA = p; },
                               incorporarTelemetriaViva, puedeAdoptarVivo,
                               sincronizarContextoVivo, incorporarAnotacionViva,
+                             CAMPOS_PUESTA_VIVA,
                              identidadDeMuestra, vaciarVivo, nuevaSesionEnCurso,
                              aperturaVigente, sigueVigente,
                              leerEstadoSesion: () => estadoSesion,
@@ -203,16 +204,30 @@ prueba("adoptar una sesion viva limpia el contexto historico", (b) => {
 
 prueba("el contexto vivo sale de las senales de la sesion nueva", (b) => {
   const vehiculo = "NUEVA:car:19";
-  b.incorporarTelemetriaViva(muestra("NUEVA", vehiculo, "brake_bias_front", 58, T(1)));
-  b.incorporarTelemetriaViva(muestra("NUEVA", vehiculo, "tyre_compound", 17, T(1)));
+  b.incorporarTelemetriaViva(muestra("NUEVA", vehiculo, "setup_front_wing", 3, T(1)));
+  b.incorporarTelemetriaViva(muestra("NUEVA", vehiculo, "setup_rear_wing", 0, T(1)));
   b.incorporarTelemetriaViva(muestra("NUEVA", vehiculo, "floor_damage", 12, T(1)));
   b.incorporarTelemetriaViva(muestra("NUEVA", vehiculo,
     "tyre_temperature_surface_front_left", 91, T(1)));
   b.sincronizarContextoVivo();
-  assert.strictEqual(b.estado.puesta.puesta_a_punto.sesgo_de_freno_pct, 58);
-  assert.strictEqual(b.estado.puesta.puesta_a_punto.compuesto, 17);
+  assert.strictEqual(b.estado.puesta.puesta_a_punto.aleron_delantero, 3);
+  assert.strictEqual(b.estado.puesta.puesta_a_punto.aleron_trasero, 0);
+  assert.strictEqual(b.estado.puesta.puesta_asentada, false,
+    "un valor navegado sin rodaje posterior se declaro aplicado");
   assert.strictEqual(b.estado.vehiculo.carroceria.piso_pct, 12);
   assert.strictEqual(b.estado.vehiculo.esquinas.front_left.temperatura_superficie_c, 91);
+});
+
+prueba("el reglaje vivo se asienta solamente despues de rodar", (b) => {
+  const vehiculo = "NUEVA:car:19";
+  b.CAMPOS_PUESTA_VIVA.forEach(([, canal], i) => {
+    b.incorporarTelemetriaViva(muestra("NUEVA", vehiculo, canal, i, T(1)));
+  });
+  b.sincronizarContextoVivo();
+  assert.strictEqual(b.estado.puesta.puesta_asentada, false);
+  b.incorporarTelemetriaViva(muestra("NUEVA", vehiculo, "speed", 30, T(2)));
+  b.sincronizarContextoVivo();
+  assert.strictEqual(b.estado.puesta.puesta_asentada, true);
 });
 
 prueba("el clima vivo sale de las senales que publica el adaptador", (b) => {
