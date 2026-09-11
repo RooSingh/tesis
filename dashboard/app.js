@@ -3478,6 +3478,14 @@ const HUECO_DE_CAPTURA_MS = 2000;
    senal puede tener. */
 const EJE_DISTANCIA = " distancia";
 
+/* Y LA ABSCISA DE LA FUENTE QUE NO MIDE DISTANCIA, QUE ES EL RELOJ DEL TRAMO.
+   `_armarSerieDeCanal` ya declara la regla: la abscisa de un bloque es
+   `distancia_m` **o** `tiempo_s`, lo que la fuente traiga. Contra el tiempo esa
+   segunda mitad no se podia leer ---solo existia la clave de la distancia--- y
+   quien necesitaba la abscisa en un instante cualquiera no tenia de donde
+   sacarla mas que de una muestra. Ahora las dos se leen igual. */
+const EJE_TIEMPO = " tiempo";
+
 /* QUE SE INTERPOLA Y QUE NO, POR LO QUE LA SENAL ES.
    Una velocidad entre 249 y 258 km/h paso por 253: interpolarla dice algo que
    ocurrio. Una marcha entre la 4 y la 5 **no** pasa por la 4,5, y un DRS entre
@@ -3658,7 +3666,8 @@ function _serieTemporalCruda(canal, vuelta, clave) {
      vista de presentacion ---la usan el instante y los graficos--- y el bloque
      tiene que seguir diciendo lo que la fuente mando. Si la unidad declarada no
      se puede llevar a la que se muestra, no hay serie que dar. */
-  const divisor = (canal === EJE_DISTANCIA || canal === EJE_DISTANCIA_SESION)
+  const divisor = (canal === EJE_DISTANCIA || canal === EJE_DISTANCIA_SESION ||
+                   canal === EJE_TIEMPO)
     ? 1 : divisorDePresentacion(canal, vuelta, clave);
   if (divisor === null) return null;
 
@@ -3668,6 +3677,7 @@ function _serieTemporalCruda(canal, vuelta, clave) {
 
   const ys = canal === EJE_DISTANCIA ? veh.distancia_m
            : canal === EJE_DISTANCIA_SESION ? veh.distancia_sesion_m
+           : canal === EJE_TIEMPO ? veh.tiempo_s
            : veh[nombreDeSenal(canal)];
   const marcas = veh.timestamp_utc;
   let armada = null;
@@ -3757,6 +3767,38 @@ function valorEscalonadoEn(st, t) {
   if (!st || !st.t.length) return null;
   const i = _antesDe(st, t);
   return i < 0 ? null : st.v[i];
+}
+
+/* ============================================================
+   LA ABSCISA DE PRESENTACION SALE DEL RELOJ, NO DE LA MUESTRA MAS CERCANA
+   ------------------------------------------------------------
+   Es la que corre la ventana movil de los graficos y la que coloca el cabezal.
+   Sobre una fuente con distancia medida ya se resolvia asi ---interpolando
+   `distancia_m` entre las dos muestras que rodean el instante--- y por eso la
+   ventana se desliza.
+
+   Sobre una fuente **sin** distancia no habia de donde sacarla y se caia en
+   `serie[Math.round(fraccion * (n - 1))][0]`, que es la abscisa de una muestra
+   concreta: la ventana no avanzaba con el reloj sino a los saltos de la
+   muestra, y con ella todo lo que se dibuja dentro.
+
+   CUANTO SALTABA. OpenF1 de Silverstone 2025, vuelta 1 pedida como tramo
+   propio: 401 muestras en 106,1 s, o sea una cada **0,265 s** de mediana. A 1x
+   eso son menos de cuatro avances por segundo sobre una pantalla que entrega
+   sesenta, y se ve: los graficos se mueven a tirones mientras los medidores
+   ---que si leen por interpolacion--- cambian en continuo. Dos relojes para el
+   mismo instante, otra vez.
+
+   La regla de que abscisa usar no se escribe aca de nuevo: es la que ya declara
+   `_armarSerieDeCanal`, distancia si la hay y reloj del tramo si no. Se lee la
+   misma, contra el mismo instante compartido.
+   ============================================================ */
+function abscisaContinua(vuelta, clave, tUtc) {
+  if (tUtc === null || tUtc === undefined) return null;
+  const distancia = serieTemporal(EJE_DISTANCIA, vuelta, clave);
+  if (distancia) return valorContinuoEn(distancia, tUtc, true);
+  const reloj = serieTemporal(EJE_TIEMPO, vuelta, clave);
+  return reloj ? valorContinuoEn(reloj, tUtc, true) : null;
 }
 
 /* ============================================================
@@ -9717,13 +9759,14 @@ function calcularInstante() {
       })()
     : (listo ? dist[Math.min(idx + 1, dist.length - 1)][1] : null);
 
-  /* LA DISTANCIA DE PRESENTACION TAMBIEN SALE DEL INSTANTE.
+  /* LA ABSCISA DE PRESENTACION TAMBIEN SALE DEL INSTANTE.
      Es la que corre la ventana de los graficos y la que coloca el cabezal en
      modo vuelta completa. Sacarla de la muestra discreta de velocidad dejaba la
-     ventana anclada a un metro que solo cambiaba cada 425 ms. No se interpola
-     sobre el cruce de meta: cuando la distancia baja, la vuelta se cerro. */
-  const stD = tUtc !== null ? serieTemporal(EJE_DISTANCIA, vuelta, propioAqui) : null;
-  const metroSuave = stD ? valorContinuoEn(stD, tUtc, true) : null;
+     ventana anclada a un metro que solo cambiaba cada 425 ms ---y, en la fuente
+     que mide contra el reloj y no contra el metro, cada 265 ms---. No se
+     interpola sobre el cruce de meta: cuando la abscisa baja, la vuelta se
+     cerro. */
+  const metroSuave = abscisaContinua(vuelta, propioAqui, tUtc);
 
   /* LA MISMA POSICION, SOBRE EL EJE QUE NO SE REINICIA.
      `metro` es la distancia de la vuelta y vuelve a cero en la meta: sirve para

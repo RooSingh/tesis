@@ -262,6 +262,7 @@ const PIEZAS = [
   constanteNumerica("HUECO_DE_CAPTURA_MS"),
   'const EJE_DISTANCIA = " distancia";',
   'const EJE_DISTANCIA_SESION = " distancia de sesion";',
+  'const EJE_TIEMPO = " tiempo";',
   fn("numeroMedido"),
   fn("nombreDeSenal"),
   fn("claveVehiculoPropio"),

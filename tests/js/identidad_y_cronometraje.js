@@ -108,6 +108,7 @@ globalThis.PISTA = { largo_m: 7000 };
 globalThis.HUECO_DE_CAPTURA_MS = 2000;
 globalThis.EJE_DISTANCIA = " distancia";
 globalThis.EJE_DISTANCIA_SESION = " distancia de sesion";
+globalThis.EJE_TIEMPO = " tiempo";
 globalThis._selloSeries = 0;
 globalThis._selloDeLoArmado = -1;
 globalThis._seriesArmadas = new Map();
@@ -145,7 +146,7 @@ const NOMBRES = [
   "cambiaronLasSeries",
   "esCanalEscalonado", "_cacheTemporal", "serieTemporal", "_serieTemporalCruda",
   "continuidadDeVuelta", "_umbralDeVuelta", "tiempoEfectivoEntre", "hayCorteEntre",
-  "_antesDe", "valorContinuoEn", "valorEscalonadoEn",
+  "_antesDe", "valorContinuoEn", "valorEscalonadoEn", "abscisaContinua",
   "relojDeVuelta", "_armarRelojDeVuelta", "_tramosContinuos", "_tramosDeMuestras",
   "tiempoDePresentacion", "recortarConBordes",
   "serieDeCanal", "serieAcumuladaDeCanal", "tramoAcumuladoDeVuelta",

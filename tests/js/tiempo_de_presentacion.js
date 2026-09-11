@@ -73,6 +73,7 @@ globalThis.PISTA = { largo_m: 7000 };
 globalThis.HUECO_DE_CAPTURA_MS = 2000;
 globalThis.EJE_DISTANCIA = " distancia";
 globalThis.EJE_DISTANCIA_SESION = " distancia de sesion";
+globalThis.EJE_TIEMPO = " tiempo";
 globalThis._selloSeries = 0;
 globalThis._selloDeLoArmado = -1;
 globalThis._seriesArmadas = new Map();
@@ -93,7 +94,7 @@ const NOMBRES = [
   "numeroMedido", "nombreDeSenal", "recortarPorDominio",
   "esCanalEscalonado", "_cacheTemporal", "serieTemporal", "_serieTemporalCruda",
   "continuidadDeVuelta", "_umbralDeVuelta", "tiempoEfectivoEntre", "hayCorteEntre",
-  "_antesDe", "valorContinuoEn", "valorEscalonadoEn",
+  "_antesDe", "valorContinuoEn", "valorEscalonadoEn", "abscisaContinua",
   "serieAcumuladaDeCanal", "tramoAcumuladoDeVuelta", "vueltasEnTramoAcumulado",
   "trazaContinua", "hayCorteEntreVueltas", "hayCorteEntreVentanas",
   "vueltaSiguienteDeclarada",
@@ -112,7 +113,8 @@ const sacadas = new Function(
   NOMBRES.map(extraer).join("\n\n") +
   "\nreturn { " + NOMBRES.join(", ") + " };")();
 const {
-  serieTemporal, valorContinuoEn, valorEscalonadoEn, tiempoDePresentacion,
+  serieTemporal, valorContinuoEn, valorEscalonadoEn, abscisaContinua,
+  tiempoDePresentacion,
   relojDeVuelta, recortarConBordes, calcularInstante, posicionesAhora,
   esCanalEscalonado, _antesDe, continuidadDeVuelta, tiempoEfectivoEntre,
   serieAcumuladaDeCanal, tramoAcumuladoDeVuelta, vueltasEnTramoAcumulado,
@@ -1133,6 +1135,87 @@ prueba("sin acumulada no hay ventana continua, y no se inventa", () => {
   assert.strictEqual(t.metroSesion, null,
     "se invento una distancia acumulada que la fuente no trae");
   assert.ok(t.metro > 0, "la distancia de vuelta tiene que seguir estando");
+});
+
+/* ------------------------------------------------------------------
+   LA ABSCISA DE UNA FUENTE QUE NO MIDE DISTANCIA
+   ------------------------------------------------------------------
+   Un bloque declara su abscisa: `distancia_m` si la fuente la mide, y si no el
+   reloj del tramo en `tiempo_s`. Lo segundo no se podia leer contra un instante
+   cualquiera, y la ventana movil de los graficos terminaba anclada a la abscisa
+   de **una muestra concreta**: avanzaba a saltos del tamaño del muestreo en vez
+   de correr con el reloj.
+
+   Las marcas de abajo son las medidas en OpenF1 ---Silverstone 2025, vuelta 1
+   pedida como tramo propio: 401 muestras en 106,1 s, una cada 0,265 s---, que es
+   donde se ve. A 1x eso son menos de cuatro avances por segundo.
+   ------------------------------------------------------------------ */
+
+/* Una vuelta como la entrega una fuente sin distancia: cuatro muestras
+   separadas 265 ms y la abscisa en `tiempo_s`, no en metros. */
+function vueltaSinDistancia() {
+  reiniciar();
+  cargarVuelta(1, [0, 265, 530, 795],
+               { tiempo_s: [0, 0.265, 0.53, 0.795],
+                 speed: [100, 120, 140, 160] });
+  declararVueltas([{ numero: 1, duracion_s: 0.795,
+                     desde_utc: iso(T0), hasta_utc: iso(T0 + 795) }]);
+}
+
+prueba("sin distancia medida la abscisa la lleva el reloj, no la muestra", () => {
+  vueltaSinDistancia();
+  /* Dos instantes **dentro del mismo intervalo entre muestras**. Con la abscisa
+     sacada de la muestra mas cercana los dos daban exactamente lo mismo, que es
+     el salto tal cual se ve en pantalla. */
+  globalThis.cabezal = 0.05;
+  const a = calcularInstante();
+  globalThis.cabezal = 0.15;
+  const b = calcularInstante();
+  assert.strictEqual(a.vuelta, 1);
+  assert.ok(a.tUtcMs < T0 + 265 && b.tUtcMs < T0 + 265,
+            "los dos instantes tienen que caer antes de la segunda muestra");
+  assert.ok(b.metro - a.metro > 1e-6,
+    "la abscisa no se movio entre dos instantes del mismo intervalo: " +
+    a.metro + " y " + b.metro);
+  /* Y se mueve **como el reloj**, no de cualquier manera: la recta entre las
+     dos muestras que lo rodean, que es lo mismo que ya se hacia con la
+     distancia. */
+  const esperado = t => (t - T0) / 1000;
+  assert.ok(Math.abs(a.metro - esperado(a.tUtcMs)) < 1e-9, "a: " + a.metro);
+  assert.ok(Math.abs(b.metro - esperado(b.tUtcMs)) < 1e-9, "b: " + b.metro);
+});
+
+prueba("la abscisa por reloj no adelanta ni atrasa las muestras medidas", () => {
+  vueltaSinDistancia();
+  /* En el arranque y en el final del tramo tiene que dar el valor medido, sin
+     interpolar contra nada que este fuera. */
+  globalThis.cabezal = 0;
+  assert.ok(Math.abs(calcularInstante().metro - 0) < 1e-9);
+  globalThis.cabezal = 1;
+  assert.ok(Math.abs(calcularInstante().metro - 0.795) < 1e-9);
+});
+
+prueba("donde hay distancia medida, manda la distancia y no el reloj", () => {
+  /* La regla de que abscisa usar es una sola y ya estaba escrita: el reloj es
+     el respaldo, no un reemplazo. Una vuelta con las dos columnas tiene que
+     seguir midiendose en metros. */
+  reiniciar();
+  cargarVuelta(1, [0, 1000],
+               { distancia_m: [0, 100], tiempo_s: [0, 1], speed: [100, 200] });
+  declararVueltas([{ numero: 1, duracion_s: 1,
+                     desde_utc: iso(T0), hasta_utc: iso(T0 + 1000) }]);
+  globalThis.cabezal = 0.5;
+  const t = calcularInstante();
+  assert.ok(Math.abs(t.metro - 50) < 1e-9,
+    "la abscisa dejo de ser la distancia medida: " + t.metro);
+});
+
+prueba("sin ninguna de las dos columnas no se inventa una abscisa", () => {
+  reiniciar();
+  cargarVuelta(1, [0, 1000], { speed: [100, 200] });
+  declararVueltas([{ numero: 1, duracion_s: 1,
+                     desde_utc: iso(T0), hasta_utc: iso(T0 + 1000) }]);
+  assert.strictEqual(abscisaContinua(1, "car:0", T0 + 500), null);
 });
 
 prueba("las senales discretas siguen en escalon sobre el eje acumulado", () => {
