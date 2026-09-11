@@ -8950,6 +8950,45 @@ function pintarPuestaAPunto() {
 /* Cada aviso trae vuelta y metro; para colocarlo en la linea de tiempo hace
    falta pasarlo a fraccion de la sesion, que es lo unico que el reproductor
    entiende. */
+/* DONDE, DENTRO DE SU VUELTA, VA UN AVISO. Devuelve una fraccion de 0 a 1.
+
+   EL INSTANTE MANDA, PORQUE LA FUENTE LO DECLARA. `/avisos` trae `instante` en
+   **cada** aviso. Reconstruirlo desde `vuelta` y `metro` era rehacer una cuenta
+   que ya estaba hecha, y encima peor: `a.metro || 0` no distingue «en el metro
+   cero» de «no se donde», y el metro cero es una posicion de la pista como
+   cualquier otra. Es la misma familia que `Number(null)` dando cero donde el
+   cero es un valor legitimo.
+
+   MEDIDO el 2026-09-11: de los veinticuatro avisos de la practica de Catalunya,
+   **veinte llegan con `metro: null`** ---los del aleron movil, la bandera
+   amarilla--- y los catorce de la vuelta 1 terminaban apilados en la fraccion
+   cero, todos en el mismo punto del arranque. El panel muestra los avisos cuyo
+   `en` ya paso el cabezal, de modo que ubicarlos mal es mostrarlos cuando no
+   ocurrieron.
+
+   EL RELOJ ES EL QUE YA ESTABA. `utcDelCabezal` reparte linealmente la fraccion
+   de una vuelta sobre su ventana `[desde_utc, hasta_utc]`; esta es la cuenta
+   inversa, con la misma aproximacion declarada. No se introduce un segundo
+   reloj que pueda desfasarse del primero.
+
+   Y EL METRO SIGUE SIRVIENDO DE RESPALDO, para una fuente que ubique sus avisos
+   sin decir cuando. Sin instante y sin metro no se inventa nada: el aviso queda
+   al comienzo de su vuelta, que es lo unico que se sabe de el. */
+function fraccionDentroDeLaVuelta(aviso, numero, largo) {
+  const v = estado.vueltas.find(x => x.numero === numero);
+  if (aviso.instante && v && v.desde_utc && v.hasta_utc) {
+    const t = Date.parse(aviso.instante);
+    const t0 = Date.parse(v.desde_utc);
+    const t1 = Date.parse(v.hasta_utc);
+    if (Number.isFinite(t) && Number.isFinite(t0) && Number.isFinite(t1) && t1 > t0) {
+      return Math.max(0, Math.min(1, (t - t0) / (t1 - t0)));
+    }
+  }
+  const metro = numeroMedido(aviso.metro);
+  if (metro !== null) return Math.max(0, Math.min(1, metro / largo));
+  return 0;
+}
+
 function ubicarAvisos(lista) {
   const inicios = iniciosDeVuelta();
   const total = duracionSesionS();
@@ -8958,7 +8997,7 @@ function ubicarAvisos(lista) {
     const v = Math.max(1, Math.min(estado.vueltas.length || 1, a.vuelta || 1));
     const ini = inicios[v - 1] || 0;
     const parte = total > 0 ? duracionDeVuelta(v) / total : 0;
-    return Object.assign({}, a, { en: ini + parte * Math.max(0, Math.min(1, (a.metro || 0) / largo)) });
+    return Object.assign({}, a, { en: ini + parte * fraccionDentroDeLaVuelta(a, v, largo) });
   }).sort((x, y) => x.en - y.en);
 }
 
