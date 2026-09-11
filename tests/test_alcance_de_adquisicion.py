@@ -51,6 +51,15 @@ class RepartoDelRelojTests(unittest.TestCase):
         api_sesion._ALCANCE_CACHE.clear()
 
     def _reparto(self, tramos):
+        """`tramos` son `(replay_run_id, captura, desde, hasta)`.
+
+        El numero de captura se agrego cuando el reparto empezo a distinguir
+        dos capturas originales de la misma sesion, que hasta entonces caian
+        las dos en `original`. Lo que esa distincion promete se comprueba en
+        `test_identidad_por_captura.py`; aca sigue comprobandose el reparto del
+        reloj, que es lo mismo de antes.
+        """
+
         return api_sesion._repartir_el_reloj(CursorConGuion([tramos]), "f", "s")
 
     def test_los_extremos_quedan_abiertos(self) -> None:
@@ -60,34 +69,34 @@ class RepartoDelRelojTests(unittest.TestCase):
         112. La primera adquisicion empieza en `-infinity` y la ultima termina
         en `infinity`: asi no se pierde ninguna fila.
         """
-        r = self._reparto([(None, _t(10), _t(20)),
-                           ("replay_a", _t(100), _t(110))])
+        r = self._reparto([(None, 0, _t(10), _t(20)),
+                           ("replay_a", 0, _t(100), _t(110))])
         self.assertEqual(r["original"][0], "-infinity")
         self.assertEqual(r["replay_a"][1], "infinity")
 
     def test_el_corte_va_a_mitad_de_camino(self) -> None:
         """Entre el final de una adquisicion y el principio de la siguiente."""
-        r = self._reparto([(None, _t(10), _t(20)),
-                           ("replay_a", _t(100), _t(110))])
+        r = self._reparto([(None, 0, _t(10), _t(20)),
+                           ("replay_a", 0, _t(100), _t(110))])
         medio = _t(60).isoformat()          # (20 + 100) / 2
         self.assertEqual(r["original"][1], medio)
         self.assertEqual(r["replay_a"][0], medio)
 
     def test_las_ventanas_se_tocan_y_no_dejan_hueco(self) -> None:
         """El final de una es exactamente el principio de la siguiente."""
-        r = self._reparto([(None, _t(0), _t(10)),
-                           ("a", _t(50), _t(60)),
-                           ("b", _t(200), _t(300))])
+        r = self._reparto([(None, 0, _t(0), _t(10)),
+                           ("a", 0, _t(50), _t(60)),
+                           ("b", 0, _t(200), _t(300))])
         self.assertEqual(r["original"][1], r["a"][0])
         self.assertEqual(r["a"][1], r["b"][0])
 
     def test_una_sola_adquisicion_no_acota_nada(self) -> None:
         """Sin vecinos, la ventana es todo el reloj."""
-        r = self._reparto([(None, _t(0), _t(10))])
+        r = self._reparto([(None, 0, _t(0), _t(10))])
         self.assertEqual(r["original"], ("-infinity", "infinity"))
 
     def test_una_adquisicion_que_no_esta_es_un_404(self) -> None:
-        cursor = CursorConGuion([[(None, _t(0), _t(10))]])
+        cursor = CursorConGuion([[(None, 0, _t(0), _t(10))]])
         with self.assertRaises(HTTPException) as caso:
             api_sesion._ventana_de_alcance(cursor, "f", "s", "no_existe")
         self.assertEqual(caso.exception.status_code, 404)

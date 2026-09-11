@@ -1034,23 +1034,59 @@ def _repartir_el_reloj(cursor, fuente: str, session_id: str) -> dict:
     """
 
     cursor.execute("""
-        SELECT replay_run_id, min(timestamp), max(timestamp)
-          FROM telemetry_messages
-         WHERE source_type = %s AND session_id = %s AND signal_name = 'lap_number'
-         GROUP BY replay_run_id
+        WITH m AS (
+            SELECT replay_run_id, timestamp,
+                   {cap}   AS us,
+                   {orden} AS orden
+              FROM telemetry_messages
+             WHERE source_type = %s AND session_id = %s
+               AND signal_name = 'lap_number'),
+        cortada AS (
+            SELECT replay_run_id, timestamp, orden,
+                   -- UN REINICIO DEL RELOJ DE CAPTURA ES UNA CAPTURA NUEVA.
+                   -- El capturador lo numera desde cero en cada corrida, de
+                   -- modo que verlo bajar es lo unico que separa dos capturas
+                   -- originales: las dos llevan `replay_run_id` nulo y ninguna
+                   -- escribe la huella de su archivo en cada fila.
+                   CASE WHEN replay_run_id IS NULL
+                             AND us < lag(us) OVER (PARTITION BY replay_run_id
+                                                        ORDER BY orden)
+                        THEN 1 ELSE 0 END AS corte
+              FROM m),
+        numerada AS (
+            SELECT replay_run_id, timestamp,
+                   sum(corte) OVER (PARTITION BY replay_run_id ORDER BY orden
+                                    ROWS UNBOUNDED PRECEDING) AS captura
+              FROM cortada)
+        SELECT replay_run_id, captura, min(timestamp), max(timestamp)
+          FROM numerada
+         GROUP BY replay_run_id, captura
          ORDER BY min(timestamp)
-    """, (fuente, session_id))
+    """.format(cap=_captura_us(), orden=_orden_dentro_de_la_sesion()),
+        (fuente, session_id))
     tramos = cursor.fetchall()
 
     ventanas: dict = {}
-    for i, (run, desde, hasta) in enumerate(tramos):
-        antes = tramos[i - 1][2] if i > 0 else None
-        despues = tramos[i + 1][1] if i + 1 < len(tramos) else None
+    originales: list[tuple[str, str]] = []
+    for i, (run, captura, desde, hasta) in enumerate(tramos):
+        antes = tramos[i - 1][3] if i > 0 else None
+        despues = tramos[i + 1][2] if i + 1 < len(tramos) else None
         v0 = _iso(antes + (desde - antes) / 2) if antes is not None else "-infinity"
         v1 = _iso(hasta + (despues - hasta) / 2) if despues is not None else "infinity"
-        ventanas[run or ORIGEN_SIN_CORRIDA] = (v0, v1)
         if run is not None:
             ventanas[run] = (v0, v1)
+        else:
+            originales.append((v0, v1))
+            ventanas[clave_de_captura(int(captura))] = (v0, v1)
+
+    # `original` SIGUE SIGNIFICANDO TODAS LAS CAPTURAS ORIGINALES.
+    #
+    # Lo que se agrega es poder elegir **una**; no se le cambia el significado a
+    # quien ya venia pidiendo `original`, que con una sola captura ---el caso
+    # normal--- es exactamente lo mismo de antes. Con dos, `original` las abarca
+    # y la respuesta lo declara mezclado, que es el aviso que antes no existia.
+    if originales:
+        ventanas[ORIGEN_SIN_CORRIDA] = (originales[0][0], originales[-1][1])
     return ventanas
 
 
@@ -1063,12 +1099,14 @@ def _declarar_alcance(cursor, fuente: str, session_id: str,
     cambia, para no romper a nadie--- la respuesta tiene que declararlo.
     """
 
-    cursor.execute("""
-        SELECT count(DISTINCT COALESCE(replay_run_id, '')) FROM telemetry_messages
-         WHERE source_type = %s AND session_id = %s AND signal_name = 'lap_number'
-    """, (fuente, session_id))
-    fila = cursor.fetchone()
-    cuantas = int(fila[0]) if fila and fila[0] is not None else 1
+    # CONTAR POR `replay_run_id` DECIA UNA SOLA ADQUISICION TENIENDO DOS.
+    #
+    # La captura original no escribe esa columna, de modo que dos capturas de la
+    # misma sesion contaban como una y la respuesta declaraba que no estaba
+    # mezclada justo cuando lo estaba. El reparto ya las distingue; se cuenta de
+    # ahi, que es el mismo sitio que despues resuelve la ventana de cada una.
+    reparto = _repartir_el_reloj(cursor, fuente, session_id)
+    cuantas = max(1, len([c for c in reparto if c != ORIGEN_SIN_CORRIDA]))
     elegida = adquisicion or ("todas" if cuantas > 1 else ORIGEN_SIN_CORRIDA)
     return {
         "adquisicion": elegida,
@@ -1085,12 +1123,53 @@ def _declarar_alcance(cursor, fuente: str, session_id: str,
 
 
 
+#: Como se nombra una captura original suelta: `original-1`, `original-2`...
+#: El numero es su orden en el reloj, no un identificador del archivo, porque la
+#: fila no trae con que nombrar al archivo: `captura_sha256` es nula en todas.
+#:
+#: EL SEPARADOR ES UN GUION Y NO UN NUMERAL A PROPOSITO. Esta clave viaja por la
+#: direccion ---el tablero deja la eleccion en `?adquisicion=` y ademas usa el
+#: fragmento para el cabezal--- y un `#` ahi depende de que todos los que armen
+#: la direccion lo escapen. El guion no necesita que nadie se acuerde.
+SEPARADOR_DE_CAPTURA = "-"
+
+
+def clave_de_captura(indice: int) -> str:
+    """El nombre de la captura numero `indice` (contado desde cero)."""
+
+    return "%s%s%d" % (ORIGEN_SIN_CORRIDA, SEPARADOR_DE_CAPTURA, indice + 1)
+
+
+def es_captura_original(adquisicion: str | None) -> bool:
+    """Si lo pedido es una captura original suelta, o todas ellas.
+
+    Se exige que lo que sigue al separador sean **digitos**: sin eso, un
+    `replay_run_id` que empezara con `original-` se filtraria como si fuera una
+    captura y devolveria las filas equivocadas en silencio.
+    """
+
+    if not adquisicion:
+        return False
+    if adquisicion == ORIGEN_SIN_CORRIDA:
+        return True
+    prefijo = ORIGEN_SIN_CORRIDA + SEPARADOR_DE_CAPTURA
+    return (adquisicion.startswith(prefijo)
+            and adquisicion[len(prefijo):].isdigit())
+
+
 def _clausula_de_adquisicion(adquisicion: str | None) -> tuple[str, list]:
-    """Condicion SQL para acotar a una adquisicion. Vacia si no se pidio."""
+    """Condicion SQL para acotar a una adquisicion. Vacia si no se pidio.
+
+    Una captura suelta ---`original#2`--- se filtra igual que `original`: por
+    `replay_run_id IS NULL`. Lo que la separa de sus hermanas es la ventana de
+    tiempo, que `_ventana_de_alcance` resuelve aparte y que todas las rutas ya
+    aplican. Poner aca el numero de captura seria un segundo sitio donde
+    equivocarse sobre lo mismo.
+    """
 
     if not adquisicion or adquisicion == "todas":
         return "", []
-    if adquisicion == ORIGEN_SIN_CORRIDA:
+    if es_captura_original(adquisicion):
         return " AND replay_run_id IS NULL", []
     return " AND replay_run_id = %s", [adquisicion]
 
@@ -1486,21 +1565,56 @@ def adquisiciones(session_id: str) -> dict:
 
     fuente = _fuente_de(session_id)
     with db.obtener_conexion() as conexion, conexion.cursor() as cursor:
+        # UNA CAPTURA ORIGINAL NO ESCRIBE `replay_run_id`, ASI QUE AGRUPAR POR
+        # ESA COLUMNA JUNTABA TODAS LAS CAPTURAS EN UNA SOLA ENTRADA.
+        #
+        # Se las separa por el reinicio del reloj de captura, que el capturador
+        # numera desde cero en cada corrida, recorriendo por el contador de
+        # cuadros del juego ---monotonico en la sesion entera---. Medido el
+        # 2026-09-11: de las catorce sesiones originales de F1 25, **ocho tienen
+        # mas de una captura**, y una de ellas dos completas de 393,7 s y
+        # 306,8 s pegadas bajo la misma entrada.
         cursor.execute("""
+            WITH m AS (
+                SELECT replay_run_id, timestamp, vehicle_id,
+                       metadata->'extra'->>'captura_sha256' AS sha,
+                       {cap}   AS us,
+                       {orden} AS orden
+                  FROM telemetry_messages
+                 WHERE source_type = %s AND session_id = %s
+                   AND signal_name = 'lap_number'),
+            cortada AS (
+                SELECT replay_run_id, timestamp, vehicle_id, sha, orden,
+                       CASE WHEN replay_run_id IS NULL
+                                 AND us < lag(us) OVER (PARTITION BY replay_run_id
+                                                            ORDER BY orden)
+                            THEN 1 ELSE 0 END AS corte
+                  FROM m),
+            numerada AS (
+                SELECT replay_run_id, timestamp, vehicle_id, sha,
+                       sum(corte) OVER (PARTITION BY replay_run_id ORDER BY orden
+                                        ROWS UNBOUNDED PRECEDING) AS captura
+                  FROM cortada)
             SELECT replay_run_id, count(*), count(DISTINCT vehicle_id),
                    min(timestamp), max(timestamp),
                    array_agg(DISTINCT vehicle_id),
                    -- La huella del archivo del que salieron estas filas, cuando
-                   -- el capturador la escribio. Es lo que ata una adquisicion a
-                   -- su captura sin depender de cual sea la mas larga.
-                   array_agg(DISTINCT metadata->'extra'->>'captura_sha256')
-              FROM telemetry_messages
-             WHERE source_type = %s AND session_id = %s
-               AND signal_name = 'lap_number'
-             GROUP BY replay_run_id
+                   -- el capturador la escribio. Ata una adquisicion a su captura
+                   -- cuando esta; hoy es nula en todas las filas guardadas, y por
+                   -- eso el corte se busca en el reloj y no aca.
+                   array_agg(DISTINCT sha),
+                   captura
+              FROM numerada
+             GROUP BY replay_run_id, captura
              ORDER BY min(timestamp)
-        """, (fuente, session_id))
+        """.format(cap=_captura_us(), orden=_orden_dentro_de_la_sesion()),
+            (fuente, session_id))
         crudas = cursor.fetchall()
+
+        # Con una sola captura la clave sigue siendo `original`, para que el
+        # caso normal se vea exactamente como antes. La numeracion aparece
+        # cuando hay algo que numerar.
+        cuantas_originales = sum(1 for f in crudas if f[0] is None)
 
         salida = []
         con_telemetria: set[str] = set()
@@ -1508,8 +1622,10 @@ def adquisiciones(session_id: str) -> dict:
             run, filas, vehiculos, desde, hasta = fila[:5]
             suyos = [x for x in (fila[5] if len(fila) > 5 else None) or [] if x]
             shas = [x for x in (fila[6] if len(fila) > 6 else None) or [] if x]
+            captura = int(fila[7]) if len(fila) > 7 and fila[7] is not None else 0
             con_telemetria.update(suyos)
-            clave = run or ORIGEN_SIN_CORRIDA
+            clave = run or (clave_de_captura(captura)
+                            if cuantas_originales > 1 else ORIGEN_SIN_CORRIDA)
             salida.append({
                 "clave": clave,
                 "replay_run_id": run,
