@@ -325,6 +325,30 @@ class EnergiaYDanoTests(unittest.TestCase):
             with self.subTest(senal=nombre):
                 self.assertIn(nombre, senales)
 
+    def test_el_reglaje_completo_llega_al_contrato(self):
+        senales = self._mensajes(5)
+        for nombre in (
+                "setup_front_wing", "setup_rear_wing",
+                "setup_differential_on_throttle",
+                "setup_differential_off_throttle", "setup_camber_front",
+                "setup_camber_rear", "setup_toe_front", "setup_toe_rear",
+                "setup_suspension_front", "setup_suspension_rear",
+                "setup_anti_roll_bar_front", "setup_anti_roll_bar_rear",
+                "setup_ride_height_front", "setup_ride_height_rear",
+                "setup_brake_pressure", "setup_brake_bias_front",
+                "setup_engine_braking", "setup_ballast", "setup_fuel_load"):
+            with self.subTest(senal=nombre):
+                self.assertIn(nombre, senales)
+
+    def test_la_presion_configurada_no_se_mezcla_con_la_presion_medida(self):
+        senales = self._mensajes(5)
+        for rueda in ("rear_left", "rear_right", "front_left", "front_right"):
+            with self.subTest(rueda=rueda):
+                nombre = f"setup_tyre_pressure_{rueda}"
+                self.assertIn(nombre, senales)
+                self.assertEqual(senales[nombre]["unit"], "psi")
+        self.assertNotIn("tyre_pressure_front_left", senales)
+
     def test_toda_senal_declara_su_transformacion(self):
         """Es la regla que este trabajo le reclama a la fuente deportiva."""
 
