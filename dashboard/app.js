@@ -3162,7 +3162,13 @@ function pintarPista() {
       marca.appendChild(blanco);
 
       const p = document.createElementNS(NS, "circle");
-      p.setAttribute("cx", z.xy[0]); p.setAttribute("cy", z.xy[1]); p.setAttribute("r", "6");
+      /* MAS CHICO QUE ANTES. Con radio 6 y cuerpo 7 sobre un lienzo de 360 por
+         170, quince numeros ocupaban mas superficie que el propio circuito: en
+         el panel ampliado de la cabina se veian como pastillas y la forma del
+         trazado quedaba detras de ellas. El blanco de puntero se conserva
+         grande ---radio 11--- porque apuntar no tiene por que ser mas dificil
+         solo porque la marca se achico. */
+      p.setAttribute("cx", z.xy[0]); p.setAttribute("cy", z.xy[1]); p.setAttribute("r", "4.2");
       p.style.fill = tinta("--superficie"); p.style.stroke = tinta("--linea-fuerte");
       p.style.strokeWidth = "1.2";
       marca.appendChild(p);
@@ -3170,7 +3176,7 @@ function pintarPista() {
       const r = document.createElementNS(NS, "text");
       r.setAttribute("x", z.xy[0]); r.setAttribute("y", z.xy[1] + 2.6);
       r.setAttribute("text-anchor", "middle");
-      r.setAttribute("font-size", "7"); r.setAttribute("font-weight", "600");
+      r.setAttribute("font-size", "5"); r.setAttribute("font-weight", "600");
       r.setAttribute("font-family", "IBM Plex Mono, monospace");
       r.style.fill = tinta("--texto-medio");
       r.setAttribute("pointer-events", "none");
@@ -3337,9 +3343,7 @@ function pintarPista() {
 /* El globo con el nombre de la curva. Se coloca sobre la marca apuntada,
    midiendo su caja en pantalla: el dibujo se escala con el panel, asi que las
    coordenadas del SVG no sirven para ubicar un elemento HTML. */
-(function globoDeCurvas() {
-  const panel = document.querySelector(".pista .cuerpo-instrumento");
-  const globo = document.getElementById("globo-curva");
+function globoDeCurvas(panel, globo) {
   if (!panel || !globo) return;
 
   function mostrar(marca) {
@@ -3362,7 +3366,14 @@ function pintarPista() {
     if (m) mostrar(m);
   });
   panel.addEventListener("focusout", ocultar);
-})();
+}
+/* Los dos trazados tienen su globo. El del panel chico existe desde siempre; el
+   de la vista grande hace falta por el mismo motivo, que no es el espacio sino
+   que quince nombres escritos tapan la forma del circuito. */
+globoDeCurvas(document.querySelector(".pista .cuerpo-instrumento"),
+              document.getElementById("globo-curva"));
+globoDeCurvas(document.querySelector("#velo-trazado .panel-comparacion"),
+              document.getElementById("globo-curva-grande"));
 
 /* ============================================================
    EL TRAZADO
@@ -10397,65 +10408,85 @@ function pintarTrazadoGrande() {
     svg.appendChild(rot);
   });
 
-  /* EL NOMBRE DE CADA CURVA, ESCRITO. Se ubica por su metro sobre el camino
-     dibujado, igual que en el panel chico: el nombre sigue siendo anotacion
-     citada y la posicion sigue siendo medicion. */
   const largo = linea.getTotalLength ? linea.getTotalLength() : 0;
+
+  /* LAS CURVAS, NUMERADAS. EL NOMBRE, AL APUNTAR.
+     Primero se escribian los quince nombres sobre el dibujo, y con quince
+     nombres encima el circuito deja de verse: lo que uno mira en un trazado es
+     la forma y donde esta el coche, y el nombre solo cuando se pregunta «que
+     curva es esta». Es la misma decision que el panel chico ya habia tomado, y
+     aca hay que tomarla igual porque el problema no era el espacio.
+
+     Se reusa la clase `marca-curva`, que es la que el globo escucha. */
   if (largo && CURVAS.length && PISTA.largo_m) {
-    const puestos = [];
     CURVAS.forEach((cu, i) => {
       const f = Math.max(0, Math.min(1, cu.metro_medido / PISTA.largo_m));
       const q = linea.getPointAtLength(largo * f);
+      const marca = document.createElementNS(NS, "g");
+      marca.setAttribute("class", "marca-curva");
+      marca.setAttribute("tabindex", "0");
+      marca.setAttribute("role", "img");
+      marca.setAttribute("aria-label", "Curva " + (i + 1) + ": " + cu.nombre);
+      marca.dataset.nombre = cu.nombre;
+      marca.dataset.numero = String(i + 1);
       const punto = document.createElementNS(NS, "circle");
       punto.setAttribute("class", "punto-curva-grande");
       punto.setAttribute("cx", q.x.toFixed(2));
       punto.setAttribute("cy", q.y.toFixed(2));
-      punto.setAttribute("r", "1.6");
-      svg.appendChild(punto);
-      /* DOS CURVAS PUEDEN CAER A POCOS METROS. En Spa el catalogo trae dos
-         «Les Combes» y dos «Fagnes» separadas por menos de ciento cincuenta
-         metros, y sus rotulos se encimaban hasta ser ilegibles ---que es el
-         motivo por el que el panel chico los manda al globo---. Aca hay
-         espacio, asi que el que choca se corre en vez de desaparecer. */
-      let y = q.y - 2.2;
-      while (puestos.some(o => Math.abs(o.x - q.x) < 26 && Math.abs(o.y - y) < 4.6)) {
-        y += 4.8;
-      }
-      puestos.push({ x: q.x, y: y });
-      const rot = document.createElementNS(NS, "text");
-      rot.setAttribute("class", "nombre-curva-grande");
-      rot.setAttribute("x", (q.x + 2.6).toFixed(2));
-      rot.setAttribute("y", y.toFixed(2));
-      rot.textContent = (i + 1) + ". " + cu.nombre;
-      svg.appendChild(rot);
+      punto.setAttribute("r", "2.4");
+      const num = document.createElementNS(NS, "text");
+      num.setAttribute("class", "numero-curva-grande");
+      num.setAttribute("x", q.x.toFixed(2));
+      num.setAttribute("y", q.y.toFixed(2));
+      num.textContent = String(i + 1);
+      const comoSeLlama = document.createElementNS(NS, "title");
+      comoSeLlama.textContent = (i + 1) + ". " + cu.nombre;
+      marca.appendChild(comoSeLlama);
+      marca.appendChild(punto);
+      marca.appendChild(num);
+      svg.appendChild(marca);
     });
   }
 
-  /* Y LOS COCHES, EN EL INSTANTE QUE EL RESTO DEL TABLERO ESTA MOSTRANDO.
-     `puntoMedidoDe` devuelve un objeto `{x, y}` y `proyectarMundo` un arreglo
-     `[x, y]`: dos formas para lo mismo, a diez lineas de distancia, y las dos
-     se usan aca. Escrito de memoria se confunde ---paso en este mismo archivo
-     con las rayas de sector--- asi que va nombrado.
+  /* EL COCHE SE TIENE QUE DISTINGUIR DE UNA CURVA, Y ANTES NO SE DISTINGUIA:
+     los dos eran un circulo del mismo color y del mismo tamaño. Lleva su sigla
+     encima, siempre visible ---no al apuntarlo---, porque saber cual coche es
+     cual es la pregunta permanente de un trazado con varios pilotos, no una
+     consulta ocasional como el nombre de una curva.
 
-     EL RESPALDO ES EL MISMO QUE EL DEL PANEL CHICO. Sin posicion medida ---en
-     una vuelta cuyas series todavia no llegaron--- el coche se ubica por la
-     fraccion recorrida sobre el camino dibujado. No es lo mismo y por eso el
-     panel chico lo distingue; lo que no puede pasar es que el trazado grande
-     muestre el circuito vacio mientras el chico muestra el coche. */
-  // Un circulo por vehiculo, creado una vez. Moverlo cuesta dos atributos.
+     Es la misma estructura que el panel chico: circulo con la tinta del
+     vehiculo, tres letras arriba y la identidad entera en el `<title>`. */
+  const siglas = [];
   [...seleccion].forEach(id => {
     const a = AUTOS.find(x => x.id === id);
     if (!a) return;
+    const grupo = document.createElementNS(NS, "g");
+    grupo.setAttribute("class", "auto-grande");
+    grupo.dataset.clave = a.clave || id;
+    /* La tinta va una vez en el grupo y de ahi la toman el punto y la sigla.
+       Puesta suelta en cada uno, el estado estimado ---que vacia el relleno---
+       se quedaba sin color y el punto desaparecia sobre el fondo. */
+    grupo.style.setProperty("--tinta-auto", tinta(a.tinta));
     const c = document.createElementNS(NS, "circle");
     c.setAttribute("class", "coche-grande");
-    c.dataset.clave = a.clave || id;
-    c.setAttribute("r", "2.6");
-    c.setAttribute("fill", a.color);
-    const cual = document.createElementNS(NS, "title");
-    cual.textContent = a.nombre;
-    c.appendChild(cual);
-    svg.appendChild(c);
+    c.setAttribute("r", a.propio ? "3.4" : "2.8");
+    const quien = document.createElementNS(NS, "title");
+    quien.textContent = a.completa;
+    grupo.appendChild(quien); grupo.appendChild(c);
+    svg.appendChild(grupo);
+    /* LA SIGLA VA EN OTRA CAPA, ENCIMA DE TODOS LOS PUNTOS. Dentro del grupo,
+       el circulo del coche siguiente la tapaba: con tres pilotos juntos ---y
+       juntos es justamente cuando hace falta distinguirlos--- se leian dos
+       siglas de tres. El halo del texto solo lo despega de lo que se dibujo
+       antes que el, no de lo que viene despues. */
+    const rot = document.createElementNS(NS, "text");
+    rot.setAttribute("class", "sigla-auto-grande");
+    rot.dataset.clave = a.clave || id;
+    rot.style.setProperty("--tinta-auto", tinta(a.tinta));
+    rot.textContent = a.etiqueta;
+    siglas.push(rot);
   });
+  siglas.forEach(s => svg.appendChild(s));
   moverCochesDelTrazadoGrande();
 
   /* DE DONDE SALE CADA COSA DEL DIBUJO, ESCRITO DEBAJO. El trazo y las rayas
@@ -10492,17 +10523,25 @@ function moverCochesDelTrazadoGrande() {
   const t = instante();
   const largo = camino.getTotalLength ? camino.getTotalLength() : 0;
   const frac = Math.max(0, Math.min(1, t.fraccion || 0));
-  svg.querySelectorAll(".coche-grande").forEach(c => {
-    const medido = puntoMedidoDe(c.dataset.clave, t.tUtcMs);
+  svg.querySelectorAll(".auto-grande").forEach(grupo => {
+    const medido = puntoMedidoDe(grupo.dataset.clave, t.tUtcMs);
     const q = medido || (largo ? camino.getPointAtLength(largo * frac) : null);
     if (!q) return;
-    c.setAttribute("cx", q.x.toFixed(2));
-    c.setAttribute("cy", q.y.toFixed(2));
-    c.classList.toggle("estimado", !medido);
-    const cual = c.querySelector("title");
-    if (cual && !medido && cual.textContent.indexOf("estimada") === -1) {
-      cual.textContent += " · posición estimada por fracción de vuelta";
+    const c = grupo.querySelector("circle");
+    const px = q.x.toFixed(2), py = q.y.toFixed(2);
+    c.setAttribute("cx", px); c.setAttribute("cy", py);
+    // La sigla vive en la capa de arriba: se la busca por la clave del coche.
+    const rot = svg.querySelector(
+      '.sigla-auto-grande[data-clave="' + grupo.dataset.clave + '"]');
+    if (rot) {
+      rot.setAttribute("x", px);
+      rot.setAttribute("y", (q.y - ALTURA_SIGLA_GRANDE).toFixed(2));
     }
+    /* Se declara despues de colocarlo: hasta aca no se sabia si la coordenada
+       medida estaba disponible para este instante. */
+    grupo.dataset.estimada = medido ? "no" : "si";
+    grupo.setAttribute("aria-label",
+      medido ? "" : "posición estimada por tiempo, no medida");
   });
 }
 
@@ -10569,6 +10608,8 @@ const LARGO_RAYA_SECTOR = 7;
 /* Cuantas muestras se miran a cada lado buscando una que este en otro sitio.
    Pocas a proposito: mas lejos la direccion ya no es la de ese punto. */
 const VECINOS_PARA_LA_DIRECCION = 6;
+/* Cuanto sube la sigla sobre el punto del coche, en unidades del dibujo. */
+const ALTURA_SIGLA_GRANDE = 4.4;
 
 function marcasDeSector(sectores, puntos, proyectar) {
   if (!proyectar || !puntos || puntos.length < 2) return [];

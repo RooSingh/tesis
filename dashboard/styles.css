@@ -492,17 +492,51 @@
     display: block; margin-inline: auto;
   }
   .rotulo-sector.grande { font-size: 3.4px; letter-spacing: .04em; }
-  .punto-curva-grande { fill: var(--acento); }
-  .nombre-curva-grande {
-    font-family: var(--cuerpo); font-size: 3.6px; font-weight: 600;
-    fill: var(--texto-medio); paint-order: stroke;
-    stroke: var(--superficie); stroke-width: 1.1px; stroke-linejoin: round;
+  /* LA CURVA ES UN NUMERO; EL NOMBRE APARECE AL APUNTARLA. Quince nombres
+     escritos sobre el dibujo tapan la forma del circuito, que es lo primero
+     que un trazado tiene que dejar ver. */
+  .punto-curva-grande { fill: var(--superficie-2); stroke: var(--acento); stroke-width: .7; }
+  .numero-curva-grande {
+    font-family: var(--cifra); font-size: 2.6px; font-weight: 600;
+    fill: var(--acento); text-anchor: middle; dominant-baseline: central;
+    pointer-events: none;
   }
-  .coche-grande { stroke: var(--superficie); stroke-width: .8; }
+  .marca-curva { cursor: default; }
+  #trazado-grande .marca-curva:hover .punto-curva-grande,
+  #trazado-grande .marca-curva:focus-visible .punto-curva-grande {
+    fill: var(--acento-veta); stroke-width: 1.2;
+  }
+
+  /* EL COCHE NO PUEDE PARECERSE A UNA CURVA. Antes los dos eran un circulo del
+     mismo color y del mismo tamaño. Lleva la tinta de su vehiculo, va relleno
+     ---la curva es hueca--- y arrastra su sigla, siempre visible: cual coche es
+     cual es la pregunta permanente de un trazado, no una consulta ocasional. */
+  .coche-grande {
+    fill: var(--tinta-auto, var(--acento));
+    stroke: var(--superficie); stroke-width: .9;
+  }
+  .sigla-auto-grande {
+    font-family: var(--cifra); font-size: 3.4px; font-weight: 600;
+    fill: var(--tinta-auto, var(--acento));
+    text-anchor: middle; pointer-events: none; paint-order: stroke;
+    stroke: var(--superficie); stroke-width: 1.3px; stroke-linejoin: round;
+  }
   /* Una posicion que sale de la fraccion de tiempo y no de una coordenada
      medida se dibuja hueca: es la misma distincion que el panel chico hace,
-     y sin ella el trazado grande afirmaria que midio algo que estimo. */
-  .coche-grande.estimado { fill: none !important; stroke-width: 1.1; }
+     y sin ella el trazado grande afirmaria que midio algo que estimo.
+
+     EL BORDE PASA A SER EL COLOR DEL PILOTO, no el del fondo. Relleno, ese
+     borde es un halo que lo despega del trazo; hueco, era lo unico que
+     quedaba dibujado, y del color del fondo eso es nada: el coche desaparecia
+     justo cuando mas hacia falta saber que su posicion era estimada. */
+  .auto-grande[data-estimada="si"] .coche-grande {
+    fill: none; stroke: var(--tinta-auto, var(--acento)); stroke-width: 1.3;
+  }
+  /* El globo se coloca con coordenadas de pantalla relativas a su contenedor,
+     asi que ese contenedor tiene que ser el origen. Sin esto el globo se va
+     al rincon de la pagina. */
+  #velo-trazado .panel-comparacion { position: relative; }
+  #globo-curva-grande { font-size: .78rem; }
   /* EL COLOR DEL PILOTO VA EN UN PUNTO, NO EN LA LETRA.
      Ponerlo como color de texto lo dejaba ilegible en el estado encendido, que
      pinta el fondo con el acento: se veia una pastilla llena sin nombre. El

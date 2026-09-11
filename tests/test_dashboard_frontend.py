@@ -354,6 +354,58 @@ class AyudantesDeSerieTests(unittest.TestCase):
         self.assertIn("anotaci", cuerpo,
                       "la vista grande no declara que el nombre de curva es anotacion")
 
+    def test_el_trazado_grande_no_escribe_los_nombres_de_curva(self) -> None:
+        """Quince nombres escritos tapan la forma del circuito.
+
+        Se probaron escritos y no sirve, y el motivo no era el espacio: lo que
+        uno mira en un trazado es la forma y donde esta el coche; el nombre
+        solo cuando se pregunta que curva es esta. Va el numero, y el nombre
+        aparece al apuntar, que es la decision que el panel chico ya habia
+        tomado.
+        """
+
+        codigo = APP.read_text(encoding="utf-8")
+        i = codigo.index("function pintarTrazadoGrande()")
+        cuerpo = codigo[i:codigo.index("\n}", i)]
+        self.assertIn("numero-curva-grande", cuerpo)
+        self.assertIn("marca-curva", cuerpo,
+                      "sin esa clase el globo no escucha y el nombre no aparece nunca")
+        self.assertNotIn("nombre-curva-grande", cuerpo,
+                         "los nombres volvieron a escribirse sobre el dibujo")
+
+    def test_la_sigla_del_piloto_va_encima_de_todos_los_puntos(self) -> None:
+        """EL DEFECTO QUE ESTA PRUEBA FIJA.
+
+        Con la sigla dentro del grupo del coche, el circulo del coche
+        **siguiente** la tapaba: con tres pilotos juntos ---y juntos es
+        justamente cuando hace falta distinguirlos--- se leian dos siglas de
+        tres. El halo del texto solo lo despega de lo que se dibujo antes.
+
+        Asi que las siglas se juntan y se agregan al final, despues de todos
+        los puntos, y el que las mueve las busca por la clave del coche.
+        """
+
+        codigo = APP.read_text(encoding="utf-8")
+        i = codigo.index("function pintarTrazadoGrande()")
+        cuerpo = codigo[i:codigo.index("\n}", i)]
+        self.assertIn("siglas.forEach(s => svg.appendChild(s));", cuerpo,
+                      "las siglas no se agregan al final: un punto puede taparlas")
+        self.assertNotIn("grupo.appendChild(rot)", cuerpo,
+                         "la sigla volvio adentro del grupo del coche")
+
+    def test_el_coche_estimado_no_se_dibuja_con_la_tinta_del_fondo(self) -> None:
+        """Una posicion estimada se dibuja hueca, y hueca el borde es lo unico
+        que queda: del color del fondo, eso es nada. El coche desaparecia justo
+        cuando mas hacia falta saber que su posicion no estaba medida."""
+
+        estilos = ESTILOS.read_text(encoding="utf-8")
+        i = estilos.index('.auto-grande[data-estimada="si"] .coche-grande')
+        regla = estilos[i:estilos.index("}", i)]
+        self.assertIn("fill: none", regla)
+        self.assertIn("--tinta-auto", regla,
+                      "el borde no toma el color del piloto: hueco queda invisible")
+        self.assertNotIn("--superficie", regla)
+
     def test_el_filtro_de_pilotos_no_puede_dejar_el_trazado_sin_nadie(self) -> None:
         """Un trazado sin ningun coche no dice donde esta nadie, y el boton que
         lo dejo asi parece roto."""
