@@ -82,12 +82,15 @@ class DashboardFrontendTests(unittest.TestCase):
         # El envoltorio de la izquierda se disuelve para que sus dos paneles
         # sean celdas de la cabina y no mitades de una columna.
         self.assertIn(
-            ':root[data-fuente="openf1"] .cabina .col-cabina.izquierda { display: contents; }',
+            ':root[data-fuente="openf1"] .cabina .col-cabina.izquierda,\n'
+            '  :root[data-fuente="openf1"] .cabina .col-cabina.derecha'
+            ' { display: contents; }',
             estilos,
         )
         # Y al apilar se deshace, o quedarian huecos donde habia paneles.
         self.assertIn(
-            ':root[data-fuente="openf1"] .cabina .col-cabina.izquierda {\n'
+            ':root[data-fuente="openf1"] .cabina .col-cabina.izquierda,\n'
+            '    :root[data-fuente="openf1"] .cabina .col-cabina.derecha {\n'
             '      display: flex; grid-column: auto; grid-row: auto;\n    }',
             estilos,
         )

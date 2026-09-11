@@ -849,43 +849,66 @@
   :root[data-fuente="openf1"] .cabina {
     grid-template-columns:
       minmax(0, 1.38fr) minmax(0, .88fr) minmax(0, 1.04fr) minmax(0, .8fr);
-    /* La fila de arriba pesa un poco mas que la de abajo. Los cuatro paneles
-       de arriba son los que necesitan alto ---una figura, dos rejillas y una
-       lista---; los graficos de abajo son trazos anchos, y quitarles un diez
-       por ciento de alto no les cambia lo que se lee. */
-    grid-template-rows: minmax(0, 1.18fr) minmax(0, .82fr);
+    /* TRES FILAS, Y LA PRIMERA LA PIDE SU CONTENIDO.
+       El cronometraje son cinco renglones de alto fijo: repartirle una fraccion
+       le da de mas o de menos segun la ventana, y lo que sobre o falte se lo
+       quita al clima, que va justo debajo. `min-content` le da exactamente los
+       renglones que tiene.
+
+       De las dos que se reparten, la de arriba pesa algo mas: ahi estan la
+       figura, la rejilla y la lista, que son los que necesitan alto. Los
+       graficos de abajo son trazos anchos y un diez por ciento menos de alto no
+       les cambia lo que se lee. */
+    grid-template-rows: min-content minmax(0, 1fr) minmax(0, 1.05fr);
   }
 
-  /* NADIE COMPARTE COLUMNA, PORQUE COMPARTIRLA ERA REPARTIR EL ALTO.
+  /* NADIE COMPARTE COLUMNA A MEDIAS, PORQUE COMPARTIRLA ERA REPARTIR EL ALTO.
      El trazado y el clima estaban uno encima del otro y se quedaban con media
      fila cada uno: el circuito entraba en un sello y las seis casillas del
-     clima se cortaban por la mitad. Y no es que sobrara alto, es que estaban
-     apilados.
+     clima se cortaban por la mitad.
 
-     La columna de la izquierda deja de ser una columna: con `display: contents`
-     el envoltorio desaparece del reparto y sus dos paneles pasan a ser celdas
-     de la cabina, cada uno con la fila entera. El trazado se queda a la
-     izquierda y el clima a la derecha, que es lo que hace que los dos crezcan.
+     Los dos envoltorios de columna dejan de serlo: con `display: contents`
+     desaparecen del reparto y sus paneles pasan a ser celdas de la cabina. Asi
+     el trazado toma una columna entera, los avisos ---que son una lista, y una
+     lista sin alto no se puede leer--- toman otra, y el cronometraje y el clima
+     comparten la del medio, que es donde compartir no molesta: uno tiene alto
+     fijo y el otro son seis casillas.
 
-     Se declara donde va cada uno, y no se deja al orden del documento: con el
-     envoltorio disuelto, el orden pondria el clima segundo y empujaria todo lo
-     demas un lugar. */
-  :root[data-fuente="openf1"] .cabina .col-cabina.izquierda { display: contents; }
-  :root[data-fuente="openf1"] .cabina [data-panel="trazado"] { grid-column: 1; grid-row: 1; }
-  :root[data-fuente="openf1"] .cabina .col-cabina.motor     { grid-column: 2; grid-row: 1; }
-  :root[data-fuente="openf1"] .cabina .col-cabina.derecha   { grid-column: 3; grid-row: 1; }
-  :root[data-fuente="openf1"] .cabina [data-panel="clima"]  { grid-column: 4; grid-row: 1; }
+     Se declara donde va cada uno y no se deja al orden del documento: con los
+     envoltorios disueltos, ese orden pondria el clima segundo y empujaria todo
+     lo demas un lugar. */
+  :root[data-fuente="openf1"] .cabina .col-cabina.izquierda,
+  :root[data-fuente="openf1"] .cabina .col-cabina.derecha { display: contents; }
 
-  /* Con columna propia, las casillas del clima dejan de apretarse en una fila
-     de cuatro ---que con seis magnitudes se partia en dos y desbordaba--- y se
-     reparten de a dos, que es lo que entra sin cortar ningun rotulo. */
+  :root[data-fuente="openf1"] .cabina [data-panel="trazado"] {
+    grid-column: 1; grid-row: 1 / 3;
+  }
+  :root[data-fuente="openf1"] .cabina .col-cabina.motor {
+    grid-column: 2; grid-row: 1 / 3;
+  }
+  :root[data-fuente="openf1"] .cabina [data-panel="cronometraje"] {
+    grid-column: 3; grid-row: 1;
+  }
+  :root[data-fuente="openf1"] .cabina [data-panel="clima"] {
+    grid-column: 3; grid-row: 2;
+  }
+  :root[data-fuente="openf1"] .cabina [data-panel="avisos"] {
+    grid-column: 4; grid-row: 1 / 3;
+  }
+  :root[data-fuente="openf1"] .cabina .graficos-cabina { grid-row: 3; }
+
+  /* Las casillas del clima dejan de apretarse en una fila de cuatro ---que con
+     seis magnitudes se partia en dos y desbordaba--- y van de a tres, que es lo
+     que entra en una celda ancha y baja sin cortar ningun rotulo. */
   :root[data-fuente="openf1"] .cabina .clima-mini .clima-rejilla {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    flex: 1; min-height: 0; align-content: stretch;
+    grid-auto-rows: minmax(0, 1fr);
   }
-  :root[data-fuente="openf1"] .cabina .clima-mini .clima-rejilla dd { font-size: .95rem; }
-  :root[data-fuente="openf1"] .cabina .clima-mini .clima-principal .cifra-grande {
-    font-size: 1.8rem;
+  :root[data-fuente="openf1"] .cabina .clima-mini .clima-rejilla div {
+    display: flex; flex-direction: column; justify-content: center;
   }
+  :root[data-fuente="openf1"] .cabina .clima-mini .clima-rejilla dd { font-size: .9rem; }
 
   /* EL TOPE DE ALTO DEL DIBUJO ERA DE CUANDO COMPARTIA COLUMNA.
      `.pista svg` esta acotado a 320 px para que, compartiendo columna con el
@@ -894,25 +917,31 @@
      293. Sin el, crece hasta donde llegue su propia proporcion. */
   :root[data-fuente="openf1"] .cabina .pista svg { max-height: none; }
 
-  /* Y el clima reparte su alto en vez de amontonar las casillas abajo. Con la
-     columna entera quedaba medio panel vacio en el medio: la temperatura
-     arriba, un hueco, y las seis casillas apoyadas en el pie. */
-  :root[data-fuente="openf1"] .cabina .clima-mini .clima-rejilla {
-    flex: 1; min-height: 0; align-content: stretch;
-    grid-auto-rows: minmax(0, 1fr);
-  }
-  :root[data-fuente="openf1"] .cabina .clima-mini .clima-rejilla div {
-    display: flex; flex-direction: column; justify-content: center;
-  }
+  /* EL ROTULO NO PUEDE SER LO QUE SE CORTA, Y NO ERA CUESTION DE ANCHO.
+     «Cronometro» quedaba en «Cronó...». Probe dos arreglos y los dos estaban
+     mal por el mismo motivo. Siete pixeles mas de columna: volvio a cortarse al
+     cambiar de vuelta, porque el valor mide lo que mida la cifra. Un escalon
+     menos de cuerpo en el valor: tampoco, y ahi se vio por que.
 
-  /* Y los avisos se quedan con lo que el cronometraje no usa. El cronometraje
-     son cinco renglones de alto fijo; sin esto, los dos se repartian la columna
-     en partes iguales y la lista de avisos quedaba en una ventanita. */
-  :root[data-fuente="openf1"] .cabina .col-cabina.derecha > [data-panel="cronometraje"] {
-    flex: 0 0 auto;
+     Medido: el rotulo pide 61 px, el valor 110, mas la separacion y el relleno
+     son 197 en una celda de 181. **No entran en un renglon**, y ningun ancho
+     razonable los hace entrar, porque la celda es la mitad de una columna que
+     comparte con el clima. Con `space-between` el valor se queda con lo suyo y
+     el rotulo con lo que sobre, asi que lo que se corta es siempre el rotulo, y
+     un rotulo cortado dice otra cosa que el rotulo.
+
+     Van uno sobre otro. Nada se corta, no depende de la cifra, y el renglon de
+     mas lo paga la fila del cronometraje ---que es `min-content` y crece--- y
+     no una casilla a medias. */
+  :root[data-fuente="openf1"] .cabina .vertical .tira-cronometraje div {
+    display: flex; flex-direction: column; align-items: flex-start;
+    justify-content: center; gap: 1px; padding: 6px 14px;
   }
-  :root[data-fuente="openf1"] .cabina .col-cabina.derecha > [data-panel="avisos"] {
-    flex: 1; min-height: 0;
+  :root[data-fuente="openf1"] .cabina .vertical .tira-cronometraje dt {
+    white-space: nowrap;
+  }
+  :root[data-fuente="openf1"] .cabina .vertical .tira-cronometraje dd {
+    font-size: 1.2rem;
   }
 
   /* ABAJO, LA LISTA DE PILOTOS SOLA EN SU FILA.
@@ -1342,17 +1371,24 @@
       grid-template-columns: minmax(0, 1fr) minmax(0, 1.25fr);
       grid-template-rows: auto auto auto auto;
     }
-    /* Apilado no hay columnas que repartir, asi que el envoltorio vuelve a
+    /* Apilado no hay columnas que repartir, asi que los envoltorios vuelven a
        serlo y las celdas fluyen: colocarlas a mano dejaria huecos donde antes
-       habia paneles. */
-    :root[data-fuente="openf1"] .cabina .col-cabina.izquierda {
+       habia paneles, y una fila declarada a mano donde no hay tres filas. */
+    :root[data-fuente="openf1"] .cabina .col-cabina.izquierda,
+    :root[data-fuente="openf1"] .cabina .col-cabina.derecha {
       display: flex; grid-column: auto; grid-row: auto;
     }
     :root[data-fuente="openf1"] .cabina [data-panel="trazado"],
     :root[data-fuente="openf1"] .cabina [data-panel="clima"],
+    :root[data-fuente="openf1"] .cabina [data-panel="cronometraje"],
+    :root[data-fuente="openf1"] .cabina [data-panel="avisos"],
     :root[data-fuente="openf1"] .cabina .col-cabina.motor,
-    :root[data-fuente="openf1"] .cabina .col-cabina.derecha {
+    :root[data-fuente="openf1"] .cabina .graficos-cabina {
       grid-column: auto; grid-row: auto;
+    }
+    /* Y el clima vuelve a su rejilla de siempre: apilado sobra el ancho. */
+    :root[data-fuente="openf1"] .cabina .clima-mini .clima-rejilla {
+      grid-template-columns: repeat(auto-fit, minmax(88px, 1fr));
     }
   }
   @media (max-width: 860px) {
