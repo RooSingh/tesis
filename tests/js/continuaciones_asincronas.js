@@ -157,6 +157,11 @@ const preludio = `
   function pintarMedidores() {}
   function pintarG() {}
   function pintarPista() {}
+  /* Mover el cabezal mueve tambien el coche del trazado ampliado, porque ese
+     es el camino que la reproduccion recorre en cada cuadro. Aca no hay DOM,
+     asi que se stubea como los demas pintores. Sin acentos graves: este bloque
+     vive dentro de una plantilla y los cerraria. */
+  function moverCochesDelTrazadoGrande() {}
   function pintarCronometraje() {}
   function pintarAvisos() {}
   function refrescarContexto() {}

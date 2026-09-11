@@ -15,9 +15,11 @@
  *
  * - que la raya **cruce** la pista y no corra a lo largo de ella. Puesta en
  *   cualquier direccion se lee como un tramo del circuito y no como un limite;
- * - que el limite que cae en el comienzo del dibujo no lleve raya, y que el
- *   motivo sea **donde cae** y no que sea el sector 1;
- * - que ninguna coordenada salga `NaN`, que es la forma que tuvo el defecto.
+ * - que los tres sectores lleven su raya, el primero tambien: su limite es la
+ *   linea de meta, que es un sitio del circuito y no un artefacto del dibujo;
+ * - que ninguna coordenada salga `NaN`, que es la forma que tuvo el defecto;
+ * - que un vecino repetido no borre la raya. La fuente deportiva publica a
+ *   3,7 Hz y con el coche detenido dos muestras seguidas son identicas.
  */
 "use strict";
 
@@ -46,9 +48,12 @@ function extraer(nombre) {
 
 const linea = /const LARGO_RAYA_SECTOR = ([\d.]+);/.exec(fuenteApp);
 if (!linea) throw new Error("no esta LARGO_RAYA_SECTOR en app.js");
+const vecinos = /const VECINOS_PARA_LA_DIRECCION = (\d+);/.exec(fuenteApp);
+if (!vecinos) throw new Error("no esta VECINOS_PARA_LA_DIRECCION en app.js");
 
 const marcasDeSector = new Function(`
   ${linea[0]}
+  ${vecinos[0]}
   ${extraer("marcasDeSector")}
   return marcasDeSector;
 `)();
@@ -82,7 +87,7 @@ prueba("la raya cruza la pista, no corre a lo largo de ella", () => {
   /* LA COMPROBACION QUE HABRIA AGARRADO EL DEFECTO. Con la lectura como objeto
      esto devolvia cero marcas y el `length` de abajo ya fallaba. */
   const m = marcasDeSector(sectores, rectaHorizontal, proyectar);
-  assert.strictEqual(m.length, 2, "no se dibujo ninguna raya");
+  assert.strictEqual(m.length, 3, "no se dibujaron las tres rayas");
   m.forEach(r => {
     // Pista horizontal: la raya tiene que ser vertical.
     assert.ok(Math.abs(r.x2 - r.x1) < 1e-9,
@@ -106,8 +111,8 @@ prueba("ninguna coordenada sale NaN", () => {
 prueba("la raya queda centrada sobre el punto del limite", () => {
   const m = marcasDeSector(sectores, rectaHorizontal, proyectar);
   m.forEach(r => {
-    assert.ok(Math.abs((r.x1 + r.x2) / 2 - 40) < 1e-9 ||
-              Math.abs((r.x1 + r.x2) / 2 - 70) < 1e-9,
+    const centro = (r.x1 + r.x2) / 2;
+    assert.ok([0, 40, 70].some(x => Math.abs(centro - x) < 1e-9),
               "la raya no esta sobre su limite: " + JSON.stringify(r));
   });
 });
@@ -117,7 +122,7 @@ prueba("la raya sigue el giro de la pista", () => {
      direccion fija acierta en las rectas y miente en todo lo demas. */
   const vertical = Array.from({ length: 100 }, (_, i) => [50, i]);
   const m = marcasDeSector(sectores, vertical, proyectar);
-  assert.strictEqual(m.length, 2);
+  assert.strictEqual(m.length, 3);
   m.forEach(r => {
     assert.ok(Math.abs(r.y2 - r.y1) < 1e-9,
               "la raya no giro con la pista: " + JSON.stringify(r));
@@ -126,19 +131,15 @@ prueba("la raya sigue el giro de la pista", () => {
 
 // --------------------------------------------------- que no se dibuja
 
-prueba("el limite que cae en el comienzo del dibujo no lleva raya", () => {
-  /* Y el motivo es el comienzo, no el numero de sector: ahi el trazado empieza
-     y termina, de modo que una raya marcaria el corte del lazo y no un limite.
-     La distincion importa: si una fuente declarara el primer sector empezando
-     en otro sitio, ahi si corresponde la raya. */
+prueba("los tres sectores llevan su raya, el primero tambien", () => {
+  /* ANTES EL PRIMERO NO LA LLEVABA, y estaba mal. El razonamiento era que ahi
+     el dibujo empieza y termina, de modo que la raya marcaria el corte del
+     lazo. Pero el corte del lazo **es** la linea de meta: no es un artefacto
+     del dibujo, es el sitio del circuito donde la vuelta empieza y donde
+     empieza el sector 1. Callarla dejaba un circuito con dos de sus tres
+     divisiones, que se lee como que falta una. */
   const m = marcasDeSector(sectores, rectaHorizontal, proyectar);
-  assert.deepStrictEqual(m.map(r => r.sector), [2, 3]);
-
-  const corridos = [{ sector: 1, indice: 20, desde_m: 200 },
-                    { sector: 2, indice: 60, desde_m: 600 }];
-  assert.deepStrictEqual(
-    marcasDeSector(corridos, rectaHorizontal, proyectar).map(r => r.sector), [1, 2],
-    "se callo una raya por su numero de sector y no por donde cae");
+  assert.deepStrictEqual(m.map(r => r.sector), [1, 2, 3]);
 });
 
 prueba("un limite fuera del dibujo no se dibuja", () => {
@@ -154,7 +155,25 @@ prueba("sin proyeccion o sin puntos no se inventa nada", () => {
   assert.deepStrictEqual(marcasDeSector(null, rectaHorizontal, proyectar), []);
 });
 
-prueba("dos puntos vecinos en el mismo sitio no dan una raya sin direccion", () => {
+prueba("un vecino repetido no borra la raya: se busca el siguiente distinto", () => {
+  /* PASO DE VERDAD, Y ESTE ES EL CASO QUE LO DESTAPO. En Silverstone, con el
+     coche detenido en la parrilla y la fuente publicando a 3,7 Hz, las dos
+     primeras muestras del trazado son **identicas** ---[-1040, 2156] las dos---
+     de modo que en el indice 0 no habia direccion y la raya del sector 1 se
+     descartaba. No se veia como un defecto: se veia como un circuito con dos
+     divisiones en vez de tres.
+
+     La direccion de la pista en ese punto existe igual; lo que falta es un
+     segundo punto distinto, y esta unas muestras mas alla. */
+  const conRepetido = rectaHorizontal.map((p, i) => (i === 1 ? [0, 50] : p));
+  const m = marcasDeSector(sectores, conRepetido, proyectar);
+  assert.deepStrictEqual(m.map(r => r.sector), [1, 2, 3],
+                         "un vecino repetido se llevo la raya del sector 1");
+  assert.ok(Math.abs(m[0].x2 - m[0].x1) < 1e-9,
+            "la raya que se salvo no quedo perpendicular: " + JSON.stringify(m[0]));
+});
+
+prueba("un tramo entero quieto si se calla", () => {
   /* Sin direccion no hay perpendicular, y la raya saldria degenerada o `NaN`.
      Se calla en vez de dibujar una marca que no significa nada. */
   const quieta = Array.from({ length: 100 }, () => [7, 7]);
@@ -182,11 +201,11 @@ prueba("cada raya conserva su sector y su metro", () => {
      valido ---la fuente deportiva no mide metros--- y lo que no puede pasar es
      que se invente uno. */
   const m = marcasDeSector(sectores, rectaHorizontal, proyectar);
-  assert.deepStrictEqual(m.map(r => r.desde_m), [400, 700]);
+  assert.deepStrictEqual(m.map(r => r.desde_m), [0, 400, 700]);
   const sinMetro = marcasDeSector(
     [{ sector: 1, indice: 0, desde_m: null }, { sector: 2, indice: 40, desde_m: null }],
     rectaHorizontal, proyectar);
-  assert.deepStrictEqual(sinMetro.map(r => r.desde_m), [null]);
+  assert.deepStrictEqual(sinMetro.map(r => r.desde_m), [null, null]);
 });
 
 console.log(hechas + " pruebas de las rayas de sector: " +

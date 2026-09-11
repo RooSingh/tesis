@@ -10342,10 +10342,21 @@ function pintarEligePilotosDelTrazado() {
   });
 }
 
+/* LA ESTRUCTURA SE REHACE CUANDO CAMBIA; LOS COCHES, EN CADA CUADRO.
+   Es el mismo reparto que el panel chico: rehacer el camino, quince nombres de
+   curva y tres rayas sesenta veces por segundo es rehacer medio centenar de
+   nodos para que ninguno cambie. Lo unico que cambia con el reloj es donde
+   esta cada coche. */
 function pintarTrazadoGrande() {
   const svg = document.getElementById("trazado-grande");
   if (!svg || !trazadoGrandeAbierto()) return;
   const NS = "http://www.w3.org/2000/svg";
+
+  const firma = [fuente, (PISTA.path || "").length, PISTA.vuelta,
+                 (PISTA.sectores || []).length, CURVAS.length,
+                 [...seleccion].join(","), tinta("--acento")].join("|");
+  if (svg.dataset.firma === firma) { moverCochesDelTrazadoGrande(); return; }
+  svg.dataset.firma = firma;
   svg.innerHTML = "";
 
   const sub = document.getElementById("sub-trazado");
@@ -10357,6 +10368,7 @@ function pintarTrazadoGrande() {
   }
 
   if (!PISTA.path) {
+    svg.dataset.firma = "";
     const aviso = document.createElementNS(NS, "text");
     aviso.setAttribute("x", "180"); aviso.setAttribute("y", "85");
     aviso.setAttribute("class", "rotulo-sector");
@@ -10430,31 +10442,21 @@ function pintarTrazadoGrande() {
      fraccion recorrida sobre el camino dibujado. No es lo mismo y por eso el
      panel chico lo distingue; lo que no puede pasar es que el trazado grande
      muestre el circuito vacio mientras el chico muestra el coche. */
-  const t = calcularInstante().tUtcMs;
-  const largoDelCamino = linea.getTotalLength ? linea.getTotalLength() : 0;
-  // La misma fraccion que usa el panel chico como respaldo: `instante()` la
-  // publica y es de tiempo, no de recorrido. Por eso la marca que sale de aca
-  // se declara estimada.
-  const frac = Math.max(0, Math.min(1, instante().fraccion || 0));
+  // Un circulo por vehiculo, creado una vez. Moverlo cuesta dos atributos.
   [...seleccion].forEach(id => {
     const a = AUTOS.find(x => x.id === id);
     if (!a) return;
-    const medido = puntoMedidoDe(a.clave || id, t);
-    const q = medido || (largoDelCamino
-      ? linea.getPointAtLength(largoDelCamino * frac) : null);
-    if (!q) return;
     const c = document.createElementNS(NS, "circle");
     c.setAttribute("class", "coche-grande");
-    c.setAttribute("cx", q.x.toFixed(2));
-    c.setAttribute("cy", q.y.toFixed(2));
+    c.dataset.clave = a.clave || id;
     c.setAttribute("r", "2.6");
     c.setAttribute("fill", a.color);
-    if (!medido) c.setAttribute("class", "coche-grande estimado");
     const cual = document.createElementNS(NS, "title");
-    cual.textContent = a.nombre + (medido ? "" : " · posición estimada por fracción de vuelta");
+    cual.textContent = a.nombre;
     c.appendChild(cual);
     svg.appendChild(c);
   });
+  moverCochesDelTrazadoGrande();
 
   /* DE DONDE SALE CADA COSA DEL DIBUJO, ESCRITO DEBAJO. El trazo y las rayas
      son medicion; el nombre de una curva es anotacion externa citada. Verlas
@@ -10469,6 +10471,39 @@ function pintarTrazadoGrande() {
     }
     nota.innerHTML = partes.join(" ");
   }
+}
+
+/* MOVER LOS COCHES DEL TRAZADO GRANDE.
+   Lo unico que cambia con el reloj. Se llama desde `moverCabezal`, al lado de
+   `pintarPista`, porque ese es el camino que la reproduccion recorre en cada
+   cuadro: `pintarTrazas` **no esta en el**, y engancharse ahi ---que fue el
+   primer intento--- dejaba el coche quieto en el trazado grande mientras el
+   panel chico lo movia.
+
+   EL RESPALDO ES EL MISMO QUE EL DEL PANEL CHICO. Sin posicion medida el coche
+   se ubica por la fraccion recorrida sobre el camino dibujado, y se dibuja
+   hueco: no es lo mismo, y el dibujo no puede afirmar que midio algo que
+   estimo. */
+function moverCochesDelTrazadoGrande() {
+  const svg = document.getElementById("trazado-grande");
+  if (!svg || !trazadoGrandeAbierto()) return;
+  const camino = svg.querySelector("path.trazado");
+  if (!camino) return;
+  const t = instante();
+  const largo = camino.getTotalLength ? camino.getTotalLength() : 0;
+  const frac = Math.max(0, Math.min(1, t.fraccion || 0));
+  svg.querySelectorAll(".coche-grande").forEach(c => {
+    const medido = puntoMedidoDe(c.dataset.clave, t.tUtcMs);
+    const q = medido || (largo ? camino.getPointAtLength(largo * frac) : null);
+    if (!q) return;
+    c.setAttribute("cx", q.x.toFixed(2));
+    c.setAttribute("cy", q.y.toFixed(2));
+    c.classList.toggle("estimado", !medido);
+    const cual = c.querySelector("title");
+    if (cual && !medido && cual.textContent.indexOf("estimada") === -1) {
+      cual.textContent += " · posición estimada por fracción de vuelta";
+    }
+  });
 }
 
 /* LA PISTA SE ARMA EN UN SOLO SITIO.
@@ -10531,20 +10566,47 @@ function armarPista(t, curvas) {
    el trazado empieza y termina: dibujarla ahi marcaria el corte del dibujo y
    no un limite de sector, y ademas caeria encima del final del lazo. */
 const LARGO_RAYA_SECTOR = 7;
+/* Cuantas muestras se miran a cada lado buscando una que este en otro sitio.
+   Pocas a proposito: mas lejos la direccion ya no es la de ese punto. */
+const VECINOS_PARA_LA_DIRECCION = 6;
 
 function marcasDeSector(sectores, puntos, proyectar) {
   if (!proyectar || !puntos || puntos.length < 2) return [];
   const salida = [];
   (sectores || []).forEach(s => {
     const i = s.indice;
-    /* EL LIMITE QUE CAE EN EL COMIENZO DEL DIBUJO NO LLEVA RAYA, y el motivo es
-       el comienzo y no el numero de sector: ahi el trazado empieza y termina, de
-       modo que una raya marcaria el corte del lazo y no un limite, y ademas
-       caeria encima del cierre. Si alguna vez una fuente declarara el primer
-       sector empezando en otro sitio, ahi si corresponde la raya. */
-    if (!(i > 0) || i >= puntos.length) return;
-    const antes = puntos[Math.max(0, i - 1)];
-    const despues = puntos[Math.min(puntos.length - 1, i + 1)];
+    /* EL LIMITE DEL PRIMER SECTOR TAMBIEN SE MARCA, y antes no.
+       El razonamiento era que ahi el dibujo empieza y termina, de modo que la
+       raya marcaria el corte del lazo. Pero el corte del lazo **es** la linea
+       de meta: no es un artefacto del dibujo, es el sitio del circuito donde
+       la vuelta empieza y donde empieza el sector 1. Callarla dejaba un
+       circuito con dos de sus tres divisiones, que se lee como que falta una.
+
+       Lo que si hace falta es una direccion, y en el primer punto se toma la
+       del tramo que sigue. */
+    if (i < 0 || i >= puntos.length) return;
+    /* EL VECINO INMEDIATO PUEDE SER EL MISMO PUNTO, y entonces no hay
+       direccion. Pasa de verdad: en Silverstone, con el coche detenido en la
+       parrilla y la fuente publicando a 3,7 Hz, las dos primeras muestras del
+       trazado son identicas ---[-1040, 2156] las dos--- y la raya del sector 1
+       se descartaba por falta de direccion. No se veia como un defecto: se
+       veia como un circuito con dos divisiones en vez de tres.
+
+       Asi que se busca hacia afuera el primer vecino que **este en otro
+       sitio**. Unas pocas muestras alcanzan; si en ese entorno no hay ninguna,
+       es que ahi el coche no se movio y no hay direccion que dibujar. */
+    const vecino = (desde, paso) => {
+      for (let k = desde + paso; k >= 0 && k < puntos.length &&
+                                 Math.abs(k - desde) <= VECINOS_PARA_LA_DIRECCION;
+           k += paso) {
+        if (puntos[k][0] !== puntos[desde][0] || puntos[k][1] !== puntos[desde][1]) {
+          return puntos[k];
+        }
+      }
+      return null;
+    };
+    const antes = vecino(i, -1) || puntos[i];
+    const despues = vecino(i, 1) || puntos[i];
     /* `proyectarMundo` devuelve un **arreglo** `[x, y]`, no un objeto. Leerlo
        como `.x` daba `undefined`, la resta daba `NaN`, y `if (!largo)` lo
        descartaba en silencio: cero rayas y ningun error. */
@@ -11201,6 +11263,10 @@ function moverCabezal(fraccion, porMano) {
   pintarMedidores();
   pintarG();
   pintarPista();
+  /* El trazado grande comparte el instante con el panel chico: dos
+     posiciones distintas para el mismo momento serian el tablero
+     contandose dos cosas. */
+  moverCochesDelTrazadoGrande();
   pintarCronometraje();
   pintarAvisos();
   pintarEsquinas();
