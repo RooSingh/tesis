@@ -9762,7 +9762,29 @@ function duracionDeVuelta(numero) {
 
 /* En el bus no hay vueltas: hay un tramo de grabacion. Decirle «vuelta 1 de
    1» seria forzar el vocabulario del circuito sobre un dato de calle. */
-function hayVueltas() { return estado.vueltas.length > 0 && hayEjeDeDistancia(); }
+/* ============================================================
+   QUE UNA FUENTE DECLARE VUELTAS Y QUE MIDA METROS SON DOS PREGUNTAS
+   ------------------------------------------------------------
+   Estaban respondidas con una sola. `hayVueltas` exigia ademas eje de
+   distancia, de modo que OpenF1 se presentaba como «tramo» aunque declara sus
+   **cincuenta y dos** vueltas por reloj ---cada una con su instante de inicio,
+   su fin y su duracion medida---, el tablero le pida los datos vuelta por
+   vuelta y el propio encabezado diga «VUELTA 1 DE 52». Tres centimetros mas
+   abajo, el reproductor decia «tramo»: la misma sesion contando dos cosas
+   distintas sobre si misma.
+
+   Que no haya metro medido no borra las vueltas: son de la fuente, no del eje.
+   Lo que la distancia gobierna es **escribir un metro**, y eso se pregunta
+   donde se escribe uno, que es un solo sitio en el transporte.
+
+   LO QUE SI HAY QUE DISTINGUIR YA ESTABA MARCADO. Cuando una fuente no declara
+   vueltas ---el bus, que entrega un minuto de ruta--- este tablero se arma un
+   tramo unico para poder compartir cabezal e interpolacion, y lo declara:
+   `tramo_temporal`. Ese no es una vuelta y la interfaz nunca lo llama asi. La
+   pregunta correcta es entonces si queda alguna vuelta que la fuente haya
+   declarado de verdad.
+   ============================================================ */
+function hayVueltas() { return estado.vueltas.some(v => !v.tramo_temporal); }
 
 function duracionSesionS() {
   const suma = estado.vueltas.reduce((a, v) => a + (v.duracion_s || 0), 0);
@@ -10093,9 +10115,13 @@ function pintarTransporte() {
   document.getElementById("tr-posicion").textContent = hayVueltas()
     ? "Vuelta " + rotuloDeVuelta(t)
     : relojDeSesion(t.segundos);
-  document.getElementById("tr-total").textContent = hayVueltas()
-    ? textoDeVuelta(t.metro) + " · " + relojDeSesion(t.segundos) + " de " + relojDeSesion(dur)
-    : relojDeSesion(t.segundos) + " de " + relojDeSesion(dur) + " grabados";
+  /* EL METRO SOLO SE ESCRIBE DONDE SE MIDIO. En una fuente que declara vueltas
+     pero no distancia, `t.metro` lleva el reloj del tramo: imprimirlo con el
+     rotulo «m» seria poner segundos bajo una unidad que nadie midio. */
+  const reloj = relojDeSesion(t.segundos) + " de " + relojDeSesion(dur);
+  document.getElementById("tr-total").textContent = hayEjeDeDistancia()
+    ? textoDeVuelta(t.metro) + " · " + reloj
+    : reloj + " grabados";
   document.getElementById("tr-cabezal").value = String(Math.round(cabezal * 10000));
 
   /* QUE SE MARCA SOBRE LA LINEA DE TIEMPO.

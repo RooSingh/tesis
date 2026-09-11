@@ -3399,12 +3399,36 @@ prueba("y la carrera sigue contando vueltas y metros", () => {
 
 prueba("un tramo de bus no se cuenta en vueltas", () => {
   /* «Vuelta 1» sobre un minuto de ruta fuerza el vocabulario del circuito sobre
-     un dato de calle, y ademas promete que hay una vuelta 2. */
-  globalThis.fuente = "can";
+     un dato de calle, y ademas promete que hay una vuelta 2. El tramo unico se
+     lo arma este tablero para compartir cabezal e interpolacion, y lo declara
+     con `tramo_temporal`: eso no es una vuelta en ninguna fuente. */
   globalThis.estado.vueltas = [{ numero: 1, duracion_s: 61.6, tramo_temporal: true }];
+  globalThis.fuente = "can";
   assert.strictEqual(hayVueltas(), false);
   globalThis.fuente = "f1";
+  assert.strictEqual(hayVueltas(), false,
+    "un tramo armado por el tablero se conto como vuelta por venir de la simulación");
+});
+
+prueba("una vuelta declarada es una vuelta aunque la fuente no mida metros", () => {
+  /* EL DEFECTO QUE ESTO CIERRA. `hayVueltas` exigia ademas eje de distancia, de
+     modo que OpenF1 ---que declara sus cincuenta y dos vueltas por reloj, con
+     instante de inicio, fin y duracion medida--- se presentaba como «tramo» en
+     el reproductor y en el cronometraje mientras el encabezado de la misma
+     pantalla decia «VUELTA 1 DE 52».
+
+     Que la fuente declare vueltas y que mida metros son dos preguntas, y la
+     segunda gobierna escribir un metro, no contar vueltas. */
+  globalThis.estado.vueltas = [
+    { numero: 1, duracion_s: 106.1, desde_utc: "2025-07-06T14:03:49.615Z" },
+    { numero: 2, duracion_s: 135.6, desde_utc: "2025-07-06T14:05:35.748Z" },
+  ];
+  globalThis.fuente = "openf1";
+  assert.strictEqual(hayEjeDeDistancia(), false, "el supuesto de la prueba cambio");
   assert.strictEqual(hayVueltas(), true);
+  globalThis.fuente = "can";
+  assert.strictEqual(hayVueltas(), true,
+    "una vuelta declarada deja de serlo segun quien la declare");
 });
 
 prueba("sin ninguna vuelta declarada tampoco hay vueltas", () => {
