@@ -1596,10 +1596,26 @@
   .cabina .panel-medidores .cuerpo-instrumento {
     display: flex; flex-direction: column; min-height: 0; padding: 6px 10px 8px;
   }
-  /* La marcha toma su renglon y los relojes se quedan con el resto: los arcos
-     aguantan ser mas chicos, la tira de ocho segmentos no ---con menos alto los
-     segmentos dejan de distinguirse uno del otro---. */
-  .cabina .panel-medidores .marcha-con-relojes { flex: 0 0 auto; margin-top: 4px; }
+  /* LA MARCHA EN UN RENGLON, NO EN DOS.
+     `barra-medida` pone su rotulo en una fila propia ---`grid-column: 1 / -1`---
+     porque en el panel de motor hay siete tiras apiladas y ahi el nombre arriba
+     se lee mejor. Aca hay una sola, y ese renglon costaba catorce pixeles de los
+     ciento cuarenta y uno del panel: el rotulo al costado se los devuelve a los
+     arcos, que son lo que se mira.
+
+     Medido antes: banda de 42 px y arcos de 60. */
+  .cabina .panel-medidores .marcha-con-relojes { flex: 0 0 auto; margin-top: 2px; }
+  .cabina .panel-medidores .barra-medida {
+    grid-template-columns: auto minmax(46px, 1fr) auto;
+    gap: 0 8px; align-items: center;
+  }
+  .cabina .panel-medidores .barra-medida .eyebrow {
+    grid-column: 1; margin: 0; white-space: nowrap;
+  }
+  /* Los segmentos ya no cargan con el alto del renglon de arriba, asi que se los
+     deja un poco mas altos: un segmento de nueve pixeles al lado de un arco de
+     ochenta se lee como un adorno. */
+  .cabina .panel-medidores .segmentos i { height: 10px; }
   .cabina .panel-medidores .fila-medidores {
     flex: 1; min-height: 0;
     grid-template-columns: repeat(2, minmax(0, 1fr));
