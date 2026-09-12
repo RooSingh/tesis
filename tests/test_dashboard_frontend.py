@@ -319,6 +319,11 @@ class AyudantesDeSerieTests(unittest.TestCase):
 
         self._correr("de_cuando_es_este_valor.js")
 
+    def test_antes_de_la_linea_el_coche_no_se_planta_en_la_meta(self) -> None:
+        """Un `lap_distance` negativo se recortaba a cero y se declaraba medido."""
+
+        self._correr("antes_de_la_linea_no_es_el_metro_cero.js")
+
     def test_el_mismo_aviso_se_ve_igual_en_vivo_y_reproducido(self) -> None:
         """En vivo todos entraban con `en: 1` y quedaba el mas viejo arriba."""
 

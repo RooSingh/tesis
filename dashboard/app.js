@@ -2520,6 +2520,39 @@ function anotarFalloDeAvisos(e) {
 let _firmaAvisos = "";
 let _cuantosAvisos = 0;
 
+/* DONDE CAE UN METRO DENTRO DE LA VUELTA, O `null` SI NO CAE.
+
+   UN METRO NEGATIVO NO ES UN DATO FALTANTE NI ES EL METRO CERO. El protocolo
+   publica `lap_distance` **negativa antes de cruzar la linea de largada**
+   ---`backend/f1_udp.py:462`---, y con eso esta diciendo algo cierto: el coche
+   esta antes de la linea. Lo que no puede hacer es ubicarlo **dentro de la
+   vuelta**, porque la vuelta todavia no empezo.
+
+   QUE PASABA. La colocacion preguntaba `!== undefined`, que un negativo
+   cumple, y recortaba con `Math.max(0, metro / largo)`: fraccion cero
+   constante hasta que el metro se volvia positivo. En la reproduccion el coche
+   quedaba clavado en la meta los primeros segundos.
+
+   Y LO PEOR NO ERA QUE NO SE MOVIERA: quedaba marcado como medido, sin
+   `data-estimada`, de modo que el tablero **afirmaba una posicion medida que
+   era un recorte**. El comentario que esta unas lineas mas abajo, en la
+   colocacion, declara la regla que ese recorte rompia: una posicion supuesta y
+   una medida no pueden verse igual.
+
+   Medido sobre `f1_25:session:16227589096132074312` el 2026-09-12: la sesion
+   arranca en el metro -5.342,3.
+
+   LOS DOS EXTREMOS NO SON SIMETRICOS. Pasarse unos metros de la linea si se
+   recorta a uno: ahi el coche esta sobre el circuito y el sobrante es ruido de
+   medicion. Quedarse corto no, porque antes de la linea no hay circuito
+   recorrido que mostrar. */
+function fraccionDelMetro(metro, largoVuelta) {
+  if (typeof metro !== "number" || !isFinite(metro) || metro < 0) return null;
+  if (typeof largoVuelta !== "number" || !isFinite(largoVuelta) ||
+      largoVuelta <= 0) return null;
+  return Math.min(1, metro / largoVuelta);
+}
+
 /* EL AVISO SE MUESTRA CON MAYUSCULA INICIAL, Y SE CAPITALIZA **AL MOSTRARLO**.
 
    POR QUE NO EN EL BACKEND, QUE ERA LO OBVIO. Los textos los arma
@@ -3395,11 +3428,13 @@ function pintarPista() {
        mostrando por donde va la vuelta. Pero se declara ---`data-estimada`--- y
        se dibuja distinto, porque una posicion supuesta y una medida no pueden
        verse igual. */
-    let medida = enPistaAhora && enPistaAhora[clave] !== undefined;
+    /* El metro ubica al coche solo si cae dentro de la vuelta. Un negativo
+       ---antes de la linea--- no es el metro cero: ver `fraccionDelMetro`. */
+    const fracDelMetro = enPistaAhora
+      ? fraccionDelMetro(enPistaAhora[clave], largoVuelta) : null;
+    let medida = fracDelMetro !== null;
     let medidaDeVerdad = false;
-    if (medida) {
-      frac = Math.max(0, Math.min(1, enPistaAhora[clave] / largoVuelta));
-    }
+    if (medida) frac = fracDelMetro;
     /* MIENTRAS SE MIDE EL RECORRIDO, EL COCHE VA POR SU POSICION.
        El camino dibujado se rehace cada veinticinco puntos ---rehacerlo en cada
        uno recalcula la orientacion de la nube y el dibujo salta---, pero la
