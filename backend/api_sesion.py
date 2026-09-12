@@ -796,6 +796,36 @@ def posiciones_en_pista(
 # 1 y 4. Series contra distancia, para uno o varios vehiculos
 # --------------------------------------------------------------------------
 
+def _solo_dentro_de_la_vuelta(filas: list) -> list:
+    """Descarta lo de **antes de la linea**, que no es parte de la vuelta.
+
+    QUE SE VIO. En la contrarreloj de Shanghai el trazado salia con una cuña
+    angosta y una chicana que el circuito no tiene, el lazo no cerraba
+    ---107,3 m--- y este punto de acceso declaraba **CINCO** limites de sector:
+    -5.342,3 / -916,4 / 1,2 / 1.419,4 / 2.986,2 m. La Formula 1 tiene tres.
+
+    POR QUE. El protocolo publica `lap_distance` negativa antes de cruzar la
+    linea ---`f1_udp.py:462`--- y esas muestras entraban en la vuelta. El dibujo
+    abarcaba de -5.342 m a 5.438 m: **casi once kilometros**, dos trayectorias
+    distintas superpuestas. `sector_index` recorre sus tres valores en la
+    aproximacion y otra vez en la vuelta, y de ahi los cinco.
+
+    ES LA MISMA REGLA QUE EL TABLERO YA TENIA ESCRITA, en `fraccionDelMetro`:
+    un metro negativo no es el metro cero ni es un dato faltante. La fuente dice
+    algo cierto ---el coche esta antes de la linea--- y lo que no puede es
+    ubicarlo **dentro de la vuelta**, porque la vuelta no empezo. Alla se aplico
+    a donde poner el coche; aca, a que se dibuja.
+
+    EL CERO SI ENTRA: es la linea, que es un sitio del circuito.
+
+    NO SE DESCARTA POR NO TENER DISTANCIA. Una fuente que no publica
+    `lap_distance` ---OpenF1--- no declara nada sobre la linea, y tirarle las
+    muestras la dejaria sin trazado. Se descarta lo que **declara** estar antes.
+    """
+
+    return [f for f in filas if f[3] is None or f[3] >= 0]
+
+
 def _pasos_del_trazado(recorte: list) -> dict:
     """Lo que hace falta para saber si el vehiculo pudo recorrer cada tramo.
 
@@ -2635,6 +2665,15 @@ def trazado(session_id: str, vuelta: int | None = None,
     # SIN `lap_number`, LA VUELTA SE DEDUCE DEL RELOJ.
     # Ver `_vueltas_por_reloj`: sin esto, una fuente que no publica el numero de
     # vuelta dibuja la sesion entera superpuesta.
+    # LO DE ANTES DE LA LINEA NO ES LA VUELTA. Se descarta antes de agrupar por
+    # vuelta, para que `_vuelta_que_mejor_dibuja` compare vueltas y no
+    # trayectorias mezcladas. Ver `_solo_dentro_de_la_vuelta`.
+    filas = _solo_dentro_de_la_vuelta(filas)
+    if not filas:
+        return {"session_id": session_id, "fuente": fuente, "puntos": [],
+                "motivo": ("Todas las posiciones de esta sesion son anteriores a "
+                           "la linea de largada: no hay vuelta que dibujar.")}
+
     if all(f[4] is None for f in filas):
         with db.obtener_conexion() as conexion, conexion.cursor() as cursor:
             _vs = _vueltas_por_reloj(cursor, session_id, _propio)

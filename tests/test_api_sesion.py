@@ -946,6 +946,97 @@ class SinNumeroDeVueltaElRelojLaDiceTests(unittest.TestCase):
                          "se consulto el contexto sin saber de quien")
 
 
+class UnaVueltaSonLosMetrosDeLaVuelta(unittest.TestCase):
+    """Lo de antes de la linea no es parte de la vuelta, y se dibujaba igual.
+
+    QUE SE VIO. En la contrarreloj de Shanghai el trazado salia con una cuña
+    angosta y una chicana que el circuito no tiene, y el lazo no cerraba
+    ---107,3 m---. La firma estaba en los sectores: el punto de acceso declaraba
+    **CINCO**, en -5.342,3 / -916,4 / 1,2 / 1.419,4 / 2.986,2 m. La Formula 1
+    tiene tres.
+
+    POR QUE. El protocolo publica `lap_distance` negativa antes de cruzar la
+    linea ---`backend/f1_udp.py:462`--- y esas muestras entraban en la vuelta.
+    El dibujo abarcaba de -5.342 m a 5.438 m: casi once kilometros, dos
+    trayectorias distintas superpuestas. `sector_index` recorre sus tres
+    valores en la aproximacion y otra vez en la vuelta, y de ahi los cinco.
+
+    ES LA MISMA REGLA QUE YA ESTA ESCRITA EN EL TABLERO, en `fraccionDelMetro`:
+    un metro negativo no es el metro cero ni es un dato faltante. La fuente esta
+    diciendo algo cierto ---el coche esta antes de la linea--- y lo que no puede
+    es ubicarlo **dentro de la vuelta**, porque la vuelta no empezo.
+
+    LO QUE NO SE HACE: descartar por no tener distancia. Una fuente que no
+    publica `lap_distance` ---OpenF1--- no declara nada sobre la linea, y
+    tirarle las muestras la dejaria sin trazado.
+    """
+
+    @staticmethod
+    def _fila(distancia, vuelta=1):
+        from datetime import datetime, timezone
+        return (1.0, 2.0, None, distancia, vuelta,
+                datetime(2025, 7, 6, tzinfo=timezone.utc), 1, 100.0)
+
+    def test_lo_de_antes_de_la_linea_no_entra_en_la_vuelta(self) -> None:
+        filas = [self._fila(-5342.3), self._fila(-916.4),
+                 self._fila(1.2), self._fila(1419.4)]
+        quedan = api_sesion._solo_dentro_de_la_vuelta(filas)
+        self.assertEqual([f[3] for f in quedan], [1.2, 1419.4])
+
+    def test_el_metro_cero_si_entra(self) -> None:
+        """Cero es la linea, que es un sitio del circuito. Descartarlo por
+        estar «en el borde» borraria la largada."""
+
+        quedan = api_sesion._solo_dentro_de_la_vuelta([self._fila(0.0)])
+        self.assertEqual(len(quedan), 1)
+
+    def test_sin_distancia_no_se_descarta_nada(self) -> None:
+        """OpenF1 no publica `lap_distance`: no declara nada sobre la linea y
+        tirarle las muestras la dejaria sin trazado."""
+
+        filas = [self._fila(None), self._fila(None)]
+        self.assertEqual(len(api_sesion._solo_dentro_de_la_vuelta(filas)), 2)
+
+    def test_una_fuente_mixta_conserva_lo_que_no_declara(self) -> None:
+        filas = [self._fila(-100.0), self._fila(None), self._fila(50.0)]
+        self.assertEqual([f[3] for f in api_sesion._solo_dentro_de_la_vuelta(filas)],
+                         [None, 50.0])
+
+    def test_si_todo_es_anterior_a_la_linea_no_se_inventa_una_vuelta(self) -> None:
+        """Mejor un trazado vacio, que el punto de acceso ya sabe declarar, que
+        uno dibujado con una trayectoria que no es la vuelta."""
+
+        filas = [self._fila(-500.0), self._fila(-100.0)]
+        self.assertEqual(api_sesion._solo_dentro_de_la_vuelta(filas), [])
+
+    def test_sin_filas_no_revienta(self) -> None:
+        self.assertEqual(api_sesion._solo_dentro_de_la_vuelta([]), [])
+
+    def test_el_trazado_lo_usa_de_verdad(self) -> None:
+        """SE COMPRUEBA SOBRE EL CODIGO QUE SE PUBLICA.
+
+        La funcion podia existir, estar probada seis veces y no llamarla nadie:
+        la mutacion que la desconectaba del trazado no mataba ninguna prueba.
+        Es la tercera vez en el dia que aparece este hueco ---la ficha del
+        circuito y `marcarSaltos` tuvieron el mismo---, y siempre por lo mismo:
+        las pruebas miran a quien consume el dato y el defecto esta en quien lo
+        emite.
+
+        Y se exige que se aplique **antes** de agrupar por vuelta: si se
+        aplicara despues, `_vuelta_que_mejor_dibuja` ya habria elegido
+        comparando trayectorias mezcladas con vueltas limpias.
+        """
+
+        import inspect
+        fuente = inspect.getsource(api_sesion)
+        i = fuente.index("_solo_dentro_de_la_vuelta(filas)")
+        self.assertGreater(i, 0)
+        j = fuente.index("_vuelta_que_mejor_dibuja(por_vuelta)")
+        self.assertLess(i, j,
+                        "el filtro corre despues de elegir la vuelta: la eleccion "
+                        "ya se hizo con trayectorias mezcladas")
+
+
 class LoQueElTrazadoNecesitaParaNoInventarUnTramo(unittest.TestCase):
     """Por que la respuesta del trazado lleva el tiempo y la velocidad.
 
