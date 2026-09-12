@@ -9297,8 +9297,8 @@ const WIDGETS = [
      en ese orden, y `tras: "graficos"` es lo que le dice al catalogo donde
      entran los graficos ---que no estan en esta lista porque cuales hay lo
      decide el panel de señales---. */
-  { id: "vehiculos",     titulo: "Vehículos",         ancho: 2, alto: 1, tras: "graficos" },
   { id: "puesta",        titulo: "Puesta a punto",    ancho: 4, alto: 1, tras: "graficos" },
+  { id: "vehiculos",     titulo: "Vehículos",         ancho: 2, alto: 2, tras: "graficos" },
   { id: "aceleraciones", titulo: "Aceleraciones",     ancho: 2, alto: 2, tras: "graficos" },
   /* La barra de señales: hasta hoy era una celda del tablero que el catalogo no
      nombraba, con `ancho-total` en vez de una disposicion. Va ultima porque es

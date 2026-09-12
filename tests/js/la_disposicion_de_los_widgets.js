@@ -442,7 +442,7 @@ prueba("la disposicion de fabrica es la que se midio, y cambiarla es deliberado"
   const firma = m.WIDGETS.map(w => w.id + ":" + w.ancho + "x" + w.alto).join(" ");
   assert.strictEqual(firma,
     "trazado:3x2 motor:2x1 vehiculo:2x2 clima:1x1 medidores:2x1 cronometraje:1x1 " +
-    "avisos:2x2 vehiculos:2x1 puesta:4x1 aceleraciones:2x2 senales:8x1",
+    "avisos:2x2 puesta:4x1 vehiculos:2x2 aceleraciones:2x2 senales:8x1",
     "cambio la disposicion de fabrica");
 });
 
