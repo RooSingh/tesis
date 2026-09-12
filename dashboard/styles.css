@@ -1364,6 +1364,44 @@
      que no lo queria ver. */
   .instrumento[data-quitado="si"] { display: none; }
 
+  /* ---------- ordenar el tablero ----------
+     Mientras se edita, cada panel muestra sus mandos y se puede arrastrar. El
+     panel quitado **no desaparece**: se ve apagado, con el boton para traerlo.
+     Si desapareciera, quitarlo seria irreversible desde la pantalla: habria que
+     saber que existio para poder pedirlo de vuelta. */
+  .cabina[data-editando="si"] .instrumento {
+    cursor: grab; outline: 1px dashed var(--acento); outline-offset: -1px;
+  }
+  .cabina[data-editando="si"] .instrumento[data-arrastrando="si"] { opacity: .4; }
+  .cabina[data-editando="si"] .instrumento[data-apagado="si"] {
+    opacity: .35; filter: grayscale(1);
+  }
+  /* Mientras se ordena, el contenido no recibe el raton: arrastrar un panel no
+     puede activar un boton que tenga adentro. Los mandos si, que para eso son. */
+  .cabina[data-editando="si"] .instrumento > *:not(.mandos-widget) {
+    pointer-events: none;
+  }
+  .mandos-widget {
+    position: absolute; inset: auto 6px 6px auto; z-index: 3;
+    display: flex; gap: 4px; align-items: center; flex-wrap: wrap;
+    padding: 4px 6px; border-radius: 8px;
+    background: var(--superficie-2); border: 1px solid var(--linea-fuerte);
+    box-shadow: var(--sombra);
+  }
+  .mandos-widget button {
+    font: inherit; font-size: .62rem; line-height: 1; cursor: pointer;
+    padding: 4px 6px; border-radius: 6px;
+    color: var(--texto); background: var(--superficie);
+    border: 1px solid var(--linea);
+  }
+  .mandos-widget button:hover { border-color: var(--acento); color: var(--acento); }
+  .medida-widget {
+    font-family: var(--cifra); font-size: .6rem; color: var(--texto-tenue);
+    padding: 0 2px;
+  }
+  /* El panel es el marco de referencia de sus mandos. */
+  .cabina[data-editando="si"] .instrumento { position: relative; }
+
   /* LA LISTA LLENA SU PANEL EN VEZ DE PARARSE A LOS 190 PIXELES.
      El panel se estira al alto de su fila ---`align-items: stretch` unas lineas
      mas abajo--- de modo que con veinte pilotos la lista se desplazaba dentro

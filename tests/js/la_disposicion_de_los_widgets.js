@@ -64,7 +64,10 @@ const m = new Function(`
   ${extraer("anchoAcotado")}
   ${extraer("altoAcotado")}
   ${extraer("reconciliarDisposicion")}
-  return { COLUMNAS_DEL_TABLERO, ALTO_DE_FILA_PX, FILAS_MAXIMAS_DE_UN_WIDGET, WIDGETS, disposicionPorOmision, reconciliarDisposicion };
+  ${extraer("moverWidget")}
+  ${extraer("redimensionarWidget")}
+  ${extraer("mostrarWidget")}
+  return { COLUMNAS_DEL_TABLERO, ALTO_DE_FILA_PX, FILAS_MAXIMAS_DE_UN_WIDGET, WIDGETS, disposicionPorOmision, reconciliarDisposicion, moverWidget, redimensionarWidget, mostrarWidget };
 `)();
 
 let hechas = 0;
@@ -222,6 +225,82 @@ prueba("una disposicion vieja sin alto toma el de fabrica", () => {
     assert.strictEqual(d.find(x => x.id === w.id).alto, w.alto,
       "el panel " + w.id + " no tomo su alto de fabrica");
   }
+});
+
+/* -------- lo que el modo edicion puede hacerle a una disposicion -------- */
+
+const orig = () => m.reconciliarDisposicion(null);
+
+prueba("mover un panel no pierde ninguno ni duplica", () => {
+  /* LA INVARIANTE QUE TODO LO DEMAS APOYA. Reordenar es la operacion que mas
+     veces se hace ---una por arrastre--- y un panel perdido en el medio de
+     veinte arrastres no se atribuye a nada. */
+  let d = orig();
+  const antes = d.map(w => w.id).sort();
+  for (const [de, a] of [[0, 3], [3, 0], [8, 1], [1, 8], [4, 4]]) {
+    d = m.moverWidget(d, d[de].id, a);
+    assert.deepStrictEqual(d.map(w => w.id).sort(), antes, `moviendo ${de}->${a}`);
+    assert.strictEqual(new Set(d.map(w => w.id)).size, d.length, "hay repetidos");
+  }
+});
+
+prueba("mover pone el panel donde se pidio", () => {
+  const d = orig();
+  const id = d[0].id;
+  assert.strictEqual(m.moverWidget(d, id, 2).findIndex(w => w.id === id), 2);
+  assert.strictEqual(m.moverWidget(d, id, 0).findIndex(w => w.id === id), 0);
+});
+
+prueba("un destino imposible se acota, no se ignora", () => {
+  /* Soltar fuera de la grilla es soltar al principio o al final, que es lo que
+     el gesto quiso decir. Ignorarlo dejaria el panel donde estaba y se leeria
+     como que el arrastre no funciono. */
+  const d = orig(); const id = d[3].id;
+  assert.strictEqual(m.moverWidget(d, id, -5).findIndex(w => w.id === id), 0);
+  assert.strictEqual(m.moverWidget(d, id, 99).findIndex(w => w.id === id), d.length - 1);
+});
+
+prueba("mover un panel que no existe no rompe nada", () => {
+  const d = orig();
+  assert.deepStrictEqual(m.moverWidget(d, "no-existe", 2), d);
+});
+
+prueba("no se escribe sobre la disposicion que llego", () => {
+  /* Cancelar tiene que poder volver a lo de antes, y eso solo funciona si las
+     operaciones devuelven una disposicion nueva en vez de modificar la vieja. */
+  const d = orig();
+  const copia = JSON.parse(JSON.stringify(d));
+  m.moverWidget(d, d[0].id, 4);
+  m.redimensionarWidget(d, d[0].id, 3, 3);
+  m.mostrarWidget(d, d[0].id, false);
+  assert.deepStrictEqual(d, copia, "una operacion modifico su entrada");
+});
+
+prueba("redimensionar acota a la grilla", () => {
+  const d = orig(); const id = d[0].id;
+  const grande = m.redimensionarWidget(d, id, 99, 99).find(w => w.id === id);
+  assert.strictEqual(grande.ancho, m.COLUMNAS_DEL_TABLERO);
+  assert.strictEqual(grande.alto, m.FILAS_MAXIMAS_DE_UN_WIDGET);
+  const chico = m.redimensionarWidget(d, id, 0, -3).find(w => w.id === id);
+  assert.strictEqual(chico.ancho, 1);
+  assert.strictEqual(chico.alto, 1);
+});
+
+prueba("QUITAR NO ES BORRAR", () => {
+  /* El panel se queda en la lista, escondido. Si se lo sacara, el modo edicion
+     no tendria como ofrecer traerlo de vuelta: habria que adivinar que existio.
+     Y la reconciliacion lo repondria visible en la proxima recarga, de modo que
+     quitarlo no duraria nada. */
+  const d = orig(); const id = d[2].id;
+  const sin = m.mostrarWidget(d, id, false);
+  assert.strictEqual(sin.length, d.length, "el panel se borro de la lista");
+  assert.strictEqual(sin.find(w => w.id === id).visible, false);
+  assert.strictEqual(m.mostrarWidget(sin, id, true).find(w => w.id === id).visible, true);
+});
+
+prueba("quitar no mueve a los demas", () => {
+  const d = orig(); const id = d[2].id;
+  assert.deepStrictEqual(m.mostrarWidget(d, id, false).map(w => w.id), d.map(w => w.id));
 });
 
 console.log("ok " + hechas + " pruebas de la disposicion de los widgets");

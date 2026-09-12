@@ -85,6 +85,15 @@
     <button class="boton secundario" id="btn-corrida" type="button" hidden></button>
     <button class="boton secundario" id="btn-comparar" type="button">Comparar pilotos</button>
     <button class="boton peligro" id="btn-limpiar" type="button">Limpiar sesión</button>
+    <!-- ORDENAR EL TABLERO. Entra en un modo aparte en vez de dejar arrastrar
+         siempre: un panel que se mueve cuando uno queria hacer clic en el es
+         peor que uno que no se mueve. Dentro del modo, «Guardar» escribe y
+         «Cancelar» vuelve a lo de antes, que es lo que hace que probar no
+         cueste nada. -->
+    <button class="boton secundario" id="btn-editar-tablero" type="button"
+            aria-pressed="false">Editar widgets</button>
+    <button class="boton" id="btn-guardar-tablero" type="button" hidden>Guardar cambios</button>
+    <button class="boton secundario" id="btn-cancelar-tablero" type="button" hidden>Cancelar</button>
   </div>
 
   <!-- ============================================================

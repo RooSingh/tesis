@@ -9108,6 +9108,174 @@ function aplicarDisposicion(disposicion) {
   }
 }
 
+/* ============================================================
+   LO QUE EL MODO EDICION LE PUEDE HACER A UNA DISPOSICION
+   ------------------------------------------------------------
+   Las tres operaciones **devuelven una disposicion nueva** y no tocan la que
+   reciben. No es prolijidad: cancelar tiene que poder volver a lo de antes, y
+   eso solo funciona si lo de antes sigue existiendo.
+   ============================================================ */
+
+/* Mueve un panel a una posicion. Un destino fuera de la lista se acota a los
+   extremos: soltar fuera de la grilla es soltar al principio o al final, que es
+   lo que el gesto quiso decir. Ignorarlo dejaria el panel donde estaba y se
+   leeria como que el arrastre no funciono. */
+function moverWidget(disposicion, id, hacia) {
+  const lista = (disposicion || []).slice();
+  const desde = lista.findIndex(w => w.id === id);
+  if (desde === -1) return lista;
+  const destino = Math.max(0, Math.min(lista.length - 1, Math.round(Number(hacia))));
+  if (!Number.isFinite(destino)) return lista;
+  const [movido] = lista.splice(desde, 1);
+  lista.splice(destino, 0, movido);
+  return lista;
+}
+
+function redimensionarWidget(disposicion, id, ancho, alto) {
+  return (disposicion || []).map(w => w.id !== id ? w : {
+    id: w.id,
+    ancho: anchoAcotado(ancho, w.ancho),
+    alto: altoAcotado(alto, w.alto),
+    visible: w.visible,
+  });
+}
+
+/* QUITAR NO ES BORRAR. El panel se queda en la lista, escondido.
+   Si se lo sacara, el modo edicion no tendria como ofrecer traerlo de vuelta
+   ---habria que adivinar que existio--- y la reconciliacion lo repondria
+   visible en la proxima recarga, de modo que quitarlo no duraria nada. */
+function mostrarWidget(disposicion, id, visible) {
+  return (disposicion || []).map(w => w.id !== id ? w : {
+    id: w.id, ancho: w.ancho, alto: w.alto, visible: !!visible,
+  });
+}
+
+/* ============================================================
+   EL MODO EDICION
+   ------------------------------------------------------------
+   Se entra y se sale, en vez de poder arrastrar siempre. Un panel que se mueve
+   cuando alguien queria hacer clic en el es peor que uno que no se mueve: el
+   tablero se usa mucho mas de lo que se ordena.
+
+   Dentro del modo, lo que se toca es una **copia**. «Guardar» la escribe y
+   «Cancelar» vuelve a la de antes, que es lo que hace que probar no cueste
+   nada; sin esa vuelta atras, mover un panel es una decision y no una prueba.
+   ============================================================ */
+let EDITANDO = null;      //: la disposicion en borrador, o null si no se edita
+
+function editando() { return EDITANDO !== null; }
+
+function entrarAEditar() {
+  /* La copia es profunda: las operaciones devuelven listas nuevas, pero el
+     borrador tiene que poder descartarse entero sin haber tocado el original. */
+  EDITANDO = JSON.parse(JSON.stringify(DISPOSICION || disposicionPorOmision()));
+  pintarModoEdicion();
+}
+
+function salirDeEditar(guardando) {
+  if (guardando && EDITANDO) {
+    DISPOSICION = EDITANDO;
+    recordarDisposicion(DISPOSICION);
+  }
+  EDITANDO = null;
+  aplicarDisposicion(DISPOSICION);
+  pintarModoEdicion();
+}
+
+/* Aplica el borrador mientras se edita: lo que se ve es lo que se guardaria. */
+function refrescarBorrador() {
+  aplicarDisposicion(EDITANDO);
+  pintarBotonesDeEdicion();
+}
+
+function pintarModoEdicion() {
+  const tablero = document.getElementById("tablero");
+  if (tablero) tablero.dataset.editando = editando() ? "si" : "no";
+  const b = document.getElementById("btn-editar-tablero");
+  const g = document.getElementById("btn-guardar-tablero");
+  const c = document.getElementById("btn-cancelar-tablero");
+  if (b) { b.setAttribute("aria-pressed", String(editando())); b.hidden = editando(); }
+  if (g) g.hidden = !editando();
+  if (c) c.hidden = !editando();
+  if (editando()) aplicarDisposicion(EDITANDO); else aplicarDisposicion(DISPOSICION);
+  pintarBotonesDeEdicion();
+}
+
+/* Los mandos de cada panel. Se dibujan dentro del panel y solo mientras se
+   edita: fuera del modo no existen, de modo que no hay forma de tocarlos sin
+   querer.
+
+   EL PANEL QUITADO SIGUE EN LA GRILLA MIENTRAS SE EDITA, apagado y con su
+   boton para traerlo. Si desapareciera, quitarlo seria irreversible desde la
+   pantalla: habria que saber que existio para poder pedirlo de vuelta. */
+function pintarBotonesDeEdicion() {
+  const tablero = document.getElementById("tablero");
+  if (!tablero) return;
+  tablero.querySelectorAll(".mandos-widget").forEach(n => n.remove());
+  if (!editando()) return;
+  for (const w of EDITANDO) {
+    const el = tablero.querySelector('[data-panel="' + w.id + '"]');
+    if (!el) continue;
+    el.dataset.quitado = "no";            // se ve apagado, no escondido
+    el.dataset.apagado = w.visible ? "no" : "si";
+    el.setAttribute("draggable", "true");
+    const mandos = document.createElement("div");
+    mandos.className = "mandos-widget";
+    mandos.innerHTML =
+      '<button type="button" data-hace="angosto" title="Menos ancho" aria-label="Menos ancho">&#8592;</button>' +
+      '<span class="medida-widget">' + w.ancho + '&times;' + w.alto + '</span>' +
+      '<button type="button" data-hace="ancho" title="Más ancho" aria-label="Más ancho">&#8594;</button>' +
+      '<button type="button" data-hace="bajo" title="Menos alto" aria-label="Menos alto">&#8593;</button>' +
+      '<button type="button" data-hace="alto" title="Más alto" aria-label="Más alto">&#8595;</button>' +
+      '<button type="button" data-hace="ver" title="' +
+        (w.visible ? "Quitar del tablero" : "Traer al tablero") + '">' +
+        (w.visible ? "Quitar" : "Traer") + "</button>";
+    mandos.addEventListener("click", ev => {
+      const b = ev.target.closest("button");
+      if (!b) return;
+      const hace = b.dataset.hace;
+      if (hace === "ver") EDITANDO = mostrarWidget(EDITANDO, w.id, !w.visible);
+      else if (hace === "ancho") EDITANDO = redimensionarWidget(EDITANDO, w.id, w.ancho + 1, w.alto);
+      else if (hace === "angosto") EDITANDO = redimensionarWidget(EDITANDO, w.id, w.ancho - 1, w.alto);
+      else if (hace === "alto") EDITANDO = redimensionarWidget(EDITANDO, w.id, w.ancho, w.alto + 1);
+      else if (hace === "bajo") EDITANDO = redimensionarWidget(EDITANDO, w.id, w.ancho, w.alto - 1);
+      refrescarBorrador();
+    });
+    el.appendChild(mandos);
+  }
+}
+
+/* Arrastrar y soltar. El destino es **la posicion del panel sobre el que se
+   solto**, no un pixel: la grilla ya decide donde cae cada uno, y calcular
+   coordenadas seria adivinar lo que la grilla sabe. */
+function conectarArrastre() {
+  const tablero = document.getElementById("tablero");
+  if (!tablero) return;
+  let arrastrado = null;
+  tablero.addEventListener("dragstart", ev => {
+    const el = ev.target.closest("[data-panel]");
+    if (!editando() || !el) { ev.preventDefault(); return; }
+    arrastrado = el.dataset.panel;
+    el.dataset.arrastrando = "si";
+    if (ev.dataTransfer) ev.dataTransfer.effectAllowed = "move";
+  });
+  tablero.addEventListener("dragover", ev => { if (editando()) ev.preventDefault(); });
+  tablero.addEventListener("drop", ev => {
+    if (!editando() || !arrastrado) return;
+    ev.preventDefault();
+    const sobre = ev.target.closest("[data-panel]");
+    if (sobre && sobre.dataset.panel !== arrastrado) {
+      const hacia = EDITANDO.findIndex(w => w.id === sobre.dataset.panel);
+      EDITANDO = moverWidget(EDITANDO, arrastrado, hacia);
+      refrescarBorrador();
+    }
+  });
+  tablero.addEventListener("dragend", () => {
+    tablero.querySelectorAll('[data-arrastrando]').forEach(n => delete n.dataset.arrastrando);
+    arrastrado = null;
+  });
+}
+
 function recordarSesion(id) {
   try { window.localStorage.setItem("sesion-abierta", id); } catch (e) { /* sin memoria */ }
 }
@@ -12973,6 +13141,20 @@ function encuadrarCabina() {
    la vista. */
 DISPOSICION = reconciliarDisposicion(disposicionGuardada());
 aplicarDisposicion(DISPOSICION);
+conectarArrastre();
+(function mandosDeEdicion() {
+  const b = document.getElementById("btn-editar-tablero");
+  const g = document.getElementById("btn-guardar-tablero");
+  const c = document.getElementById("btn-cancelar-tablero");
+  if (b) b.addEventListener("click", entrarAEditar);
+  if (g) g.addEventListener("click", () => salirDeEditar(true));
+  if (c) c.addEventListener("click", () => salirDeEditar(false));
+  /* Escape cancela. Es la salida que alguien busca cuando entro sin querer, y
+     no guardar es lo prudente: lo que no se pidio no se escribe. */
+  document.addEventListener("keydown", ev => {
+    if (ev.key === "Escape" && editando()) salirDeEditar(false);
+  });
+})();
 
 window.addEventListener("resize", () => {
   ajustarCabina();
