@@ -81,6 +81,18 @@ def _correr(fn, *args) -> Any:
     """
     try:
         resultado = fn(*args)
+    except vueltas.SinVueltas as negativa:
+        # NO ES UN FALLO: ES LA HERRAMIENTA CONTESTANDO QUE NO PUEDE.
+        #
+        # Las herramientas declaran su negativa de dos maneras ---devolviendo
+        # una estructura con el motivo, o levantando esto--- y las dos dicen lo
+        # mismo. Atraparla con el `except` general convertia «esta fuente no
+        # tiene vueltas» en «algo se rompio», que ademas le pide a quien
+        # consulta que reintente algo que nunca va a andar.
+        raise HTTPException(
+            status_code=422,
+            detail={"disponibilidad": _serializar(negativa.disponibilidad)},
+        ) from negativa
     except Exception as error:  # pragma: no cover - depende del estado de la base
         raise HTTPException(status_code=500, detail=str(error)) from error
 
