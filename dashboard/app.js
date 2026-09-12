@@ -6351,10 +6351,13 @@ function exportarCsv() {
 const LIENZOS = {};
 
 function asegurarGraficosChicos(ids) {
-  /* Todos los graficos en la misma linea, a lo ancho de la pantalla. */
-  const linea = document.getElementById("graficos-cabina");
-  const unico = document.getElementById("tablero");
-  if (!linea && !unico) return;
+  /* CADA GRAFICO ES UNA CELDA DEL TABLERO, no un pasajero de un bloque.
+     Estaban los cuatro dentro de un `div` que cruzaba el tablero entero: se
+     movian y se estiraban juntos, o sea que no se movia ninguno. Ahora cada uno
+     se cuelga del tablero con su `data-panel`, que es todo lo que el modo
+     edicion necesita para dejarlo arrastrar, estirar y acomodar. */
+  const tablero = document.getElementById("tablero");
+  if (!tablero) return;
   const previos = Object.keys(LIENZOS);
   const iguales = previos.length === ids.length && ids.every(id => LIENZOS[id]);
   if (iguales) return;
@@ -6366,12 +6369,12 @@ function asegurarGraficosChicos(ids) {
   });
 
   ids.forEach(id => {
-    const tablero = linea || unico;
     const m = METRICAS.find(x => x.id === id);
     if (!m) return;
     const s = document.createElement("section");
-    s.className = "instrumento celda-1 grafico-chico";
+    s.className = "instrumento grafico-chico";
     s.id = "celda-" + id;
+    s.dataset.panel = PREFIJO_DE_GRAFICO + id;
     s.innerHTML =
       '<header><h2>' + m.rotulo + '</h2>' +
       '<span class="fuente-canal" title="Canal: ' + nombreDeSenal(id) + '"></span>' +
@@ -6410,6 +6413,21 @@ function asegurarGraficosChicos(ids) {
     const amp = s.querySelector("[data-ampliar]");
     if (amp) amp.addEventListener("click", () => ampliarGrafico(id));
   });
+
+  /* EL CATALOGO CAMBIO, ASI QUE LA DISPOSICION TIENE QUE ENTERARSE.
+     Las celdas recien creadas todavia no estan en la disposicion: sin esto
+     nacen con `order` cero y saltan delante de todo, que es el mismo defecto
+     que ya se habia visto con el bloque de graficos. Y si se esta editando, el
+     borrador tambien las incorpora: aparecer a mitad de un gesto sin mandos
+     seria un panel que no se puede tocar. */
+  GRAFICOS_EN_EL_TABLERO = ids.slice();
+  DISPOSICION = conLosGraficosDeAhora(DISPOSICION);
+  if (editando()) {
+    EDITANDO = conLosGraficosDeAhora(EDITANDO);
+    refrescarBorrador();
+  } else {
+    aplicarDisposicion(DISPOSICION);
+  }
 }
 
 function dibujarTraza() {
@@ -8987,22 +9005,67 @@ const WIDGETS = [
      aviso a medio leer es peor que ninguno---. Quien quiera menos lo achica. */
   { id: "avisos",        titulo: "Avisos",            ancho: 1, alto: 2 },
   { id: "clima",         titulo: "Clima y pista",     ancho: 1, alto: 1 },
-  /* LOS GRAFICOS TAMBIEN SON UN PANEL. Eran una celda del tablero que el
-     catalogo no nombraba: la hoja les clavaba el ancho entero y la segunda
-     fila, asi que ni se movian ni se agrandaban ni contaban en el acomodo de
-     los demas. Nacen anchos porque una vuelta se lee de largo, pero cuantas
-     columnas ocupan ya lo decide quien mira. */
-  { id: "graficos",      titulo: "Gráficos",          ancho: 4, alto: 2 },
   { id: "vehiculos",     titulo: "Vehículos",         ancho: 1, alto: 2 },
   { id: "aceleraciones", titulo: "Aceleraciones",     ancho: 1, alto: 2 },
   { id: "puesta",        titulo: "Puesta a punto",    ancho: 2, alto: 2 },
-  /* La barra de señales: la misma historia, con `ancho-total` en vez de una
-     regla propia. Va ultima porque es un mando, no algo que se vigile. */
-  { id: "senales",       titulo: "Señales",           ancho: 4, alto: 1 },
+  /* La barra de señales: hasta hoy era una celda del tablero que el catalogo no
+     nombraba, con `ancho-total` en vez de una disposicion. Va ultima porque es
+     un mando, no algo que se vigile. */
+  { id: "senales",       titulo: "Señales",           ancho: 4, alto: 1, alPie: true },
 ];
 
-function disposicionPorOmision() {
-  return WIDGETS.map(w => ({ id: w.id, ancho: w.ancho, alto: w.alto, visible: true }));
+/* ============================================================
+   UN GRAFICO ES UN WIDGET, Y NO SE PUEDE DECLARAR ACA
+   ------------------------------------------------------------
+   Los cuatro graficos estaban metidos en un solo bloque que cruzaba el tablero
+   de lado a lado: se movian y se estiraban los cuatro juntos, que es no poder
+   moverlos. Cada uno pasa a ser una celda.
+
+   Pero cuales hay **no se puede escribir en el catalogo**: lo decide el panel
+   de señales, que enciende y apaga canales mientras la sesion corre, y depende
+   ademas de la fuente ---el bus publica seis señales y la carrera nueve---. Asi
+   que el catalogo es la lista declarada **mas** un widget por grafico vigente.
+   ============================================================ */
+
+//: El prefijo separa las dos identidades: ningun panel declarado puede llamarse
+//: igual que un canal, y un `id` guardado dice por si solo de cual de los dos
+//: se trata.
+const PREFIJO_DE_GRAFICO = "grafico:";
+
+//: Una columna y dos filas, igual que los paneles que se vigilan. Un grafico
+//: mas bajo que eso deja el trazo en una tira donde no se lee la forma.
+const MEDIDA_DE_UN_GRAFICO = { ancho: 1, alto: 2 };
+
+//: Que graficos hay en el tablero ahora mismo, por su canal. Lo escribe
+//: `asegurarGraficosChicos`, que es quien los crea y los saca: dos sitios
+//: decidiendo cuales hay terminarian en desacuerdo.
+let GRAFICOS_EN_EL_TABLERO = [];
+
+function esGrafico(id) {
+  return typeof id === "string" && id.indexOf(PREFIJO_DE_GRAFICO) === 0;
+}
+
+/* El catalogo vigente: lo declarado mas un widget por grafico encendido.
+
+   LOS GRAFICOS ENTRAN ANTES DE LO QUE VA AL PIE. Pegados al final quedaban
+   debajo de la barra de señales, y la barra ---que ocupa las cuatro columnas---
+   no puede empezar a mitad de fila: dejaba tres columnas vacias encima de ella
+   y los graficos abajo de todo. Medido en pantalla: un hueco de 4 filas. */
+function catalogoDeWidgets(graficos) {
+  const cuales = graficos || GRAFICOS_EN_EL_TABLERO;
+  const suyos = cuales.map(canal => ({
+    id: PREFIJO_DE_GRAFICO + canal,
+    titulo: canal,
+    ancho: MEDIDA_DE_UN_GRAFICO.ancho,
+    alto: MEDIDA_DE_UN_GRAFICO.alto,
+  }));
+  return WIDGETS.filter(w => !w.alPie)
+    .concat(suyos, WIDGETS.filter(w => w.alPie));
+}
+
+function disposicionPorOmision(catalogo) {
+  return (catalogo || catalogoDeWidgets())
+    .map(w => ({ id: w.id, ancho: w.ancho, alto: w.alto, visible: true }));
 }
 
 /* Acota una medida a lo que la grilla admite. Siete columnas en una grilla de
@@ -9025,7 +9088,8 @@ function altoAcotado(valor, porOmision) {
   return medidaAcotada(valor, porOmision, FILAS_MAXIMAS_DE_UN_WIDGET);
 }
 
-function reconciliarDisposicion(crudo) {
+function reconciliarDisposicion(crudo, catalogo) {
+  const cuales = catalogo || catalogoDeWidgets();
   let guardada = null;
   try {
     guardada = crudo ? JSON.parse(crudo) : null;
@@ -9036,32 +9100,64 @@ function reconciliarDisposicion(crudo) {
      almacenamiento puede devolver una version vieja, algo a medio escribir o
      texto de otro origen, y ninguna de esas es razon para quedarse sin
      tablero. */
-  if (!Array.isArray(guardada)) return disposicionPorOmision();
+  if (!Array.isArray(guardada)) return disposicionPorOmision(cuales);
 
-  const declarados = new Map(WIDGETS.map(w => [w.id, w]));
+  const declarados = new Map(cuales.map(w => [w.id, w]));
   const salida = [];
   const puestos = new Set();
   for (const fila of guardada) {
     if (!fila || typeof fila.id !== "string") continue;
-    const w = declarados.get(fila.id);
-    if (!w || puestos.has(w.id)) continue;   // ya no existe, o esta repetido
-    puestos.add(w.id);
+    if (puestos.has(fila.id)) continue;                     // esta repetido
+    /* UN GRAFICO APAGADO NO ES UN GRAFICO QUE YA NO EXISTE.
+       El panel de señales apaga un canal y su grafico se va del tablero; se
+       vuelve a encender y tiene que volver **a su sitio**, no al final. Por eso
+       su fila se conserva aunque el catalogo de hoy no lo nombre: nadie lo
+       borro, esta apagado. Un panel declarado que desaparece del codigo si se
+       descarta, porque ese no vuelve. */
+    const w = declarados.get(fila.id) ||
+              (esGrafico(fila.id) ? MEDIDA_DE_UN_GRAFICO : null);
+    if (!w) continue;
+    puestos.add(fila.id);
     salida.push({
-      id: w.id,
+      id: fila.id,
       ancho: anchoAcotado(fila.ancho, w.ancho),
       alto: altoAcotado(fila.alto, w.alto),
-      // `visible` solo es falso si la disposicion lo dice: cualquier otra cosa
-      // ---ausente, basura--- se lee como visible, que es el estado de fabrica.
-      visible: fila.visible !== false,
+      /* QUITAR UN GRAFICO ES APAGAR SU SEÑAL, y eso lo manda el panel de
+         señales. Si ademas se pudiera quitar desde aca habria dos sitios
+         decidiendo si un grafico se ve, y tarde o temprano uno diria que si
+         mientras el otro dice que no. `visible` solo lo usan los declarados. */
+      visible: esGrafico(fila.id) ? true : fila.visible !== false,
     });
   }
-  // Lo que el codigo tiene y la disposicion no nombraba, al final y visible.
-  for (const w of WIDGETS) {
-    if (!puestos.has(w.id)) {
-      salida.push({ id: w.id, ancho: w.ancho, alto: w.alto, visible: true });
+  /* LO QUE EL CODIGO TIENE Y LA DISPOSICION NO NOMBRABA, EN SU SITIO.
+     Iba al final, y con los graficos eso dejo de alcanzar: encender una señal
+     crea su grafico, y pegado al final aparecia **debajo de la barra de
+     señales**, que es el pie del tablero. O sea que cada canal que alguien
+     encendiera habria que arrastrarlo hasta donde estan los demas.
+
+     Entra donde el catalogo lo declara, medido contra lo que ya esta colocado:
+     delante del primer panel posterior a el que la disposicion si nombre. Si no
+     hay ninguno, eso es el final ---que es lo que se hacia antes, ahora como
+     caso particular en vez de como unica regla---. */
+  for (let i = 0; i < cuales.length; i++) {
+    const w = cuales[i];
+    if (puestos.has(w.id)) continue;
+    let donde = salida.length;
+    for (let j = i + 1; j < cuales.length; j++) {
+      const k = salida.findIndex(x => x.id === cuales[j].id);
+      if (k >= 0) { donde = k; break; }
     }
+    puestos.add(w.id);   // para que el siguiente recien llegado se apoye en este
+    salida.splice(donde, 0, { id: w.id, ancho: w.ancho, alto: w.alto, visible: true });
   }
   return salida;
+}
+
+/* La misma disposicion, puesta al dia con los graficos que hay ahora.
+   Reusa la reconciliacion en vez de escribir otra regla de mezcla: el dia que
+   una cambie, dos reglas para lo mismo se contradicen. */
+function conLosGraficosDeAhora(disposicion) {
+  return reconciliarDisposicion(JSON.stringify(disposicion || []));
 }
 
 /* La disposicion vigente, ya reconciliada. Se lee una vez y vive en memoria:
@@ -9206,6 +9302,17 @@ function salirDeEditar(guardando) {
   pintarModoEdicion();
 }
 
+/* VOLVER A COMO VENIA. Devuelve el borrador a la disposicion de fabrica, sin
+   escribirla: sigue siendo un borrador, de modo que «Cancelar» deshace tambien
+   el restablecer. Restablecer y guardar en un solo gesto seria una accion sin
+   vuelta atras metida en el unico modo que existe justamente para poder
+   probar. */
+function restablecerDisposicion() {
+  if (!editando()) return;
+  EDITANDO = disposicionPorOmision();
+  refrescarBorrador();
+}
+
 /* Aplica el borrador mientras se edita: lo que se ve es lo que se guardaria. */
 function refrescarBorrador() {
   aplicarDisposicion(EDITANDO);
@@ -9235,9 +9342,11 @@ function pintarModoEdicion() {
   const b = document.getElementById("btn-editar-tablero");
   const g = document.getElementById("btn-guardar-tablero");
   const c = document.getElementById("btn-cancelar-tablero");
+  const r = document.getElementById("btn-restablecer-tablero");
   if (b) { b.setAttribute("aria-pressed", String(editando())); b.hidden = editando(); }
   if (g) g.hidden = !editando();
   if (c) c.hidden = !editando();
+  if (r) r.hidden = !editando();
   if (editando()) aplicarDisposicion(EDITANDO); else aplicarDisposicion(DISPOSICION);
   pintarBotonesDeEdicion();
 }
@@ -9275,9 +9384,14 @@ function pintarBotonesDeEdicion() {
       '<button type="button" data-hace="ancho" title="Más ancho" aria-label="Más ancho">&#8594;</button>' +
       '<button type="button" data-hace="bajo" title="Menos alto" aria-label="Menos alto">&#8593;</button>' +
       '<button type="button" data-hace="alto" title="Más alto" aria-label="Más alto">&#8595;</button>' +
-      '<button type="button" data-hace="ver" title="' +
-        (w.visible ? "Quitar del tablero" : "Traer al tablero") + '">' +
-        (w.visible ? "Quitar" : "Traer") + "</button>";
+      /* UN GRAFICO NO SE QUITA DESDE ACA. Que un grafico este es lo mismo que
+         que su señal este encendida, y eso lo manda el panel «Señales». Con los
+         dos botones habria dos sitios decidiendo si un grafico se ve, y tarde o
+         temprano uno diria que si mientras el otro dice que no. */
+      (esGrafico(w.id) ? "" :
+        '<button type="button" data-hace="ver" title="' +
+          (w.visible ? "Quitar del tablero" : "Traer al tablero") + '">' +
+          (w.visible ? "Quitar" : "Traer") + "</button>");
     mandos.addEventListener("click", ev => {
       const b = ev.target.closest("button");
       if (!b) return;
@@ -13245,9 +13359,11 @@ conectarArrastre();
   const b = document.getElementById("btn-editar-tablero");
   const g = document.getElementById("btn-guardar-tablero");
   const c = document.getElementById("btn-cancelar-tablero");
+  const r = document.getElementById("btn-restablecer-tablero");
   if (b) b.addEventListener("click", entrarAEditar);
   if (g) g.addEventListener("click", () => salirDeEditar(true));
   if (c) c.addEventListener("click", () => salirDeEditar(false));
+  if (r) r.addEventListener("click", restablecerDisposicion);
   /* Escape cancela. Es la salida que alguien busca cuando entro sin querer, y
      no guardar es lo prudente: lo que no se pidio no se escribe. */
   document.addEventListener("keydown", ev => {

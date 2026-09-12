@@ -239,6 +239,25 @@ class DashboardFrontendTests(unittest.TestCase):
         sin_declarar = [c for c in self._celdas_del_tablero(html) if c not in declarados]
         self.assertEqual(sin_declarar, [], f"celdas fuera del catalogo: {sin_declarar}")
 
+    def test_un_grafico_nace_siendo_una_celda_del_tablero(self) -> None:
+        """Los graficos no estan en el HTML: los crea el guion, y son celdas.
+
+        Estaban los cuatro dentro de un `div` que cruzaba el tablero entero: se
+        movian y se estiraban juntos, o sea que no se movia ninguno. Ahora cada
+        uno se cuelga del tablero con su `data-panel`, que es **todo** lo que el
+        modo edicion necesita: sin ese atributo el grafico vuelve a ser una
+        celda que el catalogo no nombra, sin mandos y sin sitio en la
+        disposicion. La prueba de al lado no lo alcanza porque mira el HTML.
+        """
+        codigo = APP.read_text(encoding="utf-8")
+        self.assertIn("s.dataset.panel = PREFIJO_DE_GRAFICO + id;", codigo,
+                      "un grafico creado sin `data-panel` no es un widget")
+        html = INDICE.read_text(encoding="utf-8")
+        self.assertNotIn('id="graficos-cabina"', html,
+                         "volvio el bloque que juntaba a todos los graficos")
+        self.assertNotIn("graficos-cabina", ESTILOS.read_text(encoding="utf-8"),
+                         "quedan reglas del bloque que ya no existe")
+
     @staticmethod
     def _celdas_del_tablero(html: str) -> list[str]:
         """Los hijos directos de `#tablero`, por su `data-panel`.

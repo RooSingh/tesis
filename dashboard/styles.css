@@ -1450,30 +1450,26 @@
      graficos de cada costado se repartian el ancho de una sola columna: cuatro
      tiras de cien pixeles donde tenia que haber cuatro paneles de trescientos.
      Por eso las trazas se veian estiradas a lo alto y los titulos no entraban. */
-  /* Una columna por grafico, del ancho que toque. Con cuatro señales son
-     cuatro paneles anchos; con ocho, la linea se parte en dos filas sola. */
-  .graficos-cabina {
-    min-height: 0;
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
-    grid-auto-rows: minmax(0, 1fr);
-    gap: 14px;
-  }
+  /* CADA GRAFICO SE COLOCA SOLO, COMO CUALQUIER OTRO PANEL.
+     Aca vivia la rejilla del bloque que los juntaba: `auto-fit` sobre 210 px,
+     que repartia la linea entre los graficos que hubiera. Repartir dejo de ser
+     necesario el dia que cada grafico paso a ser una celda del tablero, con su
+     ancho y su alto en la disposicion como el resto. */
   /* El lienzo toma el alto que le deja su celda en vez de los 104 px fijos:
      asi los graficos crecen con la ventana en lugar de dejar aire debajo. */
-  .graficos-cabina .grafico-chico { min-height: 0; }
-  .graficos-cabina .grafico-chico .cuerpo-instrumento {
+  .cabina .grafico-chico { min-height: 0; }
+  .cabina .grafico-chico .cuerpo-instrumento {
     display: flex; flex-direction: column; min-height: 0;
   }
   /* En una columna angosta el titulo empujaba al boton de exportar fuera del
      panel. El titulo cede ---se corta con puntos suspensivos--- y el boton se
      queda: un titulo a medias se sigue entendiendo, un boton cortado no. */
-  .graficos-cabina .grafico-chico header { gap: 6px; }
-  .graficos-cabina .grafico-chico header h2 {
+  .cabina .grafico-chico header { gap: 6px; }
+  .cabina .grafico-chico header h2 {
     font-size: .82rem; min-width: 0; overflow: hidden;
     text-overflow: ellipsis; white-space: nowrap;
   }
-  .graficos-cabina .acciones-grafico { flex: 0 0 auto; margin-left: auto; }
+  .cabina .acciones-grafico { flex: 0 0 auto; margin-left: auto; }
   .cabina .fuente-canal { font-size: .56rem; }
   /* Cuantos graficos hay por columna lo decide quien mira: con cuatro señales
      encendidas son dos por lado y con ocho, cuatro. El panel tiene que poder
@@ -1483,7 +1479,7 @@
   /* `.grafico-chico canvas` fija 104 px de alto y esta mas abajo en la hoja:
      con la misma especificidad ganaba por orden y el lienzo quedaba mas bajo
      que su envoltura, con la traza apretada arriba. */
-  .graficos-cabina .lienzo-envoltura canvas,
+  .cabina .lienzo-envoltura canvas,
   .lienzo-envoltura canvas { flex: 1; width: 100%; height: 100%; display: block; }
   /* La linea del instante, sobre el lienzo y no dentro: se mueve cambiando
      una propiedad, que es lo que permite reproducir a sesenta cuadros por
@@ -1496,10 +1492,10 @@
     margin-left: -0.5px; background: var(--acento); opacity: .5;
     pointer-events: none;
   }
-  .graficos-cabina .grafico-chico .lienzo-envoltura { min-height: 26px; }
-  .graficos-cabina .grafico-chico .cuerpo-instrumento { padding: 6px 10px 7px; }
-  .graficos-cabina .pie-grafico { flex: 0 0 auto; margin-top: 3px; font-size: .6rem; }
-  .graficos-cabina .grafico-chico > header { padding: 6px 10px 5px; }
+  .cabina .grafico-chico .lienzo-envoltura { min-height: 26px; }
+  .cabina .grafico-chico .cuerpo-instrumento { padding: 6px 10px 7px; }
+  .cabina .pie-grafico { flex: 0 0 auto; margin-top: 3px; font-size: .6rem; }
+  .cabina .grafico-chico > header { padding: 6px 10px 5px; }
 
   /* Cabina completa: la ventana entera menos la barra de reproduccion, que
      sigue visible porque es lo que dice donde esta parado lo que se mira. */
@@ -1533,7 +1529,7 @@
       grid-template-columns: repeat(2, minmax(0, 1fr));
       height: auto !important; min-height: 0;
     }
-    .graficos-cabina .grafico-chico canvas { min-height: 104px; }
+    .cabina .grafico-chico canvas { min-height: 104px; }
     .cabina[data-pantalla="completa"] { position: static; inset: auto; z-index: auto; overflow: visible; }
   }
   @media (max-width: 1180px) {

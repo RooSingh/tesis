@@ -59,6 +59,11 @@ const m = new Function(`
   ${extraerDesde("const ALTO_DE_FILA_PX", ";")}
   ${extraerDesde("const FILAS_MAXIMAS_DE_UN_WIDGET", ";")}
   ${extraerDesde("const WIDGETS = [", "\n];")}
+  ${extraerDesde("const PREFIJO_DE_GRAFICO", ";")}
+  ${extraerDesde("const MEDIDA_DE_UN_GRAFICO", ";")}
+  ${extraerDesde("let GRAFICOS_EN_EL_TABLERO", ";")}
+  ${extraer("esGrafico")}
+  ${extraer("catalogoDeWidgets")}
   ${extraer("disposicionPorOmision")}
   ${extraer("medidaAcotada")}
   ${extraer("anchoAcotado")}
@@ -67,7 +72,9 @@ const m = new Function(`
   ${extraer("moverWidget")}
   ${extraer("redimensionarWidget")}
   ${extraer("mostrarWidget")}
-  return { COLUMNAS_DEL_TABLERO, ALTO_DE_FILA_PX, FILAS_MAXIMAS_DE_UN_WIDGET, WIDGETS, disposicionPorOmision, reconciliarDisposicion, moverWidget, redimensionarWidget, mostrarWidget };
+  return { COLUMNAS_DEL_TABLERO, ALTO_DE_FILA_PX, FILAS_MAXIMAS_DE_UN_WIDGET, WIDGETS,
+           PREFIJO_DE_GRAFICO, MEDIDA_DE_UN_GRAFICO, esGrafico, catalogoDeWidgets,
+           disposicionPorOmision, reconciliarDisposicion, moverWidget, redimensionarWidget, mostrarWidget };
 `)();
 
 let hechas = 0;
@@ -117,11 +124,14 @@ prueba("UN PANEL NUEVO APARECE, aunque la disposicion guardada no lo nombre", ()
   }
 });
 
-prueba("y aparece al final, no en el medio de lo que el usuario ordeno", () => {
+prueba("y aparece donde el codigo lo declara, sin tocar lo que el usuario ordeno", () => {
+  /* Lo que el usuario ordeno no se toca: los dos guardados siguen como estaban,
+     al reves de como los declara el codigo. Lo nuevo se acomoda alrededor. */
   const alReves = JSON.stringify(
     m.WIDGETS.slice(0, 2).reverse().map(w => ({ id: w.id, ancho: 1, visible: true })));
   const d = m.reconciliarDisposicion(alReves);
-  assert.deepStrictEqual(ids(d).slice(0, 2), [m.WIDGETS[1].id, m.WIDGETS[0].id],
+  const a = ids(d).indexOf(m.WIDGETS[1].id), b = ids(d).indexOf(m.WIDGETS[0].id);
+  assert.ok(a >= 0 && b >= 0 && a < b,
     "no se respeto el orden que el usuario habia guardado");
 });
 
@@ -225,6 +235,113 @@ prueba("una disposicion vieja sin alto toma el de fabrica", () => {
     assert.strictEqual(d.find(x => x.id === w.id).alto, w.alto,
       "el panel " + w.id + " no tomo su alto de fabrica");
   }
+});
+
+/* -------- los graficos, que son widgets que el catalogo no puede declarar ----- */
+
+const CAT = g => m.catalogoDeWidgets(g);
+const G = c => m.PREFIJO_DE_GRAFICO + c;
+
+prueba("cada grafico encendido es un widget mas", () => {
+  /* Estaban los cuatro dentro de un bloque unico que cruzaba el tablero: se
+     movian y se estiraban juntos, o sea que no se movia ninguno. */
+  const cat = CAT(["speed", "gas"]);
+  assert.strictEqual(cat.length, m.WIDGETS.length + 2);
+  assert.ok(cat.some(w => w.id === G("speed")));
+  assert.ok(cat.some(w => w.id === G("gas")));
+});
+
+prueba("el prefijo evita que un canal se llame igual que un panel", () => {
+  /* Si un canal se llamara «clima», sin prefijo pisaria al panel declarado y
+     uno de los dos desapareceria del tablero sin que nadie sepa por que. */
+  const cat = CAT(m.WIDGETS.map(w => w.id));
+  assert.strictEqual(new Set(cat.map(w => w.id)).size, cat.length,
+    "dos widgets distintos comparten identidad");
+});
+
+prueba("un grafico apagado no pierde su sitio", () => {
+  /* Apagar un canal saca su grafico del tablero. Volver a encenderlo tiene que
+     devolverlo **donde estaba**: si su fila se descartara, cada ida y vuelta
+     por el panel de señales lo mandaria al final y ordenar el tablero seria
+     trabajo que se pierde solo. */
+  const conElGrafico = m.reconciliarDisposicion(null, CAT(["speed"]));
+  const lugar = conElGrafico.findIndex(w => w.id === G("speed"));
+  assert.ok(lugar >= 0, "el grafico no entro en la disposicion");
+  const movido = m.moverWidget(conElGrafico, G("speed"), 0);
+  assert.strictEqual(movido[0].id, G("speed"));
+
+  // se apaga el canal: el catalogo ya no lo nombra
+  const apagado = m.reconciliarDisposicion(JSON.stringify(movido), CAT([]));
+  assert.strictEqual(apagado[0].id, G("speed"), "perdio su sitio al apagarse");
+
+  // y se vuelve a encender
+  const vuelto = m.reconciliarDisposicion(JSON.stringify(apagado), CAT(["speed"]));
+  assert.strictEqual(vuelto[0].id, G("speed"), "no volvio a su sitio");
+  assert.strictEqual(new Set(vuelto.map(w => w.id)).size, vuelto.length,
+    "quedo duplicado al volver");
+});
+
+prueba("un panel declarado que ya no existe si se descarta", () => {
+  /* La otra cara de la regla de arriba, y la que la hace mordible: un grafico
+     apagado vuelve, un panel borrado del codigo no. Sin esta, «conservar lo que
+     el catalogo no nombra» seria conservar cualquier cosa para siempre. */
+  const d = m.reconciliarDisposicion(
+    JSON.stringify([{ id: "panel-que-ya-no-existe", ancho: 1, alto: 1, visible: true }]),
+    CAT([]));
+  assert.ok(!d.some(w => w.id === "panel-que-ya-no-existe"));
+});
+
+prueba("un grafico no se puede quitar desde los mandos del tablero", () => {
+  /* Que un grafico este es lo mismo que que su señal este encendida, y eso lo
+     manda el panel «Señales». Dos sitios decidiendo lo mismo terminan en
+     desacuerdo: el tablero diria que el grafico esta quitado mientras el panel
+     de señales dice que el canal esta encendido, y no habria como arreglarlo
+     desde ninguno de los dos. */
+  const cat = CAT(["speed"]);
+  const escondido = m.mostrarWidget(m.reconciliarDisposicion(null, cat), G("speed"), false);
+  assert.strictEqual(escondido.find(w => w.id === G("speed")).visible, false,
+    "la operacion no hizo nada, y entonces la prueba no prueba nada");
+  const releido = m.reconciliarDisposicion(JSON.stringify(escondido), cat);
+  assert.strictEqual(releido.find(w => w.id === G("speed")).visible, true,
+    "un grafico quedo escondido por la disposicion");
+});
+
+prueba("un grafico nuevo entra con los graficos, no debajo de la barra de señales", () => {
+  /* Encender un canal crea su grafico. Pegado al final de la disposicion caia
+     **debajo de la barra de señales**, que es el pie del tablero y ocupa las
+     cuatro columnas: el grafico quedaba solo al fondo y habia que arrastrarlo
+     cada vez. Un panel que la disposicion no nombra entra donde el catalogo lo
+     declara, no siempre ultimo. */
+  const conDos = m.reconciliarDisposicion(null, CAT(["speed", "gas"]));
+  const guardado = JSON.stringify(conDos);
+  const conTres = m.reconciliarDisposicion(guardado, CAT(["speed", "gas", "drs"]));
+  const puestos = ids(conTres);
+  const pie = puestos.indexOf("senales");
+  assert.ok(pie >= 0, "no esta la barra de señales");
+  assert.ok(puestos.indexOf(G("drs")) < pie,
+    "el grafico nuevo quedo debajo del pie del tablero");
+  assert.strictEqual(puestos[puestos.length - 1], "senales",
+    "el pie del tablero dejo de ser el ultimo");
+});
+
+prueba("un grafico nace de una columna y dos filas", () => {
+  /* Mas bajo que eso el trazo queda en una tira donde no se lee la forma, que
+     es lo unico que un grafico tiene para decir de un vistazo. */
+  const d = m.reconciliarDisposicion(null, CAT(["speed"]));
+  const g = d.find(w => w.id === G("speed"));
+  assert.strictEqual(g.ancho, m.MEDIDA_DE_UN_GRAFICO.ancho);
+  assert.strictEqual(g.alto, m.MEDIDA_DE_UN_GRAFICO.alto);
+});
+
+prueba("restablecer devuelve exactamente la disposicion de fabrica", () => {
+  /* El boton «Restablecer» es esto y nada mas: el borrador vuelve a lo que el
+     codigo declara, incluidos los graficos que haya encendidos ahora ---que no
+     estan en `WIDGETS` y se perderian si se restableciera contra la lista
+     escrita en vez de contra el catalogo vigente---. */
+  const cat = CAT(["speed", "gas"]);
+  const fabrica = m.disposicionPorOmision(cat);
+  assert.deepStrictEqual(fabrica.map(w => w.id), cat.map(w => w.id));
+  for (const w of fabrica) assert.strictEqual(w.visible, true);
 });
 
 /* -------- lo que el modo edicion puede hacerle a una disposicion -------- */

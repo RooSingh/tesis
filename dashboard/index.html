@@ -93,6 +93,10 @@
     <button class="boton secundario" id="btn-editar-tablero" type="button"
             aria-pressed="false">Editar widgets</button>
     <button class="boton" id="btn-guardar-tablero" type="button" hidden>Guardar cambios</button>
+    <!-- Restablecer deja el borrador como viene de fabrica **sin guardarlo**:
+         asi «Cancelar» tambien deshace el restablecer. -->
+    <button class="boton secundario" id="btn-restablecer-tablero" type="button" hidden
+            title="Volver a las posiciones y tamaños originales">Restablecer</button>
     <button class="boton secundario" id="btn-cancelar-tablero" type="button" hidden>Cancelar</button>
   </div>
 
@@ -446,18 +450,18 @@
     
 
     <!-- ============================================================
-         LOS GRAFICOS, EN UNA LINEA A LO ANCHO
+         LOS GRAFICOS NO ESTAN ACA, Y ES A PROPOSITO
          ------------------------------------------------------------
-         Repartidos de a dos a cada lado del vehiculo, cada uno tenia una
-         columna de trescientos pixeles y la mitad del alto de la fila. En
-         una sola linea a lo ancho tienen el ancho entero de la pantalla
-         repartido entre ellos y todo el alto de la fila: la traza de una
-         vuelta se lee de largo, que es como se lee una vuelta.
+         Habia un `div` que los juntaba a todos en una linea a lo ancho. Se
+         movian y se estiraban los cuatro juntos, o sea que no se movia
+         ninguno: eran una celda sola disfrazada de cuatro.
 
-         Cuantos hay lo decide quien mira desde el panel de señales; la
-         linea se reparte sola y, si son muchos, se parte en dos.
+         Ahora cada grafico es una celda del tablero por derecho propio, con
+         su `data-panel`, y por eso no se pueden escribir aca: cuantos hay lo
+         decide el panel de señales mientras la sesion corre, y cuales puede
+         dar cada fuente no es el mismo numero. Los crea
+         `asegurarGraficosChicos`, que los cuelga de este mismo contenedor.
          ============================================================ -->
-    <div class="graficos-cabina" id="graficos-cabina" data-panel="graficos"></div>
 
   <!-- ============================================================
        LO QUE SE CONSULTA, NO LO QUE SE VIGILA
