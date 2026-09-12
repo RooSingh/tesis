@@ -47,6 +47,7 @@ de este modulo, y `origen` lo dice en cada fila.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
 
 
@@ -134,6 +135,69 @@ SPA_FRANCORCHAMPS: tuple[Curva, ...] = (
 #: no hay frenada: Kemmel es recta, y Malmedy hoy se toma sin levantar. Se
 #: registra para que la ausencia sea explicita y no parezca un olvido.
 SPA_SIN_FRENADA: tuple[str, ...] = ("Kemmel", "Malmedy")
+
+@dataclass(frozen=True)
+class Cobertura:
+    """Cuanto del circuito abarca una vuelta, y donde le falta."""
+
+    #: Fraccion del largo que las muestras abarcan, entre 0 y 1.
+    fraccion: float
+    #: El hueco mas grande sin muestras, en metros. Es la medida que decide:
+    #: una vuelta puede cubrir el 80 % y perderse cuatro curvas seguidas.
+    hueco_mayor_m: float
+    #: Primer y ultimo metro con muestra.
+    desde_m: float
+    hasta_m: float
+
+
+def cobertura_de_la_vuelta(metros: Iterable[float], largo_m: float) -> Cobertura:
+    """Si una vuelta sirve para anclar curvas, que **no** es si su tiempo sirve.
+
+    POR QUE ESTA FUNCION EXISTE, Y ES UNA CORRECCION. El primer censo de
+    circuitos descarto siete de once preguntandole a `analisis/vueltas` cuales
+    eran «limpias». Ese filtro decide si el **tiempo** de una vuelta es
+    comparable con otro y descarta por entrada a boxes o por no haber
+    presenciado el comienzo; una vuelta con entrada a boxes puede describir el
+    circuito perfectamente. Austin quedo afuera con dos vueltas que entre las
+    dos cubren el 99,8 % del trazado.
+
+    Peor: el segundo sintoma que parecia confirmarlo ---circuitos declarando
+    cuatro, cinco o seis sectores donde la Formula 1 tiene tres--- salia de la
+    **misma** mala eleccion de vuelta. Pedido por vuelta, todos declaran tres.
+    No eran dos senales independientes coincidiendo: era una contada dos veces.
+
+    EL HUECO MAYOR, Y NO SOLO LA FRACCION. Una vuelta a la que le falta un
+    kilometro del medio y otra que empieza un kilometro tarde cubren lo mismo y
+    no valen lo mismo: la primera se pierde las curvas que estan justo ahi.
+
+    Las distancias negativas se descartan: el simulador las usa antes de la
+    linea de largada ---Monaco trae desde -3.573 m, que es la vuelta de
+    formacion--- y sumarlas daria una cobertura del 206 %.
+    """
+
+    if largo_m <= 0:
+        raise ValueError(
+            f"largo_m={largo_m}: una cobertura es una fraccion de algo, y de un "
+            f"circuito de cero metros no se puede calcular ninguna.")
+
+    dentro = sorted(m for m in metros if 0.0 <= m <= largo_m)
+    if not dentro:
+        return Cobertura(fraccion=0.0, hueco_mayor_m=largo_m,
+                         desde_m=0.0, hasta_m=0.0)
+
+    # El hueco de la largada y el de la meta cuentan igual que los del medio:
+    # una curva en el metro 50 se pierde lo mismo si la captura arranco en 120.
+    hueco = max(
+        [dentro[0], largo_m - dentro[-1]]
+        + [b - a for a, b in zip(dentro, dentro[1:])]
+    )
+    return Cobertura(
+        fraccion=(dentro[-1] - dentro[0]) / largo_m,
+        hueco_mayor_m=hueco,
+        desde_m=dentro[0],
+        hasta_m=dentro[-1],
+    )
+
 
 @dataclass(frozen=True)
 class DeclaracionDeSector:

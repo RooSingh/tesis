@@ -121,6 +121,92 @@ class DeDondeSaleLaPosicionDeUnaCurvaDeclarada(unittest.TestCase):
             self.assertIn(decl.lado, ("antes", "despues"))
 
 
+class QueHaceQueUNAVUELTASIRVAPARAANCLAR(unittest.TestCase):
+    """La pregunta que hay que hacerle a una vuelta, y la que yo le hacia.
+
+    EL ERROR, ESCRITO PARA QUE NO SE REPITA. El primer censo de circuitos
+    descarto siete de los once usando `analisis/vueltas` ---el filtro de
+    «vueltas limpias»--- y el `cierre_m` del trazado pedido **sin decir que
+    vuelta**. Las dos cosas responden otra pregunta:
+
+    - «vuelta limpia» decide si el **tiempo** de esa vuelta es comparable con
+      otro, y descarta por entrada a boxes o por no haber presenciado el
+      comienzo. Una vuelta con entrada a boxes puede describir el circuito
+      perfectamente;
+    - el trazado sin `vuelta=` deja que el punto de acceso elija, y cuando
+      elige mal el lazo no cierra y `sector_index` parece declarar cuatro,
+      cinco o seis sectores.
+
+    Yo tome ese segundo sintoma como una **senal independiente** que confirmaba
+    al primero. No lo era: las dos salian de la misma mala eleccion de vuelta.
+    Pedida por vuelta, cada circuito declara tres sectores, incluso las vueltas
+    con 684 m de cierre.
+
+    LA PREGUNTA CORRECTA es de cobertura: que fraccion del largo abarcan las
+    muestras y cual es el hueco mas grande. Una vuelta que cubre el circuito
+    sirve para anclar aunque su tiempo no sirva para comparar.
+    """
+
+    def test_una_vuelta_entera_cubre_todo_y_no_tiene_huecos(self) -> None:
+        metros = [float(m) for m in range(0, 5000, 5)]
+        c = cat.cobertura_de_la_vuelta(metros, 5000.0)
+        self.assertAlmostEqual(c.fraccion, 1.0, places=2)
+        self.assertLessEqual(c.hueco_mayor_m, 5.0)
+
+    def test_una_vuelta_que_empieza_tarde_lo_dice(self) -> None:
+        """Austin: la captura arranco en el metro 126 de 5.513. Eso no la
+        invalida, pero tiene que estar dicho."""
+
+        metros = [float(m) for m in range(126, 5502, 4)]
+        c = cat.cobertura_de_la_vuelta(metros, 5513.0)
+        self.assertGreater(c.fraccion, 0.97)
+        self.assertAlmostEqual(c.desde_m, 126.0, places=1)
+        self.assertAlmostEqual(c.hasta_m, 5498.0, places=1)
+        # EL HUECO DE LA LARGADA CUENTA COMO HUECO. Una mutacion que lo sacaba
+        # del calculo no mataba ninguna prueba, y es exactamente el caso de
+        # Austin: sin esto, la vuelta se anuncia sin huecos y los 126 m que le
+        # faltan ---donde podria haber una curva--- no se declaran en ningun
+        # lado.
+        self.assertAlmostEqual(c.hueco_mayor_m, 126.0, places=1)
+
+    def test_el_hueco_de_la_meta_tambien_cuenta(self) -> None:
+        """El otro extremo del mismo defecto: una vuelta que corta antes de la
+        linea se pierde lo que haya entre el ultimo metro y el largo."""
+
+        metros = [float(m) for m in range(0, 4800, 5)]
+        c = cat.cobertura_de_la_vuelta(metros, 5000.0)
+        self.assertAlmostEqual(c.hueco_mayor_m, 205.0, places=1)
+
+    def test_un_hueco_en_el_medio_no_se_disimula_con_la_fraccion(self) -> None:
+        """LO QUE DISTINGUE ESTA MEDIDA DE UN PORCENTAJE. Una vuelta a la que
+        le falta un kilometro del medio y otra que empieza un kilometro tarde
+        cubren la misma fraccion y no valen lo mismo: la del medio se pierde
+        curvas que estan justo ahi."""
+
+        metros = ([float(m) for m in range(0, 2000, 5)]
+                  + [float(m) for m in range(3000, 5000, 5)])
+        c = cat.cobertura_de_la_vuelta(metros, 5000.0)
+        self.assertGreater(c.hueco_mayor_m, 900.0)
+
+    def test_las_distancias_negativas_no_cuentan(self) -> None:
+        """Monaco: la vuelta 1 trae metros desde -3.573, que es la vuelta de
+        formacion antes de la linea. Sumarlos daria una cobertura del 206 %."""
+
+        metros = [float(m) for m in range(-3573, 3322, 5)]
+        c = cat.cobertura_de_la_vuelta(metros, 3337.0)
+        self.assertLessEqual(c.fraccion, 1.0)
+        self.assertGreaterEqual(c.desde_m, 0.0)
+
+    def test_sin_muestras_la_cobertura_es_cero_y_no_revienta(self) -> None:
+        c = cat.cobertura_de_la_vuelta([], 5000.0)
+        self.assertEqual(c.fraccion, 0.0)
+        self.assertEqual(c.hueco_mayor_m, 5000.0)
+
+    def test_un_largo_invalido_no_se_divide(self) -> None:
+        with self.assertRaises(ValueError):
+            cat.cobertura_de_la_vuelta([1.0, 2.0], 0.0)
+
+
 class LoQueElCatalogoDeclaraDeSiMismo(unittest.TestCase):
 
     def test_cada_fila_declara_con_que_medicion_esta_anclada(self) -> None:

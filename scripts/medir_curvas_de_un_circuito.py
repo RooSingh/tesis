@@ -60,7 +60,7 @@ from backend.analisis.curvas import (  # noqa: E402
     UMBRAL_LATERAL_G, derivar, tramos_de_una_vuelta,
 )
 from backend.catalogo_curvas import (  # noqa: E402
-    DeclaracionDeSector, curva_declarada_en,
+    DeclaracionDeSector, cobertura_de_la_vuelta, curva_declarada_en,
 )
 
 SENAL_LATERAL = "g_force_lateral"
@@ -78,6 +78,19 @@ PUNTOS_MAXIMOS = 5000
 #: Cuanto puede alejarse un anclaje de la posicion derivada del mapa antes de
 #: que la comprobacion se considere fallada. Silverstone dio 6,7 m y 11,8 m.
 TOLERANCIA_FIA_M = 15.0
+
+#: Fraccion del circuito que una vuelta tiene que abarcar para servir de
+#: anclaje. Es un criterio de cobertura y no de limpieza: una vuelta con entrada
+#: a boxes describe el circuito igual.
+COBERTURA_MINIMA = 0.95
+
+#: A partir de aca el hueco se avisa. NO se rechaza la vuelta por el hueco, y
+#: eso es deliberado: un hueco de 126 m en la recta de largada ---Austin--- no
+#: esconde ninguna curva, y uno de 126 m en el medio se come una entera. La
+#: diferencia esta en **donde** cae, que la herramienta no puede decidir sin el
+#: catalogo que se esta tratando de escribir. Se declara y lo mira quien
+#: escriba la fila. Rechazarlo por regla fue el error del primer censo.
+HUECO_QUE_SE_AVISA_M = 40.0
 
 
 def _pedir(api: str, ruta: str) -> dict:
@@ -120,11 +133,16 @@ def main() -> int:
 
     trazado = _pedir(args.api, f"/sesiones/{args.sesion}/trazado?puntos=600")
     vueltas = _pedir(args.api, f"/analisis/{args.sesion}/vueltas").get("vueltas") or []
-    # EL NUMERO DE VUELTA SE LEE DEL REGISTRO. Contarlas por posicion asume que
-    # la primera de la lista es la vuelta 1 y que no falta ninguna; el registro
-    # trae `numero` y no hay por que adivinarlo.
-    completas = [int(v["numero"]) for v in vueltas
-                 if v.get("duracion_s") and v.get("numero") is not None]
+    # QUE VUELTAS SE USAN, Y POR QUE NO SE LE PREGUNTA A «VUELTAS LIMPIAS».
+    #
+    # Ese filtro decide si el **tiempo** de una vuelta es comparable con otro, y
+    # descarta por entrada a boxes o por no haber presenciado el comienzo. Aca
+    # la pregunta es otra: si la vuelta **cubre el circuito**. Preguntando lo
+    # primero para decidir lo segundo, el censo del 2026-09-12 descarto siete de
+    # once circuitos, entre ellos uno cuyas dos vueltas cubren el 99,8 %.
+    #
+    # El numero de vuelta se lee del registro y no se cuenta por posicion.
+    candidatas = [int(v["numero"]) for v in vueltas if v.get("numero") is not None]
 
     print(f"== {args.sesion}")
     print(f"   largo medido      {trazado.get('largo_m')} m")
@@ -136,18 +154,45 @@ def main() -> int:
           f"{'   <-- deberian ser tres' if len(sectores) != 3 else ''}")
     for s in sectores:
         print(f"       sector {s['sector']} abre en {s['desde_m']} m")
-    print(f"   vueltas completas {len(completas)} de {len(vueltas)}: {completas}")
+    largo = trazado.get("largo_m") or 0.0
+    completas, coberturas = [], {}
+    for n in candidatas:
+        lat, reducida = _serie(args.api, args.sesion, SENAL_LATERAL, n)
+        if not lat:
+            continue
+        c = cobertura_de_la_vuelta(lat.keys(), largo) if largo else None
+        coberturas[n] = (c, lat, reducida)
+        if c and c.fraccion >= COBERTURA_MINIMA:
+            completas.append(n)
+
+    print(f"\n   cobertura de cada vuelta (minima {100 * COBERTURA_MINIMA:.0f} %):")
+    for n, (c, lat, _) in sorted(coberturas.items()):
+        if c is None:
+            continue
+        aviso = ""
+        if c.hueco_mayor_m >= HUECO_QUE_SE_AVISA_M:
+            donde = ("al principio" if c.desde_m >= c.hueco_mayor_m - 0.5
+                     else "al final" if largo - c.hasta_m >= c.hueco_mayor_m - 0.5
+                     else "EN EL MEDIO")
+            aviso = f"  hueco de {c.hueco_mayor_m:.0f} m {donde}"
+        print(f"       vuelta {n:>3}: {100 * c.fraccion:5.1f} %  de {c.desde_m:7.1f} "
+              f"a {c.hasta_m:7.1f} m"
+              f"{'   sirve' if c.fraccion >= COBERTURA_MINIMA else '          '}"
+              f"{aviso}")
     if not completas:
-        print("   sin vuelta completa no hay nada que anclar.")
+        print("   ninguna vuelta cubre el circuito: no hay nada que anclar.")
         return 1
 
     # Los tramos de cada vuelta, y cuales se repiten.
     por_vuelta, reducidas = [], 0
     for n in completas:
-        lat, reducida = _serie(args.api, args.sesion, SENAL_LATERAL, n)
+        _c, lat, reducida = coberturas[n]
         reducidas += reducida
-        if len(lat) > 1:
-            por_vuelta.append(sorted(lat.items()))
+        # Solo el tramo de la vuelta: el simulador publica metros negativos
+        # antes de la linea de largada y esos son de la vuelta de formacion.
+        dentro = sorted((m, x) for m, x in lat.items() if 0.0 <= m <= largo)
+        if len(dentro) > 1:
+            por_vuelta.append(dentro)
     if reducidas:
         print(f"\n   AVISO: {reducidas} de {len(completas)} vueltas vinieron "
               f"reducidas por la API. La deteccion parte los tramos distinto "
