@@ -77,6 +77,15 @@ const cuerpo = [
   /* Cada entrada declara de donde sale: una medicion con umbral o un hecho
      que la fuente declaro. Va en el titulo y lo arma esta funcion. */
   extraer("procedenciaDelAviso"),
+  /* Lo que `pintarAvisos` consulta para ordenar y rotular. Se agregaron el
+     2026-09-12 y este arnes quedo sin ellas: cinco de sus diez casos morian con
+     «masNuevoPrimero is not defined», **y eran los que cuidan que el panel no
+     afirme que no ocurrio nada cuando la consulta no volvio**. Los descubrio
+     otra sesion corriendo los arneses a mano, porque no hay quien los corra. */
+  extraer("cuandoOcurrio"),
+  extraer("masNuevoPrimero"),
+  extraer("rotuloDeCuando"),
+  extraer("conMayusculaInicial"),
   extraer("pintarAvisos"),
   extraer("anotarFalloDeAvisos"),
   "return { pintarAvisos, anotarFalloDeAvisos };",
@@ -225,7 +234,10 @@ prueba("cuando la consulta llega, el fallo deja de mostrarse", () => {
   const nodos = documentoDePrueba();
   modulo.pintarAvisos();
   const html = nodos["lista-avisos"].innerHTML;
-  assert.ok(html.indexOf("fuera de pista") !== -1, "no se dibujo el aviso: " + html);
+  /* Con mayuscula inicial: el panel capitaliza al mostrar ---el backend escribe
+     los incidentes en minuscula y ahi el titulo es ademas clave de
+     agrupamiento---. Se busca el texto tal como se ve. */
+  assert.ok(html.indexOf("Fuera de pista") !== -1, "no se dibujo el aviso: " + html);
   assert.ok(!/no (se pudieron|pudieron|pude)|no llegaron/i.test(html),
             "sigue mostrando el fallo ya resuelto: " + html);
 });

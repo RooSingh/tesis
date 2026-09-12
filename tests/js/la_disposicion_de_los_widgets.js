@@ -56,11 +56,15 @@ function extraerDesde(marca, cierre) {
 
 const m = new Function(`
   ${extraerDesde("const COLUMNAS_DEL_TABLERO", ";")}
+  ${extraerDesde("const ALTO_DE_FILA_PX", ";")}
+  ${extraerDesde("const FILAS_MAXIMAS_DE_UN_WIDGET", ";")}
   ${extraerDesde("const WIDGETS = [", "\n];")}
   ${extraer("disposicionPorOmision")}
+  ${extraer("medidaAcotada")}
   ${extraer("anchoAcotado")}
+  ${extraer("altoAcotado")}
   ${extraer("reconciliarDisposicion")}
-  return { COLUMNAS_DEL_TABLERO, WIDGETS, disposicionPorOmision, reconciliarDisposicion };
+  return { COLUMNAS_DEL_TABLERO, ALTO_DE_FILA_PX, FILAS_MAXIMAS_DE_UN_WIDGET, WIDGETS, disposicionPorOmision, reconciliarDisposicion };
 `)();
 
 let hechas = 0;
@@ -168,6 +172,56 @@ prueba("cada panel declarado existe en el HTML", () => {
 prueba("ningun panel del catalogo esta repetido", () => {
   const vistos = new Set(m.WIDGETS.map(w => w.id));
   assert.strictEqual(vistos.size, m.WIDGETS.length);
+});
+
+/* -------- el alto tambien es del widget -------- */
+
+prueba("cada panel declara su alto en filas", () => {
+  /* POR QUE EL ALTO NO PUEDE QUEDAR LIBRE, Y ESTA MEDIDO.
+     De las reglas de estilo que viven dentro de los paneles, muchas dicen
+     `flex: 1`, `min-height: 0` o `height: 100%`: son la forma de escribir
+     «lleno el alto que me den». Estan asi porque la cabina **imponia** un alto,
+     repartido contra la ventana.
+
+     Con filas de alto libre ese alto no existe, y esas reglas colapsan o
+     desbordan: medido el 2026-09-12, el trazado pedia 313 px en una fila de
+     145 y se derramaba sobre el panel de abajo. Un panel hecho para llenar un
+     alto impuesto no se puede soltar en una grilla de alto libre.
+
+     Asi que el alto se sigue imponiendo ---la grilla tiene filas de tamaño
+     fijo--- y lo que cambia es **quien lo decide**: el widget declara cuantas
+     filas ocupa, igual que declara cuantas columnas. */
+  const d = m.reconciliarDisposicion(null);
+  for (const w of d) {
+    assert.ok(Number.isInteger(w.alto) && w.alto >= 1,
+      w.id + " no declara un alto en filas: " + w.alto);
+  }
+});
+
+prueba("un alto imposible se acota igual que el ancho", () => {
+  const d = m.reconciliarDisposicion(JSON.stringify([
+    { id: m.WIDGETS[0].id, ancho: 1, alto: 0, visible: true },
+    { id: m.WIDGETS[1].id, ancho: 1, alto: -2, visible: true },
+    { id: m.WIDGETS[2].id, ancho: 1, alto: 99, visible: true },
+    { id: m.WIDGETS[3].id, ancho: 1, alto: "tres", visible: true },
+  ]));
+  for (const w of d) {
+    assert.ok(w.alto >= 1 && w.alto <= m.FILAS_MAXIMAS_DE_UN_WIDGET,
+      w.id + " quedo con alto " + w.alto);
+    assert.ok(Number.isInteger(w.alto), w.id + " tiene un alto que no es entero");
+  }
+});
+
+prueba("una disposicion vieja sin alto toma el de fabrica", () => {
+  /* Lo guardado antes de que el alto existiera no nombra el campo. Leerlo como
+     cero dejaria el panel sin alto; leerlo como ausente le da el suyo. */
+  const sinAlto = JSON.stringify(
+    m.WIDGETS.map(w => ({ id: w.id, ancho: w.ancho, visible: true })));
+  const d = m.reconciliarDisposicion(sinAlto);
+  for (const w of m.WIDGETS) {
+    assert.strictEqual(d.find(x => x.id === w.id).alto, w.alto,
+      "el panel " + w.id + " no tomo su alto de fabrica");
+  }
 });
 
 console.log("ok " + hechas + " pruebas de la disposicion de los widgets");

@@ -64,20 +64,33 @@ class DashboardFrontendTests(unittest.TestCase):
         self.assertNotIn("bloque.vehiculos[Object.keys(bloque.vehiculos)[0]]", codigo)
         self.assertNotIn("(v / 62)", codigo)
 
-    def test_can_muestra_el_reproductor_y_reserva_la_cabina_para_sus_graficos(self) -> None:
+    def test_ninguna_regla_de_estilo_esconde_un_panel_por_la_fuente(self) -> None:
+        """QUINTA VEZ QUE APARECE UN DATO CON DOS ESCRITORES.
+
+        Hasta el 2026-09-12 el estilo escondia paneles segun la fuente. Para el
+        bus hacia tres cosas encadenadas: esconder todas las columnas, volver a
+        mostrar la izquierda, y dentro de ella esconder todo menos el trazado.
+        El resultado era que en el bus solo se veian el trazado y los graficos.
+
+        Pero quien declara que no publica cada fuente es
+        `PANELES_QUE_LA_FUENTE_NO_TIENE`, y para el bus dice dos cosas: `puesta`
+        y `vehiculos`. El estilo escondia paneles que la tabla afirma que esa
+        fuente **si** llena, y sin dar ningun motivo en pantalla.
+
+        Queda un solo dueño: la tabla, que ademas **escribe el motivo** en el
+        panel vacio en vez de hacerlo desaparecer. Lo que se esconde sin decir
+        por que es `[data-fuera]`, que la pone el guion con su motivo.
+        """
         estilos = ESTILOS.read_text(encoding="utf-8")
         self.assertNotIn(
             '.transporte[data-sin-distancia="si"] #mandos-reproduccion { display: none; }',
             estilos,
         )
-        self.assertIn(
-            ':root[data-fuente="can"] .cabina .col-cabina { display: none; }',
-            estilos,
-        )
-        self.assertIn(
-            ':root[data-fuente="can"] .cabina .graficos-cabina {',
-            estilos,
-        )
+        sobrevivientes = [
+            l for l in estilos.split("\n")
+            if "data-fuente=" in l and "display: none" in l
+        ]
+        self.assertEqual(sobrevivientes, [], "\n".join(sobrevivientes))
         self.assertIn("grid-template-columns: repeat(4, minmax(0, 1fr));", estilos)
 
     def test_hidden_esconde_y_nada_lo_puede_revertir(self) -> None:
@@ -103,44 +116,33 @@ class DashboardFrontendTests(unittest.TestCase):
         estilos = ESTILOS.read_text(encoding="utf-8")
         self.assertIn('[data-fuera="si"] { display: none !important; }', estilos)
 
-    def test_openf1_ordena_la_cabina_para_lo_que_esa_fuente_si_entrega(self) -> None:
-        """Sin el panel del vehiculo, la cabina pasa de cuatro columnas a tres.
+    def test_una_sola_grilla_y_la_ubicacion_la_decide_la_disposicion(self) -> None:
+        """Antes cada fuente tenia su propio acomodo escrito en el estilo.
 
-        Con la columna del medio escondida y la rejilla todavia en cuatro, la
-        cuarta queda reservada y vacia: el hueco se ve igual que se veia el
-        panel y encima no dice nada.
+        Habia tres capas: columnas de proporciones propias por fuente, filas
+        numeradas, y paneles colocados a mano con `grid-column` y `grid-row`.
+        Las tres competian con lo que quien mira pudiera elegir.
+
+        Ahora hay una sola grilla de cuatro columnas iguales y filas de alto
+        fijo, y cuantas ocupa cada panel lo dice la disposicion. Un ancho en
+        columnas y un alto en filas son cosas que se pueden guardar y volver a
+        aplicar; una proporcion elegida a mano para una fuente, no.
         """
         estilos = ESTILOS.read_text(encoding="utf-8")
-        inicio = estilos.index(':root[data-fuente="openf1"] .cabina {')
-        bloque = estilos[inicio:estilos.index("}", inicio)]
-        columnas = re.search(r"grid-template-columns:([^;]+);", bloque)
-        self.assertIsNotNone(columnas, bloque)
-        # Cuatro: trazado, motor, cronometraje con avisos, y clima. Ninguno
-        # comparte, porque compartir columna era repartir el alto y los cuatro
-        # necesitan alto.
-        self.assertEqual(columnas.group(1).count("minmax(0,"), 4, bloque)
-        # El envoltorio de la izquierda se disuelve para que sus dos paneles
-        # sean celdas de la cabina y no mitades de una columna.
-        self.assertIn(
-            ':root[data-fuente="openf1"] .cabina .col-cabina.izquierda,\n'
-            '  :root[data-fuente="openf1"] .cabina .col-cabina.derecha'
-            ' { display: contents; }',
-            estilos,
-        )
-        # Y al apilar se deshace, o quedarian huecos donde habia paneles.
-        self.assertIn(
-            ':root[data-fuente="openf1"] .cabina .col-cabina.izquierda,\n'
-            '    :root[data-fuente="openf1"] .cabina .col-cabina.derecha {\n'
-            '      display: flex; grid-column: auto; grid-row: auto;\n    }',
-            estilos,
-        )
-        # Y la lista de pilotos se queda con la fila de abajo entera, porque los
-        # dos paneles que la acompañaban ---puesta a punto y aceleraciones---
-        # esta fuente no los sostiene.
-        self.assertIn(
-            ':root[data-fuente="openf1"] .tablero [data-panel="vehiculos"] {',
-            estilos,
-        )
+        self.assertNotIn("col-cabina", estilos,
+                         "quedan reglas de los envoltorios que ya no existen")
+        self.assertIn("grid-template-columns: repeat(4, minmax(0, 1fr));", estilos)
+        self.assertIn("grid-auto-rows: 150px;", estilos)
+        # Ninguna regla coloca un panel a mano.
+        colocan = [
+            l for l in estilos.split("\n")
+            if "data-panel=" in l and ("grid-column" in l or "grid-row" in l)
+        ]
+        self.assertEqual(colocan, [], "\n".join(colocan))
+        html = (ESTILOS.parent / "index.html").read_text(encoding="utf-8")
+        self.assertNotIn("col-cabina", html)
+        self.assertEqual(html.count('id="tablero"'), 1,
+                         "hay mas de un contenedor de tablero, o ninguno")
 
     def test_ninguna_fuente_esconde_paneles_desde_la_hoja_de_estilos(self) -> None:
         """El selector por atributo no distingue el panel de su fila en el pie.
@@ -268,6 +270,34 @@ class AyudantesDeSerieTests(unittest.TestCase):
         )
         self.assertEqual(proceso.returncode, 0,
                          proceso.stdout + "\n" + proceso.stderr)
+
+    def test_todos_los_arneses_de_javascript_corren(self) -> None:
+        """NINGUN ARNES SE QUEDA SIN CORRER POR NO ESTAR EN UNA LISTA.
+
+        Cada arnes de `tests/js/` se nombra en un metodo de abajo, y nombrarlo
+        es acordarse. El 2026-09-12 tres de veintitres no estaban referenciados
+        en ningun archivo, y uno de ellos ---`avisos_que_no_llegaron.js`---
+        llevaba cinco de sus diez casos muertos: los que cuidan que el panel
+        **no afirme que no ocurrio nada cuando la consulta no volvio**. Se
+        habian roto al agregar una funcion que ese arnes no extraia, y no lo
+        descubrio ninguna prueba: lo descubrio alguien corriendolos a mano.
+
+        Este recorre el directorio. Un arnes nuevo entra solo, y uno que deja de
+        andar se nota el mismo dia. Los metodos con nombre siguen existiendo y
+        valen la pena: dicen **que** defiende cada arnes, que es algo que un
+        bucle no puede decir.
+        """
+
+        arneses = sorted((RAIZ / "tests" / "js").glob("*.js"))
+        self.assertGreater(len(arneses), 15, "no se encontraron los arneses")
+        rotos = []
+        for arnes in arneses:
+            proceso = subprocess.run(
+                ["node", str(arnes)], capture_output=True, text=True, check=False,
+            )
+            if proceso.returncode != 0:
+                rotos.append(f"--- {arnes.name}\n{proceso.stdout}\n{proceso.stderr}")
+        self.assertEqual(rotos, [], "\n".join(rotos))
 
     def test_los_ayudantes_de_serie_se_comportan_como_se_espera(self) -> None:
         self._correr("ayudantes_de_serie.js")

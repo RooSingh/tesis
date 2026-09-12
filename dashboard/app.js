@@ -8949,31 +8949,66 @@ function sesionQueSeAbreSola(sesiones, recordada) {
 //: angostas, y el ancho de cada panel se acota contra este numero.
 const COLUMNAS_DEL_TABLERO = 4;
 
+/* EL ALTO SE SIGUE IMPONIENDO, Y LO DECIDE QUIEN MIRA.
+
+   De las reglas de estilo que viven dentro de los paneles, muchas dicen
+   `flex: 1`, `min-height: 0` o `height: 100%`: son la forma de escribir «lleno
+   el alto que me den». Estan asi porque la cabina **imponia** un alto, repartido
+   contra la ventana.
+
+   Con filas de alto libre ese alto no existe, y esas reglas colapsan o
+   desbordan: medido el 2026-09-12, el trazado pedia 313 px en una fila de 145 y
+   se derramaba sobre el panel de abajo. Un panel hecho para llenar un alto
+   impuesto no se puede soltar en una grilla de alto libre.
+
+   Asi que la grilla tiene filas de tamaño fijo y cada widget declara **cuantas
+   ocupa**, igual que declara cuantas columnas. Lo que cambia no es que haya un
+   alto impuesto: es quien lo elige. */
+const ALTO_DE_FILA_PX = 150;
+
+//: Tope de filas de un widget. Doce filas son 1.800 px, que es mas alto que
+//: cualquier pantalla: por encima de eso el panel deja de poder mirarse entero.
+const FILAS_MAXIMAS_DE_UN_WIDGET = 12;
+
 /* EL CATALOGO DE PANELES, Y SU ORDEN DE FABRICA.
    `id` es el mismo `data-panel` del HTML ---hay una prueba que lo exige--- y
    `ancho` es cuantas columnas ocupa cuando nadie lo movio. */
 const WIDGETS = [
-  { id: "trazado",       titulo: "Trazado",           ancho: 1 },
-  { id: "motor",         titulo: "Motor y energía",   ancho: 1 },
-  { id: "vehiculo",      titulo: "Vehículo",          ancho: 1 },
-  { id: "cronometraje",  titulo: "Cronometraje",      ancho: 1 },
-  { id: "clima",         titulo: "Clima y pista",     ancho: 1 },
-  { id: "avisos",        titulo: "Avisos",            ancho: 1 },
-  { id: "vehiculos",     titulo: "Vehículos",         ancho: 1 },
-  { id: "aceleraciones", titulo: "Aceleraciones",     ancho: 1 },
-  { id: "puesta",        titulo: "Puesta a punto",    ancho: 2 },
+  { id: "trazado",       titulo: "Trazado",           ancho: 1, alto: 2 },
+  { id: "motor",         titulo: "Motor y energía",   ancho: 1, alto: 2 },
+  { id: "vehiculo",      titulo: "Vehículo",          ancho: 1, alto: 2 },
+  { id: "cronometraje",  titulo: "Cronometraje",      ancho: 1, alto: 1 },
+  /* Dos filas: con una, el primer aviso quedaba cortado a la mitad ---y un
+     aviso a medio leer es peor que ninguno---. Quien quiera menos lo achica. */
+  { id: "avisos",        titulo: "Avisos",            ancho: 1, alto: 2 },
+  { id: "clima",         titulo: "Clima y pista",     ancho: 1, alto: 1 },
+  { id: "vehiculos",     titulo: "Vehículos",         ancho: 1, alto: 2 },
+  { id: "aceleraciones", titulo: "Aceleraciones",     ancho: 1, alto: 2 },
+  { id: "puesta",        titulo: "Puesta a punto",    ancho: 2, alto: 2 },
 ];
 
 function disposicionPorOmision() {
-  return WIDGETS.map(w => ({ id: w.id, ancho: w.ancho, visible: true }));
+  return WIDGETS.map(w => ({ id: w.id, ancho: w.ancho, alto: w.alto, visible: true }));
 }
 
-/* Acota el ancho a lo que la grilla admite. Siete columnas en una grilla de
-   cuatro rompen el dibujo, y cero hace desaparecer el panel sin decirlo. */
-function anchoAcotado(valor, porOmision) {
+/* Acota una medida a lo que la grilla admite. Siete columnas en una grilla de
+   cuatro rompen el dibujo, y cero hace desaparecer el panel sin decirlo.
+
+   Una medida que no se sabe ---ausente, o que no es un numero--- toma la de
+   fabrica y no cero: una disposicion guardada antes de que el alto existiera no
+   nombra el campo, y leerla como cero dejaria el panel sin alto. */
+function medidaAcotada(valor, porOmision, tope) {
   const n = Math.round(Number(valor));
   if (!Number.isFinite(n)) return porOmision;
-  return Math.max(1, Math.min(COLUMNAS_DEL_TABLERO, n));
+  return Math.max(1, Math.min(tope, n));
+}
+
+function anchoAcotado(valor, porOmision) {
+  return medidaAcotada(valor, porOmision, COLUMNAS_DEL_TABLERO);
+}
+
+function altoAcotado(valor, porOmision) {
+  return medidaAcotada(valor, porOmision, FILAS_MAXIMAS_DE_UN_WIDGET);
 }
 
 function reconciliarDisposicion(crudo) {
@@ -9000,6 +9035,7 @@ function reconciliarDisposicion(crudo) {
     salida.push({
       id: w.id,
       ancho: anchoAcotado(fila.ancho, w.ancho),
+      alto: altoAcotado(fila.alto, w.alto),
       // `visible` solo es falso si la disposicion lo dice: cualquier otra cosa
       // ---ausente, basura--- se lee como visible, que es el estado de fabrica.
       visible: fila.visible !== false,
@@ -9007,9 +9043,69 @@ function reconciliarDisposicion(crudo) {
   }
   // Lo que el codigo tiene y la disposicion no nombraba, al final y visible.
   for (const w of WIDGETS) {
-    if (!puestos.has(w.id)) salida.push({ id: w.id, ancho: w.ancho, visible: true });
+    if (!puestos.has(w.id)) {
+      salida.push({ id: w.id, ancho: w.ancho, alto: w.alto, visible: true });
+    }
   }
   return salida;
+}
+
+/* La disposicion vigente, ya reconciliada. Se lee una vez y vive en memoria:
+   releer el almacenamiento en cada pintado seria preguntar mil veces por algo
+   que solo cambia cuando alguien edita. */
+let DISPOSICION = null;
+
+function disposicionGuardada() {
+  try { return window.localStorage.getItem("disposicion-tablero"); }
+  catch (e) { return null; }          // sin memoria: se usa la de fabrica
+}
+
+function recordarDisposicion(disposicion) {
+  try {
+    window.localStorage.setItem("disposicion-tablero", JSON.stringify(disposicion));
+  } catch (e) { /* sin memoria: el tablero anda igual, no se recuerda */ }
+}
+
+/* Lleva la disposicion al dibujo: cuantas columnas y cuantas filas ocupa cada
+   panel, y en que orden va.
+
+   SE USA `order` Y NO SE MUEVEN LOS NODOS. Reordenar el DOM obligaria a
+   reencontrar cada panel despues de cada cambio ---hay codigo que los busca por
+   `getElementById` mientras se reproduce--- y tiraria el estado de los graficos
+   ya dibujados. `order` es de la grilla y no toca el arbol.
+
+   UN PANEL QUE NO ESTA EN LA PAGINA NO ES UN ERROR: la disposicion puede
+   nombrar uno que no esta en este documento. Se saltea. */
+function aplicarDisposicion(disposicion) {
+  const tablero = document.getElementById("tablero");
+  if (!tablero) return;
+  const colocados = new Set();
+  (disposicion || []).forEach((w, i) => {
+    const el = document.querySelector('[data-panel="' + w.id + '"]');
+    if (!el || !el.classList.contains("instrumento")) return;
+    colocados.add(el);
+    el.style.gridColumn = "span " + w.ancho;
+    el.style.gridRow = "span " + w.alto;
+    el.style.order = String(i);
+    /* Quitado por quien mira, que no es lo mismo que ausente por la fuente. Esa
+       otra ausencia la declara `data-estado` con su motivo, y las dos tienen
+       que poder convivir sin pisarse. */
+    el.dataset.quitado = w.visible ? "no" : "si";
+  });
+  /* LA GRILLA TIENE HIJOS QUE NO SON WIDGETS, y ordenarlos no es opcional.
+     El bloque de graficos y la barra de señales son celdas de este tablero y no
+     estan en el catalogo: son el lienzo, no se mueven ni se quitan. Si solo los
+     paneles reciben `order`, los demas se quedan en cero ---el valor por
+     omision--- y **saltan delante de todo**: se vio el 2026-09-12, los graficos
+     dibujados encima del trazado.
+
+     Van despues de los paneles, en el orden en que el documento los declara,
+     que es el unico orden que alguien eligio para ellos. */
+  let siguiente = (disposicion || []).length;
+  for (const hijo of tablero.children) {
+    if (colocados.has(hijo)) continue;
+    hijo.style.order = String(siguiente++);
+  }
 }
 
 function recordarSesion(id) {
@@ -12092,7 +12188,7 @@ function reproducir() {
      entera menos la barra, que es lo que dice donde esta parado lo que se
      mira. Escape la devuelve a su sitio. */
   const btnCabina = document.getElementById("btn-cabina");
-  const cabina = document.getElementById("cabina");
+  const cabina = document.getElementById("tablero");
 
   /* PANTALLA COMPLETA DEL NAVEGADOR, Y SI NO SE PUEDE, DEL MARCO.
      El boton pide la pantalla completa de verdad ---la que saca la barra de
@@ -12846,21 +12942,22 @@ function render() {
    ve una vez que el encabezado quedo arriba, y al abrir la pagina se coloca
    en ella. El encabezado sigue estando, a un desplazamiento hacia arriba. */
 function ajustarCabina() {
-  const cabina = document.getElementById("cabina");
+  const cabina = document.getElementById("tablero");
   const barra = document.getElementById("transporte");
   if (!cabina || !barra) return;
-  if (cabina.dataset.pantalla === "completa") { cabina.style.height = ""; return; }
-  // Debajo de la caida a lista, la cabina crece con su contenido.
-  if (window.innerWidth <= 1180) { cabina.style.height = ""; return; }
-  const alto = window.innerHeight - barra.offsetHeight - 16;
-  cabina.style.height = Math.max(380, alto) + "px";
+  /* EL ALTO DEL TABLERO YA NO SE CALCULA CONTRA LA VENTANA.
+     Se dimensionaba asi para que trazado, graficos y barra de reproduccion
+     entraran sin scrollear. Con el tablero editable eso no se sostiene: cuantas
+     filas hay lo decide quien lo ordena. El alto sigue imponiendose, pero **por
+     fila** y no por ventana ---ver `ALTO_DE_FILA_PX`---. */
+  cabina.style.height = "";
 }
 
 /* Coloca la pagina en la cabina. Se hace una sola vez, al abrir: despues es
    de quien mira decidir donde quiere estar. */
 let yaEncuadrada = false;
 function encuadrarCabina() {
-  const cabina = document.getElementById("cabina");
+  const cabina = document.getElementById("tablero");
   if (!cabina || yaEncuadrada || window.innerWidth <= 1180) return;
   // `?quieto=1` deja la pagina donde esta. Sirve para mirar el encabezado y el
   // estado de la conexion, que es lo primero que hay que leer cuando algo no
@@ -12870,6 +12967,12 @@ function encuadrarCabina() {
   window.scrollTo(0, Math.max(0, cabina.offsetTop - 8));
   yaEncuadrada = true;
 }
+
+/* La disposicion se aplica apenas hay pagina, antes de pintar nada: aplicarla
+   despues armaria el tablero en su orden de fabrica y saltaria al del usuario a
+   la vista. */
+DISPOSICION = reconciliarDisposicion(disposicionGuardada());
+aplicarDisposicion(DISPOSICION);
 
 window.addEventListener("resize", () => {
   ajustarCabina();

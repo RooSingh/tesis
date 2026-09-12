@@ -221,10 +221,27 @@
        El boton «Cabina completa» de la barra la lleva a ocupar la ventana
        entera, para cuando lo unico que se esta haciendo es mirar la carrera.
        ============================================================ -->
-  <div class="cabina" id="cabina" data-pantalla="normal">
+  <!-- UN SOLO TABLERO, DE CUATRO COLUMNAS Y FILAS DE ALTO FIJO.
+       Habia dos contenedores: la cabina ---ajustada a la ventana para que nada
+       scrollease--- y el tablero de abajo. Ahora son uno y editable: cada panel
+       declara cuantas columnas y cuantas filas ocupa, y eso se guarda.
+
+       EL ALTO SIGUE SIENDO IMPUESTO, Y ES A PROPOSITO. Sesenta y nueve reglas
+       de estilo viven dentro de estos paneles diciendo `flex: 1`,
+       `min-height: 0` o `height: 100%`, que es la forma de escribir «lleno el
+       alto que me den». Estan asi porque la cabina repartia el alto de la
+       ventana. Con filas de alto libre ese alto no existe y esas reglas
+       colapsan o desbordan ---medido: el trazado pedia 313 px en una fila de
+       145---. Lo que cambio no es que haya un alto impuesto: es que ahora lo
+       elige quien mira, en filas.
+
+       La clase `cabina` se conserva porque esas mismas reglas dependen de ella
+       y son aspecto, no ubicacion. Renombrarla habria sido reescribirlas para
+       no cambiar nada de lo que se ve. -->
+  <div class="cabina rejilla-editable" id="tablero" data-pantalla="normal">
 
     <!-- Dónde está y en qué vuelta va. -->
-    <div class="col-cabina izquierda">
+    
       <section class="instrumento pista en-cabina" data-panel="trazado">
       <header><h2>Trazado</h2><span class="fuente-canal" id="canal-pista"></span>
         <span class="acciones-grafico">
@@ -261,7 +278,7 @@
       <div class="cuerpo-instrumento"><div class="clima" id="clima"></div></div>
       <div class="capa-ausente"><strong>Sin clima</strong><span id="motivo-clima"></span></div>
     </section>
-    </div>
+    
 
     <!-- ============================================================
          MOTOR Y ENERGIA, EN COLUMNA
@@ -273,7 +290,7 @@
          desocupa ---la de abajo, entera--- se la quedan los graficos, que
          es lo que se mira mientras la sesion corre.
          ============================================================ -->
-    <div class="col-cabina motor">
+    
       <section class="instrumento panel-motor" data-panel="motor" data-necesita="engine_speed">
       <header><h2>Motor y energía</h2><span class="fuente-canal" id="canal-motor"></span></header>
       <div class="cuerpo-instrumento">
@@ -289,10 +306,10 @@
       <div class="capa-ausente"><strong>Sin datos de motor</strong><span id="motivo-motor"></span></div>
     </section>
 
-    </div>
+    
 
     <!-- El vehículo, con sus cuatro esquinas alrededor. -->
-    <div class="col-cabina centro">
+    
       <section class="instrumento en-cabina" data-panel="vehiculo" data-necesita="tyre_temperature_surface_front_left">
       <!-- ============================================================
            DE QUE PILOTO ES ESTE VEHICULO
@@ -357,10 +374,10 @@
       </div>
       <div class="capa-ausente"><strong>Sin neumáticos ni daño</strong><span id="motivo-auto"></span></div>
     </section>
-    </div>
+    
 
     <!-- En qué vuelta va, y lo que interrumpió la lectura. -->
-    <div class="col-cabina derecha">
+    
       <!-- ============================================================
            DONDE SE CAMBIA DE PILOTO
            ------------------------------------------------------------
@@ -417,7 +434,7 @@
            lista existe. -->
       <p class="pie-instrumento" id="motivo-avisos"></p>
     </section>
-    </div>
+    
 
     <!-- ============================================================
          LOS GRAFICOS, EN UNA LINEA A LO ANCHO
@@ -432,7 +449,6 @@
          linea se reparte sola y, si son muchos, se parte en dos.
          ============================================================ -->
     <div class="graficos-cabina" id="graficos-cabina"></div>
-  </div>
 
   <!-- ============================================================
        LO QUE SE CONSULTA, NO LO QUE SE VIGILA
@@ -448,8 +464,6 @@
        segundo al otro. Es analisis, no vigilancia. Ademas, arriba solo
        cabia en un circulo de ochenta pixeles, que es no mostrarlo.
        ============================================================ -->
-  <div class="corte-consulta" aria-hidden="true"></div>
-  <div class="tablero principal" id="tablero">
     <!-- Los tres a la par: quien esta en sesion, como quedo la huella de
          aceleraciones y que señales se grafican arriba. Los tres se
          consultan, ninguno se vigila. -->
