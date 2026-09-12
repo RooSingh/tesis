@@ -319,6 +319,16 @@ class AyudantesDeSerieTests(unittest.TestCase):
 
         self._correr("de_cuando_es_este_valor.js")
 
+    def test_el_mismo_aviso_se_ve_igual_en_vivo_y_reproducido(self) -> None:
+        """En vivo todos entraban con `en: 1` y quedaba el mas viejo arriba."""
+
+        self._correr("el_mismo_aviso_en_vivo_y_en_reproduccion.js")
+
+    def test_en_contrarreloj_no_se_ofrece_a_quien_escuchar(self) -> None:
+        """La parrilla de ese modo la llenan fantasmas que no publican nada."""
+
+        self._correr("en_contrarreloj_solo_estoy_yo.js")
+
     def test_un_salto_del_vehiculo_no_se_dibuja_como_tramo(self) -> None:
         """El coche teletransportado unia dos puntos con una recta."""
 

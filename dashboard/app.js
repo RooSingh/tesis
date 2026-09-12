@@ -2520,6 +2520,83 @@ function anotarFalloDeAvisos(e) {
 let _firmaAvisos = "";
 let _cuantosAvisos = 0;
 
+/* EL AVISO SE MUESTRA CON MAYUSCULA INICIAL, Y SE CAPITALIZA **AL MOSTRARLO**.
+
+   POR QUE NO EN EL BACKEND, QUE ERA LO OBVIO. Los textos los arma
+   `backend/anotador_vivo.py`, y ahi hay una trampa: en `:629` el titulo se usa
+   como **clave de agrupamiento comparada por tupla exacta**
+   ---`clave == ("fuera de pista",)`---. Cambiar el literal apagaria en
+   silencio la logica que distingue una salida con agarre de una sin el. No es
+   texto de presentacion: es parte de una decision. Ademas `api_sesion.py:4001`
+   promete que la reproduccion usa «los mismos textos que el flujo vivo», de
+   modo que tocar uno solo de los dos caminos violaria esa promesa escrita.
+
+   Aca abajo es presentacion y nada mas: nadie compara contra esto.
+
+   SOLO LA PRIMERA LETRA. El control de carrera declara «DRS ENABLED» y
+   «CAR 87 (BEA) TIME 2:00.293 DELETED» en mayuscula entera; bajar el resto
+   seria reescribir lo que la fuente dijo. Y lo que no empieza con letra queda
+   igual. */
+function conMayusculaInicial(texto) {
+  const t = (texto === null || texto === undefined) ? "" : String(texto);
+  if (!t) return t;
+  return t.charAt(0).toLocaleUpperCase("es-AR") + t.slice(1);
+}
+
+/* COMO SE ROTULA EL MOMENTO DE UN AVISO.
+
+   Decidia con `hayVueltas() && a.vuelta`, y `hayVueltas()` mira
+   `estado.vueltas`, que **en vivo esta vacio** porque las vueltas se arman al
+   guardar la sesion. De modo que el mismo aviso decia «Vuelta 5» en
+   reproduccion y «Tramo» en vivo: dos rotulos para un solo hecho.
+
+   Lo decide el aviso. El anotador le escribe su `lap_number` cuando la fuente
+   lo publica; un bus vehicular no tiene vueltas y sus avisos vienen sin ella,
+   asi que siguen diciendo «Tramo» sin preguntarle nada a `estado`. Un dato,
+   un dueño.
+
+   El cero se compara aparte a proposito: `a.vuelta ? ...` lo leeria como
+   ausencia, y un cero dicho por la fuente es un dato. */
+function rotuloDeCuando(aviso) {
+  const v = aviso ? aviso.vuelta : null;
+  return (v === null || v === undefined || v === "") ? "Tramo" : "Vuelta " + v;
+}
+
+/* CUANDO OCURRIO UN AVISO, EN MILISEGUNDOS MEDIDOS, O NULL.
+
+   El instante ya venia en el dato y el camino vivo lo descartaba. El anotador
+   escribe `reloj_s` en cada anotacion y es epoca Unix de verdad ---`_segundos`
+   la obtiene con `.timestamp()`---; la reproduccion la convierte a `instante`.
+   En vivo se recibia y solo se usaba para armar un identificador. */
+function cuandoOcurrio(aviso) {
+  if (!aviso || !aviso.instante) return null;
+  const t = Date.parse(aviso.instante);
+  return Number.isFinite(t) ? t : null;
+}
+
+/* EL ORDEN DE LA LISTA DE AVISOS: EL MAS NUEVO ARRIBA, POR LOS DOS CAMINOS.
+
+   QUE PASABA. En vivo todos los avisos entraban con `en: 1`, que es una
+   constante y no una medicion. Ordenar por `en` con todos empatados deja el
+   orden de insercion ---`sort` es estable--- o sea **el mas viejo arriba**. Y
+   la insignia «NUEVO» es `i === 0`, no «no leido». El primer aviso de la
+   sesion se quedaba arriba rotulado NUEVO para siempre.
+
+   En reproduccion el mismo dato se ordenaba bien. Las dos listas mostraban los
+   dos extremos de la misma coleccion: misma cuenta y contenido opuesto.
+
+   POR QUE NO SE MEZCLAN LAS DOS UNIDADES. Un milisegundo de epoca y una
+   fraccion de sesion entre cero y uno no son comparables. Devolver el que
+   tenga instante como «mas grande» pondria cualquier aviso con instante por
+   encima de todos los demas: una diferencia de unidad disfrazada de orden. Por
+   eso el instante decide **solo cuando los dos lo tienen**, y si no se cae en
+   la fraccion, que es lo que la reproduccion ya usaba. */
+function masNuevoPrimero(a, b) {
+  const ta = cuandoOcurrio(a), tb = cuandoOcurrio(b);
+  if (ta !== null && tb !== null && ta !== tb) return tb - ta;
+  return (b.en || 0) - (a.en || 0);
+}
+
 function pintarAvisos() {
   const cont = document.getElementById("lista-avisos");
   if (!cont) return;
@@ -2532,7 +2609,7 @@ function pintarAvisos() {
      en que llegaron. En vivo se muestran todos, porque en vivo el cabezal
      esta siempre en el ultimo dato. */
   const hasta = estadoSesion === "vivo" ? 1 : cabezal + 1e-9;
-  const avisos = todos.filter(a => a.en <= hasta).sort((a, b) => b.en - a.en);
+  const avisos = todos.filter(a => a.en <= hasta).sort(masNuevoPrimero);
   const firma = [fuente, estadoSesion, avisos.length, todos.length,
                  estado.avisosFallo, tinta("--acento")].join("|");
   if (firma === _firmaAvisos) return;
@@ -2581,10 +2658,14 @@ function pintarAvisos() {
   cont.innerHTML = avisos.map((a, i) =>
     '<div class="aviso' + (i === 0 ? " nuevo" : "") +
       (i === 0 && recienLlego ? " recien" : "") + '" data-nivel="' + a.nivel + '">' +
-      '<span class="cuando"><b>' + (hayVueltas() && a.vuelta ? "Vuelta " + a.vuelta : "Tramo") + '</b>' +
+      '<span class="cuando"><b>' + rotuloDeCuando(a) + '</b>' +
         (a.metro ? Math.round(a.metro).toLocaleString("es-AR") + " m" : "") + '</span>' +
       '<span class="marca"></span>' +
-      '<span class="que">' + a.que + '</span>' +
+      /* ESCAPADO, ADEMAS DE CAPITALIZADO. Este campo puede traer `message` del
+         control de carrera de OpenF1 ---texto de una fuente externa--- y se
+         insertaba crudo en la pagina, a diferencia del detalle de la linea de
+         abajo, que si pasaba por `textoSeguro`. */
+      '<span class="que">' + textoSeguro(conMayusculaInicial(a.que)) + '</span>' +
       // El nombre del canal sale del renglon visible y queda en el titulo:
       // sigue disponible para quien lo necesite, sin competir con el aviso.
       // El detalle es el valor medido contra su umbral: es lo que sostiene el
@@ -6858,11 +6939,43 @@ function leerEscuchados() {
     .then(() => { pidiendoEscuchados = false; });
 }
 
+/* SI ESTA SESION TIENE A ALGUIEN MAS A QUIEN ESCUCHAR.
+
+   QUE PASABA. El selector recorria la parrilla declarada **sin ningun filtro**.
+   En una contrarreloj eso ofrecia catorce vehiculos que no existen: ese modo
+   llena la parrilla con los fantasmas de la tabla de tiempos en linea. La
+   respuesta de la API lo decia sin ambiguedad ---`vehiculos: 15` junto a
+   `vehiculos_en_carrera: 1`--- y nadie la leia.
+
+   Y no era solo ruido: `backend/f1_udp.py:233` ya declara que en contrarreloj
+   esa parrilla trae **identificadores de otras personas**.
+
+   POR QUE ACA SI SE MIRA EL MODO, Y EN EL SALTO DEL VEHICULO NO. Un salto
+   ocurre en cualquier modo, asi que alli la regla se apoya en lo que el
+   vehiculo declara de si mismo ---ver `pudoRecorrer`--- y no en el modo. Que no
+   haya rivales, en cambio, **es** una propiedad del contrarreloj y de ningun
+   otro, y la fuente la declara. Las dos preguntas se parecen y no son la misma.
+
+   UN SOLO CAMPO DECIDE. La procedencia trae `tipo_sesion`, `familia_de_sesion`
+   y `modo_juego` diciendo lo mismo; consultar los tres seria tener tres
+   respuestas para una pregunta el dia que difieran. Manda la familia, que es la
+   que agrupa y la que el catalogo de sesiones ya usa.
+
+   ANTE LA DUDA SE OFRECE. Sin procedencia no se sabe el modo, y no saberlo no
+   es saber que es contrarreloj: esconder el selector por las dudas lo haria
+   parpadear al arrancar cada sesion. */
+function hayAQuienEscuchar(procedencia) {
+  const familia = procedencia && procedencia.familia_de_sesion;
+  if (!familia) return true;
+  return String(familia).trim().toLowerCase() !== "contrarreloj";
+}
+
 function pintarEligeEscucha() {
   const caja = document.getElementById("elige-escucha");
   if (!caja) return;
   const escuchando = fuente === "f1"
-    && (estadoSesion === "escuchando" || estadoSesion === "vivo");
+    && (estadoSesion === "escuchando" || estadoSesion === "vivo")
+    && hayAQuienEscuchar(estado.abierta && estado.abierta.procedencia);
   caja.hidden = !escuchando;
   if (!escuchando) return;
   if (escuchados === null) { leerEscuchados(); return; }
@@ -8549,6 +8662,15 @@ function incorporarAnotacionViva(a) {
     umbral: a.fundamento || null,
     valor: null,
     unidad: "",
+    /* EL INSTANTE MEDIDO, QUE ANTES SE DESCARTABA. `reloj_s` es epoca Unix en
+       segundos, la misma que la reproduccion convierte a `instante`. Sin esto
+       la lista viva quedaba en orden de llegada, con el mas viejo arriba. */
+    instante: (typeof a.reloj_s === "number" && isFinite(a.reloj_s))
+      ? new Date(a.reloj_s * 1000).toISOString() : null,
+    /* En vivo no hay fraccion de sesion: la sesion no termino y no se sabe
+       sobre que total. Se deja en 1 para que el filtro del cabezal ---que en
+       vivo corta en 1--- los deje pasar a todos, y el orden lo decide el
+       instante de arriba. */
     en: 1,
   };
   const anterior = lista.findIndex(x => x.id === id);
