@@ -110,16 +110,15 @@ globalThis._seriesArmadas = new Map();
 globalThis._selloDeLoTemporal = -1;
 globalThis._temporales = new Map();
 globalThis._huboInterpolacion = false;
-globalThis.SENAL_DE = {
-  speed: "speed", throttle: "throttle_position", brake: "brake_position",
-  rpm: "engine_speed", gear: "gear_selected", glong: "g_force_longitudinal",
-  glat: "g_force_lateral", drs: "drs_open",
-};
-globalThis.SENAL_CAN = { throttle: "gas_pressed", brake: "brake_pressed" };
-globalThis.SENAL_OPENF1 = { brake: "brake_applied", drs: "drs_state_code" };
-/* `nombreDeSenal` tambien consulta la tabla del simulador. Copia a mano, como
-   las demas de este arnes: ver la nota de `vivo` mas arriba. */
-globalThis.SENAL_F1 = { posX: "world_position_x", posY: "world_position_z" };
+/* LAS CUATRO TABLAS DE SEÑALES SE EXTRAEN, NO SE COPIAN.
+   Estaban copiadas a mano y habian quedado viejas: `SENAL_CAN` tenia **dos** de
+   las doce entradas del `app.js`, de modo que en este arnes `glat` sobre el bus
+   resolvia a `g_force_lateral` ---la señal del simulador--- en vez de a
+   `accel_lateral`. Una prueba escrita sobre eso comprueba otra cosa que la que
+   dice comprobar, y es el mismo defecto que ya se habia arreglado con `vivo`. */
+for (const tabla of ["SENAL_DE", "SENAL_CAN", "SENAL_OPENF1", "SENAL_F1"]) {
+  globalThis[tabla] = new Function(constante(tabla) + "\nreturn " + tabla + ";")();
+}
 globalThis.corrida = { adquisicion: null, fase: null, disponibles: null, mezclada: false };
 globalThis.estado = { series: {}, posiciones: {}, vueltas: [], abierta: null, puesta: null };
 
@@ -1601,6 +1600,74 @@ prueba("sin instante compartido el contexto cae en lo que hay, y no en nada", ()
   globalThis.cabezal = 0.5;
   assert.ok(typeof instanteUtc() === "string",
     "sin reloj medido el contexto dejo de preguntar");
+});
+
+/* -------- la aceleracion en vivo, en la unidad que el panel declara -------- */
+
+prueba("en vivo, la aceleracion del bus llega en g y no en metros por segundo al cuadrado", () => {
+  /* EL DEFECTO. El bus publica `accel_lateral` en `m/s^2` ---asi lo declara el
+     adaptador--- y el panel de aceleraciones rotula «g» y dibuja sobre una
+     escala en g. En historico eso ya se convertia; el instante **en vivo** leia
+     las dos aceleraciones con el lector crudo, de modo que 6 m/s^2 se mostraba
+     como «6,00 g» y el punto se iba del diagrama. Seis veces mas de lo que el
+     vehiculo hizo.
+
+     La conversion no se escribe aca: la decide `divisorDePresentacion`, que
+     pregunta por la unidad que **declara el propio mensaje**. Lo unico que se
+     comprueba es que el instante la use. */
+  reiniciar();
+  globalThis.fuente = "can";
+  globalThis.estadoSesion = "vivo";
+  const propio = "car:0";
+  globalThis.vivo.ultimos.set(propio, new Map([
+    ["speed", { value: 80, unit: "km/h" }],
+    ["accel_lateral", { value: 6, unit: "m/s^2" }],
+    ["accel_longitudinal", { value: -9.80665, unit: "m/s^2" }],
+  ]));
+  globalThis.vivo.vuelta.set(propio, 1);
+  const t = calcularInstante();
+  assert.ok(Math.abs(t.gLat - 6 / 9.80665) < 1e-9,
+    "la lateral en vivo no se llevo a g: " + t.gLat);
+  assert.ok(Math.abs(t.gLong - (-1)) < 1e-9,
+    "la longitudinal en vivo no se llevo a g: " + t.gLong);
+  globalThis.estadoSesion = "cargado";
+  globalThis.fuente = "f1";
+});
+
+prueba("una aceleracion sin unidad declarada no se muestra en la unidad supuesta", () => {
+  /* Un mensaje sin `unit` no se puede convertir, y suponerlo es la forma de
+     mentir que este trabajo vino a sacar. Da `null`, que el panel escribe como
+     una raya. */
+  reiniciar();
+  globalThis.fuente = "can";
+  globalThis.estadoSesion = "vivo";
+  const propio = "car:0";
+  globalThis.vivo.ultimos.set(propio, new Map([
+    ["speed", { value: 80, unit: "km/h" }],
+    ["accel_lateral", { value: 6 }],
+  ]));
+  globalThis.vivo.vuelta.set(propio, 1);
+  assert.strictEqual(calcularInstante().gLat, null,
+    "una aceleracion sin unidad se mostro igual");
+  globalThis.estadoSesion = "cargado";
+  globalThis.fuente = "f1";
+});
+
+prueba("en el simulador la aceleracion ya viene en g y no se toca", () => {
+  /* El simulador publica `g_force_lateral` en g. Si la conversion se aplicara
+     por canal en vez de por señal declarada, dividiria por 9,8 una cifra que ya
+     estaba bien: 4 g de una curva rapida se leerian como 0,41. */
+  reiniciar();
+  globalThis.estadoSesion = "vivo";
+  const propio = "car:0";
+  globalThis.vivo.ultimos.set(propio, new Map([
+    ["speed", { value: 280, unit: "km/h" }],
+    ["g_force_lateral", { value: 4, unit: "g" }],
+  ]));
+  globalThis.vivo.vuelta.set(propio, 1);
+  assert.strictEqual(calcularInstante().gLat, 4,
+    "la aceleracion del simulador se convirtio sin hacer falta");
+  globalThis.estadoSesion = "cargado";
 });
 
 if (process.exitCode) {

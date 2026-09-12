@@ -502,8 +502,10 @@
           cuánto empuja al vehículo hacia adelante o hacia atrás (eje vertical) y
           hacia los costados (eje horizontal). Frenar lo lleva arriba, acelerar
           abajo, y girar a un lado o al otro lo corre en horizontal. La estela es
-          el recorrido de la vuelta y el punto es el instante mostrado; los
-          círculos marcan 1, 2 y 3 g. <b>Un piloto que aprovecha el vehículo
+          el recorrido de la vuelta y el punto es el instante mostrado. La escala
+          se ajusta a la vuelta y cada círculo dice cuánto vale, porque lo que
+          empuja a un coche de calle en autopista y a uno de carrera en una curva
+          rápida no entra en el mismo dibujo. <b>Un piloto que aprovecha el vehículo
           llena el borde</b>: las zonas vacías son maniobras que el neumático
           permitía y no se pidieron.
           </span>
@@ -523,20 +525,35 @@
                 <stop offset="100%" stop-color="var(--auto-3)"></stop>
               </linearGradient>
             </defs>
-            <circle cx="90" cy="90" r="80" fill="url(#veta-g)"></circle>
-            <circle class="rejilla-g" cx="90" cy="90" r="80"></circle>
-            <circle class="rejilla-g" cx="90" cy="90" r="54"></circle>
-            <circle class="rejilla-g" cx="90" cy="90" r="27"></circle>
+            <circle cx="90" cy="90" r="68" fill="url(#veta-g)"></circle>
+            <!-- LOS TRES ANILLOS SON TERCIOS DEL RADIO CON EL QUE SE DIBUJAN LOS
+                 PUNTOS, y cada uno lleva su valor. Estaban en 27, 54 y 80
+                 mientras los datos se trazan a 68: el de afuera marcaba una
+                 circunferencia por la que ningun dato pasa, y el numero de la
+                 escala señalaba ahi. Ahora el anillo de afuera **es** el borde,
+                 y los de adentro un tercio y dos tercios de el. -->
+            <circle class="rejilla-g" cx="90" cy="90" r="68"></circle>
+            <circle class="rejilla-g" cx="90" cy="90" r="45.33"></circle>
+            <circle class="rejilla-g" cx="90" cy="90" r="22.67"></circle>
             <line class="rejilla-g" x1="90" y1="6" x2="90" y2="174"></line>
             <line class="rejilla-g" x1="6" y1="90" x2="174" y2="90"></line>
             <text class="rotulo-g" x="90" y="16" text-anchor="middle">FRENADA</text>
             <text class="rotulo-g" x="90" y="172" text-anchor="middle">TRACCION</text>
             <text class="rotulo-g" x="14" y="94">IZQ</text>
             <text class="rotulo-g" x="166" y="94" text-anchor="end">DER</text>
-            <!-- Cuanto vale el borde del diagrama. La escala se ajusta a la vuelta,
-                 asi que sin este numero el dibujo no dice nada de cuanto empuja. -->
-            <text class="escala-g" id="escala-g" x="38" y="42" text-anchor="middle"></text>
+            <!-- CUANTO VALE CADA ANILLO. La escala se ajusta a la vuelta ---de
+                 0,05 a 6 g, por pasos redondos---, asi que sin estos numeros el
+                 dibujo no dice nada de cuanto empuja: la misma figura sirve para
+                 un coche de calle en autopista y para uno de carrera en una
+                 curva rapida. Van sobre la diagonal de arriba a la izquierda,
+                 que es donde no pisan ni los ejes ni los rotulos de sentido. -->
             <path class="estela-g" id="estela-g"></path>
+            <!-- Los rotulos van **despues** de la estela: dibujados antes, el
+                 trazo de la vuelta les pasaba por encima y el del anillo de
+                 adentro ---que es el que mas cruza el trazo--- quedaba tapado. -->
+            <text class="escala-g" id="escala-g-1" x="74" y="77" text-anchor="middle"></text>
+            <text class="escala-g" id="escala-g-2" x="58" y="61" text-anchor="middle"></text>
+            <text class="escala-g" id="escala-g-3" x="42" y="45" text-anchor="middle"></text>
             <circle class="halo-g" id="halo-g" cx="90" cy="90" r="9"></circle>
             <circle class="punto-g" id="punto-g" cx="90" cy="90" r="5"></circle>
           </svg>

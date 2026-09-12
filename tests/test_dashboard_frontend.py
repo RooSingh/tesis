@@ -144,6 +144,42 @@ class DashboardFrontendTests(unittest.TestCase):
         self.assertEqual(html.count('id="tablero"'), 1,
                          "hay mas de un contenedor de tablero, o ninguno")
 
+    def test_los_circulos_del_diagrama_de_g_dicen_cuanto_valen(self) -> None:
+        """Un diagrama con anillos sin numero no es una medicion, es un dibujo.
+
+        La ayuda decia «los círculos marcan 1, 2 y 3 g» y era falso: la escala se
+        ajusta a la vuelta por pasos ---de 0,05 a 6 g--- porque un coche de calle
+        no llega a 0,1 g en autopista y uno de carrera pasa de 4. Los anillos
+        marcaban tercios de esa escala, no gravedades.
+
+        Y el anillo de afuera ni siquiera marcaba el borde: los puntos se
+        dibujan a radio 68 y el circulo estaba en 80, de modo que el numero de la
+        escala señalaba una circunferencia por la que nunca pasa un dato.
+
+        Se comprueban las dos cosas contra el radio que usa el guion: los tres
+        anillos son tercios de **ese** radio, y cada uno tiene su rotulo.
+        """
+        codigo = APP.read_text(encoding="utf-8")
+        radios = set(re.findall(r"/ maximo\) \* (\d+)", codigo)) | set(
+            re.findall(r"norm\(g[xy]\) \* (\d+)", codigo))
+        self.assertEqual(len(radios), 1,
+                         f"el guion dibuja el diagrama con varios radios: {radios}")
+        radio = int(radios.pop())
+
+        html = INDICE.read_text(encoding="utf-8")
+        rejilla = re.findall(r'<circle class="rejilla-g"[^>]*r="([\d.]+)"', html)
+        self.assertEqual(
+            sorted(float(r) for r in rejilla),
+            sorted(round(radio * f / 3, 2) for f in (1, 2, 3)),
+            "los anillos no son tercios del radio con el que se dibujan los puntos",
+        )
+        for i in (1, 2, 3):
+            self.assertIn(f'id="escala-g-{i}"', html,
+                          f"al anillo {i} le falta su rotulo")
+        ayuda = html[html.index('id="ayuda-g"'):html.index("</span>", html.index('id="ayuda-g"'))]
+        self.assertNotIn("1, 2 y 3 g", ayuda,
+                         "la ayuda vuelve a declarar una escala fija que no existe")
+
     def test_la_grilla_del_estilo_dice_lo_mismo_que_las_constantes(self) -> None:
         """La grilla esta descrita en dos sitios, y tienen que coincidir.
 

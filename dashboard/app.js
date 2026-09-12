@@ -2953,8 +2953,18 @@ function pintarG() {
   const pts = huella.puntos;
   /* Cuanto vale el borde. Sin esto la escala se estira sola y no se declara:
      el mismo dibujo para 0,06 g y para 5. */
-  const rotuloEscala = document.getElementById("escala-g");
-  if (rotuloEscala) rotuloEscala.textContent = cifra(huella.maximo, 2) + " g";
+  /* CADA ANILLO DICE CUANTO VALE. Antes habia un solo numero, el del borde, y
+     la ayuda afirmaba que los circulos marcaban 1, 2 y 3 g: falso, marcan
+     tercios de una escala que se ajusta a la vuelta. Con los tres rotulados el
+     dibujo se puede leer sin contar anillos, y la unidad se escribe una sola
+     vez ---en el de afuera--- para no repetir «g» tres veces en un circulo de
+     ciento ochenta unidades. */
+  for (let i = 1; i <= 3; i++) {
+    const rotulo = document.getElementById("escala-g-" + i);
+    if (!rotulo) continue;
+    const valor = huella.maximo * i / 3;
+    rotulo.textContent = cifra(valor, valor < 1 ? 2 : 1) + (i === 3 ? " g" : "");
+  }
   const estela = document.getElementById("estela-g");
   const firmaEstela = pts.length + "|" + pts[pts.length - 1].join(",");
   if (estela.dataset.firma !== firmaEstela) {
@@ -12065,7 +12075,15 @@ function calcularInstante() {
       fraccionSesion: 1, segundos: 0, tUtcMs: null, metro: metro, metroSesion: null,
       velocidad: velocidad,
       acelerador: leer("throttle"), freno: leer("brake"), rpm: leer("rpm"),
-      marcha: leer("gear"), gLong: leer("glong"), gLat: leer("glat"),
+      marcha: leer("gear"),
+      /* LAS DOS ACELERACIONES VAN POR EL LECTOR QUE SABE DE UNIDADES.
+         El bus publica `accel_lateral` en `m/s^2` ---asi lo declara el
+         adaptador--- y este panel rotula «g» y dibuja sobre una escala en g. En
+         historico eso ya se convertia; aca se leian crudas, de modo que 6 m/s^2
+         se mostraba como «6,00 g» y el punto se iba del diagrama: seis veces
+         mas de lo que el vehiculo hizo. La vertical no: solo la publica el
+         simulador, y ya viene en g. */
+      gLong: leerEnUnidad("glong"), gLat: leerEnUnidad("glat"),
       gVert: leer("gvert"), yaw: leer("yaw"),
       tempMotor: leer("engineTemp"), ers: leer("ers"),
       ersMJ: leer("ers") === null ? null : Number(leer("ers")) / 1e6,
