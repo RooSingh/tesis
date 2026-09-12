@@ -9267,25 +9267,39 @@ const PASO_DE_MEDIDA = 1 / SUBDIVISIONES;
 /* EL CATALOGO DE PANELES, Y SU ORDEN DE FABRICA.
    `id` es el mismo `data-panel` del HTML ---hay una prueba que lo exige--- y
    `ancho` es cuantas columnas ocupa cuando nadie lo movio. */
+/* LA DISPOSICION DE FABRICA ES UNA QUE SE USO, no una lista en el orden en que
+   se fueron escribiendo los paneles. Sale de acomodar el tablero a mano y
+   medirlo: tres zonas que se leen de arriba abajo ---lo que se vigila, lo que se
+   traza, lo que se consulta--- y cada panel del tamaño que su contenido pide.
+
+   EL ORDEN IMPORTA TANTO COMO LAS MEDIDAS. La grilla coloca en este orden y no
+   retrocede: un panel de dos columnas que llega cuando queda una, se va a la
+   fila siguiente y deja el hueco. Cambiar una medida sin mirar el orden corre
+   todo lo que viene despues. */
 const WIDGETS = [
-  { id: "trazado",       titulo: "Trazado",           ancho: 2, alto: 2 },
-  { id: "motor",         titulo: "Motor y energía",   ancho: 2, alto: 2 },
+  { id: "trazado",       titulo: "Trazado",           ancho: 3, alto: 2 },
+  { id: "motor",         titulo: "Motor y energía",   ancho: 2, alto: 1 },
   /* LOS DOS RELOJES. Nace en dos columnas por una cuenta, no por gusto: en una
      celda de 1x1 ---173 px de lado--- los dos arcos se reparten el ancho y cada
      uno queda en 71 px, **menos que los 104 que tenian** dentro del panel de
      motor. En dos, cada uno toma unos 165 y recien ahi un arco se lee de reojo,
      que es para lo unico que sirve un arco. Achicarlo a 1x1 sigue funcionando;
      lo que se pierde es el tamaño. */
-  { id: "medidores",     titulo: "Régimen y velocidad", ancho: 2, alto: 1 },
   { id: "vehiculo",      titulo: "Vehículo",          ancho: 2, alto: 2 },
-  { id: "cronometraje",  titulo: "Cronometraje",      ancho: 2, alto: 1 },
+  { id: "clima",         titulo: "Clima y pista",     ancho: 1, alto: 1 },
+  { id: "medidores",     titulo: "Régimen y velocidad", ancho: 2, alto: 1 },
+  { id: "cronometraje",  titulo: "Cronometraje",      ancho: 1, alto: 1 },
   /* Dos filas: con una, el primer aviso quedaba cortado a la mitad ---y un
      aviso a medio leer es peor que ninguno---. Quien quiera menos lo achica. */
   { id: "avisos",        titulo: "Avisos",            ancho: 2, alto: 2 },
-  { id: "clima",         titulo: "Clima y pista",     ancho: 2, alto: 1 },
-  { id: "vehiculos",     titulo: "Vehículos",         ancho: 2, alto: 2 },
-  { id: "aceleraciones", titulo: "Aceleraciones",     ancho: 2, alto: 2 },
-  { id: "puesta",        titulo: "Puesta a punto",    ancho: 4, alto: 2 },
+  /* DESPUES DE LOS GRAFICOS. Los tres de abajo se consultan cuando surge la
+     pregunta; los graficos se miran mientras la sesion corre. El orden los pone
+     en ese orden, y `tras: "graficos"` es lo que le dice al catalogo donde
+     entran los graficos ---que no estan en esta lista porque cuales hay lo
+     decide el panel de señales---. */
+  { id: "vehiculos",     titulo: "Vehículos",         ancho: 2, alto: 1, tras: "graficos" },
+  { id: "puesta",        titulo: "Puesta a punto",    ancho: 4, alto: 1, tras: "graficos" },
+  { id: "aceleraciones", titulo: "Aceleraciones",     ancho: 2, alto: 2, tras: "graficos" },
   /* La barra de señales: hasta hoy era una celda del tablero que el catalogo no
      nombraba, con `ancho-total` en vez de una disposicion. Va ultima porque es
      un mando, no algo que se vigile. */
@@ -9312,7 +9326,7 @@ const PREFIJO_DE_GRAFICO = "grafico:";
 
 //: Una columna y dos filas, igual que los paneles que se vigilan. Un grafico
 //: mas bajo que eso deja el trazo en una tira donde no se lee la forma.
-const MEDIDA_DE_UN_GRAFICO = { ancho: 2, alto: 2 };
+const MEDIDA_DE_UN_GRAFICO = { ancho: 2, alto: 1 };
 
 //: Que graficos hay en el tablero ahora mismo, por su canal. Lo escribe
 //: `asegurarGraficosChicos`, que es quien los crea y los saca: dos sitios
@@ -9337,8 +9351,15 @@ function catalogoDeWidgets(graficos) {
     ancho: MEDIDA_DE_UN_GRAFICO.ancho,
     alto: MEDIDA_DE_UN_GRAFICO.alto,
   }));
-  return WIDGETS.filter(w => !w.alPie)
-    .concat(suyos, WIDGETS.filter(w => w.alPie));
+  /* TRES ZONAS DECLARADAS, y los graficos entran en la del medio. Cuales hay lo
+     decide el panel de señales, de modo que no pueden estar escritos en la
+     lista; lo que si se puede declarar es **donde van**, y eso lo dicen los dos
+     campos de los widgets: `tras: "graficos"` para los que van despues y
+     `alPie` para el que cierra. */
+  return WIDGETS.filter(w => !w.tras && !w.alPie)
+    .concat(suyos,
+            WIDGETS.filter(w => w.tras === "graficos"),
+            WIDGETS.filter(w => w.alPie));
 }
 
 /* Una medida, escrita para leerse: «1», «0,5», «1,5». El punto decimal del

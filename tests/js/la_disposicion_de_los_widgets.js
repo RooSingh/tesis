@@ -429,6 +429,46 @@ prueba("restablecer devuelve exactamente la disposicion de fabrica", () => {
 
 const orig = () => m.reconciliarDisposicion(null);
 
+prueba("la disposicion de fabrica es la que se midio, y cambiarla es deliberado", () => {
+  /* Esta lista no es «los paneles en el orden en que se escribieron»: es un
+     tablero que se acomodo a mano, se miro y se midio. Sus medidas se encastran
+     ---la grilla coloca en orden y no retrocede, de modo que un panel de dos
+     columnas que llega cuando queda una se va a la fila siguiente y deja el
+     hueco---, asi que tocar un ancho corre todo lo que viene despues.
+
+     La firma no defiende un numero: defiende que nadie la cambie **sin darse
+     cuenta**. Cambiarla a proposito es actualizar esta linea, que cuesta lo que
+     tiene que costar. */
+  const firma = m.WIDGETS.map(w => w.id + ":" + w.ancho + "x" + w.alto).join(" ");
+  assert.strictEqual(firma,
+    "trazado:3x2 motor:2x1 vehiculo:2x2 clima:1x1 medidores:2x1 cronometraje:1x1 " +
+    "avisos:2x2 vehiculos:2x1 puesta:4x1 aceleraciones:2x2 senales:8x1",
+    "cambio la disposicion de fabrica");
+});
+
+prueba("ningun panel de fabrica es mas ancho que la grilla", () => {
+  /* Un ancho mayor que las columnas que hay se acota al leerse, de modo que el
+     panel se dibujaria mas angosto de lo que su linea dice: la lista y la
+     pantalla contarian cosas distintas. */
+  for (const w of m.WIDGETS) {
+    assert.ok(w.ancho <= m.COLUMNAS_DEL_TABLERO,
+      w.id + " pide " + w.ancho + " columnas y la grilla tiene " + m.COLUMNAS_DEL_TABLERO);
+  }
+});
+
+prueba("los graficos entran entre lo que se vigila y lo que se consulta", () => {
+  /* El orden de las tres zonas, que es lo que el catalogo declara con `tras` y
+     `alPie`. Cuales graficos hay lo decide el panel de señales; donde van, no. */
+  const ids = CAT(["speed"]).map(w => w.id);
+  const avisos = ids.indexOf("avisos");
+  const grafico = ids.indexOf(G("speed"));
+  const vehiculos = ids.indexOf("vehiculos");
+  const senales = ids.indexOf("senales");
+  assert.ok(avisos < grafico, "un grafico quedo antes de los avisos");
+  assert.ok(grafico < vehiculos, "los graficos quedaron despues de lo que se consulta");
+  assert.strictEqual(senales, ids.length - 1, "el pie del tablero dejo de ser el ultimo");
+});
+
 /* -------- deshacer y rehacer -------- */
 
 prueba("recien entrado no hay nada que deshacer ni que rehacer", () => {
