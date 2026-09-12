@@ -319,6 +319,11 @@ class AyudantesDeSerieTests(unittest.TestCase):
 
         self._correr("de_cuando_es_este_valor.js")
 
+    def test_una_disposicion_guardada_no_esconde_lo_nuevo(self) -> None:
+        """Lo guardado es del pasado; el codigo sigue agregando paneles."""
+
+        self._correr("la_disposicion_de_los_widgets.js")
+
     def test_antes_de_la_linea_el_coche_no_se_planta_en_la_meta(self) -> None:
         """Un `lap_distance` negativo se recortaba a cero y se declaraba medido."""
 

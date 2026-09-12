@@ -8922,6 +8922,96 @@ function sesionQueSeAbreSola(sesiones, recordada) {
   return hay ? hay.session_id : null;
 }
 
+/* ============================================================
+   LA DISPOSICION DE LOS PANELES, Y POR QUE SE RECONCILIA
+   ------------------------------------------------------------
+   Una disposicion guardada es **un dato del pasado**. Se escribio con los
+   paneles que habia el dia que alguien ordeno su tablero, y se lee meses
+   despues, cuando puede haber paneles nuevos y paneles que ya no existen.
+
+   De ahi salen las dos reglas de `reconciliarDisposicion`:
+
+   - un panel que la disposicion nombra y el codigo ya no tiene **se ignora**;
+   - un panel que el codigo tiene y la disposicion no nombra **aparece**.
+
+   La segunda es la que cuesta y la que hay que defender. Mostrar exactamente
+   lo guardado seria mas simple, y haria que **cada panel que se agregue nazca
+   invisible** para todo el que haya ordenado su tablero alguna vez: invisible,
+   y sin que nadie pueda saber por que. Un tablero que oculta lo nuevo por
+   haberse ordenado una vez deja de ser el mismo producto para quien lo uso.
+
+   Y una tercera, que es de otra clase: **esconder no es olvidar**. Un panel que
+   el usuario quito se recuerda quitado. Si se lo tratara como ausente, la
+   reconciliacion lo devolveria en cada recarga y no habria forma de sacarlo.
+   ============================================================ */
+
+//: La grilla del tablero. Cuatro en escritorio; el CSS la reduce en pantallas
+//: angostas, y el ancho de cada panel se acota contra este numero.
+const COLUMNAS_DEL_TABLERO = 4;
+
+/* EL CATALOGO DE PANELES, Y SU ORDEN DE FABRICA.
+   `id` es el mismo `data-panel` del HTML ---hay una prueba que lo exige--- y
+   `ancho` es cuantas columnas ocupa cuando nadie lo movio. */
+const WIDGETS = [
+  { id: "trazado",       titulo: "Trazado",           ancho: 1 },
+  { id: "motor",         titulo: "Motor y energía",   ancho: 1 },
+  { id: "vehiculo",      titulo: "Vehículo",          ancho: 1 },
+  { id: "cronometraje",  titulo: "Cronometraje",      ancho: 1 },
+  { id: "clima",         titulo: "Clima y pista",     ancho: 1 },
+  { id: "avisos",        titulo: "Avisos",            ancho: 1 },
+  { id: "vehiculos",     titulo: "Vehículos",         ancho: 1 },
+  { id: "aceleraciones", titulo: "Aceleraciones",     ancho: 1 },
+  { id: "puesta",        titulo: "Puesta a punto",    ancho: 2 },
+];
+
+function disposicionPorOmision() {
+  return WIDGETS.map(w => ({ id: w.id, ancho: w.ancho, visible: true }));
+}
+
+/* Acota el ancho a lo que la grilla admite. Siete columnas en una grilla de
+   cuatro rompen el dibujo, y cero hace desaparecer el panel sin decirlo. */
+function anchoAcotado(valor, porOmision) {
+  const n = Math.round(Number(valor));
+  if (!Number.isFinite(n)) return porOmision;
+  return Math.max(1, Math.min(COLUMNAS_DEL_TABLERO, n));
+}
+
+function reconciliarDisposicion(crudo) {
+  let guardada = null;
+  try {
+    guardada = crudo ? JSON.parse(crudo) : null;
+  } catch (e) {
+    guardada = null;
+  }
+  /* Cualquier cosa que no sea una lista se trata como si no hubiera nada. El
+     almacenamiento puede devolver una version vieja, algo a medio escribir o
+     texto de otro origen, y ninguna de esas es razon para quedarse sin
+     tablero. */
+  if (!Array.isArray(guardada)) return disposicionPorOmision();
+
+  const declarados = new Map(WIDGETS.map(w => [w.id, w]));
+  const salida = [];
+  const puestos = new Set();
+  for (const fila of guardada) {
+    if (!fila || typeof fila.id !== "string") continue;
+    const w = declarados.get(fila.id);
+    if (!w || puestos.has(w.id)) continue;   // ya no existe, o esta repetido
+    puestos.add(w.id);
+    salida.push({
+      id: w.id,
+      ancho: anchoAcotado(fila.ancho, w.ancho),
+      // `visible` solo es falso si la disposicion lo dice: cualquier otra cosa
+      // ---ausente, basura--- se lee como visible, que es el estado de fabrica.
+      visible: fila.visible !== false,
+    });
+  }
+  // Lo que el codigo tiene y la disposicion no nombraba, al final y visible.
+  for (const w of WIDGETS) {
+    if (!puestos.has(w.id)) salida.push({ id: w.id, ancho: w.ancho, visible: true });
+  }
+  return salida;
+}
+
 function recordarSesion(id) {
   try { window.localStorage.setItem("sesion-abierta", id); } catch (e) { /* sin memoria */ }
 }
