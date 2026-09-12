@@ -233,6 +233,7 @@ const estado = {
   vehiculo: null,      // de /sesiones/{id}/vehiculo
   vehiculoMotivo: "",
   puesta: null,        // de /sesiones/{id}/puesta-a-punto
+  puestaMotivo: "",    // por que no hay reglaje, dicho por la API
   avisos: [],          // de /sesiones/{id}/avisos, derivados de la telemetria
   controlDeCarrera: [],     // de /racing/.../race-control, declarados por la fuente
   controlDeCarreraCrudo: [],
@@ -7882,7 +7883,8 @@ function limpiarContextoDeSesion() {
   estado.contextoCarrera = null; estado.climaDeCarrera = null;
   estado.controlDeCarrera = []; estado.controlDeCarreraCrudo = [];
   estado.vehiculo = null; estado.vehiculoMotivo = "";
-  estado.puesta = null; estado.avisos = []; estado.avisosMotivo = "";
+  estado.puesta = null; estado.puestaMotivo = "";
+  estado.avisos = []; estado.avisosMotivo = "";
   estado.avisosFallo = "";
 }
 
@@ -8796,6 +8798,7 @@ function olvidarLoDeLaCorrida() {
   estado.disponibles = new Set();
   estado.vehiculoClave = null;
   estado.climaMotivo = ""; estado.vehiculoMotivo = ""; estado.avisosMotivo = "";
+  estado.puestaMotivo = "";
   _esencialResuelta = false;
   estado.cargando = true;
   PISTA = { path: "", curvas: [], largo_m: null, desnivel_m: null, muestras: null,
@@ -9451,6 +9454,7 @@ function cargarDatosDeSesion(ruta, apertura, senal, s) {
           ? { esquinas: ctx.esquinas, carroceria: ctx.carroceria } : null;
         estado.vehiculoMotivo = ctx.vehiculo_motivo || "";
         estado.puesta = (ctx.campos && ctx.campos.length) ? ctx : null;
+        estado.puestaMotivo = motivoDeLaPuesta(ctx);
         if (estado.clima) estado.disponibles.add("air_temperature");
         if (estado.vehiculo) estado.disponibles.add("tyre_temperature_surface_front_left");
         if (estado.puesta) estado.disponibles.add("setup_front_wing");
@@ -9684,6 +9688,7 @@ function refrescarContexto() {
           ? { esquinas: d.esquinas, carroceria: d.carroceria } : null;
         estado.vehiculoMotivo = d.vehiculo_motivo || "";
         estado.puesta = (d.campos && d.campos.length) ? d : null;
+        estado.puestaMotivo = motivoDeLaPuesta(d);
         if (estado.clima) estado.disponibles.add("air_temperature");
         if (estado.vehiculo) estado.disponibles.add("tyre_temperature_surface_front_left");
         if (estado.puesta) estado.disponibles.add("setup_front_wing");
@@ -9911,19 +9916,43 @@ const ROTULO_PUESTA = {
 
 let _firmaPuesta = "";
 
+/* POR QUE NO HAY REGLAJE, DICHO POR QUIEN LO SABE.
+ *
+ * Son dos ausencias distintas y la interfaz de consulta las separa: que la
+ * fuente no publique configuracion del vehiculo, o que esta captura sea
+ * anterior al paquete de reglaje normalizado. La primera es de la fuente; la
+ * segunda es de la captura, y confundirlas le atribuye a F1 25 ---que si lo
+ * publica--- una carencia que no tiene.
+ *
+ * Se lee de las dos rutas porque cada una lo llama distinto: `/contexto`, que
+ * es la que el tablero consulta, manda `puesta_motivo`; `/puesta-a-punto`
+ * manda `motivo_ausencia`. Buscar solo el segundo sobre la respuesta del
+ * primero daba siempre `undefined`.
+ */
+function motivoDeLaPuesta(ctx) {
+  if (!ctx) return "";
+  return ctx.puesta_motivo || ctx.motivo_ausencia || "";
+}
+
 function pintarPuestaAPunto() {
   const cont = document.getElementById("lista-puesta");
   if (!cont) return;
   const d = estado.puesta;
   const campos = (d && d.campos) || [];
   const diferencias = (d && (d.diferencias_puesta || d.diferencias)) || [];
+  /* El motivo entra en la firma: cuando no hay campos, es lo unico que cambia,
+     y sin el el panel se quedaria con el texto de la sesion anterior. */
   const firma = [estadoSesion, JSON.stringify(campos), JSON.stringify(diferencias),
+                 estado.puestaMotivo,
                  d && (d.puesta_asentada || d.asentada), tinta("--acento")].join("|");
   if (firma === _firmaPuesta) return;
   _firmaPuesta = firma;
 
   const motivo = document.getElementById("motivo-puesta");
-  if (motivo) motivo.textContent = (d && d.motivo_ausencia) ||
+  /* El respaldo es lo ultimo y no lo primero: la API ya dijo cual de las
+     dos ausencias es, y solo si no contesto se cae en el texto generico. */
+  if (motivo) motivo.textContent = estado.puestaMotivo ||
+    motivoDeLaPuesta(d) ||
     "Esta fuente no publica configuración del vehículo.";
 
   const porClave = new Map(diferencias.map(x => [x.clave, x]));
