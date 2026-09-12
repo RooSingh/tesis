@@ -199,6 +199,83 @@ class MotivosTest(unittest.TestCase):
         self.assertTrue(all(v.motivos for v in sucias))
 
 
+class DosCochesBajoUnaIdentidadTest(unittest.TestCase):
+    """Una vuelta con otro coche adentro no se puede comparar con nada.
+
+    POR QUE ESTO VIVE EN EL CODIGO Y NO EN UN DOCUMENTO. Medido el 2026-09-12,
+    la sesion de Spa del conjunto `spa_original` tiene **dos conductores
+    escritos bajo el mismo `vehicle_id`** en sus vueltas 1 y 2: dos series de
+    20 Hz entrelazadas, con los coches hasta 577 metros separados. De la vuelta
+    3 en adelante la serie es de uno solo.
+
+    Quedo escrito en `docs/mediciones/`, y un documento **no impide que el
+    proximo analisis use la vuelta 2**. Este modulo ya sabe decir «esta vuelta
+    no es comparable, y por esto»; era ahi donde faltaba.
+
+    LA FIRMA ES LA DISTANCIA QUE RETROCEDE Y VUELVE. Un coche solo nunca
+    retrocede seiscientos metros; dos coches entrelazados lo hacen en cada
+    muestra. El cruce de meta si retrocede ---de siete mil a cero--- y por eso
+    un solo retroceso no alcanza para acusar a nadie.
+    """
+
+    @staticmethod
+    def _con_distancia(vueltas, distancias_por_vuelta):
+        """Un guion con `lap_distance` explicito en cada muestra."""
+        guion = []
+        for numero in range(1, vueltas + 1):
+            for j, metro in enumerate(distancias_por_vuelta[numero - 1]):
+                guion.append((numero, {vu.SENAL_CRONOMETRO: j * PASO_MS,
+                                       vu.SENAL_DISTANCIA: metro}))
+        return guion
+
+    def _disp(self):
+        return _disponibilidad(presentes=(
+            vu.SENAL_NUMERO, vu.SENAL_INVALIDA, vu.SENAL_BOXES,
+            vu.SENAL_BANDERA, vu.SENAL_DISTANCIA))
+
+    def test_una_vuelta_de_un_solo_coche_es_comparable(self):
+        avance = [[0.0, 100.0, 200.0, 300.0, 400.0, 500.0]] * 4
+        s = _extraer(_filas(self._con_distancia(4, avance)), self._disp())
+        self.assertEqual([v.numero for v in s.comparables], [2, 3])
+
+    def test_el_cruce_de_meta_no_acusa_a_nadie(self):
+        """Un solo retroceso es la vuelta que cierra, no otro coche."""
+        con_cruce = [[6800.0, 6900.0, 20.0, 120.0, 220.0, 320.0]] * 4
+        s = _extraer(_filas(self._con_distancia(4, con_cruce)), self._disp())
+        self.assertEqual([v.numero for v in s.comparables], [2, 3])
+
+    def test_dos_coches_entrelazados_dejan_la_vuelta_fuera(self):
+        limpia = [0.0, 100.0, 200.0, 300.0, 400.0, 500.0]
+        # El otro coche, quinientos metros mas atras, una muestra si y una no.
+        mezclada = [2325.0, 1748.0, 2328.0, 1750.0, 2331.0, 1753.0]
+        s = _extraer(_filas(self._con_distancia(
+            4, [limpia, mezclada, limpia, limpia])), self._disp())
+        self.assertEqual([v.numero for v in s.comparables], [3])
+        dos = [v for v in s.vueltas if v.numero == 2][0]
+        self.assertFalse(dos.comparable)
+        self.assertTrue(any("coche" in m for m in dos.motivos), dos.motivos)
+
+    def test_el_motivo_dice_cuantos_retrocesos_se_vieron(self):
+        """Sin la cifra, el motivo se lee como una sospecha y no como una medida."""
+        limpia = [0.0, 100.0, 200.0, 300.0, 400.0, 500.0]
+        mezclada = [2325.0, 1748.0, 2328.0, 1750.0, 2331.0, 1753.0]
+        s = _extraer(_filas(self._con_distancia(
+            4, [limpia, mezclada, limpia, limpia])), self._disp())
+        dos = [v for v in s.vueltas if v.numero == 2][0]
+        self.assertTrue(any("3" in m for m in dos.motivos), dos.motivos)
+
+    def test_sin_distancia_el_criterio_no_se_aplica_ni_se_inventa(self):
+        """OpenF1 no publica distancia de vuelta: ahi no se puede mirar esto.
+
+        Es la misma regla que rige para boxes y banderas: solo se aplican los
+        criterios que la sesion admite. Acusar a una vuelta con un criterio que
+        no se pudo evaluar seria peor que no evaluarlo.
+        """
+        s = _extraer(_filas(_guion_limpio()))
+        for v in s.vueltas:
+            self.assertFalse(any("coche" in m for m in v.motivos), v.motivos)
+
+
 class PrecisionTest(unittest.TestCase):
 
     def test_la_incerteza_es_el_intervalo_de_muestreo(self):

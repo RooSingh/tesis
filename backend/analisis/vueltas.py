@@ -85,6 +85,40 @@ BOXES_QUE_ENSUCIAN = {1: "entrada a boxes", 2: "paso por boxes"}
 
 #: Senales que la herramienta lee, en el orden en que se declaran sus requisitos.
 SENAL_NUMERO = "lap_number"
+
+#: Con que se detecta que una vuelta tiene mas de un coche adentro.
+#:
+#: EL CASO QUE LO MOTIVA, MEDIDO EL 2026-09-12. La sesion de Spa del conjunto
+#: `spa_original` tiene **dos conductores escritos bajo el mismo `vehicle_id`**
+#: en sus vueltas 1 y 2: dos series de 20 Hz entrelazadas, desfasadas 17 ms, con
+#: los coches hasta 577 metros separados. De la vuelta 3 en adelante la serie es
+#: de un solo coche. Quedo documentado, y **un documento no impide que el
+#: proximo analisis use la vuelta 2**: por eso el criterio vive aca, donde ya
+#: viven los de boxes y bandera, y no solo en `docs/mediciones/`.
+#:
+#: LA FIRMA. Un coche solo nunca retrocede seiscientos metros; dos coches
+#: entrelazados lo hacen en cada muestra. Lo que se cuenta son retrocesos
+#: grandes de la distancia de vuelta.
+SENAL_DISTANCIA = "lap_distance"
+
+#: Cuanto tiene que retroceder la distancia para que no pueda ser un coche solo.
+#:
+#: Doscientos metros a doscientos por hora son tres segundos y medio de marcha
+#: atras. La separacion medida entre los dos coches de Spa era de 577 m; el
+#: ruido de la señal, de centimetros. Entre esas dos escalas hay sitio de sobra.
+SALTO_IMPOSIBLE_M = 200.0
+
+#: Cuantos retrocesos se toleran antes de acusar a la vuelta.
+#:
+#: UNO ES EL CRUCE DE META, que es un retroceso legitimo: de siete mil metros a
+#: cero. Con cero de tolerancia, **todas** las vueltas quedarian fuera y el
+#: criterio no distinguiria nada, que es la manera silenciosa de que una
+#: comprobacion deje de comprobar. Medido sobre las veinte vueltas limpias de
+#: Spa: exactamente uno cada una.
+RETROCESOS_TOLERADOS = 1
+
+MOTIVO_DOS_COCHES = ("la distancia de vuelta retrocede {n} veces mas de "
+                     "{m:,.0f} m: hay mas de un coche bajo esta identidad")
 SENAL_INVALIDA = "lap_invalid"
 SENAL_BOXES = "pit_status"
 SENAL_BANDERA = "fia_flag"
@@ -240,7 +274,7 @@ def extraer(fuente: str, session_id: str) -> Sesion:
     # falla, pero recorrer sus filas inexistentes en cada vuelta si confunde.
     presentes = {m.senal for m in disponible.mediciones if m.presente and m.senal}
     senales = tuple(s for s in (SENAL_NUMERO, SENAL_INVALIDA, SENAL_BOXES,
-                                SENAL_BANDERA, SENAL_CRONOMETRO)
+                                SENAL_BANDERA, SENAL_DISTANCIA, SENAL_CRONOMETRO)
                     if s in presentes or s == SENAL_CRONOMETRO)
     #: El mismo conjunto rige **dentro del recorrido** y no solo en la consulta.
     #: Acotar solo la consulta bastaria mientras las dos cosas coincidan, y dejan
@@ -282,6 +316,7 @@ def extraer(fuente: str, session_id: str) -> Sesion:
                     "desde_ms": ms, "hasta_ms": ms, "muestras": 0,
                     "invalida": False, "boxes": set(), "banderas": set(),
                     "cronometro_ms": None,
+                    "retrocesos": 0, "metro_anterior": None,
                 }
                 orden.append(numero_actual)
             # El intervalo de muestreo sale de este canal, que es el que marca
@@ -309,6 +344,11 @@ def extraer(fuente: str, session_id: str) -> Sesion:
             v["boxes"].add(int(valor))
         elif nombre == SENAL_BANDERA and int(valor) in BANDERAS_QUE_ENSUCIAN:
             v["banderas"].add(int(valor))
+        elif nombre == SENAL_DISTANCIA:
+            previo = v["metro_anterior"]
+            if previo is not None and previo - valor > SALTO_IMPOSIBLE_M:
+                v["retrocesos"] += 1
+            v["metro_anterior"] = valor
         elif nombre == SENAL_CRONOMETRO:
             anterior = v["cronometro_ms"]
             v["cronometro_ms"] = valor if anterior is None else max(anterior, valor)
@@ -322,6 +362,12 @@ def extraer(fuente: str, session_id: str) -> Sesion:
             motivos.append(BOXES_QUE_ENSUCIAN[codigo])
         for codigo in sorted(v["banderas"]):
             motivos.append(BANDERAS_QUE_ENSUCIAN[codigo])
+        # Solo cuando la sesion publica distancia. El mismo criterio que rige
+        # para boxes y bandera: no se acusa a una vuelta con una comprobacion
+        # que no se pudo hacer.
+        if SENAL_DISTANCIA in usables and v["retrocesos"] > RETROCESOS_TOLERADOS:
+            motivos.append(MOTIVO_DOS_COCHES.format(n=v["retrocesos"],
+                                                    m=SALTO_IMPOSIBLE_M))
         # La primera y la ultima de la captura empiezan o terminan a mitad de
         # camino. No se presencio su borde, y una vuelta cuyo borde no se vio no
         # se puede cronometrar ni comparar.

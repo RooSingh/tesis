@@ -298,6 +298,15 @@ HERRAMIENTAS: tuple[Herramienta, ...] = (
             Requisito("Bandera de carrera",
                       "descartar las vueltas corridas bajo bandera",
                       esencial=False),
+            # NO ES ESENCIAL Y TIENE QUE ESTAR DECLARADA IGUAL. Sin declararla,
+            # el criterio que la usa nunca corre y **no se nota**: la sesion se
+            # separa en vueltas igual de bien y una vuelta con dos coches
+            # adentro sale marcada como comparable. Declararla es lo que hace
+            # que la comprobacion exista o que su ausencia se escriba.
+            Requisito("Distancia en la vuelta",
+                      "descartar las vueltas que tienen mas de un coche bajo la "
+                      "misma identidad",
+                      esencial=False),
         ),
     ),
     Herramienta(
