@@ -331,8 +331,6 @@
   .ejes-g { display: grid; grid-template-columns: auto 1fr; gap: 14px; align-items: center; }
   .ejes-g svg { width: 132px; height: 132px; }
   .rejilla-g { fill: none; stroke: var(--linea); stroke-width: 1; }
-  .estela-g { fill: none; stroke: var(--acento); stroke-width: 1.5; opacity: .55; }
-  .punto-g { fill: var(--acento-vivo); }
   .lista-canales { display: grid; gap: 7px; margin: 0; }
   .lista-canales div { display: flex; justify-content: space-between; gap: 10px; align-items: baseline; padding-bottom: 6px; border-bottom: 1px solid var(--linea); }
   .lista-canales dt { font-family: var(--cifra); font-size: .7rem; color: var(--texto-tenue); }
@@ -614,18 +612,15 @@
      estela sube y el halo baja hasta que la proporcion diga lo que el panel
      significa. El punto no se achica: tiene que encontrarse de un vistazo
      mientras se mueve. */
-  .estela-g { stroke: url(#trazo-g); stroke-width: 2.6; opacity: .85; }
-  .halo-g { fill: var(--acento); opacity: .16; }
-  .punto-g { fill: var(--acento-vivo); stroke: var(--superficie); stroke-width: 1.5; }
-  /* EN EL HISTORICO NO HAY TRANSICION; EN VIVO SI.
-     Los 90 ms existian para tapar los escalones del indice sobre la estela
-     decimada. Reproduciendo, el punto se coloca con las dos aceleraciones
-     interpoladas en el instante compartido y se mueve en cada cuadro: la
-     transicion solo lo pondria 90 ms detras del coche. En vivo no hay
-     interpolacion ---llega el ultimo mensaje y nada mas--- asi que ahi el
-     barrido sigue haciendo lo que hacia. */
-  body[data-modo-del-tiempo="vivo"] .halo-g,
-  body[data-modo-del-tiempo="vivo"] .punto-g { transition: cx 90ms linear, cy 90ms linear; }
+  /* EL BARRIDO DEL PUNTO SE FUE CON EL PUNTO.
+     Aca vivia una transicion de 90 ms sobre `.punto-g` y `.halo-g`, para tapar
+     los escalones del indice sobre la estela decimada. No hay punto, no hay
+     estela y no hay decimacion: el bloque se coloca con las dos aceleraciones
+     del instante compartido y se mueve en cada cuadro.
+
+     Se borra en vez de dejarla apuntando a nada. Una regla sin elemento se lee
+     como que la figura existe, y el dia que alguien busque por que el punto no
+     barre va a encontrar esta regla y no la respuesta. */
 
   /* ---------- medidores ---------- */
   .fila-medidores { grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 14px; }

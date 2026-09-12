@@ -561,12 +561,13 @@
         <span class="con-ayuda">
           <button class="btn-ayuda" type="button" aria-describedby="ayuda-g">?</button>
           <span class="panel-ayuda" id="ayuda-g" role="tooltip">
-          <b>Cómo se lee.</b> Cada punto es un instante de la vuelta, ubicado por
-          cuánto empuja al vehículo hacia adelante o hacia atrás (eje vertical) y
-          hacia los costados (eje horizontal). Frenar lo lleva arriba, acelerar
-          abajo, y girar a un lado o al otro lo corre en horizontal. La estela es
-          el recorrido de la vuelta y el punto es el instante mostrado. La escala
-          se ajusta a la vuelta y cada círculo dice cuánto vale, porque lo que
+          <b>Cómo se lee.</b> El bloque de color dice <b>de dónde empuja el
+          vehículo en este instante y cuánto</b>: hacia dónde está es la
+          dirección ---frenada arriba, tracción abajo, y a los costados según a
+          qué lado se gire--- y cuán lejos del centro está es la magnitud. La
+          cifra del medio es esa magnitud, sin importar la dirección. El color
+          pasa a alerta y a crítico cerca del borde de la escala. La escala se
+          ajusta a la vuelta y cada círculo dice cuánto vale, porque lo que
           empuja a un coche de calle en autopista y a uno de carrera en una curva
           rápida no entra en el mismo dibujo. <b>Un piloto que aprovecha el vehículo
           llena el borde</b>: las zonas vacías son maniobras que el neumático
@@ -613,18 +614,13 @@
             <!-- EL BLOQUE DE LA FUERZA DEL INSTANTE, como lo dibuja F1 TV: un
                  tramo grueso de arco apoyado a la distancia que la fuerza
                  tiene. Hacia donde esta es de donde empuja; cuan lejos del
-                 centro, cuanta. Va **debajo** de la estela para que el recorrido
-                 de la vuelta se siga leyendo por encima. -->
+                 centro, cuanta. -->
             <path class="bloque-g" id="bloque-g"></path>
-            <path class="estela-g" id="estela-g"></path>
-            <!-- Los rotulos van **despues** de la estela: dibujados antes, el
-                 trazo de la vuelta les pasaba por encima y el del anillo de
-                 adentro ---que es el que mas cruza el trazo--- quedaba tapado. -->
+            <!-- Los rotulos van despues del bloque: dibujados antes, el bloque
+                 les pasaba por encima al llegar a su anillo. -->
             <text class="escala-g" id="escala-g-1" x="74" y="77" text-anchor="middle"></text>
             <text class="escala-g" id="escala-g-2" x="58" y="61" text-anchor="middle"></text>
             <text class="escala-g" id="escala-g-3" x="42" y="45" text-anchor="middle"></text>
-            <circle class="halo-g" id="halo-g" cx="90" cy="90" r="9"></circle>
-            <circle class="punto-g" id="punto-g" cx="90" cy="90" r="5"></circle>
             <!-- LA CIFRA EN EL MEDIO, SOBRE SU PLACA. Dice el modulo ---cuanta
                  fuerza hay, venga de donde venga---, que es lo que el dibujo no
                  puede decir con una forma.

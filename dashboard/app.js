@@ -2975,9 +2975,12 @@ function pintarG() {
   }
   document.getElementById("canal-g").textContent = tres ? "3 ejes" : "2 ejes + guiñada";
 
-  // La estela es la huella de la vuelta entera: no cambia al avanzar.
-  const huella = _estelaG(t.vuelta);
-  const pts = huella.puntos;
+  /* SOLO SE NECESITA EL BORDE, NO EL RECORRIDO.
+     Aca se dibujaba la estela ---la huella de la vuelta entera---, y se quito por
+     pedido: el panel es un indicador de la fuerza de este instante y el trazo de
+     la vuelta lo tapaba. Lo que la vuelta entera sigue diciendo es **hasta donde
+     llego**, y eso vive en el numero del anillo de afuera. */
+  const huella = escalaDeLaVuelta(t.vuelta);
   /* Cuanto vale el borde. Sin esto la escala se estira sola y no se declara:
      el mismo dibujo para 0,06 g y para 5. */
   /* CADA ANILLO DICE CUANTO VALE. Antes habia un solo numero, el del borde, y
@@ -2991,12 +2994,6 @@ function pintarG() {
     if (!rotulo) continue;
     const valor = huella.maximo * i / 3;
     rotulo.textContent = cifra(valor, valor < 1 ? 2 : 1) + (i === 3 ? " g" : "");
-  }
-  const estela = document.getElementById("estela-g");
-  const firmaEstela = pts.length + "|" + pts[pts.length - 1].join(",");
-  if (estela.dataset.firma !== firmaEstela) {
-    estela.dataset.firma = firmaEstela;
-    estela.setAttribute("d", "M" + pts.map(p => p[0].toFixed(1) + " " + p[1].toFixed(1)).join(" L"));
   }
   /* EL PUNTO VA EN LA ACELERACION DEL INSTANTE, NO EN UN INDICE DE LA ESTELA.
      La estela se dibuja con ochenta puntos ---uno de cada tantos, para que el
@@ -3043,26 +3040,14 @@ function pintarG() {
     if (unidadG) unidadG.style.display = hay ? "" : "none";
   }
 
-  const punto = document.getElementById("punto-g");
-  const halo = document.getElementById("halo-g");
-  if (punto && halo) {
-    let cx, cy;
-    const gx = t.gLat, gy = t.gLong;
-    if (typeof gx === "number" && Number.isFinite(gx) &&
-        typeof gy === "number" && Number.isFinite(gy)) {
-      const q = puntoDelDiagramaG(gx, gy, huella.maximo);
-      cx = q.x; cy = q.y;
-    } else {
-      const idx = Math.min(pts.length - 1,
-                           Math.max(0, Math.round(t.fraccion * (pts.length - 1))));
-      cx = pts[idx][0];
-      cy = pts[idx][1];
-    }
-    punto.setAttribute("cx", cx.toFixed(2));
-    punto.setAttribute("cy", cy.toFixed(2));
-    halo.setAttribute("cx", cx.toFixed(2));
-    halo.setAttribute("cy", cy.toFixed(2));
-  }
+  /* EL PUNTO Y SU HALO TAMBIEN SE FUERON, y del documento: marcaban el sitio
+     exacto sobre la estela, y sin estela decian lo mismo que el bloque desde el
+     mismo sitio. Dos figuras para un dato es una de mas.
+
+     Con ellos se va su reserva ---colocarse por la fraccion de vuelta cuando no
+     habia aceleracion medida--- y esta bien que se vaya: sin fuerza medida no
+     hay nada que señalar, y señalarlo igual era dibujar una posicion que nadie
+     midio. */
 }
 
 /* El punto recorre la estela. Es la unica animacion por temporizador de la
@@ -3118,11 +3103,6 @@ function textoDeLaValidacion(v) {
     ? "guiñada y ruedas coinciden en " + medida
     : "guiñada y ruedas no coinciden: " + medida;
 }
-
-/* Cuantos puntos dibuja la estela. Ochenta sobre un circulo de ciento treinta y
-   seis unidades de diametro es algo mas de uno cada dos: por debajo se ven los
-   escalones y por encima el trazo se vuelve una mancha. */
-const PUNTOS_DE_LA_ESTELA = 80;
 
 /* ============================================================
    DE QUE LADO EMPUJA, Y CUANTO
@@ -3211,61 +3191,32 @@ function tintaDeLaFuerzaG(modulo, maximo) {
   return tinta("--acento");
 }
 
-/* LA HUELLA DE LA VUELTA, SIN PERDER SUS EXTREMOS.
-   Un diagrama de aceleraciones **es** su envolvente: lo que dice es cuanto se
-   empujo al vehiculo y en que direcciones. Tomar una muestra de cada tantas
-   tiraba justo los picos, que son lo unico que ese dibujo tiene para contar.
-   Medido sobre los siete tramos del bus, la estela perdia entre el 9 y el 32 %
-   del extremo; en `sample_27` eso bajaba la escala de 0,30 a 0,20 g y el punto
-   del instante quedaba **sujeto al borde**, mostrando pegado al limite un valor
-   que no estaba en el limite.
+/* HASTA DONDE LLEGO LA VUELTA, QUE ES LO QUE DECLARA EL BORDE.
+   Esto armaba ademas la **estela** ---el recorrido de la vuelta dibujado sobre
+   el diagrama--- y se quito por pedido: el panel es un indicador de la fuerza de
+   este instante, y el trazo de la vuelta lo tapaba.
 
-   De cada tramo se conserva el punto mas lejano del centro. Es una muestra
-   medida, no un promedio ni una interpolacion: se elige por el modulo porque
-   las dos componentes son un solo vector y su extremo es un instante real de la
-   vuelta. La objecion que impide elegir por valor en las series ---que cada
-   fila trae varias señales y el extremo de una no es el de las otras--- no
-   aplica aca, donde las dos son la misma medicion.
+   Con el se fue la decimacion y toda su historia: dibujar ochenta puntos obligaba
+   a tomar uno de cada tantos, eso tiraba los picos ---medido sobre los siete
+   tramos del bus, entre el 9 y el 32 % del extremo--- y hubo que conservar de
+   cada tramo el punto mas lejano del centro. Sin dibujo no hay que elegir
+   ninguno: se recorre la vuelta entera y se queda el mayor.
 
-   Y LA ESCALA SE MIDE SOBRE TODO, NO SOBRE LO DIBUJADO. Aunque la estela
-   conserve los extremos, el borde del diagrama se declara con la vuelta
-   entera: es lo que ese numero dice que es. */
-function _estelaG(vuelta) {
+   LO QUE NO CAMBIA es que el borde se mide sobre **todas** las muestras. Ya era
+   asi cuando habia estela ---la escala nunca salio de lo dibujado--- y es lo que
+   ese numero dice que es. */
+function escalaDeLaVuelta(vuelta) {
   const longitudinal = serieDeCanal("glong", vuelta, claveVehiculoPropio()) || [];
   const lateral = serieDeCanal("glat", vuelta, claveVehiculoPropio()) || [];
   const n = Math.min(longitudinal.length, lateral.length);
-  if (!n) return { puntos: [[90, 90]], maximo: PASOS_DE_LA_ESCALA_G[0] };
-  const valores = [];
-  const paso = Math.max(1, Math.ceil(n / PUNTOS_DE_LA_ESTELA));
   let tope = 0;
-  for (let i = 0; i < n; i += paso) {
-    let extremo = null, lejos = -1;
-    for (let k = i; k < Math.min(i + paso, n); k++) {
-      const x = Number(lateral[k][1]), y = Number(longitudinal[k][1]);
-      if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
-      if (Math.abs(x) > tope) tope = Math.abs(x);
-      if (Math.abs(y) > tope) tope = Math.abs(y);
-      const d = x * x + y * y;
-      if (d > lejos) { lejos = d; extremo = [x, y]; }
-    }
-    if (extremo) valores.push(extremo);
+  for (let i = 0; i < n; i++) {
+    const x = Number(lateral[i][1]), y = Number(longitudinal[i][1]);
+    if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
+    if (Math.abs(x) > tope) tope = Math.abs(x);
+    if (Math.abs(y) > tope) tope = Math.abs(y);
   }
-  if (!valores.length) return { puntos: [[90, 90]], maximo: PASOS_DE_LA_ESCALA_G[0] };
-  const maximo = escalaDelDiagramaG(tope);
-  /* Se devuelve tambien la escala: el punto del instante se coloca con las
-     aceleraciones interpoladas y tiene que caer en el mismo dibujo que la
-     estela, no en uno normalizado aparte. */
-  return {
-    /* Por `puntoDelDiagramaG` y no con la cuenta escrita aca: la estela, el
-       punto del instante y el sector tienen que caer en el mismo dibujo, y tres
-       copias de la misma formula se separan el dia que una cambie. Esta tenia el
-       eje lateral espejado. */
-    puntos: valores.map(p => {
-      const q = puntoDelDiagramaG(p[0], p[1], maximo);
-      return [q.x, q.y];
-    }),
-    maximo: maximo,
-  };
+  return { maximo: tope > 0 ? escalaDelDiagramaG(tope) : PASOS_DE_LA_ESCALA_G[0] };
 }
 
 /* HASTA DONDE LLEGA EL DIAGRAMA, Y ESCRITO.

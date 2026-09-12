@@ -199,7 +199,7 @@ const NOMBRES = [
   "panelEstaPresente",
   "renglonesDelPanelG",
   "escalaDelDiagramaG",
-  "puntoDelDiagramaG", "_estelaG",
+  "puntoDelDiagramaG", "escalaDeLaVuelta",
   "cifra",
   "hayCoordenadasMedidas", "porQueNoHayCoordenadas", "hayEjeDeDistancia",
   "ejeQueLaFuenteSostiene", "porQueNoHayDistancia", "hayVueltas",
@@ -221,7 +221,7 @@ const CONSTANTES = ["SENAL_DE", "SENAL_CAN", "SENAL_OPENF1",
                     "FUENTES",
                     "CANALES_POR_FUENTE",
                     "PASOS_DE_LA_ESCALA_G",
-                    "PUNTOS_DE_LA_ESTELA",
+                    "CENTRO_DEL_DIAGRAMA_G", "RADIO_DEL_DIAGRAMA_G",
                     "MUESTRAS_PARA_CONTRASTAR", "CORRELACION_QUE_CONVENCE",
                     "METRICAS"];
 
@@ -251,7 +251,6 @@ const sacadas = new Function(
   "let zoom = null;\n" +
   "let modoDetalle = true;\n" +
   constante("ZONA_MINIMA_PX") + "\n" + constante("ZONA_CON_ROTULO_PX") + "\n" +
-  constante("CENTRO_DEL_DIAGRAMA_G") + "\n" + constante("RADIO_DEL_DIAGRAMA_G") + "\n" +
   "const _fijar = { eje: v => { ejeComparacion = v; }," +
   "  alcance: v => { alcanceComparacion = v; }," +
   "  curvas: v => { CURVAS = v; }," +
@@ -307,7 +306,7 @@ const {
   panelEstaPresente,
   renglonesDelPanelG,
   escalaDelDiagramaG,
-  _estelaG,
+  escalaDeLaVuelta, puntoDelDiagramaG,
   cifra,
   COORDENADAS_POR_FUENTE, EJE_DE_DISTANCIA_POR_FUENTE,
   valoresSobreElRecorrido, tramosDelRecorrido, tintaDelValor,
@@ -315,8 +314,8 @@ const {
   CUERPO_DEL_ROTULO, METRICAS, TRAMOS_DE_LA_TRAZA,
   FUENTES: FUENTES_REALES,
   CANALES_POR_FUENTE,
-  PASOS_DE_LA_ESCALA_G,
-  PUNTOS_DE_LA_ESTELA,
+  PASOS_DE_LA_ESCALA_G, CENTRO_DEL_DIAGRAMA_G, RADIO_DEL_DIAGRAMA_G,
+
   MUESTRAS_PARA_CONTRASTAR, CORRELACION_QUE_CONVENCE,
 } = sacadas;
 
@@ -3351,11 +3350,12 @@ prueba("un coche de calle no se dibuja en la escala de uno de carrera", () => {
             "la escala se queda en el piso del simulador y la nube es un punto");
 });
 
-prueba("la estela conserva el extremo de la vuelta, que es lo que el dibujo dice", () => {
-  /* El defecto medido: tomando una muestra de cada tantas, los siete tramos del
-     bus perdian entre el 9 y el 32 % del extremo. En `sample_27` eso bajaba la
-     escala de 0,30 a 0,20 g y el punto del instante quedaba sujeto al borde,
-     mostrando pegado al limite un valor que no estaba en el limite. */
+prueba("un pico aislado no se pierde al medir el borde", () => {
+  /* El defecto medido cuando habia estela: tomando una muestra de cada tantas,
+     los siete tramos del bus perdian entre el 9 y el 32 % del extremo, y en
+     `sample_27` la escala bajaba de 0,30 a 0,20 g. Ya no hay decimacion ---se
+     recorre la vuelta entera--- y por eso mismo esta prueba se queda: es la que
+     dice que el borde sale de **todas** las muestras y no de algunas. */
   reiniciar();
   globalThis.fuente = "can";
   globalThis.canalesDeLaFuente = () => CANALES_POR_FUENTE.can;
@@ -3374,14 +3374,10 @@ prueba("la estela conserva el extremo de la vuelta, que es lo que el dibujo dice
                                  desde_utc: iso(T0), hasta_utc: iso(T0 + 60000) }];
   armarAutos([CAR19]);
 
-  const h = _estelaG(1);
+  const h = escalaDeLaVuelta(1);
   /* 4,45 m/s2 son 0,454 g: la escala tiene que ser 0,5 y no 0,1. */
   assert.strictEqual(h.maximo, 0.5,
-                     "la escala se midio sobre lo dibujado y no sobre la vuelta: " + h.maximo);
-  const radios = h.puntos.map(q => Math.hypot(q[0] - 90, q[1] - 90));
-  assert.ok(Math.max.apply(null, radios) > 55,
-            "el pico no llego a la estela: radio maximo " +
-            Math.max.apply(null, radios).toFixed(1) + " de 68");
+                     "el borde se midio sobre algunas muestras y no sobre la vuelta: " + h.maximo);
 });
 
 prueba("el borde lo declara la vuelta entera, no los puntos que se dibujaron", () => {
@@ -3405,7 +3401,7 @@ prueba("el borde lo declara la vuelta entera, no los puntos que se dibujaron", (
   globalThis.estado.vueltas = [{ numero: 1, duracion_s: 60,
                                  desde_utc: iso(T0), hasta_utc: iso(T0 + 60000) }];
   armarAutos([CAR19]);
-  const h = _estelaG(1);
+  const h = escalaDeLaVuelta(1);
   assert.strictEqual(h.maximo, 0.3,
                      "el borde se midio sobre lo dibujado: dice " + h.maximo +
                      " g y la vuelta llego a " + (2.06 / 9.80665).toFixed(3));
@@ -3429,7 +3425,7 @@ prueba("el punto del instante no queda sujeto al borde por una escala corta", ()
   globalThis.estado.vueltas = [{ numero: 1, duracion_s: 60,
                                  desde_utc: iso(T0), hasta_utc: iso(T0 + 60000) }];
   armarAutos([CAR19]);
-  const h = _estelaG(1);
+  const h = escalaDeLaVuelta(1);
   const pico = 2.05 / 9.80665;                 // 0,209 g
   assert.ok(h.maximo >= pico,
             "el borde vale " + h.maximo + " g y la vuelta llego a " + pico.toFixed(3));
@@ -3446,12 +3442,11 @@ prueba("una vuelta quieta no divide por cero ni se dibuja en escala de carrera",
   globalThis.estado.vueltas = [{ numero: 1, duracion_s: 1,
                                  desde_utc: iso(T0), hasta_utc: iso(T0 + 200) }];
   armarAutos([CAR19]);
-  const h = _estelaG(1);
+  const h = escalaDeLaVuelta(1);
   assert.ok(h.maximo > 0, "el borde vale cero y todo se divide por el");
-  assert.ok(h.puntos.every(q => Number.isFinite(q[0]) && Number.isFinite(q[1])));
 });
 
-prueba("sin aceleraciones la estela es un punto y no rompe", () => {
+prueba("sin aceleraciones el borde toma el paso mas chico y no rompe", () => {
   reiniciar();
   globalThis.fuente = "can";
   globalThis.canalesDeLaFuente = () => CANALES_POR_FUENTE.can;
@@ -3459,30 +3454,12 @@ prueba("sin aceleraciones la estela es un punto y no rompe", () => {
   globalThis.estado.vueltas = [{ numero: 1, duracion_s: 1,
                                  desde_utc: iso(T0), hasta_utc: iso(T0 + 100) }];
   armarAutos([CAR19]);
-  const h = _estelaG(1);
-  assert.deepStrictEqual(h.puntos, [[90, 90]]);
-  assert.ok(h.maximo > 0);
+  const h = escalaDeLaVuelta(1);
+  assert.strictEqual(h.maximo, PASOS_DE_LA_ESCALA_G[0],
+    "sin aceleraciones el borde no tomo el paso mas chico: " + h.maximo);
 });
 
-prueba("la estela no dibuja mas puntos de los que se distinguen", () => {
-  reiniciar();
-  globalThis.fuente = "can";
-  globalThis.canalesDeLaFuente = () => CANALES_POR_FUENTE.can;
-  const marcas = [], lat = [], lon = [], dist = [];
-  for (let i = 0; i < 3000; i++) {
-    marcas.push(i * 20); dist.push(i); lat.push(Math.sin(i / 50)); lon.push(Math.cos(i / 70));
-  }
-  cargarVuelta(1, marcas,
-               { distancia_m: dist, accel_lateral: lat, accel_longitudinal: lon },
-               { accel_lateral: "m/s^2", accel_longitudinal: "m/s^2" });
-  globalThis.estado.vueltas = [{ numero: 1, duracion_s: 60,
-                                 desde_utc: iso(T0), hasta_utc: iso(T0 + 60000) }];
-  armarAutos([CAR19]);
-  assert.ok(_estelaG(1).puntos.length <= PUNTOS_DE_LA_ESTELA,
-            "la estela paso de " + PUNTOS_DE_LA_ESTELA + " puntos y se vuelve una mancha");
-});
-
-prueba("la estela del bus se dibuja en la escala del bus", () => {
+prueba("el borde del bus sale en la escala del bus", () => {
   /* De punta a punta: la vuelta entra en m/s2, se convierte a g y el diagrama
      se ajusta a lo que hubo. Con el piso de 1 g heredado del simulador, la
      estela entera cabia en el 6 % del radio: un punto en el centro. */
@@ -3497,15 +3474,17 @@ prueba("la estela del bus se dibuja en la escala del bus", () => {
   globalThis.estado.vueltas = [{ numero: 1, duracion_s: 0.3,
                                  desde_utc: iso(T0), hasta_utc: iso(T0 + 300) }];
   armarAutos([CAR19]);
-  const h = _estelaG(1);
+  const h = escalaDeLaVuelta(1);
   assert.strictEqual(h.maximo, 0.1,
                      "el diagrama se dibujo en la escala de un coche de carrera: " + h.maximo);
-  /* Y los puntos usan el radio del dibujo, no una fraccion diminuta de el. */
-  const radios = h.puntos.map(q => Math.hypot(q[0] - 90, q[1] - 90));
-  assert.ok(Math.max.apply(null, radios) > 40,
-            "la estela entera quedo apretada en el centro: radio maximo " +
-            Math.max.apply(null, radios).toFixed(1) + " de 68");
-  assert.ok(Math.max.apply(null, radios) <= 68.01, "la estela se salio del dibujo");
+  /* Y el dibujo usa su radio entero: una fuerza igual al borde cae en el anillo
+     de afuera. Antes esto se comprobaba sobre los puntos de la estela; sin
+     estela, la afirmacion es la misma sobre la funcion que coloca. */
+  const q = puntoDelDiagramaG(h.maximo, 0, h.maximo);
+  const radio = Math.hypot(q.x - CENTRO_DEL_DIAGRAMA_G, q.y - CENTRO_DEL_DIAGRAMA_G);
+  assert.ok(Math.abs(radio - RADIO_DEL_DIAGRAMA_G) < 0.01,
+            "la vuelta del bus quedo apretada en el centro: radio " + radio.toFixed(1) +
+            " de " + RADIO_DEL_DIAGRAMA_G);
 });
 
 prueba("la escala sube por pasos redondos, para poder comparar dos vueltas", () => {
