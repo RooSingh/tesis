@@ -42,6 +42,38 @@ function extraer(nombre) {
   throw new Error("no cierra la funcion " + nombre);
 }
 
+/* EL ESTADO EN VIVO SE EXTRAE DE `app.js`, NO SE COPIA.
+
+   POR QUE SE CONVIRTIO. Este arnes tenia una copia a mano de `const vivo`, con
+   los cinco o seis campos que sus pruebas tocaban. Cada campo nuevo del objeto
+   real la dejaba vieja, y el reset de produccion ---que los limpia todos---
+   fallaba con «Cannot read properties of undefined (reading 'clear')»: un error
+   que **apunta al arnes y no al cambio**, de modo que cuesta encontrarlo.
+
+   Paso tres veces el 2026-09-12, con `marcaDePosicion`, `velocidadAnterior` y
+   `metroDePosicion`. `tests/js/aislamiento_de_sesiones.js` extraia el objeto en
+   vez de copiarlo y no tuvo el problema ninguna de las tres.
+
+   Se corta por el `\n};` de cierre y no contando llaves: los comentarios del
+   objeto tienen llaves adentro. */
+function nuevoVivo() {
+  const marca = "const vivo = {";
+  const desde = fuenteApp.indexOf(marca);
+  if (desde === -1) throw new Error("no esta `const vivo` en app.js");
+  const fin = fuenteApp.indexOf("\n};", desde);
+  if (fin === -1) throw new Error("no cierra `const vivo` en app.js");
+  const vivo = new Function(
+    "return " + fuenteApp.slice(desde + marca.length - 1, fin + 2))();
+  /* Si la extraccion se rompiera, un objeto vacio pasaria por bueno y las
+     pruebas dirian que todo anda. Son veintitres campos: se exige que sean
+     muchos, no cuantos, para no atarse al numero del dia. */
+  if (Object.keys(vivo).length < 10) {
+    throw new Error("se extrajo un `vivo` con " + Object.keys(vivo).length +
+                    " campos: la extraccion esta rota");
+  }
+  return vivo;
+}
+
 /* Las tablas de unidades tambien se sacan del archivo: escribirlas aca de nuevo
    dejaria pasar el dia en que alguien agregue un canal en milisegundos al
    `app.js` y no a la prueba.
@@ -98,15 +130,7 @@ globalThis.propioAMano = null;
 globalThis.TINTAS_DE_AUTO = ["--auto-1", "--auto-2", "--auto-3",
                              "--auto-4", "--auto-5", "--auto-6"];
 globalThis._tintaPorVehiculo = new Map();
-globalThis.vivo = { series: new Map(), ultimos: new Map(), recorrido: new Map(),
-                    distancia: new Map(), vuelta: new Map(),
-                    /* Copia a mano de `const vivo` de `app.js`: se
-                       desincroniza. Ver la nota de
-                       `tests/js/tiempo_de_presentacion.js`. */
-                    marcaDePosicion: new Map(),
-                    velocidadAnterior: new Map(),
-                    metroDePosicion: new Map(),
-                    recorridoDibujado: 0 };
+globalThis.vivo = nuevoVivo();
 globalThis.document = { getElementById: () => null };
 globalThis.seleccion = new Set();
 globalThis.CURVAS = [];
@@ -336,15 +360,7 @@ function reiniciar() {
   anotarParrillas(null, []);
   globalThis.corrida = { adquisicion: "original", fase: 3, disponibles: null, mezclada: false };
   globalThis.AUTOS = [];
-  globalThis.vivo = { series: new Map(), ultimos: new Map(), recorrido: new Map(),
-                      distancia: new Map(), vuelta: new Map(),
-                    /* Copia a mano de `const vivo` de `app.js`: se
-                       desincroniza. Ver la nota de
-                       `tests/js/tiempo_de_presentacion.js`. */
-                    marcaDePosicion: new Map(),
-                    velocidadAnterior: new Map(),
-                    metroDePosicion: new Map(),
-                    recorridoDibujado: 0 };
+  globalThis.vivo = nuevoVivo();
   globalThis.estadoSesion = "cargado";
   globalThis._selloSeries++;
   globalThis.cabezal = 0;

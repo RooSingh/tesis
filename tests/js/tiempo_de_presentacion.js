@@ -42,6 +42,38 @@ function extraer(nombre) {
   throw new Error("no cierra la funcion " + nombre);
 }
 
+/* EL ESTADO EN VIVO SE EXTRAE DE `app.js`, NO SE COPIA.
+
+   POR QUE SE CONVIRTIO. Este arnes tenia una copia a mano de `const vivo`, con
+   los cinco o seis campos que sus pruebas tocaban. Cada campo nuevo del objeto
+   real la dejaba vieja, y el reset de produccion ---que los limpia todos---
+   fallaba con «Cannot read properties of undefined (reading 'clear')»: un error
+   que **apunta al arnes y no al cambio**, de modo que cuesta encontrarlo.
+
+   Paso tres veces el 2026-09-12, con `marcaDePosicion`, `velocidadAnterior` y
+   `metroDePosicion`. `tests/js/aislamiento_de_sesiones.js` extraia el objeto en
+   vez de copiarlo y no tuvo el problema ninguna de las tres.
+
+   Se corta por el `\n};` de cierre y no contando llaves: los comentarios del
+   objeto tienen llaves adentro. */
+function nuevoVivo() {
+  const marca = "const vivo = {";
+  const desde = fuenteApp.indexOf(marca);
+  if (desde === -1) throw new Error("no esta `const vivo` en app.js");
+  const fin = fuenteApp.indexOf("\n};", desde);
+  if (fin === -1) throw new Error("no cierra `const vivo` en app.js");
+  const vivo = new Function(
+    "return " + fuenteApp.slice(desde + marca.length - 1, fin + 2))();
+  /* Si la extraccion se rompiera, un objeto vacio pasaria por bueno y las
+     pruebas dirian que todo anda. Son veintitres campos: se exige que sean
+     muchos, no cuantos, para no atarse al numero del dia. */
+  if (Object.keys(vivo).length < 10) {
+    throw new Error("se extrajo un `vivo` con " + Object.keys(vivo).length +
+                    " campos: la extraccion esta rota");
+  }
+  return vivo;
+}
+
 /* Las tablas del archivo, para no reescribirlas aca: `calcularInstante`
    pregunta por la unidad de lo que lee. */
 function constante(nombre) {
@@ -56,16 +88,7 @@ globalThis.estadoSesion = "cargado";
 globalThis.fuente = "f1";
 globalThis.cabezal = 0;
 globalThis.vueltaElegida = 1;
-/* OJO: esto es una copia a mano de `const vivo` de `app.js`, y se desincroniza.
-   Paso el 2026-09-12 al agregar `marcaDePosicion` y `velocidadAnterior`: el
-   reset de produccion las limpia y aca no existian, de modo que fallaba con
-   «Cannot read properties of undefined (reading 'clear')» ---un error que
-   apunta al arnes y no al cambio---. `tests/js/aislamiento_de_sesiones.js`
-   extrae el objeto de `app.js` en vez de copiarlo, y no tuvo el problema. */
-globalThis.vivo = { series: new Map(), ultimos: new Map(), recorrido: new Map(),
-                    marcaDePosicion: new Map(), velocidadAnterior: new Map(),
-                    metroDePosicion: new Map(),
-                    recorridoDibujado: 0 };
+globalThis.vivo = nuevoVivo();
 /* Lo minimo que `olvidarLoDeLaCorrida` ---el reset de produccion--- toca fuera
    del estado. Se lo deja hacer de verdad: sustituirlo por un reset propio es
    exactamente lo que impidio ver que no invalidaba las caches derivadas. */
