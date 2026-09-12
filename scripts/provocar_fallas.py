@@ -157,8 +157,17 @@ def main() -> int:
         print(f"  se borraron {borradas} filas de reproducciones anteriores")
 
 
+    # EL AVANCE SE SIGUE POR LAS METRICAS DEL CONSUMIDOR, NO PREGUNTANDOLE A LA
+    # BASE. Contar filas por `replay_run_id` recorre todas las particiones
+    # ---ese campo no es columna de segmentacion--- y con cuatrocientas mil filas
+    # cada consulta tarda minutos. Sondear asi hacia que el guion tardara mas en
+    # preguntar si termino que el sistema en terminar. El consumidor ya escribe
+    # cuantas persistio; leer un archivo es gratis.
+    metricas = Path("/tmp/provocar_fallas_metricas.json")
+    metricas.unlink(missing_ok=True)
     consumidor = subprocess.Popen(
-        [sys.executable, str(RAIZ / "scripts" / "run_mqtt_consumer.py")],
+        [sys.executable, str(RAIZ / "scripts" / "run_mqtt_consumer.py"),
+         "--metrics-file", str(metricas)],
         stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
     # El consumidor tarda en suscribirse. Publicar antes perderia los primeros
     # mensajes y el experimento informaria una perdida que no ocurrio en la
@@ -219,22 +228,19 @@ def main() -> int:
         if linea.startswith("publicados"):
             publicadas = linea.split(":", 1)[1].strip()
 
-    # SE ESPERA A QUE LA BASE DEJE DE CRECER, NO UN NUMERO FIJO DE SEGUNDOS.
-    #
-    # La primera version esperaba seis segundos y mataba al consumidor ahi. Con
-    # lotes de cinco mil y trescientas mil filas en cola, seis segundos lo cortan
-    # a mitad del vaciado: la corrida **sin falla** informaba 100.490 de 404.972
-    # filas, un setenta y cinco por ciento de perdida que no era del transporte
-    # sino de este guion. Una medicion que corta el experimento antes de que
-    # termine no mide el sistema: mide su propia impaciencia.
-    anterior, quieto, esperado = -1, 0, time.time() + 300
+    # SE ESPERA A QUE EL CONSUMIDOR DEJE DE PERSISTIR, no un numero fijo de
+    # segundos. La primera version esperaba seis y mataba al consumidor ahi: con
+    # lotes de cinco mil y trescientas mil filas en cola, eso lo corta a mitad
+    # del vaciado, y la corrida sin falla informaba un setenta y cinco por ciento
+    # de perdida que era de este guion. Una medicion que corta el experimento
+    # antes de que termine no mide el sistema: mide su propia impaciencia.
+    anterior, quieto, esperado = -1, 0, time.time() + 240
     while time.time() < esperado:
         time.sleep(3.0)
         try:
-            ahora = filas_de_la_corrida(session_id, run_id)["filas"] if (
-                session_id and run_id) else -1
+            ahora = json.loads(metricas.read_text()).get("persisted", -1)
         except Exception:                          # noqa: BLE001
-            ahora = -1                             # la base puede estar caida
+            ahora = -1                             # todavia no escribio ninguna
         if ahora >= 0 and ahora == anterior:
             quieto += 1
             if quieto >= 3:                        # nueve segundos sin moverse
@@ -242,7 +248,7 @@ def main() -> int:
         else:
             quieto = 0
         anterior = ahora
-    anotar("la base dejo de crecer")
+    anotar(f"el consumidor dejo de persistir en {anterior}")
     consumidor.terminate()
     salida_cons = ""
     try:
