@@ -467,6 +467,64 @@ const COORDENADAS_POR_FUENTE = {
    no se mostraba nunca ---tener la explicacion y no darla---. Si no vino, se
    cae en el motivo declarado para la fuente, y recien despues en la descripcion
    general de la fuente, que es la que describe una posicion medida. */
+/* QUE DICE EL ENCABEZADO DEL PANEL DE TRAZADO.
+
+   LA PREGUNTA ERA LA EQUIVOCADA. Esto decidia con `if (PISTA.largo_m)`, o sea
+   preguntaba «¿se cuantos metros mide?» y, cuando no lo sabia, respondia «sin
+   trazado» ---con el circuito dibujado justo debajo---. Son dos cosas
+   distintas: el dibujo sale de la **posicion** y el largo sale de la
+   **distancia de vuelta**, y hay fuentes que publican la primera y no la
+   segunda. El comentario de `COORDENADAS_POR_FUENTE` ya lo decia con todas las
+   letras, y advertia que decidirlo por el eje de distancia le quitaria el
+   trazado a OpenF1, que lo tiene. Esta funcion lo decidia asi igual.
+
+   Visto el 2026-09-11 sobre `openf1:session:9947`, pedido como lo pide el
+   tablero ---con la clave del vehiculo---: vuelta 21, 641 muestras, 321 puntos
+   y `largo_m: null`. Esa fuente guarda nueve señales y `lap_distance` no es una
+   de ellas, de modo que el largo no le falta a esa vuelta: no existe en la
+   fuente.
+
+   LA AUSENCIA SE DECLARA Y NO SE CALLA, pero solo cuando se sabe de quien es.
+   Si la fuente no publica distancia, la falta de largo es un hecho de la fuente
+   y se dice. Si la publica y este trazado igual no la trae, la falta es de esta
+   vuelta: se omite el largo y nada mas. Decir «sin metro medido» ahi seria
+   concluir sobre la fuente desde un solo trazado.
+
+   El motivo completo ---por que esa fuente no lo publica--- no entra en un
+   renglon y vive en el titulo del panel, que es donde ya estaba. */
+function queDiceElTrazado(pista, ctx) {
+  if (pista && pista.path) {
+    const partes = [];
+    if (pista.largo_m) partes.push(cifra(pista.largo_m, 0) + " m");
+    else if (!ctx.hayDistancia) partes.push("sin metro medido");
+    if (pista.desnivel_m) partes.push(cifra(pista.desnivel_m, 1) + " m de desnivel");
+    if (pista.muestras) partes.push(cifra(pista.muestras, 0) + " muestras");
+    /* De donde sale el dibujo. Un recorrido a medio medir y un circuito
+       completo se ven parecidos y no son lo mismo: el primero termina donde va
+       el coche y el segundo cierra. */
+    if (pista.enConstruccion) partes.push("recorrido en construcción, medido en vivo");
+    else if (pista.medidoEnVivo) partes.push("medido en vivo, primera vuelta cerrada");
+    /* Un recorrido derivado no se puede ver igual que uno medido. La forma sale
+       de integrar velocidad y guiñada, así que es fiel en su trazo y no dice
+       nada del sitio del mundo donde ocurrió. */
+    else if (pista.derivado) partes.push("forma derivada por integración, sin coordenadas");
+    /* Si la marca del vehiculo se esta dibujando entre dos muestras, se dice.
+       Es una representacion y no una medicion: el dato guardado y lo que se
+       exporta siguen siendo las muestras, sin tocar. */
+    if (ctx.interpolada) partes.push("posición interpolada entre muestras");
+    return partes.join(" · ");
+  }
+  if (ctx.estadoSesion === "vivo") {
+    /* En vivo, sin trazado todavia, la espera tiene una razon concreta y un
+       final: se esta midiendo. Decir «sin trazado» a secas se leeria como que
+       la fuente no lo publica, que es otra cosa. */
+    return ctx.posiciones
+      ? "midiendo el recorrido: " + cifra(ctx.posiciones, 0) + " posiciones"
+      : "esperando la primera posición del vehículo";
+  }
+  return ctx.fuente === "can" ? "recorrido reconstruido" : "sin trazado";
+}
+
 function explicacionDelTrazado() {
   if (PISTA.derivado) {
     const base = PISTA.advertencia || porQueNoHayCoordenadas();
@@ -1958,36 +2016,14 @@ function aplicarDisponibilidad() {
      una cifra escrita: el largo, el desnivel y cuantas muestras hubo detras
      del dibujo salen de la respuesta de la API. */
   const cabPista = document.getElementById("canal-pista");
-  if (PISTA.largo_m) {
-    const partes = [cifra(PISTA.largo_m, 0) + " m"];
-    if (PISTA.desnivel_m) partes.push(cifra(PISTA.desnivel_m, 1) + " m de desnivel");
-    if (PISTA.muestras) partes.push(cifra(PISTA.muestras, 0) + " muestras");
-    /* De donde sale el dibujo. Un recorrido a medio medir y un circuito
-       completo se ven parecidos y no son lo mismo: el primero termina donde va
-       el coche y el segundo cierra. */
-    if (PISTA.enConstruccion) partes.push("recorrido en construcción, medido en vivo");
-    else if (PISTA.medidoEnVivo) partes.push("medido en vivo, primera vuelta cerrada");
-    /* Un recorrido derivado no se puede ver igual que uno medido. La forma sale
-       de integrar velocidad y guiñada, así que es fiel en su trazo y no dice
-       nada del sitio del mundo donde ocurrió. */
-    else if (PISTA.derivado) partes.push("forma derivada por integración, sin coordenadas");
-    /* Si la marca del vehiculo se esta dibujando entre dos muestras, se dice.
-       Es una representacion y no una medicion: el dato guardado y lo que se
-       exporta siguen siendo las muestras, sin tocar. */
-    if (_huboInterpolacion) partes.push("posición interpolada entre muestras");
-    cabPista.textContent = partes.join(" · ");
-  } else if (estadoSesion === "vivo") {
-    /* En vivo, sin trazado todavia, la espera tiene una razon concreta y un
-       final: se esta midiendo. Decir «sin trazado» a secas se leeria como que
-       la fuente no lo publica, que es otra cosa. */
-    const clave = claveVehiculoPropio();
-    const n = (clave && vivo.recorrido.get(clave) || []).length;
-    cabPista.textContent = n
-      ? "midiendo el recorrido: " + cifra(n, 0) + " posiciones"
-      : "esperando la primera posición del vehículo";
-  } else {
-    cabPista.textContent = fuente === "can" ? "recorrido reconstruido" : "sin trazado";
-  }
+  const claveEnVivo = estadoSesion === "vivo" ? claveVehiculoPropio() : null;
+  cabPista.textContent = queDiceElTrazado(PISTA, {
+    hayDistancia: hayEjeDeDistancia(),
+    interpolada: _huboInterpolacion,
+    estadoSesion,
+    fuente,
+    posiciones: (claveEnVivo && vivo.recorrido.get(claveEnVivo) || []).length,
+  });
   const panelPista = cabPista.closest(".instrumento");
   if (panelPista) panelPista.title = explicacionDelTrazado();
 }
@@ -10631,7 +10667,13 @@ function moverCochesDelTrazadoGrande() {
 
    Es el mismo defecto que este tablero ya tuvo dos veces ---`estado.clima` y el
    pie de avisos---: dos escritores para un mismo dato. El arreglo es el mismo,
-   y es estructural: un solo constructor, y los dos sitios lo llaman. */
+   y es estructural: un solo constructor, y todos los sitios lo llaman.
+
+   Y quedo a medias: eran **tres** sitios, no dos, y `pedirTrazado` siguio
+   armandolo a mano hasta el 2026-09-11 mientras este comentario afirmaba lo
+   contrario. Por eso la prueba de `tests/js/lo_que_dice_el_trazado.js` cuenta
+   los constructores sobre el `app.js` publicado: un comentario que afirma una
+   invariante no la sostiene. */
 function armarPista(t, curvas) {
   const invertir = /invertir/i.test(t.para_dibujarlo || "") &&
                    !/no invertir/i.test(t.para_dibujarlo || "");
@@ -10769,36 +10811,13 @@ function pedirTrazado(ruta) {
       if (!t || !t.puntos || !t.puntos.length) { TESTIGO.trazadosDescartados++; return; }
       TESTIGO.trazadosAplicados++;
       estado.trazado = t;
-      const armado = trazadoAPath(t.puntos,
-        /invertir/i.test(t.para_dibujarlo || "") &&
-        !/no invertir/i.test(t.para_dibujarlo || ""));
-      PISTA = {
-        path: armado.path,
-        largo_m: t.largo_m,
-        desnivel_m: t.desnivel_m,
-        muestras: t.muestras_originales,
-        vuelta: t.vuelta,
-        curvas: CURVAS,
-        /* La transformacion que llevo estos puntos al dibujo, guardada. La
-           armaba `trazadoAPath` y este sitio la tiraba, de modo que una
-           coordenada medida no se podia poner sobre el trazo aunque se tuviera:
-           habia que conformarse con repartir la vuelta por tiempo. */
-        proyectarMundo: armado.proyectarMundo,
-        /* LOS SECTORES SON MEDICION, A DIFERENCIA DEL NOMBRE DE UNA CURVA.
-           El nombre no esta en ningun canal y viene del catalogo externo; el
-           limite de sector si esta en el dato, y cada fuente lo alcanza por su
-           dimension ---el simulador lo declara en cada muestra, la fuente
-           deportiva por las duraciones de la vuelta---. La respuesta trae
-           escrito cual de las dos, y se guarda para poder decirlo. */
-        sectores: t.sectores || [],
-        sectoresOrigen: t.sectores_origen || "",
-        /* Los puntos crudos, para poder orientar la marca de sector: una raya
-           sobre el trazo tiene que cruzarlo, y para eso hace falta saber hacia
-           donde va la pista en ese punto. */
-        puntos: t.puntos || [],
-        invertirY: /invertir/i.test(t.para_dibujarlo || "") &&
-                   !/no invertir/i.test(t.para_dibujarlo || ""),
-      };
+      /* EL TERCER SITIO. `armarPista` se extrajo porque habia dos copias y la
+         que ganaba no traia los sectores; este quedo armando el objeto a mano
+         igual, y el comentario de `armarPista` afirmaba que no quedaba
+         ninguno. Hoy los campos coinciden uno a uno ---se comprobo--- asi que
+         no llego a divergir, pero es exactamente la posicion desde la que ya
+         se rompio una vez: el proximo campo que se agregue alla no llega aca. */
+      PISTA = armarPista(t, CURVAS);
       const svg = document.getElementById("linea-pista");
       if (svg && svg.ownerSVGElement) delete svg.ownerSVGElement.dataset.reserva;
       const g = document.getElementById("marcas-pista");

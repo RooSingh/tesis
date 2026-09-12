@@ -319,6 +319,11 @@ class AyudantesDeSerieTests(unittest.TestCase):
 
         self._correr("de_cuando_es_este_valor.js")
 
+    def test_un_trazado_dibujado_no_se_anuncia_como_ausente(self) -> None:
+        """El encabezado decidia por el largo y negaba el dibujo sin el."""
+
+        self._correr("lo_que_dice_el_trazado.js")
+
     def test_el_trazado_grande_es_el_mismo_dibujo_escalado(self) -> None:
         """EL INVARIANTE QUE HACE QUE LA VISTA GRANDE SEA CONFIABLE.
 
