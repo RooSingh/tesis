@@ -5,7 +5,26 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Banco de instrumentos</title>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Saira+Condensed:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
-<link rel="stylesheet" href="styles.css">
+<!-- LA HOJA SE PIDE CON VERSION, POR LA MISMA RAZON QUE EL GUION.
+     El backend manda `Cache-Control: no-cache` ---ver `TableroQueSeRevalida`---
+     y eso alcanza contra el cache del navegador. No alcanza contra la red de
+     distribucion que hay delante: medido el 2026-09-12 sobre el sitio publico,
+     la respuesta llega con `cache-control: max-age=14400`, o sea cuatro horas de
+     hoja vieja puestas por el intermediario.
+
+     Y una hoja vieja con un guion nuevo es **peor que todo viejo**: el guion
+     escribe `--alto-de-fila` y anchos en unidades de ocho columnas, y la hoja
+     vieja dibuja cuatro. Se vio asi: la regla aplicada decia
+     «1.02fr 0.88fr 1.22fr 1.1fr» mientras el disco de la Raspberry y la
+     respuesta de la API ya tenian la nueva.
+
+     Una direccion que cambia no se puede servir de una entrada vieja. Se escribe
+     con `document.write` y no creando el elemento a mano para conservar la
+     semantica de la etiqueta que reemplaza: bloquea el analizador aca, en el
+     encabezado, de modo que la pagina no se dibuja sin estilos. -->
+<script>
+  document.write('<li' + 'nk rel="stylesheet" href="styles.css?v=' + Date.now() + '">');
+</script>
 </head>
 <body>
 

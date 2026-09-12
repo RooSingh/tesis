@@ -223,6 +223,36 @@ class DashboardFrontendTests(unittest.TestCase):
             "esta prueba dejo de proteger nada y hay que revisarla",
         )
 
+    def test_la_hoja_y_el_guion_se_piden_con_version(self) -> None:
+        """Una hoja vieja con un guion nuevo es peor que todo viejo.
+
+        El backend manda `Cache-Control: no-cache` y eso alcanza contra el cache
+        del navegador. No alcanza contra la red de distribucion que hay delante:
+        medido el 2026-09-12 sobre el sitio publico, la respuesta llega con
+        `cache-control: max-age=14400`. Cuatro horas de hoja vieja, puestas por
+        el intermediario y no por el origen.
+
+        Y las dos mitades no envejecen juntas. El guion ya se pedia con version,
+        asi que despues de un despliegue quedaba **guion nuevo sobre hoja
+        vieja**: el guion escribe anchos en unidades de ocho columnas y la hoja
+        vieja dibuja cuatro. Visto en pantalla, la regla aplicada decia
+        «1.02fr 0.88fr 1.22fr 1.1fr» con la hoja nueva ya en el disco de la
+        Raspberry y en la respuesta de la API.
+
+        Una direccion que cambia no se puede servir de una entrada vieja.
+        """
+        html = INDICE.read_text(encoding="utf-8")
+        for archivo in ("styles.css", "app.js"):
+            self.assertRegex(
+                html, re.escape(archivo) + r"\?v=' \+ Date\.now\(\)",
+                f"{archivo} se pide sin version: un despliegue no se ve hasta "
+                "que el intermediario decida soltarlo",
+            )
+        # Y ninguno queda enlazado ademas por su nombre pelado, que volveria a
+        # traer la copia vieja por la puerta de al lado.
+        self.assertNotIn('href="styles.css"', html)
+        self.assertNotIn('src="app.js"', html)
+
     def test_la_tabla_medida_no_pisa_la_tabla_declarada(self) -> None:
         """Son dos preguntas distintas y estaban en el mismo hueco.
 
