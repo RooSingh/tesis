@@ -2701,6 +2701,8 @@ function pintarClima() {
       : '<svg class="icono" viewBox="0 0 48 48" role="img" aria-label="Nubes">' +
         '<path d="M14 32 a8 8 0 0 1 1 -16 a11 11 0 0 1 20 4 a7 7 0 0 1 -1 12 z" fill="var(--texto-tenue)"></path></svg>';
 
+  const fClima = comoSeVe(d.frescura || "current", d.edad_s);
+
   const banderas = { "ninguna": "ok", "verde": "ok", "amarilla": "alerta",
                      "roja": "critico", "azul": "info" };
   const bandera = d.bandera_texto || "ninguna";
@@ -2719,7 +2721,18 @@ function pintarClima() {
     '<dl class="clima-rejilla">' +
       celdasDelClima(d).map(f => '<div><dt>' + textoSeguro(f[0]) + '</dt><dd>' +
         textoSeguro(f[1]).replace(/ /g, "&nbsp;") + '</dd></div>').join("") +
-    '</dl>';
+    '</dl>' +
+    /* DE CUANDO ES ESTE CLIMA. La respuesta lo trae resuelto en
+       `weather_freshness` desde que se conecto `context-at`, y hasta ahora el
+       tablero lo guardaba y no lo leia: el dato llegaba resuelto y se tiraba.
+
+       Se dice una vez para todo el panel, no en cada casilla: las siete
+       magnitudes vienen de la **misma** muestra de clima, asi que todas tienen
+       la misma edad y repetirla siete veces seria decir siete veces lo mismo. */
+    (fClima.sufijo || fClima.aclara
+      ? '<p class="frescura-panel" data-frescura="' + fClima.estado + '">' +
+        textoSeguro(fClima.aclara || fClima.sufijo) + '</p>'
+      : "");
 }
 
 /* LOS TRES RENGLONES DEL PANEL DE ACELERACIONES, CON EL NOMBRE DE LA SEÑAL QUE
@@ -9692,6 +9705,57 @@ function contextoDelPropio() {
 
 /* Cuanto hace que se declaro, en palabras y entre parentesis. Cadena vacia si
    no se sabe: un parentesis vacio en un titulo es peor que no ponerlo. */
+/* QUE TAN FRESCO ES UN VALOR DEL CONTEXTO, Y COMO SE DICE.
+   ---------------------------------------------------------------------
+   La API resuelve el estado y lo manda: `current`, `aged`, `held` o
+   `unavailable`. El tablero **no lo recalcula**, porque el umbral sale de la
+   cadencia de cada magnitud y esa cadencia la conoce quien la midio, no quien
+   la dibuja.
+
+   POR QUE NO ALCANZABA UN UMBRAL UNICO. Las magnitudes de esta fuente se
+   publican cada 8, 60 y 336 segundos. Con un corte unico de treinta, el clima
+   ---edad mediana 49 s--- se habria borrado siempre, y el puesto en cincuenta y
+   uno de cada sesenta instantes. Borrar un dato que la fuente declaro no es
+   conservador: afirma un desconocimiento que no existe.
+
+   `held` NO ES UN ESTADO DEGRADADO, y esta es la decision que mas importa de
+   todo esto. Atenuar significa «desconfia un poco de esto». Un puesto que la
+   fuente publica **al cambiar** no merece desconfianza entre dos cambios: es
+   exactamente lo que declaro y no ha cambiado. Lo que merece es una aclaracion
+   de cuando es, no una degradacion.
+
+   Se separa del DOM para poder ejercerla. */
+/* LA MARCA VISUAL VIVE EN LA HOJA, NO EN EL TEXTO. Primero el sostenido llevaba
+   un punto pegado al numero, y con la edad desconocida quedaba « ·» solo: un
+   caracter suelto que no dice nada. Una marca que depende de que haya otro dato
+   al lado no es una marca. La pone el estilo sobre `data-frescura`, que esta
+   siempre. */
+const FRESCURAS = {
+  current: { atenua: false, dice: "" },
+  held: {
+    atenua: false,
+    dice: "sostenido: la fuente lo publica al cambiar, no en cada muestra",
+  },
+  aged: { atenua: true, dice: "mas viejo que la cadencia de esta magnitud" },
+  unavailable: { atenua: false, dice: "" },
+};
+
+function comoSeVe(estado, segundos) {
+  const regla = FRESCURAS[estado];
+  if (!regla) return { estado: "current", atenua: false, sufijo: "", aclara: "" };
+  /* La edad se escribe **solo cuando deja de ser obvia**. En `current`, que es
+     el caso normal, una edad al lado de cada numero es ruido permanente para
+     decir que todo esta bien, y el tablero tiene ocho paneles. */
+  const edad = (estado === "held" || estado === "aged")
+    ? edadEnPalabras(segundos) : "";
+  return {
+    estado: estado,
+    atenua: regla.atenua,
+    sufijo: edad.replace(/^,\s*/, ""),
+    aclara: regla.dice + edad,
+  };
+}
+
 function edadEnPalabras(segundos) {
   /* `Number(null)` es cero, no un no-numero: sin esta linea una edad que no
      se sabe se anunciaba como «hace 0 s», que es la afirmacion contraria. */
@@ -9744,6 +9808,10 @@ function climaDeLaCarrera(w) {
           : "sin declarar";
   d.icono = w.rainfall === true ? "lluvia" : "nube";
   d.frescura = w.weather_freshness || null;
+  /* LA EDAD VIAJA CON LA FRESCURA. Se guardaba el estado y se tiraba el numero,
+     de modo que el panel podia decir «viejo» pero no de cuando. Un estado sin su
+     edad obliga a creerle al umbral sin poder juzgarlo. */
+  d.edad_s = w.weather_age_seconds !== undefined ? w.weather_age_seconds : null;
   return d;
 }
 
@@ -11679,6 +11747,15 @@ function pintarCronometraje() {
     if (medido === undefined) c.removeAttribute("data-medido");
     else c.dataset.medido = medido ? "si" : "no";
   };
+  /* La frescura va en un atributo aparte y no mezclada con `data-medido`: son
+     dos preguntas distintas ---«se midio o se estimo» y «de cuando es»--- y una
+     celda puede estar medida y vieja a la vez. */
+  const frescura = (id, estado) => {
+    const c = document.getElementById(id);
+    if (!c) return;
+    if (!estado) c.removeAttribute("data-frescura");
+    else c.dataset.frescura = estado;
+  };
 
   /* QUIEN. El nombre y el numero de carrera arriba, el equipo debajo: son las
      dos cosas que identifican a un piloto, y no son la misma. El indice
@@ -11711,8 +11788,18 @@ function pintarCronometraje() {
                     !!delContexto && delContexto.position_freshness === "held";
   const hayPuesto = puesto !== null && puesto !== undefined &&
                     Number.isFinite(Number(puesto)) && Number(puesto) >= 1;
+  /* La frescura la resuelve la API y el tablero la muestra. Sin contexto ---el
+     simulador, el bus--- no hay estado que mostrar y la celda no lleva marca. */
+  const fPuesto = comoSeVe(
+    hayPuesto ? ((delContexto && delContexto.position_freshness) ||
+                 (t.posicion !== null && t.posicion !== undefined ? "current" : "unavailable"))
+              : "unavailable",
+    delContexto && delContexto.position_age_seconds);
   pon("crono-posicion",
-      hayPuesto ? "P" + Math.round(Number(puesto)) : "—",
+      hayPuesto
+        ? "P" + Math.round(Number(puesto)) +
+          (fPuesto.sufijo ? '<span class="edad">' + textoSeguro(fPuesto.sufijo) + "</span>" : "")
+        : "—",
       !hayPuesto
         ? "La fuente no declara puesto en carrera en este instante"
         : sostenido
@@ -11720,6 +11807,7 @@ function pintarCronometraje() {
             edadEnPalabras(delContexto.position_age_seconds) +
             ". Esta fuente publica el puesto al cambiar, no en cada muestra."
           : "Puesto en carrera medido por la fuente en este instante");
+  frescura("crono-posicion", hayPuesto ? fPuesto.estado : null);
 
   /* EN QUE VUELTA. */
   pon("crono-vuelta",
@@ -11765,8 +11853,17 @@ function pintarCronometraje() {
     deLaCarrera = true;
   }
   const celdaDif = document.getElementById("crono-diferencia");
+  /* Solo la que viene del contexto tiene frescura declarada: la del propio
+     paquete de telemetria llega con cada muestra y no envejece aparte. */
+  const fDif = comoSeVe(
+    dif === null ? "unavailable"
+                 : (deLaCarrera && delContexto
+                      ? (delContexto.interval_freshness || "current") : "current"),
+    delContexto && delContexto.interval_age_seconds);
   pon("crono-diferencia",
-      dif === null ? "—" : textoSeguro(dif) + ' <span class="unidad">s</span>',
+      dif === null ? "—"
+        : textoSeguro(dif) + ' <span class="unidad">s</span>' +
+          (fDif.sufijo ? '<span class="edad">' + textoSeguro(fDif.sufijo) + "</span>" : ""),
       dif === null
         ? (enSegundos
             ? "La fuente no declara diferencia con el líder en este instante"
@@ -11775,6 +11872,7 @@ function pintarCronometraje() {
           ? "Diferencia con el líder declarada por la fuente (intervals)" +
             edadEnPalabras(delContexto.interval_age_seconds)
           : "Diferencia con el líder de la carrera (delta_to_race_leader)");
+  frescura("crono-diferencia", dif === null ? null : fDif.estado);
   if (celdaDif) {
     celdaDif.className = (dif !== null && crudo < 0) ? "negativo" : "";
   }
