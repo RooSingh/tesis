@@ -33,6 +33,7 @@ from fastapi import APIRouter, HTTPException
 
 from backend.analisis import (
     consistencia,
+    sectores,
     criticidad,
     degradacion,
     delta,
@@ -127,6 +128,25 @@ def listar_herramientas(fuente: str | None = None) -> dict[str, Any]:
             "requisitos": [_serializar(r) for r in getattr(h, "requisitos", ())],
         })
     return {"herramientas": salida, "cantidad": len(salida), "fuente_consultada": fuente}
+
+
+@router.get("/analisis/{session_id}/sectores")
+def analisis_sectores(session_id: str, vehiculos: str | None = None) -> Any:
+    """Tiempos por sector de cada vehiculo, y quien manda en cada tercio.
+
+    Contesta mas grueso que la traza de delta y se puede repetir de memoria
+    mirando la pista: «sos mejor en el 1 y te sacan medio segundo en el 2».
+    Trae ademas la **vuelta ideal** de cada uno ---la suma de sus mejores
+    sectores---, que no se corrio nunca y dice cuanto hay sobre la mesa sin
+    mejorar nada, solo repitiendo lo que ya se hizo.
+
+    LA CIFRA ES DERIVADA Y LO DICE. El simulador publica los tiempos exactos en
+    un paquete que no se persiste; estos salen del indice de sector muestreado,
+    con una incerteza de un intervalo de muestreo que viaja en la respuesta.
+    """
+    elegidos = tuple(v for v in (vehiculos or "").split(",") if v) or None
+    return _correr(sectores.extraer, _fuente_de(session_id), session_id,
+                   elegidos)
 
 
 @router.get("/analisis/{session_id}/vueltas")
