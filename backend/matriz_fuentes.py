@@ -95,12 +95,15 @@ MAGNITUDES: list[dict[str, Any]] = [
         "por_fuente": {
             "can_real_replay": "wheel_speed_front_left",
             "openf1_historical_replay": None,
-            "f1_25_udp_simulation": None,
+            "f1_25_udp_simulation": "wheel_speed_front_left",
         },
         "ausencias": {
             "openf1_historical_replay": "la interfaz publica no la expone",
-            "f1_25_udp_simulation": "el protocolo no publica velocidad por rueda",
         },
+        "nota": "la misma magnitud en unidades distintas: el bus la da en "
+                "kilometros por hora y el simulador en metros por segundo. Las "
+                "dos fuentes publican las cuatro esquinas; la matriz mide sobre "
+                "la delantera izquierda",
     },
     {
         "magnitud": "Aceleracion longitudinal",
@@ -135,11 +138,14 @@ MAGNITUDES: list[dict[str, Any]] = [
         "por_fuente": {
             "can_real_replay": "yaw_rate",
             "openf1_historical_replay": None,
-            "f1_25_udp_simulation": "yaw_rate_rads",
+            "f1_25_udp_simulation": "yaw_rate",
         },
         "ausencias": {
             "openf1_historical_replay": "la interfaz publica no la expone",
         },
+        "nota": "la misma magnitud en unidades distintas: el bus la da en grados "
+                "por segundo y el simulador en radianes por segundo. La unidad "
+                "no va en el nombre de la senal: viaja en cada fila",
     },
     {
         "magnitud": "Direccion",
