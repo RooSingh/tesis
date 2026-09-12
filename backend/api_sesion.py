@@ -58,7 +58,7 @@ DISTANCIA_POR_FUENTE = {
 
 #: POR QUE ESA FUENTE NO TIENE EJE DE DISTANCIA, UNA RAZON POR FUENTE.
 #:
-#: El mensaje era uno solo y explicaba el caso de OpenF1 ---los huecos de 83 m
+#: El mensaje era uno solo y explicaba el caso de OpenF1 ---los huecos de 1,3 s
 #: entre muestras---, y se devolvia igual para cualquier fuente sin distancia.
 #: Quien abria una captura del bus leia una explicacion sobre una fuente que no
 #: estaba usando, y ademas equivocada: en el bus el problema no es que el
@@ -66,8 +66,8 @@ DISTANCIA_POR_FUENTE = {
 #: corresponde es peor que no dar ninguno, porque manda a buscar donde no hay.
 SIN_DISTANCIA_PORQUE = {
     "openf1_historical_replay": (
-        "el muestreo de 3,7 Hz deja huecos de hasta 83 m entre muestras "
-        "---medido el 2026-09-06--- y el eje espacial no es defendible"),
+        "el muestreo de 3,7 Hz deja huecos de hasta 1,3 s entre muestras "
+        "---medido el 2026-09-12 sobre las dos sesiones cargadas, mas de 110 m a velocidad de recta--- y el eje espacial no es defendible"),
     "can_real_replay": (
         "el bus del vehiculo publica velocidad de rueda pero no odometro ni "
         "distancia de vuelta, de modo que no hay metro medido con el que "

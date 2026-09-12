@@ -46,6 +46,13 @@ from backend.analisis import (
 
 router = APIRouter()
 
+#: Cuantos sitios del trazado se devuelven con la traza.
+#:
+#: Tres es lo que entra en una frase que alguien pueda repetir de memoria
+#: mirando la pista. Con diez, la lista deja de ser un resumen y vuelve a ser
+#: la curva, que ya viaja entera al lado.
+ZONAS_QUE_SE_DEVUELVEN = 3
+
 #: La fuente se deduce del identificador, igual que en `api_sesion`.
 def _fuente_de(session_id: str) -> str:
     if session_id.startswith("f1_25:"):
@@ -196,9 +203,27 @@ def analisis_delta(session_id: str, vuelta_a: int, vuelta_b: int,
     Sin vehiculos son dos vueltas del coche que elige el contexto ---un piloto
     contra si mismo---. Nombrandolos, la misma vuelta de dos coches distintos,
     que es donde la pregunta «¿donde me saca tiempo?» tiene respuesta.
+
+    LAS ZONAS VIAJAN CON LA TRAZA, y hasta aqui no viajaban. El modulo sabia
+    calcular donde cambio de manos el tiempo y **nadie se lo pedia**: la curva
+    llegaba entera al tablero y la respuesta en una frase ---«perdes seis
+    decimas entre el metro 6.750 y el 6.790»--- se quedaba en el backend. Es la
+    misma clase de hueco que dejo trece señales fuera de la persistencia.
+
+    Se calculan aca y no en `comparar` porque cuantas se quieren es una
+    decision de quien pregunta, no de la medicion.
     """
-    return _correr(delta.comparar, _fuente_de(session_id), session_id,
-                   vuelta_a, vuelta_b, paso_m, None, vehiculo_a, vehiculo_b)
+    def con_sus_zonas():
+        traza = delta.comparar(_fuente_de(session_id), session_id,
+                               vuelta_a, vuelta_b, paso_m, None,
+                               vehiculo_a, vehiculo_b)
+        return {
+            **_serializar(traza),
+            "zonas": [_serializar(z) for z in
+                      delta.zonas_dominantes(traza, ZONAS_QUE_SE_DEVUELVEN)],
+        }
+
+    return _correr(con_sus_zonas)
 
 
 @router.get("/analisis/{session_id}/degradacion")

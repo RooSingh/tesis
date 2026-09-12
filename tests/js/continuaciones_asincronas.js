@@ -1528,7 +1528,7 @@ prueba("el bus no tiene eje de distancia, y se sabe por que", async (b) => {
   assert.ok(/odómetro/.test(b.porQueNoHayDistancia()), b.porQueNoHayDistancia());
   b.fijarFuente("openf1");
   assert.strictEqual(b.hayEjeDeDistancia(), false);
-  assert.ok(/83 m/.test(b.porQueNoHayDistancia()), b.porQueNoHayDistancia());
+  assert.ok(/1,3 s/.test(b.porQueNoHayDistancia()), b.porQueNoHayDistancia());
   b.fijarFuente("f1");
   assert.strictEqual(b.hayEjeDeDistancia(), true);
 });

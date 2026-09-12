@@ -301,9 +301,9 @@ MAGNITUDES: list[dict[str, Any]] = [
 EJE_DE_DISTANCIA = {
     "f1_25_udp_simulation": {"hay": True, "porque": ""},
     "openf1_historical_replay": {"hay": False, "porque":
-        "el muestreo de 3,7 Hz deja huecos de hasta 83 m entre muestras, y "
-        "sobre ese eje dos puntos vecinos no son dos lugares vecinos del "
-        "circuito"},
+        "el muestreo de 3,7 Hz deja huecos de hasta 1,3 s entre muestras, y a "
+        "velocidad de recta eso son más de 110 m: sobre ese eje dos puntos "
+        "vecinos no son dos lugares vecinos del circuito"},
     "can_real_replay": {"hay": False, "porque":
         "el bus publica velocidad de rueda pero no odómetro ni distancia de "
         "vuelta: no hay metro medido con el que ubicar una muestra en el "

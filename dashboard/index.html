@@ -731,7 +731,7 @@
               <tr><td>Acelerador y freno</td><td class="si">continuo</td><td class="parcial">continuo / binario</td><td class="parcial">binario</td><td><code>throttle_position</code>, <code>brake_position</code> vs <code>gas_pressed</code></td></tr>
               <tr><td>Motor y marcha</td><td class="si">sí</td><td class="si">sí</td><td class="no">no</td><td><code>engine_speed</code>, <code>gear_selected</code></td></tr>
               <tr><td>Trazado del circuito</td><td class="si">declarado</td><td class="si">declarado</td><td class="parcial">reconstruido</td><td><code>world_position_*</code>, <code>track_position_*</code></td></tr>
-              <tr><td><b>Comparación por distancia</b></td><td class="si">2,67 m entre muestras</td><td class="no">huecos de hasta 83 m</td><td class="no">sin distancia declarada</td><td><code>lap_distance</code></td></tr>
+              <tr><td><b>Comparación por distancia</b></td><td class="si">2,67 m entre muestras</td><td class="no">huecos de hasta 1,3 s · +110 m</td><td class="no">sin distancia declarada</td><td><code>lap_distance</code></td></tr>
               <tr data-panel="aceleraciones"><td>Aceleraciones</td><td class="si">3 ejes</td><td class="no">no</td><td class="parcial">2 ejes</td><td><code>g_force_vertical</code> solo en F1 25</td></tr>
               <tr><td>Dirección y ruedas</td><td class="si">sí</td><td class="no">no</td><td class="si">sí</td><td><code>steer_angle</code>, <code>wheel_speed_*</code></td></tr>
               <tr data-panel="vehiculo"><td>Neumáticos y frenos</td><td class="si">sí</td><td class="no">no</td><td class="no">no</td><td><code>tyre_*</code>, <code>brake_temperature_*</code></td></tr>
@@ -788,7 +788,8 @@
         </div>
         <p class="nota"><strong>La fila que cambia una decisión:</strong> la comparación por distancia se
         había descartado por medición propia, porque en OpenF1 el muestreo de 3,7 Hz deja huecos de hasta
-        83 m. En F1 25 la separación mediana entre muestras es de <b>2,67 m</b>, treinta y una veces menor.
+        1,3 s, que a velocidad de recta son más de <b>110 m</b>. En F1 25 la separación mediana entre
+        muestras es de <b>2,67 m</b>, cuarenta veces menor.
         El descarte vale para la fuente deportiva y no para la simulación.</p>
         <p class="nota"><strong>Biometría:</strong> las referencias visuales muestran pulso, respiración y
         estrés. Ninguna fuente los entrega, y dibujarlos con valores inventados sería lo que el trabajo

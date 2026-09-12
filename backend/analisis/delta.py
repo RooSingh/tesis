@@ -64,13 +64,22 @@ class SinTraza(Exception):
 
 
 @dataclass
-class Tramo:
-    """Un tramo del trazado y cuanto tiempo cambio de manos en el."""
+class Zona:
+    """Un sitio del trazado y cuanto tiempo cambio de manos en el.
+
+    UNA ZONA ES UN SITIO, NO UNA REBANADA. La rejilla mide diez metros y una
+    frenada ocupa varias: devolver los escalones sueltos hace que un mismo
+    evento aparezca tres veces en una lista de tres, y que los otros dos sitios
+    del circuito no aparezcan nunca.
+    """
 
     desde_m: float
     hasta_m: float
     #: Positivo: la primera vuelta perdio tiempo contra la segunda.
     delta_s: float
+    #: Cuantos escalones de la rejilla la componen. Es lo que permite saber si
+    #: la respuesta es una frenada larga o un unico salto de interpolacion.
+    pasos: int = 1
 
 
 @dataclass
@@ -308,24 +317,106 @@ def comparar(fuente: str, session_id: str, vuelta_a: int, vuelta_b: int,
     return traza
 
 
-def tramos_dominantes(traza: Traza, cuantos: int = 3) -> list[Tramo]:
-    """Los tramos donde mas tiempo cambio de manos.
+#: Por debajo de esto un escalon de la rejilla no cuenta como cambio.
+#:
+#: La traza se arma interpolando sobre una rejilla comun, y esa interpolacion
+#: tiene ruido propio: dos vueltas identicas no dan una recta perfecta. Es el
+#: piso absoluto, para que con dos vueltas casi iguales el umbral relativo de
+#: abajo no baje hasta el ruido.
+RUIDO_POR_PASO_S = 0.001
+
+#: Cuantas veces el escalon tipico tiene que valer un escalon para contar.
+#:
+#: LA CLAVE ES LA CONCENTRACION, NO EL SIGNO SOSTENIDO, y esto costo dos
+#: intentos. Juntar escalones contiguos del mismo signo ---que era lo evidente---
+#: sobre dos vueltas reales de Spa devolvia **un solo sitio de 1.730 metros**,
+#: un cuarto de vuelta: quien pierde tiempo lo pierde de a poco durante todo un
+#: sector, y ese hilo no se corta nunca. «Perdes dos segundos en un cuarto de
+#: vuelta» no dice donde trabajar, que es lo unico que esta herramienta tiene
+#: para dar.
+#:
+#: Medida la distribucion de los escalones de esa traza: mediana 6,3 ms cada
+#: diez metros, percentil 90 en 24,7 ms, percentil 99 en 128,6 ms. Cuatro veces
+#: la mediana cae justo sobre el percentil 90, o sea el diez por ciento de la
+#: vuelta donde el tiempo se mueve de verdad. Con eso los sitios salen de
+#: cincuenta a ciento noventa metros ---una frenada, una salida de curva--- y se
+#: reconocen en el circuito.
+#:
+#: Es relativo a la traza a proposito: sirve igual para dos vueltas separadas
+#: por una decima que por cinco segundos. Lo absoluto es el filtro final.
+FACTOR_DE_CONCENTRACION = 4.0
+
+#: Cuantos escalones flojos se toleran dentro de un mismo sitio.
+#:
+#: Una frenada no cambia el tiempo de manera pareja: tiene un escalon medio
+#: flojo en el medio. Sin tolerancia, ese escalon parte la frenada en dos
+#: respuestas que son la misma. Dos escalones son veinte metros.
+HUECO_TOLERADO_PASOS = 2
+
+
+def _mediana_de(valores: list[float]) -> float:
+    ordenados = sorted(valores)
+    n = len(ordenados)
+    if not n:
+        return 0.0
+    mitad = n // 2
+    return (ordenados[mitad] if n % 2
+            else (ordenados[mitad - 1] + ordenados[mitad]) / 2.0)
+
+
+def zonas_dominantes(traza: Traza, cuantas: int = 3,
+                     minimo_s: float = 0.05) -> list[Zona]:
+    """Los sitios del trazado donde mas tiempo cambio de manos.
 
     Es lo que hace util a la herramienta: no el total, que ya lo daba el
-    cronometro, sino **donde** se produjo. Se ordenan por magnitud del cambio y no
-    por signo, porque un tramo donde se gano medio segundo informa tanto como uno
+    cronometro, sino **donde** se produjo. Se ordenan por magnitud y no por
+    signo, porque un sitio donde se gano medio segundo informa tanto como uno
     donde se perdio.
+
+    QUE CUENTA COMO SITIO. Un escalon de la rejilla mide diez metros y no es un
+    sitio: devolver los escalones sueltos hacia que una lista de tres tuviera
+    tres pedazos de la misma frenada ---medido sobre Spa: 363-373, 373-383 y
+    413-423--- y que los otros sitios del circuito no aparecieran nunca.
+
+    Un sitio es donde el tiempo cambia **rapido** comparado con el resto de la
+    vuelta. Juntar por signo sostenido, que fue el primer arreglo, daba el error
+    opuesto: un solo sitio de mil setecientos metros.
+
+    El umbral es relativo a la traza y el filtro final es absoluto: lo primero
+    encuentra, lo segundo decide si vale la pena nombrarlo.
     """
 
     if len(traza.puntos) < 2:
         return []
-    tramos = [
-        Tramo(desde_m=traza.puntos[i][0], hasta_m=traza.puntos[i + 1][0],
-              delta_s=round(traza.puntos[i + 1][1] - traza.puntos[i][1], 4))
-        for i in range(len(traza.puntos) - 1)
-    ]
-    tramos.sort(key=lambda t: abs(t.delta_s), reverse=True)
-    return tramos[:cuantos]
+
+    cambios = [(traza.puntos[i][0], traza.puntos[i + 1][0],
+                traza.puntos[i + 1][1] - traza.puntos[i][1])
+               for i in range(len(traza.puntos) - 1)]
+    umbral = max(FACTOR_DE_CONCENTRACION * _mediana_de([abs(c[2]) for c in cambios]),
+                 RUIDO_POR_PASO_S)
+
+    zonas: list[Zona] = []
+    ultimo_i: int | None = None
+    for i, (desde, hasta, cambio) in enumerate(cambios):
+        if abs(cambio) < umbral:
+            continue
+        ultima = zonas[-1] if zonas else None
+        sigue = (ultima is not None
+                 and ultimo_i is not None
+                 and (i - ultimo_i) <= HUECO_TOLERADO_PASOS + 1
+                 and (cambio > 0) == (ultima.delta_s > 0))
+        if sigue:
+            ultima.hasta_m = hasta
+            ultima.delta_s = round(ultima.delta_s + cambio, 4)
+            ultima.pasos += 1
+        else:
+            zonas.append(Zona(desde_m=desde, hasta_m=hasta,
+                              delta_s=round(cambio, 4)))
+        ultimo_i = i
+
+    utiles = [z for z in zonas if abs(z.delta_s) >= minimo_s]
+    utiles.sort(key=lambda z: abs(z.delta_s), reverse=True)
+    return utiles[:cuantas]
 
 
 def resumen(traza: Traza) -> str:
@@ -337,9 +428,9 @@ def resumen(traza: Traza) -> str:
               f"sobre {traza.largo_comun_m:,.0f} m"]
     if traza.residuo_s is not None:
         partes.append(f"residuo contra el cronometro {traza.residuo_s:+.3f} s")
-    dominantes = tramos_dominantes(traza, 1)
+    dominantes = zonas_dominantes(traza, 1)
     if dominantes:
-        t = dominantes[0]
-        partes.append(f"el tramo mas caro va del metro {t.desde_m:,.0f} al "
-                      f"{t.hasta_m:,.0f} con {t.delta_s:+.3f} s")
+        z = dominantes[0]
+        partes.append(f"el sitio mas caro va del metro {z.desde_m:,.0f} al "
+                      f"{z.hasta_m:,.0f} con {z.delta_s:+.3f} s")
     return "; ".join(partes)

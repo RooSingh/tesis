@@ -61,10 +61,10 @@ from backend.analisis.vueltas import (  # noqa: F401
 )
 from backend.analisis.delta import (  # noqa: F401
     SinTraza,
-    Tramo,
     Traza,
+    Zona,
     comparar,
-    tramos_dominantes,
+    zonas_dominantes,
 )
 from backend.analisis.fases import (  # noqa: F401
     CurvaEnVuelta,

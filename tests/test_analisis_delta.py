@@ -304,29 +304,113 @@ class InterpolacionTest(unittest.TestCase):
         self.assertEqual([m[1] for m in limpio], [0.0, 50.0, 100.0])
 
 
-class TramosTest(unittest.TestCase):
+class ZonasTest(unittest.TestCase):
+    """Donde cambio de manos el tiempo, en sitios y no en rebanadas.
+
+    DOS ERRORES OPUESTOS, LOS DOS MEDIDOS SOBRE SPA. La primera version
+    devolvia los escalones de la rejilla ordenados por magnitud, y la rejilla
+    mide diez metros: los cinco primeros eran 6753-6763, 363-373, 373-383,
+    6763-6773 y 413-423 ---dos frenadas cortadas en pedazos, presentadas como
+    cinco sitios---. El arreglo evidente, juntar escalones contiguos del mismo
+    signo, dio el error contrario: **un solo sitio de 1.730 metros**, porque
+    quien pierde tiempo lo pierde de a poco durante todo un sector y ese hilo no
+    se corta.
+
+    Lo que define un sitio es la **concentracion**: donde el tiempo cambia
+    rapido comparado con el resto de la vuelta. Por eso los fixtures de aca
+    tienen un fondo de escalones flojos: sin el, no hay «resto de la vuelta»
+    contra el cual algo pueda destacarse, y una prueba sin fondo comprobaria una
+    regla que no es la que corre.
+    """
+
+    @staticmethod
+    def _traza(eventos, fondo=0.004, escalones=100):
+        """Una vuelta tranquila con los eventos que se le pidan.
+
+        `eventos` es {indice_del_escalon: cambio}. El fondo imita lo que pasa de
+        verdad entre dos vueltas parecidas: nunca cero, siempre un poco.
+        """
+        t = dl.Traza(session_id="s", fuente="f", vuelta_a=1, vuelta_b=2,
+                     paso_m=10.0)
+        puntos, acumulado = [(0.0, 0.0)], 0.0
+        for i in range(escalones):
+            acumulado += eventos.get(i, fondo)
+            puntos.append(((i + 1) * 10.0, round(acumulado, 6)))
+        t.puntos = puntos
+        return t
 
     def test_encuentra_donde_cambio_de_manos_el_tiempo(self):
-        traza = dl.Traza(session_id="s", fuente="f", vuelta_a=1, vuelta_b=2,
-                         paso_m=10.0)
-        traza.puntos = [(0.0, 0.0), (10.0, 0.01), (20.0, 0.71), (30.0, 0.72)]
-        peor = dl.tramos_dominantes(traza, 1)[0]
-        self.assertEqual((peor.desde_m, peor.hasta_m), (10.0, 20.0))
-        self.assertAlmostEqual(peor.delta_s, 0.70, places=3)
+        traza = self._traza({40: 0.30, 41: 0.25})
+        peor = dl.zonas_dominantes(traza, 1)[0]
+        self.assertEqual((peor.desde_m, peor.hasta_m), (400.0, 420.0))
+        self.assertAlmostEqual(peor.delta_s, 0.55, places=3)
 
-    def test_un_tramo_ganado_pesa_tanto_como_uno_perdido(self):
-        """Se ordena por magnitud y no por signo: los dos informan."""
+    def test_los_escalones_seguidos_son_un_sitio_y_no_tres(self):
+        """El primer defecto, escrito como prueba."""
+        traza = self._traza({10: 0.15, 11: 0.15, 12: 0.15})
+        zonas = dl.zonas_dominantes(traza, 3)
+        self.assertEqual(len(zonas), 1)
+        self.assertEqual((zonas[0].desde_m, zonas[0].hasta_m), (100.0, 130.0))
+        self.assertAlmostEqual(zonas[0].delta_s, 0.45, places=3)
+        self.assertEqual(zonas[0].pasos, 3)
 
-        traza = dl.Traza(session_id="s", fuente="f", vuelta_a=1, vuelta_b=2,
-                         paso_m=10.0)
-        traza.puntos = [(0.0, 0.0), (10.0, -0.90), (20.0, -0.85)]
-        peor = dl.tramos_dominantes(traza, 1)[0]
+    def test_una_perdida_pareja_y_larga_no_es_un_sitio(self):
+        """El segundo defecto, escrito como prueba.
+
+        Perder tres segundos repartidos parejo en toda la vuelta es una
+        afirmacion sobre la vuelta entera, no sobre un lugar. Decir «perdes tres
+        segundos entre el metro 0 y el 1.000» no le dice a nadie donde frenar
+        distinto.
+        """
+        traza = self._traza({}, fondo=0.03)
+        self.assertEqual(dl.zonas_dominantes(traza, 3), [])
+
+    def test_un_escalon_flojo_no_parte_una_frenada_en_dos(self):
+        """Una frenada tiene un escalon medio flojo en el medio."""
+        traza = self._traza({20: 0.20, 21: 0.01, 22: 0.22})
+        zonas = dl.zonas_dominantes(traza, 3)
+        self.assertEqual(len(zonas), 1)
+        self.assertEqual((zonas[0].desde_m, zonas[0].hasta_m), (200.0, 230.0))
+
+    def test_dos_sitios_lejos_son_dos_respuestas(self):
+        traza = self._traza({10: 0.40, 70: 0.60})
+        zonas = dl.zonas_dominantes(traza, 3)
+        self.assertEqual(len(zonas), 2)
+        self.assertEqual(zonas[0].desde_m, 700.0)
+        self.assertEqual(zonas[1].desde_m, 100.0)
+
+    def test_un_cambio_de_signo_corta_el_sitio(self):
+        """Perder y despues recuperar no es un solo sitio: son dos cosas.
+
+        Sumarlas las cancelaria hasta hacerlas desaparecer, que es la peor
+        manera de perder una respuesta: sin dejar rastro.
+        """
+        traza = self._traza({30: 0.40, 31: -0.50})
+        zonas = dl.zonas_dominantes(traza, 3)
+        self.assertEqual(len(zonas), 2)
+        self.assertAlmostEqual(zonas[0].delta_s, -0.50, places=3)
+        self.assertAlmostEqual(zonas[1].delta_s, 0.40, places=3)
+
+    def test_una_zona_ganada_pesa_tanto_como_una_perdida(self):
+        """Se ordena por magnitud y no por signo: las dos informan."""
+        traza = self._traza({50: -0.90})
+        peor = dl.zonas_dominantes(traza, 1)[0]
         self.assertAlmostEqual(peor.delta_s, -0.90, places=3)
 
-    def test_sin_puntos_no_hay_tramos(self):
-        traza = dl.Traza(session_id="s", fuente="f", vuelta_a=1, vuelta_b=2,
-                         paso_m=10.0)
-        self.assertEqual(dl.tramos_dominantes(traza), [])
+    def test_dos_vueltas_casi_iguales_no_producen_sitios(self):
+        """El umbral es relativo; el filtro final es absoluto.
+
+        Sin el filtro absoluto, cuatro veces la mediana de un ruido diminuto
+        sigue siendo diminuto, y la lista se llenaria de sitios de tres
+        milesimas.
+        """
+        traza = self._traza({10: 0.004, 40: 0.005}, fondo=0.0005)
+        self.assertEqual(dl.zonas_dominantes(traza, 3), [])
+
+    def test_sin_puntos_no_hay_zonas(self):
+        t = dl.Traza(session_id="s", fuente="f", vuelta_a=1, vuelta_b=2,
+                     paso_m=10.0)
+        self.assertEqual(dl.zonas_dominantes(t), [])
 
 
 class NegativasTest(unittest.TestCase):

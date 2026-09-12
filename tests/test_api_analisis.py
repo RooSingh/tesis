@@ -18,10 +18,11 @@ from unittest.mock import patch
 from fastapi import HTTPException
 
 from backend import api_analisis
+from backend.analisis import delta
 
 
 @dataclasses.dataclass
-class TramoFalso:
+class ParteFalsa:
     desde_m: float
     hasta_m: float
     delta_s: float
@@ -29,9 +30,16 @@ class TramoFalso:
 
 @dataclasses.dataclass
 class TrazaFalsa:
+    """Un anidado cualquiera para probar `_serializar`, no el contrato real.
+
+    Se llamaba `tramos` al campo de adentro y eso invitaba a leerlo como si la
+    traza de verdad lo tuviera. No lo tiene: lo que la ruta calcula y adjunta
+    son zonas, y eso se prueba aparte, contra la clase real.
+    """
+
     session_id: str
     fuente: str
-    tramos: list
+    partes: list
     vuelta_a: int = 3
     vuelta_b: int = 4
 
@@ -48,13 +56,13 @@ class SerializacionTests(unittest.TestCase):
 
     def test_una_estructura_anidada_llega_entera(self) -> None:
         traza = TrazaFalsa("s1", "f1_25_udp_simulation",
-                           [TramoFalso(0.0, 10.0, 0.12), TramoFalso(10.0, 20.0, -0.03)])
+                           [ParteFalsa(0.0, 10.0, 0.12), ParteFalsa(10.0, 20.0, -0.03)])
         d = api_analisis._serializar(traza)
         self.assertEqual(d["session_id"], "s1")
-        self.assertEqual(len(d["tramos"]), 2)
-        self.assertEqual(d["tramos"][0]["delta_s"], 0.12)
+        self.assertEqual(len(d["partes"]), 2)
+        self.assertEqual(d["partes"][0]["delta_s"], 0.12)
         # Los nombres son los del modulo, no unos nuevos inventados aca.
-        self.assertIn("desde_m", d["tramos"][0])
+        self.assertIn("desde_m", d["partes"][0])
 
     def test_los_tipos_simples_pasan_sin_tocar(self) -> None:
         self.assertEqual(api_analisis._serializar(3.5), 3.5)
@@ -85,10 +93,10 @@ class NegativaDeLaHerramientaTests(unittest.TestCase):
         self.assertIn("no declara distancia", caso.exception.detail["motivo"])
 
     def test_un_resultado_con_motivo_y_con_datos_no_se_toma_por_negativa(self) -> None:
-        """Una traza puede traer un motivo informativo y aun asi tener tramos."""
-        traza = TrazaFalsa("s1", "f1_25_udp_simulation", [TramoFalso(0.0, 10.0, 0.1)])
+        """Una traza puede traer un motivo informativo y aun asi tener datos."""
+        traza = TrazaFalsa("s1", "f1_25_udp_simulation", [ParteFalsa(0.0, 10.0, 0.1)])
         d = api_analisis._correr(lambda: traza)
-        self.assertEqual(len(d["tramos"]), 1)
+        self.assertEqual(len(d["partes"]), 1)
 
     def test_un_fallo_real_sale_como_500_y_no_se_disfraza(self) -> None:
         def revienta():
@@ -100,11 +108,78 @@ class NegativaDeLaHerramientaTests(unittest.TestCase):
         self.assertIn("la base no responde", caso.exception.detail)
 
 
+def _traza_vacia():
+    """Una traza real sin puntos, para las pruebas que solo miran la llamada.
+
+    Un doble hecho a mano dejo de servir el dia que la ruta empezo a derivar las
+    zonas de la traza: no tenia `puntos` y la ruta reventaba con un 500 que no
+    decia nada del defecto. Cuando la ruta usa la estructura, la prueba usa la
+    estructura.
+    """
+    return delta.Traza(session_id="s", fuente="f1_25_udp_simulation",
+                       vuelta_a=3, vuelta_b=4, paso_m=10.0)
+
+
+class ZonasEnLaRutaTests(unittest.TestCase):
+    """La ruta adjunta donde cambio de manos el tiempo.
+
+    Se prueba contra la clase **real** y no contra un doble: lo que se esta
+    comprobando es que la respuesta HTTP lleve las zonas, y un doble con un
+    campo `zonas` puesto a mano probaria que el doble lo tiene.
+    """
+
+    @staticmethod
+    def _traza_real():
+        """Una vuelta tranquila con una frenada y un sitio ganado mas lejos.
+
+        EL FONDO FLOJO NO ES RELLENO. Un sitio se define por concentrarse contra
+        el resto de la vuelta: sin escalones flojos alrededor no hay «resto», y
+        la prueba comprobaria una regla que no es la que corre.
+        """
+        t = delta.Traza(session_id="f1_25:session:7",
+                        fuente="f1_25_udp_simulation",
+                        vuelta_a=3, vuelta_b=4, paso_m=10.0)
+        eventos = {2: 0.20, 3: 0.20, 4: 0.20, 40: -0.45}
+        puntos, acumulado = [(0.0, 0.0)], 0.0
+        for i in range(60):
+            acumulado += eventos.get(i, 0.004)
+            puntos.append(((i + 1) * 10.0, round(acumulado, 6)))
+        t.puntos = puntos
+        t.delta_final_s = round(acumulado, 4)
+        return t
+
+    def test_la_respuesta_lleva_las_zonas(self) -> None:
+        with patch("backend.api_analisis.delta.comparar",
+                   return_value=self._traza_real()):
+            d = api_analisis.analisis_delta("f1_25:session:7", vuelta_a=3,
+                                            vuelta_b=4)
+        self.assertIn("zonas", d)
+        self.assertEqual(len(d["zonas"]), 2)
+
+    def test_la_frenada_llega_entera_y_no_en_rebanadas(self) -> None:
+        """Lo que hace util al resumen: tres escalones son un sitio."""
+        with patch("backend.api_analisis.delta.comparar",
+                   return_value=self._traza_real()):
+            d = api_analisis.analisis_delta("f1_25:session:7", vuelta_a=3,
+                                            vuelta_b=4)
+        perdida = [z for z in d["zonas"] if z["delta_s"] > 0][0]
+        self.assertEqual((perdida["desde_m"], perdida["hasta_m"]), (20.0, 50.0))
+        self.assertEqual(perdida["pasos"], 3)
+
+    def test_la_curva_sigue_llegando_entera(self) -> None:
+        """El resumen se agrega; no reemplaza a la medicion."""
+        with patch("backend.api_analisis.delta.comparar",
+                   return_value=self._traza_real()):
+            d = api_analisis.analisis_delta("f1_25:session:7", vuelta_a=3,
+                                            vuelta_b=4)
+        self.assertEqual(len(d["puntos"]), 61)
+
+
 class RutasTests(unittest.TestCase):
     """Cada ruta llama a su herramienta con la fuente deducida."""
 
     def test_delta_pasa_las_dos_vueltas_y_el_paso(self) -> None:
-        traza = TrazaFalsa("s", "f1_25_udp_simulation", [TramoFalso(0.0, 5.0, 0.01)])
+        traza = _traza_vacia()
         with patch("backend.api_analisis.delta.comparar", return_value=traza) as fn:
             api_analisis.analisis_delta("f1_25:session:7", vuelta_a=3, vuelta_b=4, paso_m=25.0)
         fn.assert_called_once_with("f1_25_udp_simulation", "f1_25:session:7",
@@ -116,7 +191,7 @@ class RutasTests(unittest.TestCase):
         Es la unica forma de equivocarse que no se ve en la respuesta: la traza
         sale igual de bien formada, comparando al mismo piloto consigo mismo.
         """
-        traza = TrazaFalsa("s", "f1_25_udp_simulation", [TramoFalso(0.0, 5.0, 0.01)])
+        traza = _traza_vacia()
         with patch("backend.api_analisis.delta.comparar", return_value=traza) as fn:
             api_analisis.analisis_delta("f1_25:session:7", vuelta_a=3, vuelta_b=3,
                                         vehiculo_a="veh:a", vehiculo_b="veh:b")

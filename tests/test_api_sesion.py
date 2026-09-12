@@ -70,7 +70,7 @@ class SeriesPorDistanciaTests(unittest.TestCase):
         with self.assertRaises(HTTPException) as caso:
             api_sesion.series_por_distancia("9939", senales="speed")
         self.assertEqual(caso.exception.status_code, 422)
-        self.assertIn("83 m", caso.exception.detail)
+        self.assertIn("1,3 s", caso.exception.detail)
 
     def test_exige_al_menos_una_senal(self) -> None:
         with self.assertRaises(HTTPException) as caso:
@@ -284,13 +284,13 @@ class SinEjeDeDistanciaTests(unittest.TestCase):
         self.assertIn("odometro", detalle)
         self.assertIn("can_real_replay", detalle)
         self.assertNotIn("OpenF1", detalle)
-        self.assertNotIn("83 m", detalle)
+        self.assertNotIn("1,3 s", detalle)
 
     def test_la_fuente_deportiva_sigue_explicando_sus_huecos(self) -> None:
         with self.assertRaises(HTTPException) as caso:
             api_sesion.series_por_distancia("9939", senales="speed")
         detalle = caso.exception.detail
-        self.assertIn("83 m", detalle)
+        self.assertIn("1,3 s", detalle)
         self.assertNotIn("odometro", detalle)
 
     def test_se_declara_que_no_es_un_fallo_reintentable(self) -> None:
@@ -518,7 +518,7 @@ class VueltasTests(unittest.TestCase):
         r = api_sesion.listar_vueltas("9939")
         self.assertEqual(r["vueltas"], [])
         self.assertIn("no tiene eje de distancia", r["motivo"])
-        self.assertIn("83 m", r["motivo"])
+        self.assertIn("1,3 s", r["motivo"])
 
     def test_marca_como_incompleta_una_vuelta_que_no_arranca_en_cero(self) -> None:
         """Un tramo no es una vuelta, y ofrecerlo para comparar seria enganoso."""

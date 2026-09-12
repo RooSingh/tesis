@@ -440,8 +440,9 @@ function enTandas(lista, cuantas, hacer) {
 const EJE_DE_DISTANCIA_POR_FUENTE = {
   f1: { hay: true, porque: "" },
   openf1: { hay: false, porque:
-    "el muestreo de 3,7 Hz deja huecos de hasta 83 m entre muestras, y sobre ese " +
-    "eje dos puntos vecinos no son dos lugares vecinos del circuito" },
+    "el muestreo de 3,7 Hz deja huecos de hasta 1,3 s entre muestras, y a " +
+    "velocidad de recta eso son más de 110 m: sobre ese eje dos puntos " +
+    "vecinos no son dos lugares vecinos del circuito" },
   can: { hay: false, porque:
     "el bus publica velocidad de rueda pero no odómetro ni distancia de vuelta: " +
     "no hay metro medido con el que ubicar una muestra en el circuito" },
@@ -700,7 +701,7 @@ const FUENTES = {
   openf1: {
     nombre: "OpenF1",
     tiene: new Set(),
-    pista: "track_position_x / track_position_y, declarados por la fuente. El muestreo de 3,7 Hz deja huecos de hasta 83 m entre muestras.",
+    pista: "track_position_x / track_position_y, declarados por la fuente. El muestreo de 3,7 Hz deja huecos de hasta 1,3 s entre muestras, más de 110 m a velocidad de recta.",
     accion: "Importar sesión", accionVivo: "Importar sesión",
     ingreso: "Se elige una sesión del catálogo y se descarga. No hay flujo en vivo: es reproducción en diferido.",
     motivos: {
@@ -7879,6 +7880,13 @@ function trazaDeDelta(sesion, vuelta, a, b, cuandoLlegue) {
    SE DIBUJA LO QUE LA TRAZA MIDIO Y NADA MAS. La traza llega sobre el tramo que
    las dos vueltas recorrieron a la vez; fuera de el una de las dos no fue
    medida y el delta no existe. No se completa hasta el borde del panel. */
+/* El delta de un sitio, con el signo puesto. Sin el, media perdida y media
+   ganancia se dibujan con el mismo rotulo y solo el color las distingue: quien
+   no distingue esos dos colores se queda sin la respuesta. */
+function conSignoDelta(v) {
+  return (v > 0 ? "+" : "\u2212") + cifra(Math.abs(v), 2) + " s";
+}
+
 function pintarPanelDeDelta(ctx, delta, y0, y1, margenIzq, ancho, xMin, xMax,
                             ids, paleta) {
   ctx.strokeStyle = tinta("--linea"); ctx.lineWidth = 1;
@@ -7913,12 +7921,46 @@ function pintarPanelDeDelta(ctx, delta, y0, y1, margenIzq, ancho, xMin, xMax,
   ctx.beginPath(); ctx.moveTo(margenIzq, cero); ctx.lineTo(margenIzq + ancho, cero); ctx.stroke();
   ctx.setLineDash([]);
 
+  /* ------------------------------------------------------------
+     DONDE CAMBIO DE MANOS EL TIEMPO, MARCADO SOBRE EL PROPIO EJE
+     ------------------------------------------------------------
+     La curva ya dice cuanto y donde, y hay que leerla entera para verlo. El
+     backend sabe cuales son los dos o tres sitios que explican casi todo, y
+     hasta ahora se lo quedaba: llegaba la curva y no el resumen.
+
+     VAN DEBAJO DE LA CURVA Y NO ENCIMA. Son el fondo contra el que se lee el
+     trazo; dibujadas despues lo taparian, que es como se pierde la medicion
+     por explicarla.
+
+     EL COLOR ES SEMANTICO Y NO DECORATIVO: el mismo que el tablero usa para
+     alerta y para bien, de modo que quien ya leyo un panel no tiene que
+     aprender otra clave. */
+  (delta.zonas || []).forEach(z => {
+    const x0 = px(Math.max(z.desde_m, xMin)), x1 = px(Math.min(z.hasta_m, xMax));
+    if (!(x1 > x0)) return;
+    ctx.fillStyle = tinta(z.delta_s > 0 ? "--alerta" : "--ok");
+    ctx.globalAlpha = 0.16;
+    ctx.fillRect(x0, y0 + 1, x1 - x0, y1 - y0 - 2);
+    ctx.globalAlpha = 1;
+  });
+
   ctx.strokeStyle = tinta("--acento"); ctx.lineWidth = 1.6;
   ctx.beginPath();
   puntos.forEach((p, i) => { const x = px(p[0]), y = py(p[1]);
                              if (i) ctx.lineTo(x, y); else ctx.moveTo(x, y); });
   ctx.stroke();
   ctx.lineWidth = 1;
+
+  /* El rotulo de cada sitio, al pie de su banda. Con la cifra puesta, la banda
+     deja de ser una mancha y pasa a ser una respuesta: «medio segundo aca». */
+  (delta.zonas || []).forEach(z => {
+    const x0 = px(Math.max(z.desde_m, xMin)), x1 = px(Math.min(z.hasta_m, xMax));
+    if (!(x1 - x0 > 26)) return;
+    ctx.fillStyle = tinta(z.delta_s > 0 ? "--alerta" : "--ok");
+    ctx.textAlign = "center";
+    ctx.fillText(conSignoDelta(z.delta_s), (x0 + x1) / 2, y1 - 4);
+    ctx.textAlign = "left";
+  });
 
   ctx.fillStyle = tinta("--texto-tenue");
   ctx.textAlign = "right";
