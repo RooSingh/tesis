@@ -311,22 +311,6 @@ EJE_DE_DISTANCIA = {
 }
 
 
-def eje_comun_de_distancia(fuente_a: str, fuente_b: str) -> dict:
-    """Si las dos fuentes admiten el mismo eje espacial, y si no, por que.
-
-    Alcanza con que a una le falte. Y el motivo que viaja es el de la que no lo
-    tiene, no una frase generica: «no hay eje comun» no le dice a nadie que el
-    problema es un hueco de ochenta y tres metros.
-    """
-
-    faltan = [f for f in (fuente_a, fuente_b)
-              if not EJE_DE_DISTANCIA.get(f, {"hay": True})["hay"]]
-    if not faltan:
-        return {"hay": True, "porque": ""}
-    return {"hay": False,
-            "porque": "; ".join(EJE_DE_DISTANCIA[f]["porque"] for f in faltan)}
-
-
 #: Ventana sobre la que se mide la frecuencia.
 #:
 #: Una frecuencia es una razon: medirla sobre un minuto da lo mismo que sobre

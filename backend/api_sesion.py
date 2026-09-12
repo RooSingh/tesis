@@ -35,7 +35,8 @@ from fastapi import APIRouter, HTTPException, Query
 
 from adapters import f1_25 as adaptador_f1_25
 from backend import (anotador_vivo, catalogo_curvas, catalogo_reglajes,
-                     catalogo_sesiones, db, f1_udp, procedencia_sesiones)
+                     catalogo_sesiones, db, f1_udp, matriz_fuentes,
+                     procedencia_sesiones)
 
 router = APIRouter()
 
@@ -64,14 +65,21 @@ DISTANCIA_POR_FUENTE = {
 #: estaba usando, y ademas equivocada: en el bus el problema no es que el
 #: muestreo sea pobre, es que **la senal no existe**. Un motivo que no
 #: corresponde es peor que no dar ninguno, porque manda a buscar donde no hay.
+#: EL HECHO NO SE ESCRIBE ACA: SE COMPONE. Este diccionario tenia los dos
+#: motivos escritos a mano, y eran una **tercera** copia de algo que ya estaba
+#: en la matriz de fuentes y en el tablero. Se vio el 2026-09-12 al corregir una
+#: cifra que estaba mal en los tres sitios: dos estaban atados por una prueba y
+#: este no, de modo que se podia corregir el hecho y dejar este mensaje
+#: diciendo lo viejo, sin que nada lo notara.
+#:
+#: Lo que sigue siendo de aca es la **coda**: el hecho dice por que la fuente no
+#: tiene metro medido; esta ruta agrega que, por eso, no va a devolver un eje.
+CODA_SIN_DISTANCIA = ". Por eso el eje espacial no es defendible"
+
 SIN_DISTANCIA_PORQUE = {
-    "openf1_historical_replay": (
-        "el muestreo de 3,7 Hz deja huecos de hasta 1,3 s entre muestras "
-        "---medido el 2026-09-12 sobre las dos sesiones cargadas, mas de 110 m a velocidad de recta--- y el eje espacial no es defendible"),
-    "can_real_replay": (
-        "el bus del vehiculo publica velocidad de rueda pero no odometro ni "
-        "distancia de vuelta, de modo que no hay metro medido con el que "
-        "ubicar una muestra en el circuito"),
+    fuente: declaracion["porque"] + CODA_SIN_DISTANCIA
+    for fuente, declaracion in matriz_fuentes.EJE_DE_DISTANCIA.items()
+    if not declaracion["hay"]
 }
 
 

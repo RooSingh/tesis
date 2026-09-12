@@ -92,21 +92,6 @@
   .eyebrow { margin: 0 0 2px; font-size: .68rem; font-weight: 600; letter-spacing: .14em; text-transform: uppercase; color: var(--texto-tenue); }
   .grupo-control { display: flex; align-items: center; gap: 8px; }
 
-  /* Un enlace de navegacion en la barra. Se viste como los botones
-     segmentados de al lado ---mismo alto, mismo borde, mismo hueco--- porque
-     esta en la misma fila y ocupa el mismo lugar; con otra forma se leeria
-     como un elemento suelto. No es un boton: navega, y por eso es un enlace
-     de verdad y se puede abrir en otra pestana. */
-  .enlace-de-barra {
-    display: inline-flex; align-items: center; padding: 6px 11px;
-    border: 1px solid var(--linea); border-radius: 10px;
-    background: var(--superficie-hueca); color: var(--texto-medio);
-    text-decoration: none; font-size: .82rem; font-weight: 600;
-    white-space: nowrap;
-  }
-  .enlace-de-barra:hover { color: var(--texto); border-color: var(--linea-fuerte); }
-  .enlace-de-barra:focus-visible { outline: 2px solid var(--acento); outline-offset: 2px; }
-
   .segmentado { display: flex; padding: 3px; gap: 3px; border: 1px solid var(--linea); border-radius: 10px; background: var(--superficie-hueca); }
   .segmentado button {
     padding: 7px 13px; border: 0; border-radius: 7px; background: transparent; color: var(--texto-medio);
@@ -454,73 +439,6 @@
   table.disponibilidad td:first-child { font-weight: 600; }
   td.si { color: var(--ok); font-weight: 600; } td.parcial { color: var(--alerta); font-weight: 600; } td.no { color: var(--texto-tenue); }
   table.disponibilidad code { font-family: var(--cifra); font-size: .72rem; color: var(--texto-medio); }
-
-  /* LA COMPARACION ENTRE FUENTES.
-     Hereda el aspecto de las otras dos tablas del cierre a proposito: son la
-     misma clase de afirmacion ---que sostiene cada fuente--- y verlas distintas
-     las leeria como piezas separadas. Lo unico propio es el selector de
-     circuito y que la columna del motivo respire, porque son frases y no
-     celdas de si o no. */
-  table.disponibilidad.entre-fuentes td.nota { font-weight: 400;
-    color: var(--texto-tenue); font-size: .76rem; line-height: 1.35; }
-  table.disponibilidad.entre-fuentes td:first-child { white-space: nowrap; }
-  /* ============================================================
-     LA PAGINA DE CONTRASTE ENTRE FUENTES
-     ------------------------------------------------------------
-     Vive en esta hoja y no en una propia a proposito: es el mismo trabajo
-     visto de otro lado y comparte los colores, la tipografia y la tabla. Una
-     segunda hoja obligaria a mantener dos paletas que tienen que coincidir.
-     ============================================================ */
-  .pagina-comparar { padding: 0; }
-  .cabecera-comparar { max-width: 1280px; margin: 0 auto;
-    padding: 28px 24px 8px; }
-  .cabecera-comparar .bajada { margin: 12px 0 0; max-width: 62ch; line-height: 1.55;
-    color: var(--texto-medio); }
-  .cuerpo-comparar { max-width: 1280px; margin: 0 auto; padding: 8px 24px 48px; }
-
-  /* Los mandos en fila, y que bajen a columna cuando no entran. El circuito
-     manda sobre los otros dos y por eso va primero y separado. */
-  .mandos-comparar { display: flex; flex-direction: row; flex-wrap: wrap;
-    gap: 14px; align-items: flex-start; margin: 18px 0 14px; }
-  .mandos-comparar .mando { display: flex; flex-direction: column; gap: 4px; }
-  .mandos-comparar label, .mandos-comparar .eyebrow { font-family: var(--titulo);
-    font-size: .7rem; letter-spacing: .09em; text-transform: uppercase;
-    color: var(--texto-tenue); margin: 0; }
-  .mandos-comparar select { font: inherit; font-size: .82rem; color: var(--texto);
-    background: var(--superficie-2); padding: 6px 9px; border-radius: 6px;
-    border: 1px solid var(--linea); max-width: 22rem; }
-  .lado-comparar { display: flex; flex-direction: column; gap: 8px;
-    padding: 10px 14px; border: 1px solid var(--linea); border-radius: 10px;
-    background: var(--superficie); }
-
-  /* Quien contra quien. Es lo primero que hay que poder leer y por eso es lo
-     mas grande de la pagina despues del titulo. */
-  .quien-contra-quien { display: flex; flex-direction: row; flex-wrap: wrap;
-    align-items: baseline; gap: 10px; margin: 20px 0 10px; }
-  .quien-contra-quien .lado-nombre { font-family: var(--titulo); font-size: 1.05rem;
-    font-weight: 600; color: var(--texto); }
-  .quien-contra-quien .contra, .quien-contra-quien .en-circuito {
-    font-size: .8rem; color: var(--texto-tenue); }
-
-  .estado-comparar { margin: 10px 0; }
-
-  /* Las salvedades en tarjetas y no en un parrafo corrido: son cuatro cosas
-     distintas y en un parrafo la cuarta no se lee. */
-  .limites-comparar { display: grid; gap: 12px; margin: 18px 0 0;
-    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); }
-  .limites-comparar .salvedad { padding: 12px 14px; border-radius: 10px;
-    border: 1px solid var(--linea); background: var(--superficie); }
-  .limites-comparar .salvedad p { margin: 0; line-height: 1.5;
-    color: var(--texto-medio); font-size: .82rem; }
-  .limites-comparar .salvedad .eyebrow { margin: 0 0 4px; font-size: .68rem;
-    letter-spacing: .09em; text-transform: uppercase; color: var(--texto-tenue); }
-
-  @media (max-width: 700px) {
-    .cabecera-comparar, .cuerpo-comparar { padding-left: 16px; padding-right: 16px; }
-    .mandos-comparar { flex-direction: column; }
-    .mandos-comparar select { max-width: 100%; width: 100%; }
-    .lado-comparar { width: 100%; }
-  }
 
   .nota { margin: 10px 0 0; color: var(--texto-medio); font-size: .82rem; max-width: 82ch; }
   .nota code { font-family: var(--cifra); font-size: .76rem; color: var(--acento); }

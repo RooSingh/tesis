@@ -281,7 +281,7 @@ class SinEjeDeDistanciaTests(unittest.TestCase):
             api_sesion.series_por_distancia("can:segmento:sample_01", senales="speed")
         detalle = caso.exception.detail
         self.assertEqual(caso.exception.status_code, 422)
-        self.assertIn("odometro", detalle)
+        self.assertIn("odómetro", detalle)
         self.assertIn("can_real_replay", detalle)
         self.assertNotIn("OpenF1", detalle)
         self.assertNotIn("1,3 s", detalle)
@@ -291,7 +291,7 @@ class SinEjeDeDistanciaTests(unittest.TestCase):
             api_sesion.series_por_distancia("9939", senales="speed")
         detalle = caso.exception.detail
         self.assertIn("1,3 s", detalle)
-        self.assertNotIn("odometro", detalle)
+        self.assertNotIn("odómetro", detalle)
 
     def test_se_declara_que_no_es_un_fallo_reintentable(self) -> None:
         """Mover el cabezal mil veces no hace que el bus declare distancia."""
@@ -305,12 +305,12 @@ class SinEjeDeDistanciaTests(unittest.TestCase):
         """Tres rutas contestaban lo mismo con tres textos distintos."""
         r = api_sesion.listar_vueltas("can:segmento:sample_01")
         self.assertEqual(r["vueltas"], [])
-        self.assertIn("odometro", r["motivo"])
+        self.assertIn("odómetro", r["motivo"])
 
     def test_las_posiciones_tambien(self) -> None:
         with self.assertRaises(HTTPException) as caso:
             api_sesion.posiciones_en_pista("can:segmento:sample_01", vuelta=1)
-        self.assertIn("odometro", caso.exception.detail)
+        self.assertIn("odómetro", caso.exception.detail)
 
     def test_una_fuente_sin_motivo_escrito_no_inventa_uno(self) -> None:
         self.assertIn("no declara distancia recorrida",
