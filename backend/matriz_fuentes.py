@@ -79,6 +79,17 @@ FUENTES = [
 #:
 #: Donde una fuente no publica la magnitud va el motivo, y los motivos se
 #: distinguen: no tenerlo el vehiculo no es lo mismo que no exponerlo la interfaz.
+#: DOS LLAVES QUE DECIDEN SI DOS FUENTES SE PUEDEN RESTAR.
+#:
+#: `naturalezas` dice **que clase de valor** publica cada fuente cuando no es una
+#: cifra continua: `si_no` para un booleano y `codigo` para un identificador de
+#: estado. Estaba dicho en prosa, en las notas ---«solo el simulador entrega
+#: intensidad»---, y una nota no la puede leer quien decide si restar. Sin
+#: declarar, se asume `cifra`.
+#:
+#: `marco_propio` dice que cada fuente la expresa en **su** sistema, de modo que
+#: las cifras no son comparables entre fuentes aunque compartan unidad: la
+#: posicion en el trazado y el angulo de direccion son los dos casos.
 MAGNITUDES: list[dict[str, Any]] = [
     {
         "magnitud": "Velocidad del vehiculo",
@@ -158,6 +169,8 @@ MAGNITUDES: list[dict[str, Any]] = [
         "ausencias": {
             "openf1_historical_replay": "la interfaz publica no la expone",
         },
+        "marco_propio": "el bus la da en grados y el simulador normalizada entre "
+                        "menos uno y uno: la forma se compara, la escala no",
         "nota": "el bus la da en grados y el simulador normalizada entre menos "
                 "uno y uno: comparables en forma, no en escala",
     },
@@ -168,6 +181,10 @@ MAGNITUDES: list[dict[str, Any]] = [
             "can_real_replay": "brake_pressed",
             "openf1_historical_replay": "brake_applied",
             "f1_25_udp_simulation": "brake_position",
+        },
+        "naturalezas": {
+            "can_real_replay": "si_no",
+            "openf1_historical_replay": "si_no",
         },
         "nota": "solo el simulador entrega intensidad; las otras dos publican si "
                 "el freno esta aplicado o no",
@@ -180,6 +197,7 @@ MAGNITUDES: list[dict[str, Any]] = [
             "openf1_historical_replay": "throttle_position",
             "f1_25_udp_simulation": "throttle_position",
         },
+        "naturalezas": {"can_real_replay": "si_no"},
         "nota": "el bus publica un booleano; las otras dos, porcentaje",
     },
     {
@@ -245,6 +263,8 @@ MAGNITUDES: list[dict[str, Any]] = [
         "ausencias": {
             "can_real_replay": "el conjunto es anonimo y no publica localizacion",
         },
+        "marco_propio": "cada fuente la publica en su propio sistema de "
+                        "coordenadas, con otro origen y otra orientacion",
     },
     {
         "magnitud": "Aleron movil",
@@ -257,10 +277,54 @@ MAGNITUDES: list[dict[str, Any]] = [
         "ausencias": {
             "can_real_replay": "el vehiculo no lo tiene",
         },
+        "naturalezas": {
+            "openf1_historical_replay": "codigo",
+            "f1_25_udp_simulation": "si_no",
+        },
         "nota": "el simulador lo entrega como booleano documentado y la fuente "
                 "deportiva como codigo de estado con valores indeterminados",
     },
 ]
+
+
+#: QUE FUENTE PUBLICA DISTANCIA RECORRIDA, Y POR QUE LAS OTRAS NO.
+#:
+#: Es lo que decide si dos fuentes se pueden alinear sobre el circuito o solo
+#: comparar en conjunto. Sin metro medido no hay eje espacial, y entonces la
+#: unica comparacion honesta es la de los valores alcanzados y su frecuencia.
+#:
+#: EL MISMO HECHO ESTA ESCRITO EN EL TABLERO, en `EJE_DE_DISTANCIA_POR_FUENTE`,
+#: porque el panel de trazado tiene que poder explicar la ausencia sin esperar a
+#: que la API falle. Dos copias de un hecho es una de mas, y mientras no se
+#: unifiquen hay una prueba que compara las dos y cae si se separan: una
+#: duplicacion vigilada no es lo mismo que una duplicacion.
+EJE_DE_DISTANCIA = {
+    "f1_25_udp_simulation": {"hay": True, "porque": ""},
+    "openf1_historical_replay": {"hay": False, "porque":
+        "el muestreo de 3,7 Hz deja huecos de hasta 83 m entre muestras, y "
+        "sobre ese eje dos puntos vecinos no son dos lugares vecinos del "
+        "circuito"},
+    "can_real_replay": {"hay": False, "porque":
+        "el bus publica velocidad de rueda pero no odómetro ni distancia de "
+        "vuelta: no hay metro medido con el que ubicar una muestra en el "
+        "circuito"},
+}
+
+
+def eje_comun_de_distancia(fuente_a: str, fuente_b: str) -> dict:
+    """Si las dos fuentes admiten el mismo eje espacial, y si no, por que.
+
+    Alcanza con que a una le falte. Y el motivo que viaja es el de la que no lo
+    tiene, no una frase generica: «no hay eje comun» no le dice a nadie que el
+    problema es un hueco de ochenta y tres metros.
+    """
+
+    faltan = [f for f in (fuente_a, fuente_b)
+              if not EJE_DE_DISTANCIA.get(f, {"hay": True})["hay"]]
+    if not faltan:
+        return {"hay": True, "porque": ""}
+    return {"hay": False,
+            "porque": "; ".join(EJE_DE_DISTANCIA[f]["porque"] for f in faltan)}
 
 
 #: Ventana sobre la que se mide la frecuencia.

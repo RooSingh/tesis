@@ -31,8 +31,10 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException
 
+from backend import db
 from backend.analisis import (
     consistencia,
+    entre_fuentes,
     criticidad,
     degradacion,
     delta,
@@ -120,6 +122,56 @@ def listar_herramientas(fuente: str | None = None) -> dict[str, Any]:
             "requisitos": [_serializar(r) for r in getattr(h, "requisitos", ())],
         })
     return {"herramientas": salida, "cantidad": len(salida), "fuente_consultada": fuente}
+
+
+@router.get("/analisis/entre-fuentes/circuitos")
+def entre_fuentes_circuitos() -> dict[str, Any]:
+    """Donde se puede comparar una fuente contra otra, y donde no.
+
+    SE CONSULTA ANTES QUE LA COMPARACION, y no es una comodidad de la interfaz.
+    Que dos fuentes tengan datos del mismo circuito es una pregunta de medicion:
+    el 2026-09-12, antes de descargar nada, la respuesta era **cero** ---la unica
+    sesion deportiva cargada era Silverstone y ninguna de las veinticuatro
+    capturas del simulador era de ahi---. Ofrecer la comparacion sin esto la
+    habria estrenado vacia y sin explicar por que.
+    """
+    with db.obtener_conexion() as con, con.cursor() as cur:
+        return entre_fuentes.circuitos_comunes(cur)
+
+
+def _lado_de(session_id: str, vehiculo: str | None, ubicacion: dict) -> dict:
+    donde = ubicacion.get(session_id) or {}
+    return {"fuente": _fuente_de(session_id), "session_id": session_id,
+            "vehiculo": vehiculo, "circuito": donde.get("circuito"),
+            "circuito_nombre": donde.get("circuito_nombre")}
+
+
+@router.get("/analisis/entre-fuentes")
+def entre_fuentes_comparar(a: str, b: str,
+                           vehiculo_a: str | None = None,
+                           vehiculo_b: str | None = None) -> Any:
+    """Enfrenta dos sesiones de dos fuentes, magnitud por magnitud.
+
+    El circuito de cada lado no lo pasa quien consulta: se resuelve aca, desde
+    la tabla de contexto de la fuente deportiva y desde el identificador de
+    pista de la captura del simulador. Dejarselo al cliente permitiria declarar
+    que dos sesiones son del mismo circuito sin que lo sean, que es exactamente
+    la afirmacion que esta comparacion tiene que poder desmentir.
+    """
+    with db.obtener_conexion() as con, con.cursor() as cur:
+        inventario = entre_fuentes.circuitos_comunes(cur)
+        ubicacion = {}
+        for c in inventario["circuitos"]:
+            for sesiones in c["por_fuente"].values():
+                for s in sesiones:
+                    ubicacion[s["session_id"]] = c
+        try:
+            return entre_fuentes.comparar(
+                cur,
+                _lado_de(a, vehiculo_a, ubicacion),
+                _lado_de(b, vehiculo_b, ubicacion))
+        except Exception as error:  # pragma: no cover
+            raise HTTPException(status_code=500, detail=str(error)) from error
 
 
 @router.get("/analisis/{session_id}/vueltas")
