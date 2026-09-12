@@ -440,6 +440,24 @@
   td.si { color: var(--ok); font-weight: 600; } td.parcial { color: var(--alerta); font-weight: 600; } td.no { color: var(--texto-tenue); }
   table.disponibilidad code { font-family: var(--cifra); font-size: .72rem; color: var(--texto-medio); }
 
+  /* LA COMPARACION ENTRE FUENTES.
+     Hereda el aspecto de las otras dos tablas del cierre a proposito: son la
+     misma clase de afirmacion ---que sostiene cada fuente--- y verlas distintas
+     las leeria como piezas separadas. Lo unico propio es el selector de
+     circuito y que la columna del motivo respire, porque son frases y no
+     celdas de si o no. */
+  .mando-entre-fuentes { display: flex; flex-direction: row; align-items: center;
+    gap: 10px; margin: 0 0 10px; flex-wrap: wrap; }
+  .mando-entre-fuentes label { font-family: var(--titulo); font-size: .72rem;
+    letter-spacing: .09em; text-transform: uppercase; color: var(--texto-tenue); }
+  .mando-entre-fuentes select { font: inherit; font-size: .82rem;
+    color: var(--texto); background: var(--superficie-2); padding: 5px 9px;
+    border: 1px solid var(--linea); border-radius: 6px; }
+  table.disponibilidad.entre-fuentes td.nota { font-weight: 400;
+    color: var(--texto-tenue); font-size: .76rem; line-height: 1.35; }
+  table.disponibilidad.entre-fuentes td:first-child { white-space: nowrap; }
+  #limites-entre-fuentes { margin: 10px 0 0; line-height: 1.5; }
+
   .nota { margin: 10px 0 0; color: var(--texto-medio); font-size: .82rem; max-width: 82ch; }
   .nota code { font-family: var(--cifra); font-size: .76rem; color: var(--acento); }
   .ancho-total { grid-column: 1 / -1; }

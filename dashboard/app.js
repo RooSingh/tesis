@@ -13540,6 +13540,197 @@ function pedirMatriz(intento) {
    solo la primera declara ---puesta a punto, clima, avisos y comparacion entre
    vehiculos, que no son magnitudes y esta medicion no conoce--- y el
    `data-panel` de seis filas. Ahora cada pregunta tiene su tabla. */
+/* ============================================================
+   QUE DICE CADA FUENTE DEL MISMO CIRCUITO
+   ------------------------------------------------------------
+   La tabla de magnitudes dice **que publica** cada fuente. Esto dice en que se
+   parecen y en que no **cuando midieron el mismo trazado**, que es la unica
+   manera de contrastar un simulador contra lo que se mide en pista.
+
+   SE PREGUNTA PRIMERO DONDE SE PUEDE. Que exista un circuito con datos de dos
+   fuentes es una pregunta de medicion y la respuesta puede ser ninguno. Cuando
+   lo es, se dice por que en vez de dejar una tabla vacia, que se leeria como
+   que la comparacion no funciona.
+
+   LA COLUMNA DE DIFERENCIA DICE SU SENTIDO EN EL ENCABEZADO. «Diferencia» a
+   secas obliga a adivinar el signo, y un signo al reves no se nota: sale un
+   numero del tamano correcto con la fuente equivocada arriba. Ya paso en este
+   tablero con el eje lateral del diagrama de fuerzas G.
+   ============================================================ */
+const FUENTE_DEPORTIVA = "openf1_historical_replay";
+const FUENTE_SIMULADOR = "f1_25_udp_simulation";
+
+let CIRCUITOS_COMUNES = [];
+
+function pedirCircuitosComunes() {
+  pedir("/analisis/entre-fuentes/circuitos")
+    .then(pintarCircuitosComunes)
+    .catch(e => { if (!fueAnulada(e)) escribirPieEntreFuentes(
+      "no se pudo consultar dónde comparar: " + (e.message || e)); });
+}
+
+function escribirPieEntreFuentes(texto) {
+  const pie = document.getElementById("pie-entre-fuentes");
+  if (pie) pie.textContent = texto;
+}
+
+function pintarCircuitosComunes(inv) {
+  const mando = document.getElementById("mando-entre-fuentes");
+  const selector = document.getElementById("circuito-entre-fuentes");
+  if (!selector) return;
+
+  CIRCUITOS_COMUNES = (inv.circuitos || []).filter(c => c.comparable);
+  if (!CIRCUITOS_COMUNES.length) {
+    /* No es un fallo y no se muestra como tal: es el estado de los datos. */
+    escribirPieEntreFuentes(inv.porque_no_hay ||
+      "ninguna pista tiene datos de más de una fuente");
+    if (mando) mando.hidden = true;
+    return;
+  }
+
+  selector.innerHTML = CIRCUITOS_COMUNES.map((c, i) =>
+    '<option value="' + i + '">' + (c.circuito_nombre || ("circuito " + c.circuito)) +
+    "</option>").join("");
+  if (mando) mando.hidden = false;
+  selector.onchange = () => pedirContraste(CIRCUITOS_COMUNES[selector.value | 0]);
+  pedirContraste(CIRCUITOS_COMUNES[0]);
+}
+
+/* La sesion de cada lado: la mas observada de esa fuente en ese circuito.
+   Es la misma regla con la que el analisis elige el vehiculo, y por la misma
+   razon: con varias sesiones hay que elegir una, y elegir la de mas filas es
+   defendible y se puede decir en una linea. */
+function sesionMasObservada(circuito, fuente) {
+  const sesiones = (circuito.por_fuente || {})[fuente] || [];
+  return sesiones.slice().sort((x, y) => (y.filas || 0) - (x.filas || 0))[0];
+}
+
+function pedirContraste(circuito) {
+  if (!circuito) return;
+  const a = sesionMasObservada(circuito, FUENTE_DEPORTIVA);
+  const b = sesionMasObservada(circuito, FUENTE_SIMULADOR);
+  if (!a || !b) {
+    escribirPieEntreFuentes("este circuito no tiene una sesión de cada fuente");
+    return;
+  }
+  escribirPieEntreFuentes("midiendo sobre la base…");
+  pedir("/analisis/entre-fuentes?a=" + encodeURIComponent(a.session_id) +
+        "&b=" + encodeURIComponent(b.session_id))
+    .then(pintarEntreFuentes)
+    .catch(e => { if (!fueAnulada(e)) escribirPieEntreFuentes(
+      "no se pudo comparar: " + (e.message || e)); });
+}
+
+/* Un lado, en una celda. Se destaca el extremo y no la media a proposito: el
+   extremo aguanta que las dos sesiones sean distintas carreras y la media no,
+   y lo que se destaca es lo que la gente lee. */
+function celdaDelLado(lado, comparacion) {
+  if (!lado) return '<td class="no">no la trajo</td>';
+  const partes = [];
+  if (comparacion === "proporcion") {
+    if (lado.proporcion !== null && lado.proporcion !== undefined) {
+      partes.push("<b>" + cifra(lado.proporcion * 100, 1) + " %</b> del tiempo");
+    }
+  } else {
+    if (lado.maximo !== null && lado.maximo !== undefined) {
+      partes.push("<b>" + cifra(lado.maximo, 1) + "</b> " +
+                  (lado.unidad || "") + " máx");
+    }
+    if (lado.media !== null && lado.media !== undefined) {
+      partes.push(cifra(lado.media, 1) + " media");
+    }
+  }
+  if (lado.hz) partes.push(cifra(lado.hz, 1) + " Hz");
+  return '<td class="si" title="' + (lado.senal || "") + '">' +
+         partes.join(" · ") + "</td>";
+}
+
+function celdaDeLaDiferencia(m) {
+  if (!m.diferencia) return '<td class="nota">' + (m.motivo || "") + "</td>";
+  if (m.comparacion === "proporcion") {
+    return "<td>" + conSigno(m.diferencia.proporcion * 100, 1) + " puntos</td>";
+  }
+  const partes = [];
+  if (m.diferencia.maximo !== null && m.diferencia.maximo !== undefined) {
+    partes.push(conSigno(m.diferencia.maximo, 1) + " en el máximo");
+  }
+  if (m.diferencia.media !== null && m.diferencia.media !== undefined) {
+    partes.push(conSigno(m.diferencia.media, 1) + " en la media");
+  }
+  return "<td>" + partes.join("<br>") + "</td>";
+}
+
+/* El signo siempre visible. Un «8» y un «−8» se distinguen; un «8» y un «8»
+   con el signo comido, no. */
+function conSigno(v, decimales) {
+  if (v === null || v === undefined) return "—";
+  return (v > 0 ? "+" : "") + cifra(v, decimales);
+}
+
+function pintarEntreFuentes(c) {
+  const tabla = document.getElementById("tabla-entre-fuentes");
+  const limites = document.getElementById("limites-entre-fuentes");
+  if (!tabla) return;
+
+  const robustez = c.robustez || {};
+  tabla.querySelector("thead").innerHTML =
+    "<tr><th>Magnitud</th><th>Fuente deportiva</th><th>Simulador</th>" +
+    "<th>Diferencia (deportiva − simulador)</th>" +
+    "<th>Qué aguanta la cifra</th></tr>";
+
+  tabla.querySelector("tbody").innerHTML = (c.magnitudes || []).map(m => {
+    if (m.comparacion === "no") {
+      /* La ausencia ocupa una fila entera con su motivo. Tres celdas vacias
+         dirian lo mismo y no dirian por que. */
+      return '<tr><td>' + m.magnitud + '</td>' +
+             '<td colspan="4" class="no">' + (m.motivo || "no se comparan") +
+             "</td></tr>";
+    }
+    /* El veredicto corto en la celda y la razon al pasar por encima. La razon
+       completa en cada fila serian cuatro renglones largos diciendo lo mismo,
+       y una frase que se repite se deja de leer. */
+    const aguanta = (m.comparacion === "proporcion"
+      ? robustez.proporcion : robustez.maximo) || {};
+    return "<tr><td>" + m.magnitud + "</td>" +
+      celdaDelLado(m.lados[0], m.comparacion) +
+      celdaDelLado(m.lados[1], m.comparacion) +
+      celdaDeLaDiferencia(m) +
+      '<td class="nota" title="' + (aguanta.porque || "") + '">' +
+      (aguanta.corto || "") + "</td></tr>";
+  }).join("");
+  tabla.hidden = false;
+
+  /* Los tres limites que hacen que este cuadro se pueda leer sin sacar de mas:
+     de quien es cada lado, si es el mismo circuito, y que no hay eje comun. */
+  if (limites) {
+    const partes = [];
+    const [a, b] = c.lados || [];
+    if (a && b) {
+      partes.push("<b>De quién es cada lado:</b> " + (a.vehiculo || "—") +
+                  " contra " + (b.vehiculo || "—") +
+                  (a.vehiculo_elegido ? " (" + a.vehiculo_elegido + ")" : "") + ".");
+    }
+    if (!c.mismo_circuito) partes.push("<b>Atención:</b> " + c.por_que_no_es_el_mismo + ".");
+    if (c.sobre_que_se_mide) partes.push("<b>Sobre qué se mide:</b> " + c.sobre_que_se_mide + ".");
+    if (robustez.maximo && robustez.maximo.porque) {
+      partes.push("<b>Por qué el máximo y la media no valen lo mismo:</b> " +
+                  robustez.maximo.porque + ".");
+    }
+    if (c.eje_comun && !c.eje_comun.hay) {
+      partes.push("<b>Sin eje común de distancia:</b> " + c.eje_comun.porque +
+                  ". Por eso se comparan los valores alcanzados y la frecuencia, " +
+                  "y no el punto a punto.");
+    }
+    limites.innerHTML = partes.join(" ");
+    limites.hidden = !partes.length;
+  }
+
+  escribirPieEntreFuentes(
+    ((c.lados || [])[0] || {}).circuito_nombre
+      ? "medido sobre la base, en " + c.lados[0].circuito_nombre
+      : "medido sobre la base");
+}
+
 function pintarMatriz() {
   const m = estado.matriz;
   const tabla = document.querySelector("table.disponibilidad.magnitudes");
@@ -14211,6 +14402,10 @@ function arrancar() {
      segundos, un punado de veces: no es un sondeo permanente, es esperar a que
      un calculo que ya arranco termine. */
   cuandoHayaGrafico(() => pedirMatriz(0));
+  /* Va con la matriz porque es la misma pregunta: las dos son conclusiones
+     sobre las fuentes y no sobre la sesion abierta. No depende de cual este
+     abierta, asi que se pide una sola vez. */
+  cuandoHayaGrafico(() => pedirCircuitosComunes());
   vigilarEnVivo();
   conectarFlujoEnVivo();
 }
