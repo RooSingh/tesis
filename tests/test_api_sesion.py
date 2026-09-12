@@ -536,6 +536,35 @@ class VueltasTests(unittest.TestCase):
         self.assertFalse(r["vueltas"][1]["completa"])
         self.assertEqual(r["vueltas"][0]["largo_m"], 6995.0)
 
+    def test_un_fragmento_que_pasa_el_metro_mil_no_es_una_vuelta(self) -> None:
+        """El caso medido: la captura se corto 20 s despues de cruzar la meta.
+
+        `f1_25:session:3282644824454978680`, Spielberg, dos pilotos en pantalla
+        dividida. La captura empezo 124 m despues de la largada, de modo que la
+        vuelta 1 cubre del metro 123,9 al 4.323,0 y la 2 del 1,0 al 1.195,9.
+
+        Con el piso fijo de mil metros la **segunda** pasaba por completa y la
+        primera no, y el tablero ---que le pide el trazado a la primera completa
+        que encuentra--- dibujaba el contorno del circuito con un fragmento de
+        1,2 km sobre una pista de 4,3 km. Ninguna de las dos es una vuelta
+        entera: declararlo deja que el trazado elija por cuerda de cierre, que
+        es lo que `_vuelta_que_mejor_dibuja` sabe hacer.
+        """
+        from datetime import datetime, timezone
+        t0 = datetime(2026, 9, 11, 23, 53, 53, tzinfo=timezone.utc)
+        t1 = datetime(2026, 9, 11, 23, 55, 29, tzinfo=timezone.utc)
+        t2 = datetime(2026, 9, 11, 23, 55, 49, tzinfo=timezone.utc)
+        filas = [(1, 1924, 123.9, 4323.0, t0, t1, 0.0, 298.0, 0.0, 96.1, 0.067),
+                 (2, 412, 1.0, 1195.9, t1, t2, 75.0, 308.0, 0.0, 20.5, 0.067)]
+        falsa, parche = _con(filas)
+        with parche:
+            r = api_sesion.listar_vueltas("f1_25:session:3282644824454978680")
+        self.assertFalse(r["vueltas"][0]["completa"],
+                         "arranca en el metro 124: le falta el comienzo")
+        self.assertFalse(r["vueltas"][1]["completa"],
+                         "1.194,9 m contra los 4.199,1 de la vuelta mas larga: "
+                         "es un fragmento, y se dibujaba como si fuera el circuito")
+
 
 class TrazadoTests(unittest.TestCase):
     def test_el_bus_no_declara_posicion_y_lo_explica(self) -> None:

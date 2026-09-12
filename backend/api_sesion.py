@@ -426,6 +426,32 @@ def listar_vueltas(
             tuple([senal_distancia, fuente, session_id, vehiculo, senal_distancia,
                     v0, v0, v1] + tramo_par))
 
+    # CUANTO MIDE UNA VUELTA EN ESTA SESION: LA MAS LARGA QUE SE MIDIO.
+    #
+    # `completa` se decidia con un piso fijo de mil metros, y ese piso es una
+    # cifra de otro circuito. Medido el 2026-09-11 sobre
+    # `f1_25:session:3282644824454978680` ---Spielberg, 4.323 m declarados, dos
+    # pilotos en pantalla dividida---: la captura empezo 124 m despues de la
+    # largada y se corto 20 s despues de cruzar la meta, de modo que la vuelta 1
+    # cubre del metro 123,9 al 4.323,0 y la vuelta 2, del 1,0 al 1.195,9. Con el
+    # piso fijo la **segunda** pasaba por completa ---arranca casi en cero y
+    # termina pasado el metro mil--- y la primera no. El tablero le pide el
+    # trazado a la primera que este completa, y dibujaba el contorno del
+    # circuito con un fragmento de 1,2 km: un arco abierto, con 973 m de cuerda
+    # de cierre contra los 124 m de la vuelta entera.
+    #
+    # La referencia sale de la propia sesion: la vuelta mas larga medida. Es el
+    # mismo criterio ---y el mismo nueve decimos--- que `_vuelta_que_mejor_dibuja`
+    # usa para descartar media vuelta, y no cuesta una consulta mas.
+    #
+    # LO QUE ESTO NO ALCANZA, Y HAY QUE DECIRLO. Si la sesion trae **un solo**
+    # tramo y nada mas largo con que compararlo, ese tramo sigue siendo su propia
+    # referencia y se declara completo. Distinguirlo necesitaria la longitud del
+    # circuito, que vive en la procedencia y no en estas filas.
+    _largos = [f[3] - f[2] for f in filas
+               if f[2] is not None and f[3] is not None]
+    _vuelta_entera = max(_largos, default=0.0)
+
     vueltas = []
     for f in filas:
         bruta = (f[5] - f[4]).total_seconds() if f[4] and f[5] else None
@@ -470,9 +496,15 @@ def listar_vueltas(
             "velocidad_minima_kmh": round(f[6], 1) if f[6] is not None else None,
             "velocidad_maxima_kmh": round(f[7], 1) if f[7] is not None else None,
             "invalida": bool(f[8]) if f[8] is not None else None,
-            # Una vuelta que no arranca en cero es un tramo, no una vuelta: se
-            # declara para que el tablero no la ofrezca como comparable.
-            "completa": bool(f[2] is not None and f[2] < 60 and f[3] and f[3] > 1000),
+            # Una vuelta que no arranca en cero es un tramo, no una vuelta, y
+            # una que se corta antes de volver a la meta tampoco: las dos se
+            # declaran para que el tablero no las ofrezca como comparables ni
+            # las tome por el contorno del circuito. El segundo limite se mide
+            # contra la vuelta mas larga de la sesion; ver `_vuelta_entera`.
+            "completa": bool(f[2] is not None and f[2] < 60
+                             and f[3] is not None and f[3] > 1000
+                             and _vuelta_entera > 0
+                             and (f[3] - f[2]) >= 0.9 * _vuelta_entera),
         })
     return {"session_id": session_id, "fuente": fuente,
             "vehiculo": vehiculo, "vueltas": vueltas}
