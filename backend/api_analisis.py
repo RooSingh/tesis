@@ -136,10 +136,17 @@ def analisis_vueltas(session_id: str) -> Any:
 
 @router.get("/analisis/{session_id}/delta")
 def analisis_delta(session_id: str, vuelta_a: int, vuelta_b: int,
-                   paso_m: float = 10.0) -> Any:
-    """Diferencia de tiempo acumulada entre dos vueltas, metro a metro."""
+                   paso_m: float = 10.0,
+                   vehiculo_a: str | None = None,
+                   vehiculo_b: str | None = None) -> Any:
+    """Diferencia de tiempo acumulada entre dos vueltas, metro a metro.
+
+    Sin vehiculos son dos vueltas del coche que elige el contexto ---un piloto
+    contra si mismo---. Nombrandolos, la misma vuelta de dos coches distintos,
+    que es donde la pregunta «¿donde me saca tiempo?» tiene respuesta.
+    """
     return _correr(delta.comparar, _fuente_de(session_id), session_id,
-                   vuelta_a, vuelta_b, paso_m)
+                   vuelta_a, vuelta_b, paso_m, None, vehiculo_a, vehiculo_b)
 
 
 @router.get("/analisis/{session_id}/degradacion")

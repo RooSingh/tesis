@@ -82,6 +82,12 @@ class Traza:
     vuelta_a: int
     vuelta_b: int
     paso_m: float
+    #: De que vehiculo es cada lado, cuando los lados son dos pilotos distintos.
+    #: `None` en la comparacion de siempre, que es un piloto contra si mismo.
+    #: Una medicion que no nombra sobre que se hizo no es verificable, y sin
+    #: esto dos trazas de dos pares de pilotos se ven iguales.
+    vehiculo_a: str | None = None
+    vehiculo_b: str | None = None
     #: Pares (distancia, delta acumulado) sobre la rejilla comun.
     puntos: list[tuple[float, float]] = field(default_factory=list)
     disponibilidad: Disponibilidad | None = None
@@ -99,6 +105,7 @@ class Traza:
         return {
             "session_id": self.session_id, "fuente": self.fuente,
             "vuelta_a": self.vuelta_a, "vuelta_b": self.vuelta_b,
+            "vehiculo_a": self.vehiculo_a, "vehiculo_b": self.vehiculo_b,
             "paso_m": self.paso_m, "largo_comun_m": self.largo_comun_m,
             "delta_final_s": self.delta_final_s,
             "diferencia_cronometros_s": self.diferencia_cronometros_s,
@@ -110,20 +117,35 @@ class Traza:
 
 
 def _leer(cursor, fuente: str, session_id: str,
-          contexto: tuple[str | None, str | None, str | None]) -> list[tuple]:
+          contexto: tuple[str | None, str | None, str | None],
+          vehiculo_pedido: str | None = None) -> list[tuple]:
+    """Las tres señales de un coche en una corrida.
+
+    EL CONDUCTOR DEJA DE FILTRAR CUANDO EL LADO NOMBRA SU VEHICULO, y no es un
+    detalle. La terna del contexto trae el conductor **del coche con mas filas**,
+    y un `driver_id is not distinct from` con ese valor puesto mientras se pide
+    otro `vehicle_id` no devuelve ninguna fila: la traza saldria vacia con los
+    dos coches presentes en la base, y nada en el resultado diria por que. Un
+    `vehicle_id` ya identifica al coche dentro de la sesion.
+    """
+
     conductor, vehiculo, corrida = contexto
+    if vehiculo_pedido is not None:
+        vehiculo = vehiculo_pedido
+        conductor = None
+    condiciones = ["source_type = %s", "session_id = %s"]
+    valores: list[object] = [fuente, session_id]
+    if vehiculo_pedido is None:
+        condiciones.append("driver_id is not distinct from %s")
+        valores.append(conductor)
+    condiciones += ["vehicle_id is not distinct from %s",
+                    "replay_run_id is not distinct from %s",
+                    "signal_name in (%s, %s, %s)", "value_numeric is not null"]
+    valores += [vehiculo, corrida, SENAL_NUMERO, SENAL_DISTANCIA, SENAL_VELOCIDAD]
     cursor.execute(
-        """select timestamp, signal_name, value_numeric
-           from telemetry_messages
-           where source_type = %s and session_id = %s
-             and driver_id is not distinct from %s
-             and vehicle_id is not distinct from %s
-             and replay_run_id is not distinct from %s
-             and signal_name in (%s, %s, %s)
-             and value_numeric is not null
-           order by timestamp""",
-        (fuente, session_id, conductor, vehiculo, corrida,
-         SENAL_NUMERO, SENAL_DISTANCIA, SENAL_VELOCIDAD),
+        "select timestamp, signal_name, value_numeric from telemetry_messages"
+        " where " + " and ".join(condiciones) + " order by timestamp",
+        tuple(valores),
     )
     return cursor.fetchall()
 
@@ -206,11 +228,19 @@ def _monotonas(muestras: list[tuple[float, float, float | None]]
 
 def comparar(fuente: str, session_id: str, vuelta_a: int, vuelta_b: int,
              paso_m: float = PASO_REJILLA_M,
-             cronometros: dict[int, float] | None = None) -> Traza:
+             cronometros: dict[int, float] | None = None,
+             vehiculo_a: str | None = None,
+             vehiculo_b: str | None = None) -> Traza:
     """Traza el delta acumulado de la vuelta A contra la B.
 
-    Un delta positivo significa que **la vuelta A iba perdiendo** contra la B en
+    Un delta positivo significa que **el lado A iba perdiendo** contra el B en
     ese punto del trazado.
+
+    DOS PILOTOS SON LA MISMA TRAZA CON UN VEHICULO POR LADO. Sin `vehiculo_a` ni
+    `vehiculo_b` se comparan dos vueltas del coche que elige el contexto, que es
+    lo que esta herramienta hacia: un piloto contra si mismo. Nombrando los dos
+    vehiculos se compara la misma vuelta de dos coches, que es donde la pregunta
+    «¿donde me saca tiempo?» tiene respuesta.
     """
 
     disponible = evaluar("delta_acumulado", fuente, session_id)
@@ -218,21 +248,35 @@ def comparar(fuente: str, session_id: str, vuelta_a: int, vuelta_b: int,
         raise SinVueltas(disponible)
 
     contexto = disponible.contexto or (None, None, None)
+    dos_pilotos = vehiculo_a is not None or vehiculo_b is not None
     with db.obtener_conexion() as conexion, conexion.cursor() as cursor:
-        filas = _leer(cursor, fuente, session_id, contexto)
+        if dos_pilotos:
+            lado_a = _por_vuelta(_leer(cursor, fuente, session_id, contexto,
+                                       vehiculo_a))
+            lado_b = _por_vuelta(_leer(cursor, fuente, session_id, contexto,
+                                       vehiculo_b))
+        else:
+            # Una sola lectura: dos viajes a la base traerian lo mismo dos veces.
+            lado_a = lado_b = _por_vuelta(
+                _leer(cursor, fuente, session_id, contexto))
 
-    por_vuelta = _por_vuelta(filas)
-    for numero in (vuelta_a, vuelta_b):
-        if numero not in por_vuelta or len(por_vuelta[numero]) < 2:
+    # El motivo nombra al coche cuando hay dos: «la vuelta 3 no tiene muestras»
+    # no dice de cual de los dos, y el que no la tiene es uno solo.
+    for numero, lado, quien in ((vuelta_a, lado_a, vehiculo_a),
+                                (vuelta_b, lado_b, vehiculo_b)):
+        if numero not in lado or len(lado[numero]) < 2:
+            de_quien = f" de {quien}" if quien else ""
             raise SinTraza(
-                f"la vuelta {numero} no tiene muestras de distancia suficientes",
-                disponible)
+                f"la vuelta {numero}{de_quien} no tiene muestras de distancia "
+                "suficientes", disponible)
 
-    a = _monotonas(por_vuelta[vuelta_a])
-    b = _monotonas(por_vuelta[vuelta_b])
+    a = _monotonas(lado_a[vuelta_a])
+    b = _monotonas(lado_b[vuelta_b])
 
     traza = Traza(session_id=session_id, fuente=fuente, vuelta_a=vuelta_a,
-                  vuelta_b=vuelta_b, paso_m=paso_m, disponibilidad=disponible)
+                  vuelta_b=vuelta_b, vehiculo_a=vehiculo_a,
+                  vehiculo_b=vehiculo_b, paso_m=paso_m,
+                  disponibilidad=disponible)
 
     # Hasta donde las dos vueltas tienen dato. Mas alla, una de las dos no fue
     # medida y el delta no existiria: no se completa.

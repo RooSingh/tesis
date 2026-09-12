@@ -107,7 +107,21 @@ class RutasTests(unittest.TestCase):
         traza = TrazaFalsa("s", "f1_25_udp_simulation", [TramoFalso(0.0, 5.0, 0.01)])
         with patch("backend.api_analisis.delta.comparar", return_value=traza) as fn:
             api_analisis.analisis_delta("f1_25:session:7", vuelta_a=3, vuelta_b=4, paso_m=25.0)
-        fn.assert_called_once_with("f1_25_udp_simulation", "f1_25:session:7", 3, 4, 25.0)
+        fn.assert_called_once_with("f1_25_udp_simulation", "f1_25:session:7",
+                                   3, 4, 25.0, None, None, None)
+
+    def test_delta_entre_dos_pilotos_pasa_los_dos_vehiculos(self) -> None:
+        """Sin esto la ruta acepta los vehiculos y no se los da a nadie.
+
+        Es la unica forma de equivocarse que no se ve en la respuesta: la traza
+        sale igual de bien formada, comparando al mismo piloto consigo mismo.
+        """
+        traza = TrazaFalsa("s", "f1_25_udp_simulation", [TramoFalso(0.0, 5.0, 0.01)])
+        with patch("backend.api_analisis.delta.comparar", return_value=traza) as fn:
+            api_analisis.analisis_delta("f1_25:session:7", vuelta_a=3, vuelta_b=3,
+                                        vehiculo_a="veh:a", vehiculo_b="veh:b")
+        fn.assert_called_once_with("f1_25_udp_simulation", "f1_25:session:7",
+                                   3, 3, 10.0, None, "veh:a", "veh:b")
 
     def test_frenadas_pasa_la_vuelta(self) -> None:
         @dataclasses.dataclass
