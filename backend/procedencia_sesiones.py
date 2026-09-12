@@ -38,6 +38,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from backend import track_reference
+
 #: Donde viven los metadatos de captura.
 DIRECTORIO = Path(__file__).resolve().parent.parent / "datasets" / "f1_25" / "capturas"
 
@@ -226,10 +228,16 @@ def _una_sesion(datos: dict, proc: dict, duracion: Any,
             "duracion_s": duracion_captura,
         }
 
+    circuito = identidad_del_circuito(proc)
+
     return "f1_25:session:%s" % uid, {
-        "circuito": proc.get("circuito"),
+        "circuito": circuito["circuito"],
+        "circuito_segun_la_captura": circuito["circuito_segun_la_captura"],
+        "circuito_openf1": circuito["circuito_openf1"],
+        "clave_openf1": circuito["clave_openf1"],
         "circuito_id": proc.get("circuito_id"),
         "longitud_declarada_m": proc.get("longitud_declarada_m"),
+        "longitud_contrastada": circuito["longitud"],
         "tipo_sesion": crudo,
         "tipo_sesion_nombre": nombre,
         "familia_de_sesion": familia,
@@ -258,6 +266,49 @@ def _una_sesion(datos: dict, proc: dict, duracion: Any,
         # la declaran las que salen de la lista por sesion.
         **({"tramo_de_la_captura_s": list(tramo)} if tramo is not None else {}),
     }, parrilla
+
+
+def identidad_del_circuito(proc: dict) -> dict:
+    """Que circuito es esta captura, resuelto desde el identificador.
+
+    POR QUE NO SE LEE EL NOMBRE QUE TRAE EL ARCHIVO. El capturador escribe dos
+    cosas: `circuito_id`, que es el `track_id` que emitio el paquete de sesion,
+    y `circuito`, que es el nombre que **el capturador le puso** buscandolo en
+    una tabla propia. El primero es el dato; el segundo, una lectura de ese
+    dato. Y esa tabla tenia el tramo final corrido: llamaba «las-vegas» a la
+    pista 30, que es Miami.
+
+    Resolver desde el identificador arregla las capturas ya hechas sin tocar
+    ningun archivo. Reescribir los metadatos habria sido editar el registro de
+    lo capturado, que es justo lo que no se hace.
+
+    LA CORRECCION SE DECLARA. Cuando el nombre resuelto no es el que trae la
+    captura, el que traia viaja en `circuito_segun_la_captura`. Un dato que
+    cambia sin decir que cambio es indistinguible de un dato equivocado.
+    """
+
+    crudo = proc.get("circuito")
+    pista = track_reference.circuito_de_la_pista(proc.get("circuito_id"))
+    if pista is None:
+        return {
+            "circuito": crudo,
+            "circuito_segun_la_captura": None,
+            "circuito_openf1": None,
+            "clave_openf1": None,
+            "longitud": track_reference.contrastar_longitud_declarada(
+                proc.get("circuito_id"), proc.get("longitud_declarada_m")),
+        }
+
+    nombre = pista["nombre_f1_25"]
+    contraste = track_reference.contrastar_longitud_declarada(
+        proc.get("circuito_id"), proc.get("longitud_declarada_m"))
+    return {
+        "circuito": nombre,
+        "circuito_segun_la_captura": crudo if crudo and crudo != nombre else None,
+        "circuito_openf1": contraste.get("circuito"),
+        "clave_openf1": pista["clave_openf1"],
+        "longitud": contraste,
+    }
 
 
 def _releer() -> tuple[dict[str, dict], dict[str, list[dict]]]:

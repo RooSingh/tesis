@@ -166,3 +166,156 @@ def resolver_referencia_circuito(
         "referencia_temporada": entrada["temporada"],
         "referencia_tipo": REFERENCIA_TIPO,
     }
+
+
+# ============================================================================
+# QUE CIRCUITO DE LA FUENTE DEPORTIVA ES CADA PISTA DEL SIMULADOR
+# ============================================================================
+#
+# POR QUE HACE FALTA UN PUENTE. Las dos fuentes nombran el circuito con el
+# identificador de su proveedor y ninguno de los dos significa nada para el
+# otro: F1 25 emite `track_id` en el paquete de sesion y OpenF1 publica
+# `circuit_key`. Compararlas «en el mismo circuito» exige decir cual es cual, y
+# eso no se deduce de los datos: es una correspondencia escrita a mano, igual
+# que la de magnitudes en la matriz de fuentes.
+#
+# COMO SE COMPRUEBA, QUE ES LO QUE HACE QUE VALGA. Un puente escrito a mano se
+# revisa leyendolo, y leerlo no encuentra nada: si el nombre esta mal, se lee
+# igual de bien en las dos puntas. Pero el juego **declara la longitud de la
+# pista** en el mismo paquete de sesion, y este modulo ya guarda la longitud que
+# publica la ficha oficial del circuito. Son dos cifras de dos origenes que no
+# se hablan: si el puente esta bien, coinciden.
+#
+# Contrastadas las once pistas con captura al 2026-09-12, diez coinciden dentro
+# de catorce metros ---la mayor separacion es Monte Carlo, 3323 declarados
+# contra 3337 de ficha--- y **una se apartaba 791**. Esa era la pista 30, que el
+# proyecto llamaba «las-vegas»: 5410 m declarados contra 6201 de Las Vegas, y
+# contra 5412 de Miami. La tabla del capturador tenia el tramo final corrido.
+#
+# LO QUE ESTA MEDIDO Y LO QUE NO. Once pistas tienen captura y su contraste esta
+# escrito en la entrada. Las demas no la tienen: su nombre viene de la tabla del
+# capturador y se declara asi, sin ascenderlo a comprobado. Las tres que el
+# desplazamiento arrastra ---29, 31 y 32--- se reubican por la misma razon que
+# hizo caer a la 30 y lo dicen: es la lectura mejor sostenida, no una medicion.
+
+#: Cuanto puede separarse la longitud que declara el juego de la ficha externa
+#: antes de que se lea como otro circuito.
+#:
+#: Sale de lo observado y no de una regla: sobre las once pistas con captura la
+#: mayor separacion legitima es de catorce metros. Veinticinco deja margen y
+#: sigue a cincuenta y seis veces de distancia del error que se encontro. El
+#: veredicto es una comodidad; **la cifra de la diferencia viaja siempre**, para
+#: que quien lea juzgue por su cuenta.
+TOLERANCIA_LONGITUD_M = 25.0
+
+
+def _pista(clave_openf1: int, nombre_f1_25: str, verificacion: str) -> dict:
+    return {
+        "clave_openf1": clave_openf1,
+        "nombre_f1_25": nombre_f1_25,
+        "verificacion": verificacion,
+    }
+
+
+_MEDIDA = "captura propia: el juego declaro {} m y la ficha externa {} m"
+_SIN_CAPTURA = "sin captura todavia: el nombre viene de la tabla del capturador"
+_REUBICADA = ("sin captura todavia: reubicada por el mismo desplazamiento que "
+              "dejo ver la pista 30, que si esta medida")
+
+#: Indexada por `track_id` de F1 25.
+CIRCUITO_POR_PISTA_F1_25: dict[int, dict] = {
+    0: _pista(10, "melbourne", _SIN_CAPTURA),
+    2: _pista(49, "shanghai", _MEDIDA.format(5441, 5451)),
+    3: _pista(63, "sakhir", _SIN_CAPTURA),
+    4: _pista(15, "catalunya", _MEDIDA.format(4664, 4657)),
+    5: _pista(22, "monte-carlo", _MEDIDA.format(3323, 3337)),
+    6: _pista(23, "montreal", _SIN_CAPTURA),
+    7: _pista(2, "silverstone", _SIN_CAPTURA),
+    9: _pista(4, "hungaroring", _SIN_CAPTURA),
+    10: _pista(7, "spa", _MEDIDA.format(7007, 7004)),
+    11: _pista(39, "monza", _MEDIDA.format(5798, 5793)),
+    12: _pista(61, "singapur", _SIN_CAPTURA),
+    13: _pista(46, "suzuka", _MEDIDA.format(5809, 5807)),
+    14: _pista(70, "abu-dhabi", _SIN_CAPTURA),
+    15: _pista(9, "austin", _MEDIDA.format(5514, 5513)),
+    16: _pista(14, "interlagos", _SIN_CAPTURA),
+    17: _pista(19, "spielberg", _MEDIDA.format(4323, 4326)),
+    19: _pista(65, "mexico", _SIN_CAPTURA),
+    20: _pista(144, "baku", _MEDIDA.format(5994, 6003)),
+    26: _pista(55, "zandvoort", _SIN_CAPTURA),
+    27: _pista(6, "imola", _MEDIDA.format(4910, 4909)),
+    29: _pista(149, "jeddah", _REUBICADA),
+    30: _pista(151, "miami", _MEDIDA.format(5410, 5412)),
+    31: _pista(152, "las-vegas", _REUBICADA),
+    32: _pista(150, "lusail", _REUBICADA),
+}
+
+
+def circuito_de_la_pista(track_id: int | None) -> dict | None:
+    """El circuito de OpenF1 que corresponde a una pista del simulador."""
+
+    if track_id is None:
+        return None
+    return CIRCUITO_POR_PISTA_F1_25.get(int(track_id))
+
+
+def contrastar_longitud_declarada(
+    track_id: int | None,
+    longitud_declarada_m: float | None,
+) -> dict:
+    """Compara la longitud que declara el juego contra la ficha del circuito.
+
+    Es la comprobacion independiente del puente. Devuelve siempre la diferencia
+    en metros cuando se la puede calcular, porque el veredicto resume y la cifra
+    informa: un dia la tolerancia va a quedar corta para un circuito remodelado
+    y quien lea la diferencia va a poder verlo.
+
+    `concuerda` vale `None` ---y no `False`--- cuando no hay con que comparar.
+    No es lo mismo «no coincide» que «no se comprobo», y el tablero tiene que
+    poder decir cual de las dos cosas pasa.
+    """
+
+    pista = circuito_de_la_pista(track_id)
+    if pista is None:
+        return {
+            "concuerda": False,
+            "circuito": None,
+            "clave_openf1": None,
+            "longitud_referencia_m": None,
+            "longitud_declarada_m": longitud_declarada_m,
+            "diferencia_m": None,
+            "motivo": f"la pista track_id={track_id} no tiene circuito declarado "
+                      "en el puente entre el simulador y la fuente deportiva",
+        }
+
+    referencia = LONGITUDES_CIRCUITO[pista["clave_openf1"]]
+    base = {
+        "circuito": referencia["circuito"],
+        "clave_openf1": pista["clave_openf1"],
+        "nombre_f1_25": pista["nombre_f1_25"],
+        "verificacion": pista["verificacion"],
+        "longitud_referencia_m": referencia["longitud_m"],
+        "longitud_declarada_m": longitud_declarada_m,
+        "referencia_fuente": referencia["fuente"],
+        "referencia_tipo": REFERENCIA_TIPO,
+    }
+
+    if longitud_declarada_m is None:
+        return {**base, "concuerda": None, "diferencia_m": None,
+                "motivo": "la captura no declaro longitud de pista: se resuelve "
+                          "la identidad y no se la comprueba"}
+
+    diferencia = float(longitud_declarada_m) - referencia["longitud_m"]
+    concuerda = abs(diferencia) <= TOLERANCIA_LONGITUD_M
+    return {
+        **base,
+        "concuerda": concuerda,
+        "diferencia_m": round(diferencia, 1),
+        "tolerancia_m": TOLERANCIA_LONGITUD_M,
+        "motivo": "" if concuerda else
+                  f"el juego declara {longitud_declarada_m:g} m y la ficha de "
+                  f"{referencia['circuito']} publica "
+                  f"{referencia['longitud_m']:g}: {abs(diferencia):g} m de "
+                  "diferencia, muy por encima de lo que separa a las pistas "
+                  "que si concuerdan",
+    }

@@ -44,7 +44,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from adapters import f1_25
-from backend import f1_capture, f1_udp
+from backend import f1_capture, f1_udp, track_reference
 from backend.config import MQTT_HOST, MQTT_PORT, MQTT_TOPIC
 
 DESTINO_POR_DEFECTO = ROOT / "datasets" / "f1_25" / "capturas"
@@ -64,12 +64,21 @@ SILENCIO_CIERRA_S = 8.0
 # del menu y no una sesion.
 MINIMO_UTIL_S = 5.0
 
+# COMO SE LLAMA CADA PISTA, Y POR QUE YA NO SE ESCRIBE ACA.
+#
+# Esta tabla estaba escrita a mano y **tenia el tramo final corrido**: llamaba
+# «las-vegas» a la pista 30, que declara 5410 m de longitud contra los 6201 de
+# Las Vegas y los 5412 de Miami. Se vio contrastando la longitud que el propio
+# paquete de sesion declara contra la ficha oficial del circuito, que es lo
+# unico que puede desmentir un nombre escrito a mano.
+#
+# El nombre pasa a salir del puente entre las dos fuentes, que es donde ya vive
+# la identidad del circuito y donde cada entrada dice como se la comprobo. Una
+# pista sin entrada sigue llamandose `id-<n>`: nombrarla de memoria es
+# exactamente lo que produjo el error.
 CIRCUITOS = {
-    0: "melbourne", 2: "shanghai", 3: "sakhir", 4: "catalunya", 5: "monte-carlo",
-    6: "montreal", 7: "silverstone", 9: "hungaroring", 10: "spa", 11: "monza",
-    12: "singapur", 13: "suzuka", 14: "abu-dhabi", 15: "austin", 16: "interlagos",
-    17: "spielberg", 19: "mexico", 20: "baku", 26: "zandvoort", 29: "miami",
-    30: "las-vegas", 31: "lusail", 32: "jeddah",
+    pista: entrada["nombre_f1_25"]
+    for pista, entrada in track_reference.CIRCUITO_POR_PISTA_F1_25.items()
 }
 # Transcritos del apendice "Game Mode IDs".
 MODOS_JUEGO = {

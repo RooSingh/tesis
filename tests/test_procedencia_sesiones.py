@@ -12,14 +12,27 @@ from unittest.mock import patch
 from backend import procedencia_sesiones as ps
 
 
+#: La pista y su longitud, por nombre, para que el metadato de prueba sea
+#: coherente consigo mismo.
+#:
+#: Antes ponia `circuito_id: 7` fijo con el nombre variando. Siete es
+#: Silverstone en el simulador y Spa en la fuente deportiva: el fixture estaba
+#: usando la clave de una fuente como identificador de la otra, con la longitud
+#: de Spa al lado. Nada podia notarlo mientras el nombre se leyera tal cual;
+#: al resolverlo desde el identificador, saltó.
+PISTAS_DE_PRUEBA = {"spa": (10, 7004), "monza": (11, 5793),
+                    "silverstone": (7, 5891)}
+
+
 def _meta(uid, tipo="carrera", circuito="spa", duracion=100.0, archivo="a.f1raw"):
+    pista, largo = PISTAS_DE_PRUEBA[circuito]
     return {
         "archivo": archivo,
         "inicio_utc": "2026-09-01T12:00:00+00:00",
         "duracion_s": duracion,
         "procedencia": {
             "session_uid": uid, "tipo_sesion": tipo, "circuito": circuito,
-            "circuito_id": 7, "longitud_declarada_m": 7004,
+            "circuito_id": pista, "longitud_declarada_m": largo,
             "modo_juego": "gran-premio", "clima": "despejado",
             "temperatura_pista_c": 38, "temperatura_aire_c": 23,
             "vueltas_totales": 22, "dificultad_ia": 44,
