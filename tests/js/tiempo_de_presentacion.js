@@ -93,6 +93,9 @@ globalThis.SENAL_DE = {
 };
 globalThis.SENAL_CAN = { throttle: "gas_pressed", brake: "brake_pressed" };
 globalThis.SENAL_OPENF1 = { brake: "brake_applied", drs: "drs_state_code" };
+/* `nombreDeSenal` tambien consulta la tabla del simulador. Copia a mano, como
+   las demas de este arnes: ver la nota de `vivo` mas arriba. */
+globalThis.SENAL_F1 = { posX: "world_position_x", posY: "world_position_z" };
 globalThis.corrida = { adquisicion: null, fase: null, disponibles: null, mezclada: false };
 globalThis.estado = { series: {}, posiciones: {}, vueltas: [], abierta: null, puesta: null };
 

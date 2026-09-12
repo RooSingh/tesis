@@ -1152,8 +1152,17 @@ const LECTURAS = [
      mismo punto, porque la fraccion es la misma para todos.
      Estas dos son las que dibujan el circuito, y llegan a 3,9 Hz con su
      instante. Son lecturas y no metricas: no se grafican, se leen. */
-  { id: "posX", fuentes: ["openf1"] },
-  { id: "posY", fuentes: ["openf1"] }
+  /* EL SIMULADOR TAMBIEN LAS NECESITA, y no por el mismo motivo que OpenF1.
+     Ahi hacian falta porque esa fuente **no tiene metro de vuelta**. El
+     simulador si lo tiene, y por eso estas dos se declararon solo para OpenF1.
+
+     Pero el metro no ubica **antes de la linea de largada**: ahi es negativo y
+     la vuelta no empezo ---ver `fraccionDelMetro`---. Sin estas dos series, la
+     colocacion se quedaba sin posicion medida y repartia el coche por
+     **tiempo** sobre el contorno dibujado, de modo que parecia recorrer tramos
+     por los que no paso. La posicion estaba medida; faltaba pedirla. */
+  { id: "posX", fuentes: ["f1", "openf1"] },
+  { id: "posY", fuentes: ["f1", "openf1"] }
 ];
 
 /* ============================================================
@@ -1210,9 +1219,17 @@ const SENAL_CAN = {
 const SENAL_OPENF1 = { brake: "brake_applied", drs: "drs_state_code",
                        posX: "track_position_x", posY: "track_position_y" };
 
+/* EN EL SIMULADOR EL PLANO DEL CIRCUITO ES `x` Y `z`, NO `x` E `y`: la `y` es
+   la altura. Son las dos mismas señales con las que el backend arma el trazado
+   ---ver `EJES_POR_FUENTE` en `api_sesion.py`--- y mapear `posY` a
+   `world_position_y` dibujaria el desnivel como si fuera una coordenada del
+   mapa. */
+const SENAL_F1 = { posX: "world_position_x", posY: "world_position_z" };
+
 function nombreDeSenal(id) {
   if (fuente === "can" && SENAL_CAN[id]) return SENAL_CAN[id];
   if (fuente === "openf1" && SENAL_OPENF1[id]) return SENAL_OPENF1[id];
+  if (fuente === "f1" && SENAL_F1[id]) return SENAL_F1[id];
   return SENAL_DE[id] || id;
 }
 

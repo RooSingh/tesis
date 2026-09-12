@@ -186,7 +186,7 @@ const preludio = `
   /* Y lo que hace falta para leer el reloj. */
   let fuente = "f1";
   const SENAL_DE = { speed: "speed", throttle: "throttle_position" };
-  const SENAL_CAN = {}, SENAL_OPENF1 = {};
+  const SENAL_CAN = {}, SENAL_OPENF1 = {}, SENAL_F1 = {};
   let _selloDeLoTemporal = -1;
   const _temporales = new Map();
   let _instanteClave = null;

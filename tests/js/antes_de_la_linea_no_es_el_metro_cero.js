@@ -115,4 +115,38 @@ prueba("la colocacion consulta esta funcion y no recorta por su cuenta", () => {
     "sigue el recorte que convertia un negativo en cero");
 });
 
+/* -------- y de donde sale la posicion cuando el metro no ubica -------- */
+
+prueba("EL SIMULADOR TAMBIEN PIDE SU POSICION MEDIDA", () => {
+  /* LO QUE FALTABA, Y SE VIO REPRODUCIENDO. Con el metro devolviendo `null`
+     antes de la linea, la colocacion cae en `puntoMedidoDe`, que necesita las
+     series `posX`/`posY`. Esas dos estaban declaradas **solo para OpenF1**, de
+     modo que en el simulador nunca se piden y `puntoMedidoDe` no puede
+     funcionar jamas: el coche terminaba repartido por **tiempo** sobre el
+     contorno dibujado, y por eso parecia recorrer tramos por los que no paso.
+
+     La posicion esta medida ---`world_position_x` y `world_position_z` son las
+     mismas dos señales con las que el backend arma el trazado--- y lo unico
+     que faltaba era pedirla. Se comprueba sobre el `app.js` publicado porque
+     es una declaracion, no una rama de codigo: una prueba de comportamiento no
+     la alcanza. */
+  const i = fuenteApp.indexOf('{ id: "posX"');
+  assert.notStrictEqual(i, -1, "no esta la declaracion de posX");
+  const bloque = fuenteApp.slice(i, i + 200);
+  assert.ok(/"f1"/.test(bloque),
+    "el simulador no pide su posicion medida: " + bloque.split("\n")[0]);
+});
+
+prueba("y con el nombre que esa fuente usa", () => {
+  /* En el simulador el plano del circuito son `x` y **`z`**: la `y` es la
+     altura. Mapearla a `world_position_y` dibujaria el desnivel como si fuera
+     una coordenada del mapa. */
+  const i = fuenteApp.indexOf("const SENAL_F1 = ");
+  assert.notStrictEqual(i, -1, "no esta la tabla de nombres del simulador");
+  const bloque = fuenteApp.slice(i, i + 300);
+  assert.ok(/posX:\s*"world_position_x"/.test(bloque), "posX mal mapeada");
+  assert.ok(/posY:\s*"world_position_z"/.test(bloque),
+    "posY tiene que ser world_position_z: la `y` del simulador es la altura");
+});
+
 console.log("ok " + hechas + " pruebas del metro antes de la linea");
