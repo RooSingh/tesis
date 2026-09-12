@@ -4035,15 +4035,20 @@ def curvas_del_circuito(circuito: str) -> dict[str, Any]:
     como si el sistema lo hubiera derivado del dato.
     """
     cs = catalogo_curvas.curvas_de(circuito)
-    if not cs:
+    ficha = catalogo_curvas.ficha_de(circuito)
+    if not cs or ficha is None:
         return {"circuito": circuito, "curvas": [],
                 "motivo": "No hay catalogo para ese circuito."}
+    # LA FICHA ES DEL CIRCUITO QUE SE PIDIO. Estos cuatro campos salian de las
+    # constantes de Spa para cualquier circuito: mientras hubo un solo catalogo
+    # la respuesta siempre acerto, y el segundo habria hecho que esta ruta
+    # afirmara que Silverstone mide 7.004 m y que Kemmel no frena.
     return {
         "circuito": circuito,
-        "largo_declarado_m": catalogo_curvas.SPA_LARGO_DECLARADO_M,
-        "desnivel_declarado_m": catalogo_curvas.SPA_DESNIVEL_DECLARADO_M,
-        "sentido": catalogo_curvas.SPA_SENTIDO,
-        "sin_frenada": list(catalogo_curvas.SPA_SIN_FRENADA),
+        "largo_declarado_m": ficha.largo_declarado_m,
+        "desnivel_declarado_m": ficha.desnivel_declarado_m,
+        "sentido": ficha.sentido,
+        "sin_frenada": list(ficha.sin_frenada),
         "curvas": [
             {
                 "orden": c.orden,
@@ -4052,6 +4057,11 @@ def curvas_del_circuito(circuito: str) -> dict[str, Any]:
                 "metro_medido": c.metro_medido,
                 "velocidad_minima_kmh": c.velocidad_minima_kmh,
                 "origen": c.origen,
+                # CON QUE MEDICION ESTA ANCLADO ESE METRO. Los dos circuitos no
+                # coinciden y quien dibuje un nombre sobre el trazado tiene que
+                # poder decir cual esta mirando.
+                "anclaje": c.anclaje,
+                "sentido": c.sentido,
             }
             for c in cs
         ],
