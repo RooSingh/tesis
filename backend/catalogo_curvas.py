@@ -135,6 +135,56 @@ SPA_FRANCORCHAMPS: tuple[Curva, ...] = (
 #: registra para que la ausencia sea explicita y no parezca un olvido.
 SPA_SIN_FRENADA: tuple[str, ...] = ("Kemmel", "Malmedy")
 
+@dataclass(frozen=True)
+class DeclaracionDeSector:
+    """«El limite de sector esta a N metros antes/despues de la curva C».
+
+    POR QUE ESTO ES UTIL, Y ES LA PARTE QUE SE PUEDE REUSAR. El mapa de
+    circuito de la FIA **no publica el metro de ninguna curva**, asi que no
+    sirve para anclar. Pero publica los limites de sector dichos en curvas, y
+    los limites de sector **si estan medidos** en el dato: el paquete de vuelta
+    del simulador declara `sector_index` en cada muestra.
+
+    Cruzando las dos cosas se obtiene la posicion de una curva numerada **sin
+    usar el catalogo**, que es exactamente lo que hace falta para comprobarlo.
+    Es una fuente independiente y gratuita: ya estaba publicada y ya estaba
+    medida, solo que nadie las habia puesto una al lado de la otra.
+
+    Sirve para cualquier circuito cuyo mapa diga los sectores asi.
+    """
+
+    #: Numero de curva en la convencion de cronometraje, la del mapa.
+    curva: int
+    #: Distancia entre el limite de sector y la curva.
+    metros: float
+    #: De que lado del limite cae la curva. "antes" significa que el limite
+    #: esta antes de la curva ---«sector 1, 110 m antes de la curva 6»--- y
+    #: entonces la curva esta mas adelante.
+    lado: str
+
+
+#: Los lados que una declaracion admite. Cualquier otra cosa es una lectura
+#: dudosa del mapa y se rechaza en vez de resolverse por omision.
+LADOS: frozenset[str] = frozenset({"antes", "despues"})
+
+
+def curva_declarada_en(declaracion: DeclaracionDeSector, limite_medido_m: float) -> float:
+    """Donde queda esa curva, segun el mapa y el limite medido.
+
+    No usa el catalogo: ese es el punto. El numero que devuelve se compara
+    contra el anclaje del catalogo, y esa comparacion es la comprobacion.
+    """
+
+    if declaracion.lado not in LADOS:
+        raise ValueError(
+            f"lado {declaracion.lado!r}: una declaracion de sector dice «antes» "
+            f"o «despues» de la curva. Resolverlo por omision convertiria una "
+            f"lectura dudosa del mapa en un numero con dos decimales.")
+    if declaracion.lado == "antes":
+        return limite_medido_m + declaracion.metros
+    return limite_medido_m - declaracion.metros
+
+
 #: Atajo local: la cadena del anclaje se repite quince veces y escribirla a
 #: mano quince veces es quince oportunidades de escribirla distinto.
 _LAT = "apice de aceleracion lateral"
@@ -205,6 +255,16 @@ SILVERSTONE: tuple[Curva, ...] = (
     # Club se numera 17 y 18 y se toma como una sola curva larga a derecha: un
     # tramo de 291,5 m.
     Curva(15, "Club", (17, 18), 5770.6, 107, anclaje=_LAT, sentido="derecha"),
+)
+
+#: LO QUE EL MAPA DE LA FIA DECLARA, GUARDADO para poder volver a comprobar.
+#: Mapa de circuito del Gran Premio de Gran Bretana 2025, version 2.
+#: Los limites medidos de esta vuelta son 1.815,2 m y 4.294,6 m; cruzados con
+#: esto dan 1.925,2 m y 4.244,6 m, contra los 1.918,5 m y 4.256,4 m del
+#: catalogo. Ver `tests/test_catalogo_curvas.py`.
+SILVERSTONE_SECTORES_FIA: tuple[DeclaracionDeSector, ...] = (
+    DeclaracionDeSector(curva=6, metros=110.0, lado="antes"),
+    DeclaracionDeSector(curva=14, metros=50.0, lado="despues"),
 )
 
 #: DOS TRAMOS QUE LA DETECCION ENCUENTRA Y ESTE CATALOGO NO NOMBRA.

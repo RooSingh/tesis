@@ -74,6 +74,53 @@ class ElAnclajeSeComprubaContraLaFIA(unittest.TestCase):
                                delta=self.TOLERANCIA_M)
 
 
+class DeDondeSaleLaPosicionDeUnaCurvaDeclarada(unittest.TestCase):
+    """La aritmetica del cruce, aislada, porque es donde un signo se da vuelta.
+
+    El mapa de la FIA dice «Sector 1 -- 110 m antes de la curva 6». El limite de
+    sector esta medido. La curva esta 110 m **despues** del limite. Invertir esa
+    resta da un punto a 220 m del verdadero y la comprobacion sigue pareciendo
+    una comprobacion: por eso se ejerce con los dos casos de Silverstone, cuya
+    respuesta se conoce.
+    """
+
+    def test_un_limite_antes_de_la_curva_la_pone_mas_adelante(self) -> None:
+        decl = cat.DeclaracionDeSector(curva=6, metros=110.0, lado="antes")
+        self.assertAlmostEqual(
+            cat.curva_declarada_en(decl, SILVERSTONE_SECTOR_2_M), 1925.2, places=1)
+
+    def test_un_limite_despues_de_la_curva_la_pone_mas_atras(self) -> None:
+        decl = cat.DeclaracionDeSector(curva=14, metros=50.0, lado="despues")
+        self.assertAlmostEqual(
+            cat.curva_declarada_en(decl, SILVERSTONE_SECTOR_3_M), 4244.6, places=1)
+
+    def test_los_dos_lados_no_dan_lo_mismo(self) -> None:
+        """Si dieran lo mismo, `lado` no estaria haciendo nada y la prueba de
+        arriba pasaria por casualidad."""
+
+        antes = cat.curva_declarada_en(
+            cat.DeclaracionDeSector(curva=6, metros=110.0, lado="antes"), 1000.0)
+        despues = cat.curva_declarada_en(
+            cat.DeclaracionDeSector(curva=6, metros=110.0, lado="despues"), 1000.0)
+        self.assertEqual(antes - despues, 220.0)
+
+    def test_un_lado_que_no_existe_no_se_adivina(self) -> None:
+        """«a la altura de la curva 6» no es ni antes ni despues, y resolverlo
+        por omision convertiria una lectura dudosa del mapa en un numero."""
+
+        with self.assertRaises(ValueError):
+            cat.curva_declarada_en(
+                cat.DeclaracionDeSector(curva=6, metros=110.0, lado="cerca"), 1000.0)
+
+    def test_silverstone_guarda_las_declaraciones_que_lo_verifican(self) -> None:
+        """No alcanza con haber hecho la comprobacion una vez: si el anclaje se
+        re-mide, tiene que volver a comprobarse contra lo mismo."""
+
+        self.assertEqual(len(cat.SILVERSTONE_SECTORES_FIA), 2)
+        for decl in cat.SILVERSTONE_SECTORES_FIA:
+            self.assertIn(decl.lado, ("antes", "despues"))
+
+
 class LoQueElCatalogoDeclaraDeSiMismo(unittest.TestCase):
 
     def test_cada_fila_declara_con_que_medicion_esta_anclada(self) -> None:

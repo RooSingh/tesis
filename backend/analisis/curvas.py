@@ -73,9 +73,23 @@ class Curva:
     desde_m: float
     hasta_m: float
     #: Positivo o negativo segun el sentido del giro. Se conserva el signo del
-    #: pico y no se lo traduce a "izquierda" o "derecha": la relacion entre el
-    #: signo del canal y el sentido real no esta verificada, y nombrarla seria
-    #: afirmar algo que no se midio.
+    #: pico y no se lo traduce aca, porque este modulo es una funcion pura sobre
+    #: pares de numeros y la traduccion depende de la fuente.
+    #:
+    #: LA RELACION CON EL SENTIDO REAL YA ESTA VERIFICADA, para `g_force_lateral`
+    #: de F1 25: **negativo es derecha**. Estuvo sin verificar hasta el
+    #: 2026-09-12, y se comprobo contra casos cuyo sentido publica una fuente
+    #: externa, no por inspeccion del dibujo:
+    #:
+    #: - La Source, horquilla a derecha, da -1,70 a 399,7 m, contra los 405 m
+    #:   donde `catalogo_curvas` la ancla;
+    #: - The Loop, horquilla a izquierda, da positivo, con un minimo medido de
+    #:   87 km/h contra los «unos 90 km/h, la curva mas lenta del trazado» que
+    #:   publica la nota oficial del campeonato;
+    #: - Eau Rouge, cuya primera mitad es a izquierda, da positivo.
+    #:
+    #: Tres casos, dos sentidos, y coinciden los tres. Quien traduzca el signo
+    #: ---`catalogo_curvas`, el guion de medicion--- lo hace con esto escrito.
     pico_g: float
     #: En cuantas de las vueltas usadas aparecio. Es la evidencia de que es una
     #: curva y no un incidente, y viaja con ella.
