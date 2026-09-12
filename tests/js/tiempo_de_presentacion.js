@@ -64,6 +64,7 @@ globalThis.vueltaElegida = 1;
    extrae el objeto de `app.js` en vez de copiarlo, y no tuvo el problema. */
 globalThis.vivo = { series: new Map(), ultimos: new Map(), recorrido: new Map(),
                     marcaDePosicion: new Map(), velocidadAnterior: new Map(),
+                    metroDePosicion: new Map(),
                     recorridoDibujado: 0 };
 /* Lo minimo que `olvidarLoDeLaCorrida` ---el reset de produccion--- toca fuera
    del estado. Se lo deja hacer de verdad: sustituirlo por un reset propio es

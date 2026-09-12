@@ -7994,6 +7994,10 @@ const vivo = {
      entre dos posiciones, o si salto. Ver `pudoRecorrer`. */
   marcaDePosicion: new Map(),
   velocidadAnterior: new Map(),
+  /* El metro de vuelta de cada posicion acumulada, en paralelo con
+     `recorrido`. Hace falta para que el circuito que se congela no arrastre lo
+     recorrido antes de la linea. Ver `soloDesdeLaLinea`. */
+  metroDePosicion: new Map(),
   //: Cuantos puntos habia la ultima vez que se rehizo el dibujo. Rehacerlo en
   //: cada punto significa recalcular la orientacion de la nube entera, y el
   //: dibujo salta de sitio a cada paso.
@@ -8128,6 +8132,7 @@ function vaciarVivo(sesion) {
      anterior debajo del coche de la nueva. */
   vivo.recorrido.clear(); vivo.posicionMundo.clear();
   vivo.marcaDePosicion.clear(); vivo.velocidadAnterior.clear();
+  vivo.metroDePosicion.clear();
   vivo.recorridoDibujado = 0;
   /* Y lo derivado de las series tambien: las vistas temporales y los relojes de
      vuelta viven en otra cache, con la vuelta y el vehiculo por clave, y esos
@@ -8278,6 +8283,14 @@ function anotarPosicionViva(vehiculo, marca) {
   vivo.marcaDePosicion.set(vehiculo, marca);
 
   puntos.push(corte ? [x, z, true] : [x, z]);
+  /* En paralelo, el metro de vuelta de esa misma posicion. Se lee de la ultima
+     muestra y no de `vivo.distancia`, que guarda el mayor visto: lo que hace
+     falta es el metro **de este punto**, y antes de la linea es negativo. */
+  if (!vivo.metroDePosicion.has(vehiculo)) vivo.metroDePosicion.set(vehiculo, []);
+  const metros = vivo.metroDePosicion.get(vehiculo);
+  const md = ultimos.get("lap_distance");
+  metros.push(md ? numeroMedido(md.value) : null);
+  if (metros.length > MAX_PUNTOS_DE_RECORRIDO) metros.shift();
   if (puntos.length > MAX_PUNTOS_DE_RECORRIDO) puntos.shift();
   /* CUANTAS POSICIONES DISTINTAS ENTRARON, NO CUANTAS QUEDAN.
      El redibujo se decidia por cuanto habia crecido el arreglo. Deja de crecer
@@ -8336,9 +8349,40 @@ function armarTrazadoVivo() {
 /* Al cerrar una vuelta, lo recorrido **es** el circuito: se cierra el camino y
    se deja de crecer. Desde ahi el coche se ubica por su distancia, que es lo
    que permite verlo dar vueltas en vez de alargar una linea. */
+/* LO RECORRIDO ANTES DE LA LINEA NO ES EL CIRCUITO, TAMPOCO EN VIVO.
+
+   TERCER SITIO DE LA MISMA REGLA, y los tres hacen falta porque los tres
+   deciden cosas distintas: `fraccionDelMetro` decide donde poner el coche,
+   `_solo_dentro_de_la_vuelta` ---en el backend--- decide que se dibuja de una
+   sesion guardada, y esta decide **que se congela como circuito** en vivo.
+
+   Mientras el recorrido se construye se dibuja entero, y esta bien: el
+   encabezado declara «recorrido en construccion, medido en vivo» y lo que se
+   ve es lo que el coche recorrio. Lo que no puede pasar es que eso se
+   congele **como el circuito**: ahi entrarian la aproximacion y la vuelta
+   rapida superpuestas, que es exactamente la cuña y la falsa chicana que se
+   vieron en la sesion guardada de Shanghai.
+
+   Sin metros no se recorta: una fuente que no publica distancia de vuelta
+   ---el bus--- no declara nada sobre la linea, y recortarla la dejaria sin
+   circuito. Desalineados tampoco, por lo mismo que en `marcarSaltos`: recortar
+   por un indice corrido borraria un tramo que si se recorrio. */
+function soloDesdeLaLinea(puntos, metros) {
+  if (!Array.isArray(puntos) || !Array.isArray(metros) ||
+      metros.length !== puntos.length) return puntos;
+  let desde = -1;
+  for (let i = 0; i < metros.length; i++) {
+    const m = metros[i];
+    if (typeof m === "number" && isFinite(m) && m < 0) desde = i;
+  }
+  return desde < 0 ? puntos : puntos.slice(desde + 1);
+}
+
 function congelarTrazadoVivo(largoDeLaVuelta) {
   const clave = claveVehiculoPropio();
-  const puntos = clave ? vivo.recorrido.get(clave) : null;
+  const crudos = clave ? vivo.recorrido.get(clave) : null;
+  /* El circuito son los metros de la vuelta. Ver `soloDesdeLaLinea`. */
+  const puntos = soloDesdeLaLinea(crudos, clave ? vivo.metroDePosicion.get(clave) : null);
   if (!puntos || puntos.length < 20) return;
   const armado = trazadoAPath(puntos, false, true);
   if (!armado.path) return;
@@ -9095,6 +9139,7 @@ function olvidarLoDeLaCorrida() {
   CURVAS = [];
   vivo.recorrido.clear();
   vivo.marcaDePosicion.clear(); vivo.velocidadAnterior.clear();
+  vivo.metroDePosicion.clear();
   vivo.recorridoDibujado = 0;
   AUTOS = [];
   seleccion = new Set();

@@ -127,6 +127,7 @@ const PIEZAS = [
   extraerConstanteNumerica("PISO_DE_MOVIMIENTO_M"),
   extraerFuncion("pudoRecorrer"),
   extraerFuncion("anotarPosicionViva"),
+  extraerFuncion("soloDesdeLaLinea"),
   extraerFuncion("armarTrazadoVivo"),
   extraerFuncion("congelarTrazadoVivo"),
   extraerFuncion("claveVehiculoPropio"),

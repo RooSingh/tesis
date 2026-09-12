@@ -149,4 +149,62 @@ prueba("y con el nombre que esa fuente usa", () => {
     "posY tiene que ser world_position_z: la `y` del simulador es la altura");
 });
 
+/* -------- y la misma regla en vivo, al congelar el circuito -------- */
+
+const soloDesdeLaLinea = new Function(
+  `${extraer("soloDesdeLaLinea")} return soloDesdeLaLinea;`)();
+
+prueba("EN VIVO, EL CIRCUITO TAMPOCO INCLUYE LA APROXIMACION", () => {
+  /* `congelarTrazadoVivo` toma lo acumulado y lo declara **el circuito**. Si
+     ahi entra lo recorrido antes de la linea, el circuito en vivo queda con la
+     misma cuña y la misma falsa chicana que tenia la sesion guardada: son dos
+     trayectorias distintas superpuestas.
+
+     Mientras se construye se dibuja todo, y esta bien: ahi el encabezado
+     declara «recorrido en construccion, medido en vivo» y lo que se muestra es
+     lo que el coche recorrio. Lo que no puede pasar es que eso se congele
+     **como el circuito**. */
+  const puntos = [[0, 0], [1, 1], [2, 2], [3, 3], [4, 4]];
+  const metros = [-900, -10, 0, 120, 240];
+  assert.deepStrictEqual(soloDesdeLaLinea(puntos, metros),
+                         [[2, 2], [3, 3], [4, 4]]);
+});
+
+prueba("el metro cero es la largada y entra", () => {
+  const puntos = [[0, 0], [1, 1]];
+  assert.deepStrictEqual(soloDesdeLaLinea(puntos, [0, 10]), puntos);
+});
+
+prueba("una vuelta que nunca estuvo antes de la linea no se toca", () => {
+  const puntos = [[0, 0], [1, 1], [2, 2]];
+  assert.strictEqual(soloDesdeLaLinea(puntos, [10, 20, 30]), puntos);
+});
+
+prueba("sin metros no se recorta nada", () => {
+  /* Una fuente que no publique distancia de vuelta ---el bus--- no declara
+     nada sobre la linea, y recortarle el recorrido lo dejaria sin circuito. */
+  const puntos = [[0, 0], [1, 1]];
+  assert.strictEqual(soloDesdeLaLinea(puntos, null), puntos);
+  assert.strictEqual(soloDesdeLaLinea(puntos, [null, null]), puntos);
+});
+
+prueba("arreglos desalineados no recortan", () => {
+  const puntos = [[0, 0], [1, 1], [2, 2]];
+  assert.strictEqual(soloDesdeLaLinea(puntos, [-5, 0]), puntos);
+});
+
+prueba("si todo es anterior a la linea no queda circuito", () => {
+  /* Y esta bien que quede vacio: `congelarTrazadoVivo` exige veinte puntos
+     para congelar, asi que no congela nada y sigue en construccion. */
+  assert.deepStrictEqual(soloDesdeLaLinea([[0, 0], [1, 1]], [-90, -10]), []);
+});
+
+prueba("el que congela el circuito usa esta regla", () => {
+  const i = fuenteApp.indexOf("function congelarTrazadoVivo(");
+  assert.notStrictEqual(i, -1, "no esta congelarTrazadoVivo");
+  const cuerpo = fuenteApp.slice(i, i + 700);
+  assert.ok(/soloDesdeLaLinea\(/.test(cuerpo),
+    "congela el recorrido entero, con la aproximacion adentro");
+});
+
 console.log("ok " + hechas + " pruebas del metro antes de la linea");

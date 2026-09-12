@@ -105,6 +105,7 @@ globalThis.vivo = { series: new Map(), ultimos: new Map(), recorrido: new Map(),
                        `tests/js/tiempo_de_presentacion.js`. */
                     marcaDePosicion: new Map(),
                     velocidadAnterior: new Map(),
+                    metroDePosicion: new Map(),
                     recorridoDibujado: 0 };
 globalThis.document = { getElementById: () => null };
 globalThis.seleccion = new Set();
@@ -342,6 +343,7 @@ function reiniciar() {
                        `tests/js/tiempo_de_presentacion.js`. */
                     marcaDePosicion: new Map(),
                     velocidadAnterior: new Map(),
+                    metroDePosicion: new Map(),
                     recorridoDibujado: 0 };
   globalThis.estadoSesion = "cargado";
   globalThis._selloSeries++;
