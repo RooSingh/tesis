@@ -9158,7 +9158,7 @@ function sesionQueSeAbreSola(sesiones, recordada) {
 
 //: La grilla del tablero. Cuatro en escritorio; el CSS la reduce en pantallas
 //: angostas, y el ancho de cada panel se acota contra este numero.
-const COLUMNAS_DEL_TABLERO = 4;
+const COLUMNAS_DEL_TABLERO = 8;
 
 /* EL ALTO SE SIGUE IMPONIENDO, Y LO DECIDE QUIEN MIRA.
 
@@ -9175,7 +9175,28 @@ const COLUMNAS_DEL_TABLERO = 4;
    Asi que la grilla tiene filas de tamaño fijo y cada widget declara **cuantas
    ocupa**, igual que declara cuantas columnas. Lo que cambia no es que haya un
    alto impuesto: es quien lo elige. */
-const ALTO_DE_FILA_PX = 150;
+/* EL ALTO DE UNA FILA ES EL ANCHO DE UNA COLUMNA, MEDIDO.
+   Una celda de 1x1 tiene que ser un **cuadrado**, y el ancho de una columna
+   depende de la ventana: con 1.480 px de tablero y ocho columnas son 173, y con
+   otro ancho es otro numero. Un alto escrito a mano solo seria cuadrado en una
+   ventana.
+
+   Este numero es el respaldo, el que vale hasta que `ajustarAltoDeFila` mida.
+   No es decorativo: es lo que se ve entre que el documento se dibuja y el guion
+   corre, y ponerlo lejos del real haria saltar el tablero al cargar. */
+const ALTO_DE_FILA_PX = 173;
+
+/* Lleva el alto de fila al ancho de columna que la grilla tiene ahora mismo.
+   Se mide del tablero y no se calcula contra `window.innerWidth`: el tablero
+   tiene margenes, y el dia que cambien la cuenta quedaria vieja sin avisar. */
+function ajustarAltoDeFila() {
+  const tablero = document.getElementById("tablero");
+  if (!tablero) return;
+  const columnas = getComputedStyle(tablero).gridTemplateColumns.split(" ");
+  const ancho = parseFloat(columnas[0]);
+  if (!Number.isFinite(ancho) || ancho <= 0) return;
+  tablero.style.setProperty("--alto-de-fila", Math.round(ancho) + "px");
+}
 
 //: El hueco entre celdas, el mismo que declara `gap` en la hoja de estilos.
 //: Hace falta para convertir pixeles arrastrados en columnas y filas: sin
@@ -9220,21 +9241,28 @@ const PASO_DE_MEDIDA = 1 / SUBDIVISIONES;
    `id` es el mismo `data-panel` del HTML ---hay una prueba que lo exige--- y
    `ancho` es cuantas columnas ocupa cuando nadie lo movio. */
 const WIDGETS = [
-  { id: "trazado",       titulo: "Trazado",           ancho: 1, alto: 2 },
-  { id: "motor",         titulo: "Motor y energía",   ancho: 1, alto: 2 },
-  { id: "vehiculo",      titulo: "Vehículo",          ancho: 1, alto: 2 },
-  { id: "cronometraje",  titulo: "Cronometraje",      ancho: 1, alto: 1 },
+  { id: "trazado",       titulo: "Trazado",           ancho: 2, alto: 2 },
+  { id: "motor",         titulo: "Motor y energía",   ancho: 2, alto: 2 },
+  /* LOS DOS RELOJES. Nace en dos columnas por una cuenta, no por gusto: en una
+     celda de 1x1 ---173 px de lado--- los dos arcos se reparten el ancho y cada
+     uno queda en 71 px, **menos que los 104 que tenian** dentro del panel de
+     motor. En dos, cada uno toma unos 165 y recien ahi un arco se lee de reojo,
+     que es para lo unico que sirve un arco. Achicarlo a 1x1 sigue funcionando;
+     lo que se pierde es el tamaño. */
+  { id: "medidores",     titulo: "Régimen y velocidad", ancho: 2, alto: 1 },
+  { id: "vehiculo",      titulo: "Vehículo",          ancho: 2, alto: 2 },
+  { id: "cronometraje",  titulo: "Cronometraje",      ancho: 2, alto: 1 },
   /* Dos filas: con una, el primer aviso quedaba cortado a la mitad ---y un
      aviso a medio leer es peor que ninguno---. Quien quiera menos lo achica. */
-  { id: "avisos",        titulo: "Avisos",            ancho: 1, alto: 2 },
-  { id: "clima",         titulo: "Clima y pista",     ancho: 1, alto: 1 },
-  { id: "vehiculos",     titulo: "Vehículos",         ancho: 1, alto: 2 },
-  { id: "aceleraciones", titulo: "Aceleraciones",     ancho: 1, alto: 2 },
-  { id: "puesta",        titulo: "Puesta a punto",    ancho: 2, alto: 2 },
+  { id: "avisos",        titulo: "Avisos",            ancho: 2, alto: 2 },
+  { id: "clima",         titulo: "Clima y pista",     ancho: 2, alto: 1 },
+  { id: "vehiculos",     titulo: "Vehículos",         ancho: 2, alto: 2 },
+  { id: "aceleraciones", titulo: "Aceleraciones",     ancho: 2, alto: 2 },
+  { id: "puesta",        titulo: "Puesta a punto",    ancho: 4, alto: 2 },
   /* La barra de señales: hasta hoy era una celda del tablero que el catalogo no
      nombraba, con `ancho-total` en vez de una disposicion. Va ultima porque es
      un mando, no algo que se vigile. */
-  { id: "senales",       titulo: "Señales",           ancho: 4, alto: 1, alPie: true },
+  { id: "senales",       titulo: "Señales",           ancho: 8, alto: 1, alPie: true },
 ];
 
 /* ============================================================
@@ -9257,7 +9285,7 @@ const PREFIJO_DE_GRAFICO = "grafico:";
 
 //: Una columna y dos filas, igual que los paneles que se vigilan. Un grafico
 //: mas bajo que eso deja el trazo en una tira donde no se lee la forma.
-const MEDIDA_DE_UN_GRAFICO = { ancho: 1, alto: 2 };
+const MEDIDA_DE_UN_GRAFICO = { ancho: 2, alto: 2 };
 
 //: Que graficos hay en el tablero ahora mismo, por su canal. Lo escribe
 //: `asegurarGraficosChicos`, que es quien los crea y los saca: dos sitios
@@ -9399,14 +9427,21 @@ function conLosGraficosDeAhora(disposicion) {
    que solo cambia cuando alguien edita. */
 let DISPOSICION = null;
 
+/* LA LLAVE LLEVA LA VERSION DE LA GRILLA, y cambio al pasar de cuatro columnas
+   a ocho. Una disposicion guardada dice «ancho: 2» y eso significaba media
+   pantalla; ahora significa un cuarto. Leerla tal cual no da un error: da un
+   tablero que se encogio solo, que es la clase de cambio que nadie atribuye a
+   nada. Con la llave nueva lo viejo se ignora y se empieza de fabrica. */
+const LLAVE_DE_LA_DISPOSICION = "disposicion-tablero-8col";
+
 function disposicionGuardada() {
-  try { return window.localStorage.getItem("disposicion-tablero"); }
+  try { return window.localStorage.getItem(LLAVE_DE_LA_DISPOSICION); }
   catch (e) { return null; }          // sin memoria: se usa la de fabrica
 }
 
 function recordarDisposicion(disposicion) {
   try {
-    window.localStorage.setItem("disposicion-tablero", JSON.stringify(disposicion));
+    window.localStorage.setItem(LLAVE_DE_LA_DISPOSICION, JSON.stringify(disposicion));
   } catch (e) { /* sin memoria: el tablero anda igual, no se recuerda */ }
 }
 
@@ -9532,10 +9567,86 @@ let EDITANDO = null;      //: la disposicion en borrador, o null si no se edita
 
 function editando() { return EDITANDO !== null; }
 
+/* ============================================================
+   DESHACER Y REHACER
+   ------------------------------------------------------------
+   Sale casi gratis y es por una decision vieja: las tres operaciones
+   ---mover, redimensionar, mostrar--- **devuelven una lista nueva** y no tocan
+   la que reciben. O sea que cada paso del borrador ya era un valor entero e
+   inmutable; lo unico que faltaba era guardarlos en fila.
+
+   POR QUE «CANCELAR» NO ALCANZABA. Cancelar vuelve al principio: veinte
+   arrastres bien y uno mal cuestan los veintiuno. Deshacer devuelve **un** paso,
+   que es lo que alguien quiere cuando se le fue la mano con el tirador.
+
+   LA PILA MUERE CON EL MODO. Entrar a editar empieza de cero: deshacer un
+   cambio que ya se guardo seria otra cosa ---revertir lo publicado--- y
+   mezclarlas en el mismo boton haria que a veces vuelva al paso anterior y a
+   veces a la sesion anterior.
+   ============================================================ */
+let PASOS = [];        //: cada estado por el que paso el borrador, en orden
+let PASO = -1;         //: en cual esta parado; los de mas alla son el «rehacer»
+
+function empezarLosPasos(disposicion) {
+  PASOS = [disposicion];
+  PASO = 0;
+}
+
+/* Anota un estado nuevo. Lo que estuviera por delante se descarta: rehacer
+   despues de haber cambiado de rumbo llevaria a una rama que ya no es la que se
+   esta editando, y no hay forma de dibujar dos. */
+function anotarPaso(disposicion) {
+  /* UN PASO IGUAL AL ANTERIOR NO SE ANOTA. Un arrastre que termina donde empezo,
+     o un tirador que se movio sin llegar a cambiar de celda, dejarian un paso
+     que al deshacerse no hace nada visible. Un boton que a veces no hace nada se
+     lee como roto, y quien lo aprieta no tiene forma de saber cual de las dos
+     cosas paso. */
+  if (PASO >= 0 && JSON.stringify(PASOS[PASO]) === JSON.stringify(disposicion)) return;
+  PASOS = PASOS.slice(0, PASO + 1);
+  PASOS.push(disposicion);
+  PASO = PASOS.length - 1;
+}
+
+function sePuedeDeshacer() { return PASO > 0; }
+function sePuedeRehacer() { return PASO >= 0 && PASO < PASOS.length - 1; }
+
+/* Mover el puntero y devolver el estado, o `null` si no hay a donde ir.
+   Va aparte de `deshacer` a proposito: asi la pila entera ---anotar, descartar
+   la rama, ir y volver--- se puede probar sin un documento, que es donde vive el
+   unico defecto que este codigo puede tener. */
+function unPasoAtras() {
+  if (!sePuedeDeshacer()) return null;
+  PASO -= 1;
+  return PASOS[PASO];
+}
+
+function unPasoAdelante() {
+  if (!sePuedeRehacer()) return null;
+  PASO += 1;
+  return PASOS[PASO];
+}
+
+function deshacer() {
+  if (!editando()) return;
+  const paso = unPasoAtras();
+  if (!paso) return;
+  EDITANDO = paso;
+  refrescarBorrador();
+}
+
+function rehacer() {
+  if (!editando()) return;
+  const paso = unPasoAdelante();
+  if (!paso) return;
+  EDITANDO = paso;
+  refrescarBorrador();
+}
+
 function entrarAEditar() {
   /* La copia es profunda: las operaciones devuelven listas nuevas, pero el
      borrador tiene que poder descartarse entero sin haber tocado el original. */
   EDITANDO = JSON.parse(JSON.stringify(DISPOSICION || disposicionPorOmision()));
+  empezarLosPasos(EDITANDO);
   pintarModoEdicion();
 }
 
@@ -9557,13 +9668,28 @@ function salirDeEditar(guardando) {
 function restablecerDisposicion() {
   if (!editando()) return;
   EDITANDO = disposicionPorOmision();
+  anotarPaso(EDITANDO);           // restablecer tambien se puede deshacer
   refrescarBorrador();
+}
+
+/* Si deshacer y rehacer estan disponibles ahora mismo.
+   VIVE APARTE DE `pintarModoEdicion` PORQUE SE PINTA MUCHO MAS SEGUIDO: aquel
+   corre al entrar y al salir del modo, y esto tiene que correr **despues de cada
+   paso**. Estuvo adentro y el resultado era que los dos botones se quedaban como
+   estaban al entrar ---apagados--- y no se encendian nunca: comprobado en
+   pantalla, tres cambios y deshacer seguia sin poder apretarse. */
+function pintarBotonesDeHistoria() {
+  const atras = document.getElementById("btn-deshacer-tablero");
+  const adelante = document.getElementById("btn-rehacer-tablero");
+  if (atras) { atras.hidden = !editando(); atras.disabled = !sePuedeDeshacer(); }
+  if (adelante) { adelante.hidden = !editando(); adelante.disabled = !sePuedeRehacer(); }
 }
 
 /* Aplica el borrador mientras se edita: lo que se ve es lo que se guardaria. */
 function refrescarBorrador() {
   aplicarDisposicion(EDITANDO);
   pintarBotonesDeEdicion();
+  pintarBotonesDeHistoria();
 }
 
 /* LO MISMO PERO SIN TOCAR EL ARBOL, para usar **durante** un gesto.
@@ -9604,6 +9730,7 @@ function pintarQuitados() {
   caja.querySelectorAll("[data-traer]").forEach(b => {
     b.addEventListener("click", () => {
       EDITANDO = mostrarWidget(EDITANDO, b.dataset.traer, true);
+      anotarPaso(EDITANDO);
       refrescarBorrador();
     });
   });
@@ -9634,6 +9761,9 @@ function pintarModoEdicion() {
   if (g) g.hidden = !editando();
   if (c) c.hidden = !editando();
   if (r) r.hidden = !editando();
+  /* Se apagan en vez de esconderse: un boton que aparece y desaparece cambia de
+     sitio a los de al lado, y deshacer se aprieta varias veces seguidas. */
+  pintarBotonesDeHistoria();
   if (editando()) aplicarDisposicion(EDITANDO); else aplicarDisposicion(DISPOSICION);
   pintarBotonesDeEdicion();
 }
@@ -9708,6 +9838,7 @@ function pintarBotonesDeEdicion() {
       else if (hace === "angosto") EDITANDO = redimensionarWidget(EDITANDO, w.id, w.ancho - PASO_DE_MEDIDA, w.alto);
       else if (hace === "alto") EDITANDO = redimensionarWidget(EDITANDO, w.id, w.ancho, w.alto + PASO_DE_MEDIDA);
       else if (hace === "bajo") EDITANDO = redimensionarWidget(EDITANDO, w.id, w.ancho, w.alto - PASO_DE_MEDIDA);
+      anotarPaso(EDITANDO);
       refrescarBorrador();
     });
     el.appendChild(mandos);
@@ -9744,6 +9875,7 @@ function pintarBotonesDeEdicion() {
       const soltar = () => {
         tirador.removeEventListener("pointermove", mover);
         tirador.removeEventListener("pointerup", soltar);
+        anotarPaso(EDITANDO);      // un paso por gesto, no por pixel
         pintarBotonesDeEdicion();
       };
       tirador.addEventListener("pointermove", mover);
@@ -9795,6 +9927,7 @@ function conectarArrastre() {
   tablero.addEventListener("dragend", () => {
     tablero.querySelectorAll('[data-arrastrando]').forEach(n => delete n.dataset.arrastrando);
     arrastrado = null; ultimoSobre = null;
+    anotarPaso(EDITANDO);         // un paso por arrastre, no por panel cruzado
     pintarBotonesDeEdicion();   // recien aca se puede tocar el arbol
   });
 }
@@ -13692,6 +13825,7 @@ function encuadrarCabina() {
    despues armaria el tablero en su orden de fabrica y saltaria al del usuario a
    la vista. */
 DISPOSICION = reconciliarDisposicion(disposicionGuardada());
+ajustarAltoDeFila();
 aplicarDisposicion(DISPOSICION);
 conectarArrastre();
 (function mandosDeEdicion() {
@@ -13699,18 +13833,30 @@ conectarArrastre();
   const g = document.getElementById("btn-guardar-tablero");
   const c = document.getElementById("btn-cancelar-tablero");
   const r = document.getElementById("btn-restablecer-tablero");
+  const atras = document.getElementById("btn-deshacer-tablero");
+  const adelante = document.getElementById("btn-rehacer-tablero");
   if (b) b.addEventListener("click", entrarAEditar);
   if (g) g.addEventListener("click", () => salirDeEditar(true));
   if (c) c.addEventListener("click", () => salirDeEditar(false));
   if (r) r.addEventListener("click", restablecerDisposicion);
+  if (atras) atras.addEventListener("click", deshacer);
+  if (adelante) adelante.addEventListener("click", rehacer);
   /* Escape cancela. Es la salida que alguien busca cuando entro sin querer, y
      no guardar es lo prudente: lo que no se pidio no se escribe. */
   document.addEventListener("keydown", ev => {
-    if (ev.key === "Escape" && editando()) salirDeEditar(false);
+    if (ev.key === "Escape" && editando()) { salirDeEditar(false); return; }
+    if (!editando() || !(ev.metaKey || ev.ctrlKey)) return;
+    /* Los atajos de siempre, porque nadie los va a buscar en un boton: Z
+       deshace y Mayus+Z rehace, que es lo que hace el resto del sistema. */
+    if (ev.key.toLowerCase() === "z") {
+      ev.preventDefault();
+      if (ev.shiftKey) rehacer(); else deshacer();
+    }
   });
 })();
 
 window.addEventListener("resize", () => {
+  ajustarAltoDeFila();
   ajustarCabina();
   dibujarTraza(); moverCabezalesGraficos();
   if (compAbierta()) dibujarComparacion();

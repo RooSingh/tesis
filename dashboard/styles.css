@@ -812,8 +812,13 @@
        unidad: medido, una unidad media 164 px contra 150, dos 342 contra 314 y
        tres 520 contra 478. Subdividir solo es inocuo con `gap: 0`, y el hueco es
        justamente lo que separa un panel del de al lado. */
-    grid-template-columns: repeat(4, minmax(0, 1fr));
-    grid-auto-rows: 150px;
+    grid-template-columns: repeat(8, minmax(0, 1fr));
+    /* EL ALTO DE FILA ES EL ANCHO DE COLUMNA, para que una celda de 1x1 sea un
+       cuadrado. Lo mide `ajustarAltoDeFila` y lo escribe en la variable; el
+       respaldo es lo que vale entre que la pagina se dibuja y el guion corre, y
+       por eso es el ancho de columna a 1.480 px de tablero y no un numero
+       redondo: con otro, el tablero saltaria al cargar. */
+    grid-auto-rows: var(--alto-de-fila, 173px);
     gap: 14px;
     /* EL ALTO LO PONEN LAS FILAS, NO LA VENTANA.
        Aca decia `height: calc(100vh - 290px)`, para que trazado, graficos,
@@ -1526,6 +1531,94 @@
   .cabina[data-editando="si"] > [data-panel] > *:not(.mandos-widget) {
     pointer-events: none;
   }
+  /* ---------- EL CLIMA MUESTRA MENOS CUANDO LE DAN MENOS ----------
+     En una celda de 1x1 ---173 px de lado--- no entran seis cosas legibles. Lo
+     que se queda es el titular: el icono, la temperatura del aire y si llueve.
+     Es lo que alguien mira de reojo, y ademas lo unico del panel que no esta
+     repetido en ningun otro sitio del tablero.
+
+     LAS CUATRO CASILLAS NO SE ACHICAN, SE VAN. Achicarlas fue el primer intento
+     y termino en rotulos de medio cuerpo cortados con puntos suspensivos: «PI…»,
+     «COC…». Un rotulo a medias no es un rotulo corto, es otra palabra. Y volver
+     a agrandar el panel las trae enteras, de modo que no se pierde nada: se
+     elige cuanto sitio vale el clima.
+
+     El umbral son 210 px de ancho: por debajo, «COCHE DE SEG.» no entra en dos
+     columnas sin cortarse, que es el caso que esto viene a evitar. */
+  @container widget (max-width: 210px) {
+    .cabina .clima-mini .clima-rejilla { display: none; }
+    .cabina .clima-mini .clima { gap: 0; height: 100%; justify-content: center; }
+    .cabina .clima-mini .clima-principal { gap: 10px; }
+    .cabina .clima-mini .clima-principal .icono { width: 34px; height: 34px; }
+    /* LA CIFRA Y SU UNIDAD EN EL MISMO RENGLON, y el estado abajo. Puesto en
+       columna, el «°C» caia a un renglon propio y quedaba una unidad suelta
+       debajo del numero. Se envuelve, y el estado ---que es el unico de los tres
+       que lleva renglon propio--- se lo pide con una base del cien por ciento. */
+    .cabina .clima-mini .clima-principal > div {
+      /* `flex-direction` se declara aunque `row` sea el valor de fabrica: la
+         consulta de 260 px, mas arriba, la puso en columna, y `display: flex` a
+         secas no la devuelve. Es la segunda vez que esta misma trampa muerde en
+         este archivo: heredar una direccion no se ve leyendo la regla propia. */
+      display: flex; flex-direction: row; flex-wrap: wrap;
+      align-items: baseline; gap: 0 3px; min-width: 0;
+    }
+    .cabina .clima-mini .clima-principal .eyebrow { flex: 0 0 100%; }
+    /* 1,2 y no 1,1: con 1,1 la coma decimal de «16,0» se cortaba tres pixeles
+       contra el borde de su propia linea. Un numero recortado por abajo se lee
+       igual, y por eso cuesta verlo. */
+    .cabina .clima-mini .clima-principal .cifra-grande { font-size: 1.5rem; line-height: 1.2; }
+    .cabina .clima-mini .clima-principal .unidad-grande { font-size: .9rem; }
+    .cabina .clima-mini .clima-principal .eyebrow {
+      margin: 0; font-size: .62rem; letter-spacing: .06em; line-height: 1.2;
+      white-space: nowrap;
+    }
+    /* La pastilla de bandera tambien se va. En 173 px no entra al lado de la
+       temperatura, y partida en dos renglones se come el alto del titular. El
+       hecho que dice ---que bandera hay--- vuelve con las casillas en cuanto el
+       panel crece, y ademas vive en el panel de avisos. */
+    .cabina .clima-mini .clima-principal .bandera { display: none; }
+  }
+
+  /* ---------- LOS DOS RELOJES EN UNA CELDA CUADRADA ----------
+     Uno al lado del otro, repartiendose el ancho, y cada uno tan grande como su
+     mitad del cuadrado permita. El arco se lee por la posicion de la aguja: lo
+     que necesita es tamaño, y lo que sobra es el aire alrededor. */
+  .cabina .panel-medidores .cuerpo-instrumento {
+    display: flex; min-height: 0; padding: 6px 10px 10px;
+  }
+  .cabina .panel-medidores .fila-medidores {
+    flex: 1; min-height: 0;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+    /* `stretch` y no `center`: el reloj de abajo reparte su alto entre el
+       dibujo y el nombre con `flex: 1 1 0`, y eso necesita que el padre tenga un
+       alto **definido**. Con `center` el alto del medidor salia de su contenido,
+       el contenido salia del alto, y el dibujo se resolvia en cero: se vieron
+       los dos nombres sin ningun arco. */
+    align-items: stretch;
+  }
+  /* EL ARCO CEDE, EL NOMBRE NO.
+     El tope de 104 px venia de cuando los relojes compartian el panel con siete
+     tiras de texto; con la celda para ellos solos el limite es la celda. Pero
+     `width: 100%` con `height: auto` deja que el alto salga del ancho, y en una
+     celda baja el dibujo pedia 149 px donde habia 124: el rotulo ---«Régimen»,
+     «Velocidad»--- caia debajo del borde y el panel lo cortaba. Medido: 35 px de
+     desborde y el nombre invisible.
+
+     El arco se lee por la posicion de la aguja y aguanta ser mas chico; el
+     nombre no aguanta desaparecer. Asi que el nombre toma lo suyo primero y el
+     dibujo se queda con lo que sobre, centrado ---un `<svg>` con `viewBox` se
+     encaja solo dentro de su caja sin deformarse---. */
+  .cabina .panel-medidores .medidor {
+    min-width: 0; min-height: 0;
+    display: flex; flex-direction: column; align-items: center;
+  }
+  .cabina .panel-medidores .medidor svg {
+    max-width: none; width: 100%; height: 100%;
+    flex: 1 1 0; min-height: 0;
+  }
+  .cabina .panel-medidores .medidor .rotulo { flex: 0 0 auto; }
+
   /* La bandeja de quitados vive en la barra de edicion, al lado de Guardar y
      Cancelar: es parte de la misma decision y se lee en el mismo renglon. */
   .quitados {
@@ -1685,7 +1778,7 @@
   }
   @media (max-width: 1180px) {
     .cabina {
-      grid-template-columns: repeat(2, minmax(0, 1fr));
+      grid-template-columns: repeat(4, minmax(0, 1fr));
       height: auto !important; min-height: 0;
     }
     .cabina .grafico-chico canvas { min-height: 104px; }
@@ -1699,7 +1792,7 @@
      especificidad a las consultas de tamaño, que es lo que ahora decide como se
      reparte el panel. */
   @media (max-width: 860px) {
-    .cabina { grid-template-columns: minmax(0, 1fr); }
+    .cabina { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   }
 
   .tablero {

@@ -93,6 +93,15 @@
     <button class="boton secundario" id="btn-editar-tablero" type="button"
             aria-pressed="false">Editar widgets</button>
     <button class="boton" id="btn-guardar-tablero" type="button" hidden>Guardar cambios</button>
+    <!-- DESHACER Y REHACER. Cancelar vuelve al principio: veinte arrastres bien
+         y uno mal cuestan los veintiuno. Esto devuelve un paso, que es lo que
+         alguien quiere cuando se le fue la mano con el tirador. Se apagan en vez
+         de esconderse: deshacer se aprieta varias veces seguidas y un boton que
+         desaparece corre de sitio a los de al lado. -->
+    <button class="boton secundario" id="btn-deshacer-tablero" type="button" hidden
+            title="Deshacer el último cambio (Ctrl+Z)" aria-label="Deshacer">&#8630; Deshacer</button>
+    <button class="boton secundario" id="btn-rehacer-tablero" type="button" hidden
+            title="Rehacer (Ctrl+Mayús+Z)" aria-label="Rehacer">&#8631; Rehacer</button>
     <!-- Restablecer deja el borrador como viene de fabrica **sin guardarlo**:
          asi «Cancelar» tambien deshace el restablecer. -->
     <button class="boton secundario" id="btn-restablecer-tablero" type="button" hidden
@@ -312,16 +321,38 @@
       <section class="instrumento panel-motor" data-panel="motor" data-necesita="engine_speed">
       <header><h2>Motor y energía</h2><span class="fuente-canal" id="canal-motor"></span></header>
       <div class="cuerpo-instrumento">
-        <!-- Tres zonas: barras, medidores, barras. Los medidores quedan
-             centrados en el ancho, alineados con el vehiculo de la fila de
-             arriba, y las barras acompanan a los lados. -->
+        <!-- LOS DOS RELOJES SE FUERON A SU PROPIO PANEL, aca abajo. Vivian en el
+             medio de este, entre las barras, y compartian el ancho con ellas:
+             dos arcos de cien pixeles al lado de siete tiras de texto. Un arco
+             sirve para mirarlo **de reojo** ---la posicion de la aguja se
+             entiende sin leer--- y para eso necesita tamaño, que es lo que no
+             tenia. Quedan las tiras, que es lo que se lee con la cifra. -->
         <div class="banco-motor">
           <div class="barras-medidas" id="barras-izq"></div>
-          <div class="fila-medidores" id="fila-medidores"></div>
           <div class="barras-medidas" id="barras-der"></div>
         </div>
       </div>
       <div class="capa-ausente"><strong>Sin datos de motor</strong><span id="motivo-motor"></span></div>
+    </section>
+
+      <!-- ============================================================
+           LOS DOS RELOJES, SOLOS EN UNA CELDA CUADRADA
+           ------------------------------------------------------------
+           Regimen y velocidad son las dos señales que se miran mientras se
+           conduce, y las unicas que se leen por la posicion de la aguja en vez
+           de por la cifra. En una celda de 1x1 ---un cuadrado--- entran los dos
+           grandes, que es lo que un arco necesita para servir de algo.
+
+           PIDE `speed` Y NO `engine_speed`. El panel de motor pide el regimen, y
+           con eso el bus ---que no lo publica--- se quedaba sin ninguno de los
+           dos relojes, incluido el de velocidad, que si tiene. Este panel existe
+           por los dos: alcanza con que haya uno.
+           ============================================================ -->
+      <section class="instrumento panel-medidores" data-panel="medidores" data-necesita="speed">
+      <header><h2>Régimen y velocidad</h2><span class="fuente-canal" id="canal-medidores"></span></header>
+      <div class="cuerpo-instrumento">
+        <div class="fila-medidores" id="fila-medidores"></div>
+      </div>
     </section>
 
     

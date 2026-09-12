@@ -131,8 +131,8 @@ class DashboardFrontendTests(unittest.TestCase):
         estilos = ESTILOS.read_text(encoding="utf-8")
         self.assertNotIn("col-cabina", estilos,
                          "quedan reglas de los envoltorios que ya no existen")
-        self.assertIn("grid-template-columns: repeat(4, minmax(0, 1fr));", estilos)
-        self.assertIn("grid-auto-rows: 150px;", estilos)
+        self.assertIn("grid-template-columns: repeat(8, minmax(0, 1fr));", estilos)
+        self.assertIn("grid-auto-rows: var(--alto-de-fila,", estilos)
         # Ninguna regla coloca un panel a mano.
         colocan = [
             l for l in estilos.split("\n")
@@ -291,8 +291,15 @@ class DashboardFrontendTests(unittest.TestCase):
         )
         self.assertEqual(alto % subdivisiones, 0,
                          "el alto de unidad no se puede partir en subdivisiones enteras")
-        self.assertIn(f"grid-auto-rows: {alto // subdivisiones}px;", estilos,
-                      "la fila de la hoja no es la unidad del guion partida")
+        # EL ALTO DE FILA SE MIDE, y el numero de la hoja es solo el respaldo
+        # hasta que el guion mida: una celda de 1x1 tiene que ser cuadrada, y el
+        # ancho de columna depende de la ventana. Los dos sitios tienen que
+        # nombrar el mismo respaldo, porque es lo que se ve al cargar.
+        self.assertIn(f"grid-auto-rows: var(--alto-de-fila, {alto // subdivisiones}px);",
+                      estilos,
+                      "el respaldo de la hoja no es el que declara el guion")
+        self.assertIn("--alto-de-fila", APP.read_text(encoding="utf-8"),
+                      "nadie mide el alto de fila: la celda nunca sera cuadrada")
 
         # UNA UNIDAD TIENE QUE MEDIR LO QUE EL MODELO DICE, y partir la grilla no
         # lo respeta solo: un widget de una unidad ocupa `subdivisiones` pistas y

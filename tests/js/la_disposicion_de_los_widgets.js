@@ -74,10 +74,20 @@ const m = new Function(`
   ${extraer("moverWidget")}
   ${extraer("redimensionarWidget")}
   ${extraer("mostrarWidget")}
+  let PASOS = [], PASO = -1;
+  ${extraer("empezarLosPasos")}
+  ${extraer("anotarPaso")}
+  ${extraer("sePuedeDeshacer")}
+  ${extraer("sePuedeRehacer")}
+  ${extraer("unPasoAtras")}
+  ${extraer("unPasoAdelante")}
+  const pila = () => ({ pasos: PASOS, en: PASO });
   return { COLUMNAS_DEL_TABLERO, ALTO_DE_FILA_PX, FILAS_MAXIMAS_DE_UN_WIDGET,
            SUBDIVISIONES, PASO_DE_MEDIDA, WIDGETS,
            PREFIJO_DE_GRAFICO, MEDIDA_DE_UN_GRAFICO, esGrafico, catalogoDeWidgets,
-           disposicionPorOmision, reconciliarDisposicion, moverWidget, redimensionarWidget, mostrarWidget };
+           disposicionPorOmision, reconciliarDisposicion, moverWidget, redimensionarWidget, mostrarWidget,
+           empezarLosPasos, anotarPaso, sePuedeDeshacer, sePuedeRehacer,
+           unPasoAtras, unPasoAdelante, pila };
 `)();
 
 let hechas = 0;
@@ -376,6 +386,73 @@ prueba("restablecer devuelve exactamente la disposicion de fabrica", () => {
 /* -------- lo que el modo edicion puede hacerle a una disposicion -------- */
 
 const orig = () => m.reconciliarDisposicion(null);
+
+/* -------- deshacer y rehacer -------- */
+
+prueba("recien entrado no hay nada que deshacer ni que rehacer", () => {
+  /* Los dos botones nacen apagados. Uno encendido que no hace nada se lee como
+     roto, y quien lo aprieta no tiene forma de saber cual de las dos cosas fue. */
+  m.empezarLosPasos(orig());
+  assert.strictEqual(m.sePuedeDeshacer(), false);
+  assert.strictEqual(m.sePuedeRehacer(), false);
+});
+
+prueba("deshacer devuelve UN paso, no todos", () => {
+  /* Es la diferencia con «Cancelar», que vuelve al principio: veinte arrastres
+     bien y uno mal costaban los veintiuno. */
+  const a = orig();
+  m.empezarLosPasos(a);
+  const b = m.moverWidget(a, a[0].id, 3);
+  m.anotarPaso(b);
+  const c = m.redimensionarWidget(b, b[0].id, 3, 3);
+  m.anotarPaso(c);
+  assert.strictEqual(m.pila().pasos.length, 3);
+  assert.strictEqual(m.pila().en, 2);
+  assert.ok(m.sePuedeDeshacer());
+  assert.strictEqual(m.sePuedeRehacer(), false, "hay rehacer sin haber deshecho");
+});
+
+prueba("un paso igual al anterior no se anota", () => {
+  /* Un arrastre que termina donde empezo, o un tirador que se movio sin cambiar
+     de celda. Anotarlo dejaria un «deshacer» que no hace nada visible. */
+  const a = orig();
+  m.empezarLosPasos(a);
+  m.anotarPaso(a.map(w => ({ ...w })));       // mismo contenido, otro objeto
+  assert.strictEqual(m.pila().pasos.length, 1, "se anoto un paso que no cambia nada");
+  assert.strictEqual(m.sePuedeDeshacer(), false);
+});
+
+prueba("cambiar de rumbo despues de deshacer descarta lo que habia adelante", () => {
+  /* Rehacer llevaria a una rama que ya no es la que se esta editando, y no hay
+     forma de dibujar dos tableros a la vez. */
+  const a = orig();
+  m.empezarLosPasos(a);
+  const b = m.moverWidget(a, a[0].id, 3); m.anotarPaso(b);
+  const c = m.moverWidget(b, b[0].id, 5); m.anotarPaso(c);
+  // se deshace uno y se toma otro camino
+  const vuelto = m.unPasoAtras();
+  assert.strictEqual(JSON.stringify(vuelto), JSON.stringify(b), "deshacer no volvio al paso anterior");
+  assert.ok(m.sePuedeRehacer(), "tras deshacer no se puede rehacer");
+  const d = m.redimensionarWidget(b, b[0].id, 4, 1);
+  m.anotarPaso(d);
+  assert.strictEqual(m.pila().pasos.length, 3, "quedo una rama vieja en la pila");
+  assert.strictEqual(m.sePuedeRehacer(), false, "se puede rehacer hacia la rama descartada");
+});
+
+prueba("los pasos guardados son valores enteros, no referencias al mismo objeto", () => {
+  /* Es lo que hace que deshacer funcione: las tres operaciones **devuelven una
+     lista nueva** y no tocan la que reciben. Si mutaran, todos los pasos de la
+     pila serian el mismo estado y deshacer no volveria a ningun lado. */
+  const a = orig();
+  m.empezarLosPasos(a);
+  const antes = JSON.stringify(a);
+  m.anotarPaso(m.moverWidget(a, a[0].id, 4));
+  m.anotarPaso(m.redimensionarWidget(a, a[0].id, 2, 2));
+  m.anotarPaso(m.mostrarWidget(a, a[2].id, false));
+  assert.strictEqual(JSON.stringify(m.pila().pasos[0]), antes,
+    "el primer paso de la pila cambio al operar sobre el");
+});
+
 
 prueba("mover un panel no pierde ninguno ni duplica", () => {
   /* LA INVARIANTE QUE TODO LO DEMAS APOYA. Reordenar es la operacion que mas
