@@ -620,6 +620,11 @@ class AyudantesDeSerieTests(unittest.TestCase):
 
         self._correr("de_cuando_es_este_valor.js")
 
+    def test_el_delta_dice_cuando_no_se_puede_trazar_y_cual_falta(self) -> None:
+        """Superponer trazas dice **que** se hizo distinto; el delta, **donde**."""
+
+        self._correr("donde_se_saca_el_tiempo.js")
+
     def test_una_disposicion_guardada_no_esconde_lo_nuevo(self) -> None:
         """Lo guardado es del pasado; el codigo sigue agregando paneles."""
 

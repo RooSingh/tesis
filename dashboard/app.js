@@ -7696,6 +7696,165 @@ function reintentarComparacionCuandoLleguenLosDatos() {
   });
 }
 
+/* ============================================================
+   DONDE SE SACA EL TIEMPO
+   ------------------------------------------------------------
+   La pantalla de comparacion superpone las trazas de varios pilotos, y eso
+   muestra **que** hicieron distinto. Lo que no dice es cuanto tiempo cambio de
+   manos ni donde, que es la pregunta con la que alguien mira esta pantalla.
+
+   El backend ya lo calculaba y nadie se lo pedia: `/analisis/{id}/delta` alinea
+   dos vueltas **por posicion en el trazado y no por reloj** y devuelve el tiempo
+   acumulado ganado o perdido metro a metro. Un cronometro dice «perdiste un
+   segundo»; esto dice «0,7 s entre el metro 2.400 y el 2.500 y los otros 2.100
+   fueron equivalentes». Lo primero no indica donde trabajar.
+
+   TRES CONDICIONES, Y CUANDO NO SE CUMPLEN SE DICE CUAL.
+   Un panel que aparece y desaparece sin explicarse se lee como un defecto.
+   ============================================================ */
+
+/* Por que no se puede trazar el delta, o `null` si se puede. */
+function porQueNoHayDelta(cuantos, eje, alcance) {
+  if (eje !== "distancia") {
+    return "el delta alinea las dos vueltas por el metro del circuito, no por " +
+           "el reloj, y con el eje en tiempo no hay posición contra la cual alinear.";
+  }
+  if (alcance !== "una") {
+    return "el delta enfrenta una vuelta contra otra, y con la carrera entera " +
+           "en pantalla no hay dos vueltas que enfrentar.";
+  }
+  if (cuantos < 2) {
+    return "un delta es la diferencia entre dos vueltas; elegí un vehículo más.";
+  }
+  if (cuantos > 2) {
+    return "un delta es la diferencia entre dos, y hay " + cuantos +
+           " vehículos elegidos; dejá dos.";
+  }
+  return null;
+}
+
+/* Lo que se pidio, guardado por lo que lo identifica. Cambiar de vuelta o de
+   pilotos es otra traza; volver a la anterior no tiene por que costar otro
+   viaje. */
+const DELTAS = new Map();
+
+function claveDelDelta(sesion, vuelta, a, b) {
+  return [sesion, vuelta, a, b].join("|");
+}
+
+/* Pide la traza y avisa cuando llego. Devuelve lo que ya tenga ---o `null`---
+   sin esperar: el dibujo no se bloquea por una consulta, y cuando la respuesta
+   entra se vuelve a dibujar. */
+function trazaDeDelta(sesion, vuelta, a, b, cuandoLlegue) {
+  const clave = claveDelDelta(sesion, vuelta, a, b);
+  if (DELTAS.has(clave)) return DELTAS.get(clave);
+  DELTAS.set(clave, null);                      // pedido en curso: no se repite
+  api("/analisis/" + encodeURIComponent(sesion) + "/delta" +
+      "?vuelta_a=" + vuelta + "&vuelta_b=" + vuelta +
+      "&vehiculo_a=" + encodeURIComponent(a) +
+      "&vehiculo_b=" + encodeURIComponent(b))
+    .then(d => {
+      /* EL MOTIVO VIAJA CON EL RESULTADO. La herramienta rechaza con su razon
+         ---una vuelta sin muestras, dos vueltas sin tramo comun--- y perderla
+         dejaria un panel vacio sin decir por que. */
+      DELTAS.set(clave, d && d.puntos ? d : { error: (d && d.detail) || "sin traza" });
+      if (typeof cuandoLlegue === "function") cuandoLlegue();
+    })
+    .catch(e => {
+      DELTAS.set(clave, { error: (e && e.message) || "no se pudo trazar el delta" });
+      if (typeof cuandoLlegue === "function") cuandoLlegue();
+    });
+  return null;
+}
+
+/* EL PANEL DEL DELTA. Una curva sobre el cero: por encima, el primero iba
+   perdiendo; por debajo, ganando. El cero se dibuja siempre ---sin el, una curva
+   que sube puede leerse como que alguien gana--- y el signo se escribe con el
+   nombre de quien, que es lo unico que no se deduce mirando.
+
+   SE DIBUJA LO QUE LA TRAZA MIDIO Y NADA MAS. La traza llega sobre el tramo que
+   las dos vueltas recorrieron a la vez; fuera de el una de las dos no fue
+   medida y el delta no existe. No se completa hasta el borde del panel. */
+function pintarPanelDeDelta(ctx, delta, y0, y1, margenIzq, ancho, xMin, xMax,
+                            ids, paleta) {
+  ctx.strokeStyle = tinta("--linea"); ctx.lineWidth = 1;
+  ctx.strokeRect(margenIzq, y0, ancho, y1 - y0);
+  ctx.font = "11px 'IBM Plex Sans', sans-serif";
+
+  if (!delta || delta.error) {
+    ctx.fillStyle = tinta("--texto-tenue");
+    ctx.fillText(delta && delta.error
+      ? "Sin delta: " + delta.error
+      : "Midiendo dónde se saca el tiempo…", margenIzq + 10, (y0 + y1) / 2);
+    return;
+  }
+  const puntos = (delta.puntos || []).filter(p => p[0] >= xMin && p[0] <= xMax);
+  if (puntos.length < 2) {
+    ctx.fillStyle = tinta("--texto-tenue");
+    ctx.fillText("El tramo elegido no tiene delta medido.", margenIzq + 10, (y0 + y1) / 2);
+    return;
+  }
+  /* La escala se centra en el cero: con un maximo y un minimo sueltos, medio
+     segundo perdido y medio ganado se dibujan a alturas distintas del cero y la
+     curva miente sobre de que lado esta. */
+  let tope = 0;
+  puntos.forEach(p => { if (Math.abs(p[1]) > tope) tope = Math.abs(p[1]); });
+  if (tope < 0.05) tope = 0.05;
+  const px = d => margenIzq + ((d - xMin) / (xMax - xMin || 1)) * ancho;
+  const py = v => (y0 + y1) / 2 - (v / tope) * ((y1 - y0) / 2 - 4);
+
+  const cero = py(0);
+  ctx.strokeStyle = tinta("--linea-fuerte");
+  ctx.setLineDash([3, 3]);
+  ctx.beginPath(); ctx.moveTo(margenIzq, cero); ctx.lineTo(margenIzq + ancho, cero); ctx.stroke();
+  ctx.setLineDash([]);
+
+  ctx.strokeStyle = tinta("--acento"); ctx.lineWidth = 1.6;
+  ctx.beginPath();
+  puntos.forEach((p, i) => { const x = px(p[0]), y = py(p[1]);
+                             if (i) ctx.lineTo(x, y); else ctx.moveTo(x, y); });
+  ctx.stroke();
+  ctx.lineWidth = 1;
+
+  ctx.fillStyle = tinta("--texto-tenue");
+  ctx.textAlign = "right";
+  ctx.fillText("+" + cifra(tope, 2) + " s", margenIzq - 6, y0 + 10);
+  ctx.fillText("-" + cifra(tope, 2) + " s", margenIzq - 6, y1 - 2);
+  ctx.textAlign = "left";
+
+  /* QUIEN PIERDE Y QUIEN GANA, ESCRITO. El signo de la traza es una convencion
+     ---positivo es que el lado A iba perdiendo--- y una convencion que no se
+     escribe se lee al reves la mitad de las veces. */
+  /* El nombre sale de la misma tabla que usa la lamina exportada ---`AUTOS`,
+     con la clave corta de respaldo---: dos formas de nombrar al mismo coche en
+     la misma pantalla se leen como dos coches. */
+  const comoSeLlama = id => ((AUTOS.find(x => x.id === id) || {}).nombre) || claveCorta(id);
+  const a = comoSeLlama(ids[0]), b = comoSeLlama(ids[1]);
+  /* SOBRE UN FONDO, PORQUE LA CURVA PASA POR AHI. La traza llega al borde de su
+     escala por definicion ---la escala sale de su propio maximo--- de modo que
+     el renglon de arriba es justamente donde la curva pasa cuando mas importa.
+     Visto en pantalla: el nombre tachado por el trazo. */
+  const chip = (texto, x, y, alineado) => {
+    const ancho_ = ctx.measureText(texto).width;
+    const izq = alineado === "right" ? x - ancho_ - 5 : x - 5;
+    ctx.fillStyle = tinta("--superficie");
+    ctx.globalAlpha = 0.82;
+    ctx.fillRect(izq, y - 10, ancho_ + 10, 14);
+    ctx.globalAlpha = 1;
+    ctx.textAlign = alineado || "left";
+    ctx.fillStyle = tinta("--texto-medio");
+    ctx.fillText(texto, x, y);
+    ctx.textAlign = "left";
+  };
+  chip("arriba: " + a + " pierde contra " + b, margenIzq + 8, y0 + 12);
+  const final = delta.delta_final_s;
+  if (typeof final === "number") {
+    const quien = final > 0 ? b : a;
+    chip("al final " + cifra(Math.abs(final), 3) + " s para " + quien,
+         margenIzq + ancho - 8, y0 + 12, "right");
+  }
+}
+
 function dibujarComparacion() {
   const cv = document.getElementById("lienzo-comparacion");
   const ctx = cv.getContext("2d");
@@ -7747,8 +7906,21 @@ function dibujarComparacion() {
   const activas = vista.activas;
   if (!activas.length) return;
   const w = cv.clientWidth;
-  const altoPanel = Math.max(84, Math.min(150, (window.innerHeight - 260) / activas.length));
-  const h = altoPanel * activas.length + 26;
+  /* EL DELTA ES UN PANEL MAS, Y VA ARRIBA. Es la respuesta a «¿donde me saca
+     tiempo?», y las trazas de abajo son el «¿que hizo distinto?» que la
+     explica: leerlas en ese orden es leer la causa despues del efecto. */
+  const motivoSinDelta = porQueNoHayDelta(vista.ids.length, vista.eje, vista.alcance);
+  /* `estado.abierta` es la **ficha** de la sesion, no su identificador: pasarla
+     tal cual arma una direccion con `[object Object]` adentro y la consulta se
+     va a una sesion que no existe. */
+  const sesionAbierta = estado.abierta && estado.abierta.session_id;
+  const delta = (motivoSinDelta || !sesionAbierta) ? null
+    : trazaDeDelta(sesionAbierta, vueltaElegida, vista.ids[0], vista.ids[1],
+                   dibujarComparacion);
+  const hayPanelDeDelta = !motivoSinDelta;
+  const cuantos = activas.length + (hayPanelDeDelta ? 1 : 0);
+  const altoPanel = Math.max(84, Math.min(150, (window.innerHeight - 260) / cuantos));
+  const h = altoPanel * cuantos + 26;
   // Este si cambia de alto ---depende de cuantas metricas hay--- pero solo
   // cuando cambia: `ajustarLienzo` no toca el buffer si el tamano es el mismo.
   if (cv.style.height !== h + "px") cv.style.height = h + "px";
@@ -7779,8 +7951,14 @@ function dibujarComparacion() {
   const [bandas, notaDeBandas] = bandasParaElTramo(xMin, xMax, ids[0], ancho,
                                                    vista.eje, vista.alcance);
 
+  if (hayPanelDeDelta) {
+    pintarPanelDeDelta(ctx, delta, 6, altoPanel - 10, margenIzq, ancho,
+                       xMin, xMax, vista.ids, paleta);
+  }
+  const corrimiento = hayPanelDeDelta ? altoPanel : 0;
+
   activas.forEach((m, pi) => {
-    const y0 = pi * altoPanel + 6, y1 = y0 + altoPanel - 16;
+    const y0 = pi * altoPanel + 6 + corrimiento, y1 = y0 + altoPanel - 16;
 
     if (bandas) pintarZonas(ctx, bandas, xMin, xMax, margenIzq, ancho, y0, y1);
 
@@ -7906,6 +8084,11 @@ function dibujarComparacion() {
   /* Que son las franjas se declara siempre, incluso con el zoom puesto: son lo
      primero que se lee del dibujo y no pueden quedar sin explicacion. */
   if (notaDeBandas) dice.push(notaDeBandas);
+  /* POR QUE NO ESTA EL DELTA. El panel de arriba responde «¿donde me saca
+     tiempo?» y tiene tres condiciones; cuando falta alguna no se gasta un panel
+     entero en decirlo, pero tampoco se calla: un panel que aparece y desaparece
+     sin explicarse se lee como un defecto del tablero. */
+  if (motivoSinDelta) dice.push("Sin delta acumulado: " + motivoSinDelta);
   document.getElementById("nota-comparacion").textContent = dice.join(" ");
 }
 
