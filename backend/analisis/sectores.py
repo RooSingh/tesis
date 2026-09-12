@@ -77,16 +77,23 @@ class VueltaConSectores:
 
 @dataclass
 class MejorSector:
-    """El mejor tiempo de un sector, y de quien y de que vuelta es."""
+    """El mejor tiempo de un sector, y de quien y de que vuelta es.
+
+    EL CAMPO SE LLAMA `vuelta` Y NO `numero` PORQUE ASI SALE POR HTTP. La ruta
+    serializa recorriendo **campos**, de modo que el nombre del campo es el
+    contrato: llamarlo `numero` y traducirlo a `vuelta` en `como_dict` hacia que
+    la vista leyera `undefined`, que es exactamente lo que mostro la primera vez
+    que se lo miro en pantalla.
+    """
 
     sector: int
     vehiculo: str
-    numero: int
+    vuelta: int
     duracion_s: float
 
     def como_dict(self) -> dict:
         return {"sector": self.sector, "vehiculo": self.vehiculo,
-                "vuelta": self.numero, "duracion_s": self.duracion_s}
+                "vuelta": self.vuelta, "duracion_s": self.duracion_s}
 
 
 @dataclass
@@ -309,7 +316,7 @@ def extraer(fuente: str, session_id: str,
                 if mejor is None or duracion < mejor.duracion_s:
                     piloto.mejor_por_sector[sector] = MejorSector(
                         sector=sector, vehiculo=piloto.vehiculo,
-                        numero=vuelta.numero, duracion_s=duracion)
+                        vuelta=vuelta.numero, duracion_s=duracion)
         piloto.mejor_vuelta_s = min(v.duracion_s for v in piloto.vueltas)
         if len(piloto.mejor_por_sector) == SECTORES:
             piloto.vuelta_ideal_s = round(

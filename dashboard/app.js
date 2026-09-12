@@ -7854,7 +7854,7 @@ function trazaDeDelta(sesion, vuelta, a, b, cuandoLlegue) {
   const clave = claveDelDelta(sesion, vuelta, a, b);
   if (DELTAS.has(clave)) return DELTAS.get(clave);
   DELTAS.set(clave, null);                      // pedido en curso: no se repite
-  api("/analisis/" + encodeURIComponent(sesion) + "/delta" +
+  pedir("/analisis/" + encodeURIComponent(sesion) + "/delta" +
       "?vuelta_a=" + vuelta + "&vuelta_b=" + vuelta +
       "&vehiculo_a=" + encodeURIComponent(a) +
       "&vehiculo_b=" + encodeURIComponent(b))
@@ -8001,10 +8001,130 @@ function pintarPanelDeDelta(ctx, delta, y0, y1, margenIzq, ancho, xMin, xMax,
   }
 }
 
+/* ============================================================
+   EN QUE TERCIO DEL CIRCUITO ES MEJOR CADA UNO
+   ------------------------------------------------------------
+   La curva de delta contesta metro a metro. Esto contesta la misma pregunta en
+   tres cifras que se pueden repetir de memoria mirando la pista: «sos mejor en
+   el 1 y te sacan medio segundo en el 2».
+
+   LA VUELTA IDEAL NO SE CORRIO NUNCA. Es la suma de los mejores sectores
+   propios, y lo que la separa de la mejor vuelta real es tiempo que se gana
+   **sin mejorar nada**, solo repitiendo lo que ya se hizo. Por eso esa columna
+   se llama «sobre la mesa» y no «potencial»: lo segundo suena a promesa y esto
+   es una resta.
+
+   LA CIFRA ES DERIVADA Y SE DICE AL PIE. El simulador publica los tiempos
+   exactos en un paquete que no se guarda; estos salen del indice de sector
+   muestreado y valen lo que dice su incerteza. Callarlo haria pasar una
+   derivacion por la medicion del juego.
+   ============================================================ */
+let SECTORES_DE_LA_SESION = null;
+let SECTORES_PEDIDOS_DE = null;
+
+function pedirSectores(sesion, cuandoLlegue) {
+  if (SECTORES_PEDIDOS_DE === sesion) return;
+  SECTORES_PEDIDOS_DE = sesion;
+  SECTORES_DE_LA_SESION = null;
+  pedir("/analisis/" + encodeURIComponent(sesion) + "/sectores")
+    .then(d => {
+      SECTORES_DE_LA_SESION = (d && d.pilotos) ? d : { error: "sin sectores" };
+      if (typeof cuandoLlegue === "function") cuandoLlegue();
+    })
+    .catch(e => {
+      SECTORES_DE_LA_SESION = { error: (e && e.message) || "no se pudieron medir" };
+      if (typeof cuandoLlegue === "function") cuandoLlegue();
+    });
+}
+
+/* El mejor de cada sector **entre los que se estan mirando**. La comparacion es
+   entre los pilotos elegidos: coronar a uno que no esta en pantalla dejaria
+   tres columnas sin ganador visible. */
+function duenosEntre(pilotos) {
+  const duenos = {};
+  [1, 2, 3].forEach(s => {
+    let mejor = null;
+    pilotos.forEach(p => {
+      const m = (p.mejor_por_sector || {})[String(s)];
+      if (m && (mejor === null || m.duracion_s < mejor.duracion_s)) mejor = m;
+    });
+    if (mejor) duenos[s] = mejor.vehiculo;
+  });
+  return duenos;
+}
+
+function pintarSectores() {
+  const caja = document.getElementById("sectores-comparacion");
+  const tabla = document.getElementById("tabla-sectores");
+  const nota = document.getElementById("nota-sectores");
+  if (!caja || !tabla) return;
+
+  const d = SECTORES_DE_LA_SESION;
+  if (!d) { caja.hidden = true; return; }
+  if (d.error) {
+    caja.hidden = false;
+    tabla.querySelector("thead").innerHTML = "";
+    tabla.querySelector("tbody").innerHTML = "";
+    nota.textContent = "Sin tiempos por sector: " + d.error;
+    return;
+  }
+
+  const elegidos = [...seleccion];
+  const pilotos = (d.pilotos || []).filter(p => !elegidos.length ||
+                                                elegidos.indexOf(p.vehiculo) !== -1);
+  if (!pilotos.length) { caja.hidden = true; return; }
+
+  const duenos = duenosEntre(pilotos);
+  const comoSeLlama = id => ((AUTOS.find(x => x.id === id) || {}).nombre) || claveCorta(id);
+
+  tabla.querySelector("thead").innerHTML =
+    "<tr><th>Piloto</th><th>Sector 1</th><th>Sector 2</th><th>Sector 3</th>" +
+    "<th>Mejor vuelta</th><th>Vuelta ideal</th><th>Sobre la mesa</th></tr>";
+
+  tabla.querySelector("tbody").innerHTML = pilotos.map(p => {
+    const celdas = [1, 2, 3].map(s => {
+      const m = (p.mejor_por_sector || {})[String(s)];
+      if (!m) return '<td class="nota">—</td>';
+      const manda = duenos[s] === p.vehiculo;
+      /* El mejor de cada sector se marca con texto y con color. Solo con color,
+         quien no los distingue se queda sin la respuesta. */
+      return '<td class="' + (manda ? "manda" : "") + '">' +
+             cifra(m.duracion_s, 3) + " s" +
+             (manda ? ' <span class="marca-manda" title="el mejor de este sector">mejor</span>' : "") +
+             '<small>vuelta ' + m.vuelta + "</small></td>";
+    }).join("");
+    return "<tr><td>" + comoSeLlama(p.vehiculo) + "</td>" + celdas +
+      "<td>" + cifra(p.mejor_vuelta_s, 3) + " s</td>" +
+      "<td>" + (p.vuelta_ideal_s === null || p.vuelta_ideal_s === undefined
+                ? "—" : cifra(p.vuelta_ideal_s, 3) + " s") + "</td>" +
+      "<td>" + (p.sobre_la_mesa_s === null || p.sobre_la_mesa_s === undefined
+                ? "—" : cifra(p.sobre_la_mesa_s, 3) + " s") + "</td></tr>";
+  }).join("");
+
+  nota.innerHTML =
+    "<b>La vuelta ideal no se corrió:</b> es la suma de los mejores sectores de " +
+    "cada uno. Lo que la separa de la mejor vuelta real es tiempo que se gana " +
+    "repitiendo lo ya hecho, sin mejorar nada. " +
+    (d.incerteza_s
+      ? "<b>Precisión:</b> ±" + cifra(d.incerteza_s, 2) + " s — " + d.origen + "."
+      : d.origen + ".");
+  caja.hidden = false;
+}
+
 function dibujarComparacion() {
   const cv = document.getElementById("lienzo-comparacion");
   const ctx = cv.getContext("2d");
   const ids0 = [...seleccion];
+  /* Los sectores se piden una vez por sesion y se repintan con cada cambio de
+     seleccion: son de la sesion, no del dibujo.
+
+     SE LEE DE `estado` Y NO DE `sesionAbierta`: mas abajo esta funcion declara
+     un `const sesionAbierta` propio que ensombrece al de arriba, de modo que
+     nombrarlo aca cae en su zona muerta y revienta. No se renombra el de abajo
+     porque ese es el que usa el delta y no es de esta linea arreglarlo. */
+  const abiertaAhora = estado.abierta && estado.abierta.session_id;
+  if (abiertaAhora) pedirSectores(abiertaAhora, pintarSectores);
+  pintarSectores();
   if (!ids0.length) {
     const cv0 = document.getElementById("lienzo-comparacion");
     if (cv0) {

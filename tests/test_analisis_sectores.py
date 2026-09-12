@@ -206,6 +206,16 @@ class QuienEsMejorEnCadaSector(unittest.TestCase):
         self.assertEqual(r.dueno_del_sector(1).vehiculo, "a")
         self.assertEqual(r.dueno_del_sector(2).vehiculo, "b")
 
+    def test_el_mejor_sector_dice_de_que_vuelta_salio(self):
+        """El campo se llama como sale por HTTP: la ruta serializa campos.
+
+        Con el campo llamado `numero` y traducido a `vuelta` solo en
+        `como_dict`, la vista leia `undefined`. Se vio en pantalla, no en una
+        prueba, porque la prueba miraba el objeto y no lo que cruza.
+        """
+        r = _extraer(self._dos_pilotos())
+        self.assertEqual(r.dueno_del_sector(1).vuelta, 2)
+
     def test_la_vuelta_ideal_suma_los_mejores_propios(self):
         """No es una vuelta que se corrio: es la que se podria haber corrido."""
         r = _extraer(self._dos_pilotos())

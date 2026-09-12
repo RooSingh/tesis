@@ -440,6 +440,29 @@
   td.si { color: var(--ok); font-weight: 600; } td.parcial { color: var(--alerta); font-weight: 600; } td.no { color: var(--texto-tenue); }
   table.disponibilidad code { font-family: var(--cifra); font-size: .72rem; color: var(--texto-medio); }
 
+  /* ---------- en que tercio es mejor cada uno ----------
+     Hereda el aire de las tablas del cierre, que son de la misma clase: pocas
+     filas, muchas cifras, y una columna que hay que poder recorrer con la
+     vista. Las cifras van tabulares para que los decimales se alineen: sin
+     eso, comparar 26,447 con 26,614 obliga a leer digito por digito. */
+  .sectores-comparacion { margin-bottom: 14px; }
+  table.tabla-sectores { width: 100%; border-collapse: collapse; }
+  table.tabla-sectores th, table.tabla-sectores td {
+    padding: 7px 10px; text-align: left; border-bottom: 1px solid var(--linea);
+    font-variant-numeric: tabular-nums; }
+  table.tabla-sectores thead th { font-family: var(--titulo); font-size: .7rem;
+    letter-spacing: .09em; text-transform: uppercase; color: var(--texto-tenue);
+    font-weight: 600; }
+  table.tabla-sectores td:first-child { font-weight: 600; }
+  table.tabla-sectores td small { display: block; color: var(--texto-tenue);
+    font-size: .68rem; font-variant-numeric: normal; }
+  /* El mejor de cada sector, con color **y** con palabra: solo con color, quien
+     no los distingue se queda sin la respuesta. */
+  table.tabla-sectores td.manda { color: var(--ok); font-weight: 700; }
+  table.tabla-sectores .marca-manda { font-family: var(--titulo); font-size: .6rem;
+    letter-spacing: .08em; text-transform: uppercase; padding: 1px 5px;
+    border: 1px solid var(--ok); border-radius: 5px; vertical-align: middle; }
+
   .nota { margin: 10px 0 0; color: var(--texto-medio); font-size: .82rem; max-width: 82ch; }
   .nota code { font-family: var(--cifra); font-size: .76rem; color: var(--acento); }
   .ancho-total { grid-column: 1 / -1; }

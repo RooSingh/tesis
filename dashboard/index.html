@@ -977,6 +977,25 @@
   </div>
   <div class="panel-comparacion">
     <div class="metricas-comparacion" id="metricas-comparacion" style="margin-bottom:12px"></div>
+    <!-- ============================================================
+         EN QUE TERCIO ES MEJOR CADA UNO
+         ------------------------------------------------------------
+         POR QUE ACA Y NO EN UNA PANTALLA PROPIA. Es la misma pregunta que ya
+         contesta esta vista ---quien es mejor y donde--- a otra escala. La
+         curva de delta la contesta metro a metro; esto la contesta en tres
+         cifras que se pueden repetir de memoria mirando la pista. Y los mandos
+         que hacen falta ---que pilotos, que vuelta--- ya estan arriba: una
+         pantalla aparte los duplicaria y las dos podrian discrepar.
+
+         VA ANTES DE LA CURVA porque es el resumen, y un resumen despues del
+         detalle no se lee.
+         ============================================================ -->
+    <div class="sectores-comparacion" id="sectores-comparacion" hidden>
+      <table class="tabla-sectores" id="tabla-sectores">
+        <thead></thead><tbody></tbody>
+      </table>
+      <p class="nota" id="nota-sectores"></p>
+    </div>
     <canvas class="lienzo-comparacion" id="lienzo-comparacion"></canvas>
     <p class="nota" id="nota-comparacion"></p>
   </div>
