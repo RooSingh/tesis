@@ -271,9 +271,17 @@ MAGNITUDES: list[dict[str, Any]] = [
 #: fuente deportiva tiene siete millones y medio de filas.
 VENTANA_MEDICION_S = 120
 
+#: Sobre que recorte se midio, escrito para que viaje con el resultado. Decia
+#: «la sesion y el vehiculo mas recientes de cada fuente» y era cierto; el
+#: problema era el criterio, no la frase. Describir mal el recorte es peor que no
+#: describirlo, porque invita a confiar.
+MEDIDO_SOBRE = ("la sesion con mas filas de cada fuente, acotada a un conductor: "
+                "lo mas reciente suele ser una captura de prueba y su frecuencia "
+                "no caracteriza a la fuente")
+
 
 def _contexto_reciente(cursor, fuente: str) -> tuple[str, str, Any] | None:
-    """Sesion, conductor e instante mas recientes de una fuente.
+    """Sobre que sesion y conductor se mide la frecuencia de una fuente.
 
     Se resuelve **una vez por fuente** y no una vez por senal, y se toma el
     conductor y no el vehiculo porque es lo que el indice de la tabla ordena
@@ -283,6 +291,18 @@ def _contexto_reciente(cursor, fuente: str) -> tuple[str, str, Any] | None:
     misma sesion, y contarlos juntos multiplica por veinte la frecuencia
     aparente. Ya paso —la primera medicion dio noventa hercios donde hay cuatro—
     y por eso la resolucion del contexto incluye al conductor.
+
+    SE ELIGE LA QUE MAS FILAS TIENE, NO LA MAS RECIENTE, y es el mismo descuido
+    que el del conductor en otra dimension. Lo mas reciente de una fuente suele
+    ser una captura de prueba de unos segundos, y la frecuencia que sale de ahi
+    se publica como caracteristica de la fuente. Medido sobre la base local el
+    2026-09-12: el simulador tiene tres sesiones, la mas reciente con 17.094
+    filas y la captura de verdad con 5.641.702 ---trescientas treinta veces
+    mas, y mas vieja---. La matriz declaraba 2,9 Hz donde lo medido sobre la
+    captura real es 58,3. Veinte veces menos, en el numero que alguien copiaria.
+
+    `backend.analisis.disponibilidad` ya elegia asi para sus propias mediciones.
+    Dos modulos contestaban distinto a la misma pregunta.
     """
 
     cursor.execute(
@@ -290,7 +310,7 @@ def _contexto_reciente(cursor, fuente: str) -> tuple[str, str, Any] | None:
            from telemetry_messages
            where source_type = %s
            group by session_id, driver_id
-           order by max(timestamp) desc limit 1""",
+           order by count(*) desc limit 1""",
         (fuente,),
     )
     return cursor.fetchone()
@@ -510,6 +530,6 @@ def _construir_midiendo() -> dict[str, Any]:
             magnitudes.append(fila)
 
     resultado = {"fuentes": fuentes, "magnitudes": magnitudes,
-                 "medido_sobre": "la sesion y el vehiculo mas recientes de cada fuente"}
+                 "medido_sobre": MEDIDO_SOBRE}
     _CACHE = (ahora, resultado)
     return resultado

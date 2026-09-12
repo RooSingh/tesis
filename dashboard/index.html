@@ -605,10 +605,31 @@
        celda mas de la grilla: se separa para que se lea como cierre. -->
   <div class="tablero cierre">
     <section class="instrumento ancho-total">
-      <header><h2>Qué sostiene cada fuente</h2><span class="fuente-canal">medido sobre la base, 06/09/2026</span></header>
+      <header><h2>Qué instrumento sostiene cada fuente</h2><span class="fuente-canal">declarado, contrastado contra la base el 06/09/2026</span></header>
       <div class="cuerpo-instrumento">
         <div class="envoltura-tabla">
-          <table class="disponibilidad">
+          <!-- ============================================================
+               DOS TABLAS, PORQUE SON DOS PREGUNTAS
+               ------------------------------------------------------------
+               Esta dice **que puede mostrar cada fuente**: instrumentos, con
+               los matices que no son un si o un no ---«continuo / binario»,
+               «23 ajustes declarados», «un solo vehiculo»---. Es una lectura
+               del dominio y se escribe.
+
+               La de abajo dice **que magnitud fisica publica cada una**, con su
+               unidad y su frecuencia medidas sobre la base.
+
+               ESTABAN LAS DOS EN EL MISMO HUECO. `pintarMatriz` reemplazaba
+               encabezado y cuerpo de esta tabla con la otra, incluido el titulo
+               de la primera columna ---«Instrumento» pasaba a «Magnitud»---: se
+               veia una tabla y un segundo despues otra, con catorce filas que no
+               eran las mismas catorce. Se perdian cuatro capacidades que solo
+               esta declara ---puesta a punto, clima, avisos y comparacion entre
+               vehiculos--- porque no son magnitudes fisicas y la medicion no las
+               conoce. Y se perdia el `data-panel` de seis filas, que es lo que
+               ata cada instrumento al panel del tablero.
+               ============================================================ -->
+          <table class="disponibilidad instrumentos">
             <!-- Las filas de los instrumentos que alguna fuente esconde llevan el
                  nombre del panel: es el unico registro que queda de lo que esa
                  fuente no sostiene una vez que el panel no esta en pantalla, y
@@ -631,6 +652,19 @@
               <tr data-panel="clima"><td>Clima y pista</td><td class="si">sí</td><td class="parcial">por contexto</td><td class="no">no</td><td><code>air_temperature</code></td></tr>
               <tr><td>Biometría del piloto</td><td class="no">no</td><td class="no">no</td><td class="no">no</td><td>ninguna fuente la entrega</td></tr>
             </tbody>
+          </table>
+        </div>
+        <div class="envoltura-tabla">
+          <!-- La edad va en su propio renglon: pegada al titulo, y con las
+               mayusculas del `eyebrow`, las dos frases se leian como una sola. -->
+          <h3 class="eyebrow" style="margin:18px 0 2px">Qué magnitud publica cada fuente, y a qué frecuencia</h3>
+          <p class="nota" style="margin:0 0 8px" id="pie-matriz"></p>
+          <!-- Vacia a proposito: la llena `pintarMatriz` con lo medido sobre la
+               base. Mientras la medicion viaja dice que esta midiendo, que es
+               distinto de decir que ninguna fuente sostiene nada. -->
+          <table class="disponibilidad magnitudes">
+            <thead><tr><th>Magnitud</th><th>Simulador</th><th>Fuente deportiva</th><th>Bus de vehículo real</th><th>Señal que la entrega</th></tr></thead>
+            <tbody><tr><td colspan="5" class="nota" id="estado-matriz">Midiendo sobre la base…</td></tr></tbody>
           </table>
         </div>
         <!-- ============================================================

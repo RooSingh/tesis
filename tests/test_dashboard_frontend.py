@@ -180,6 +180,47 @@ class DashboardFrontendTests(unittest.TestCase):
         self.assertNotIn("1, 2 y 3 g", ayuda,
                          "la ayuda vuelve a declarar una escala fija que no existe")
 
+    def test_la_tabla_medida_no_pisa_la_tabla_declarada(self) -> None:
+        """Son dos preguntas distintas y estaban en el mismo hueco.
+
+        La escrita dice **qué instrumento sostiene cada fuente**, con los matices
+        que no son un sí o un no: «continuo / binario», «23 ajustes declarados»,
+        «un solo vehículo». La medida dice **qué magnitud física publica cada
+        una**, con unidad y frecuencia sacadas de la base.
+
+        `pintarMatriz` escribía sobre `table.disponibilidad` a secas y
+        reemplazaba encabezado y cuerpo de la escrita, incluido el título de la
+        primera columna. Comprobado en pantalla el 2026-09-12: catorce filas, y
+        **ninguna** con `data-panel`. Con ellas se iban cuatro capacidades que
+        sólo la escrita declara ---puesta a punto, clima, avisos y comparación
+        entre vehículos--- porque no son magnitudes y la medición no las conoce.
+
+        Lo que el atributo ata es cada instrumento con su panel del tablero, y
+        esa atadura es la que sostiene la invariante de al lado: un panel que una
+        fuente esconde sigue declarado acá.
+        """
+        html = INDICE.read_text(encoding="utf-8")
+        self.assertIn('class="disponibilidad instrumentos"', html)
+        self.assertIn('class="disponibilidad magnitudes"', html)
+
+        codigo = APP.read_text(encoding="utf-8")
+        inicio = codigo.index("function pintarMatriz(")
+        cuerpo = codigo[inicio:codigo.index("\n}", inicio)]
+        self.assertIn('table.disponibilidad.magnitudes', cuerpo,
+                      "la matriz medida no apunta a su propia tabla")
+        # Y no puede volver a agarrar la tabla a secas, que es la declarada.
+        self.assertNotIn('querySelector("table.disponibilidad")', cuerpo,
+                         "la matriz medida vuelve a escribir sobre la declarada")
+
+        # Las cuatro que sólo la escrita declara: si algún día las trajera la
+        # medición, esta prueba pide que alguien lo decida a mano.
+        declarada = html[html.index('class="disponibilidad instrumentos"'):
+                         html.index('class="disponibilidad magnitudes"')]
+        for capacidad in ("Puesta a punto", "Clima y pista", "Avisos de sesión",
+                          "Comparación entre vehículos"):
+            self.assertIn(capacidad, declarada,
+                          f"la tabla declarada dejo de nombrar «{capacidad}»")
+
     def test_la_grilla_del_estilo_dice_lo_mismo_que_las_constantes(self) -> None:
         """La grilla esta descrita en dos sitios, y tienen que coincidir.
 

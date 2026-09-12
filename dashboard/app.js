@@ -13128,17 +13128,24 @@ function pedirMatriz(intento) {
     .catch(e => { if (!fueAnulada(e) && e instanceof TypeError) console.error(e); });
 }
 
+/* LA TABLA DE MAGNITUDES ES SUYA, Y SOLO ESA.
+   Esto escribia sobre `table.disponibilidad` a secas, que era la tabla de
+   **instrumentos** escrita a mano: reemplazaba su encabezado y su cuerpo con
+   catorce magnitudes fisicas que no son los catorce instrumentos. Se veia una
+   tabla y un segundo despues otra, y con ella se iban cuatro capacidades que
+   solo la primera declara ---puesta a punto, clima, avisos y comparacion entre
+   vehiculos, que no son magnitudes y esta medicion no conoce--- y el
+   `data-panel` de seis filas. Ahora cada pregunta tiene su tabla. */
 function pintarMatriz() {
   const m = estado.matriz;
-  const tabla = document.querySelector("table.disponibilidad");
+  const tabla = document.querySelector("table.disponibilidad.magnitudes");
   if (!m || !tabla) return;
+  const estadoMatriz = document.getElementById("estado-matriz");
 
   /* Todavia no hay medicion. Se dice, con su motivo, en vez de dibujar una
      tabla vacia que se leeria como "ninguna fuente sostiene nada". */
   if (m.sin_medir) {
-    const inst = tabla.closest(".instrumento");
-    const pieSin = inst ? inst.querySelector(".fuente-canal") : null;
-    if (pieSin) pieSin.textContent = m.motivo_ausencia || "midiendo...";
+    if (estadoMatriz) estadoMatriz.textContent = m.motivo_ausencia || "midiendo…";
     return;
   }
 
@@ -13168,7 +13175,10 @@ function pintarMatriz() {
                                : "ninguna fuente la entrega") + "</td></tr>";
   }).join("");
 
-  const pie = tabla.closest(".instrumento").querySelector(".fuente-canal");
+  /* La edad de la medicion va en la tabla que la medicion llena, no en el
+     encabezado del panel: ese encabezado ya habla de la tabla de instrumentos,
+     que no se mide ---se declara--- y tiene su propia fecha. */
+  const pie = document.getElementById("pie-matriz");
   if (pie) {
     pie.textContent = "medido sobre la base" +
       (m.edad_del_calculo_s !== undefined && m.edad_del_calculo_s !== null
