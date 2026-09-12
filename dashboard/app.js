@@ -2869,7 +2869,9 @@ function pintarClima() {
       : '<svg class="icono" viewBox="0 0 48 48" role="img" aria-label="Nubes">' +
         '<path d="M14 32 a8 8 0 0 1 1 -16 a11 11 0 0 1 20 4 a7 7 0 0 1 -1 12 z" fill="var(--texto-tenue)"></path></svg>';
 
-  const fClima = comoSeVe(d.frescura || "current", d.edad_s);
+  /* El clima dice **siempre** de cuando es, y no solo cuando envejece: puede
+     estar vigente y tener noventa segundos. Ver `comoSeVe`. */
+  const fClima = comoSeVe(d.frescura || "current", d.edad_s, true);
 
   const banderas = { "ninguna": "ok", "verde": "ok", "amarilla": "alerta",
                      "roja": "critico", "azul": "info" };
@@ -10116,13 +10118,27 @@ const FRESCURAS = {
   unavailable: { atenua: false, dice: "" },
 };
 
-function comoSeVe(estado, segundos) {
+/* `siempreLaEdad` es la excepcion del clima, y esta medida.
+
+   La regla general es la de abajo: la edad se escribe solo cuando deja de ser
+   obvia. Pero el clima declara `vigente_s = 90` ---`CONTEXTOS_DE_CARRERA` en
+   `backend/db.py`, «una muestra por minuto; noventa es una cadencia y
+   media»---, de modo que un clima **`current` puede tener noventa segundos** y
+   el panel no decia nada de cuando era. Es la magnitud con el umbral mas flojo
+   de las tres y la unica que nunca mostraba su edad: el puesto se publica al
+   cambiar y por eso siempre la dice, y el intervalo esta vigente diez segundos.
+
+   Y no es el ruido que la regla general evita, porque el panel de clima lo dice
+   **una vez para las siete magnitudes** y no en cada casilla: las siete vienen
+   de la misma muestra. */
+function comoSeVe(estado, segundos, siempreLaEdad) {
   const regla = FRESCURAS[estado];
   if (!regla) return { estado: "current", atenua: false, sufijo: "", aclara: "" };
   /* La edad se escribe **solo cuando deja de ser obvia**. En `current`, que es
      el caso normal, una edad al lado de cada numero es ruido permanente para
      decir que todo esta bien, y el tablero tiene ocho paneles. */
-  const edad = (estado === "held" || estado === "aged")
+  const edad = (estado === "held" || estado === "aged" ||
+                (siempreLaEdad && estado === "current"))
     ? edadEnPalabras(segundos) : "";
   return {
     estado: estado,

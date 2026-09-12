@@ -176,5 +176,66 @@ prueba("la hoja atenua por el atributo, y solo al viejo", () => {
             "la hoja atenua el sostenido");
 });
 
+/* -------- el clima siempre dice de cuando es -------- */
+
+prueba("un clima fresco tambien dice su edad", () => {
+  /* POR QUE EL CLIMA ES LA EXCEPCION, Y ESTA MEDIDO. La regla general de
+     `comoSeVe` es que la edad se escribe **solo cuando deja de ser obvia**: una
+     edad al lado de cada numero es ruido permanente para decir que todo esta
+     bien, y el tablero tiene ocho paneles.
+
+     Pero el clima declara `vigente_s = 90` ---`CONTEXTOS_DE_CARRERA` en
+     `backend/db.py`, «una muestra por minuto; noventa es una cadencia y
+     media»---, de modo que un clima **`current` puede tener noventa segundos**
+     y el panel no decia nada. Es la magnitud con el umbral mas flojo de las
+     tres y la unica que nunca mostraba su edad: el puesto se publica al cambiar
+     y siempre la dice, y el intervalo esta vigente solo diez segundos.
+
+     Y la razon por la que ahi no es ruido: el panel de clima lo dice **una vez
+     para las siete magnitudes**, no en cada casilla. Las siete vienen de la
+     misma muestra. */
+  const v = m.comoSeVe("current", 42, true);
+  assert.ok(/42 s/.test(v.aclara), "un clima fresco no dice de cuando es: " + v.aclara);
+  assert.strictEqual(v.estado, "current");
+  assert.strictEqual(v.atenua, false, "decir la edad no es desconfiar del dato");
+});
+
+prueba("sin pedirlo, la regla general no cambia", () => {
+  /* Los demas paneles siguen callando la edad cuando el valor esta vigente. Si
+     esto cambiara, la edad aparecería junto a cada numero del tablero. */
+  const v = m.comoSeVe("current", 42);
+  assert.strictEqual(v.aclara, "");
+  assert.strictEqual(v.sufijo, "");
+});
+
+prueba("una edad que no se sabe no se inventa", () => {
+  /* `Number(null)` es cero: sin cuidado, un clima sin edad se anunciaria como
+     «hace 0 s», que es la afirmacion contraria a no saber. */
+  assert.strictEqual(m.comoSeVe("current", null, true).aclara, "");
+  assert.strictEqual(m.comoSeVe("current", undefined, true).aclara, "");
+  assert.strictEqual(m.comoSeVe("current", "", true).aclara, "");
+});
+
+prueba("los estados que ya decian su edad no cambian", () => {
+  const a = m.comoSeVe("aged", 200), b = m.comoSeVe("aged", 200, true);
+  assert.strictEqual(a.aclara, b.aclara);
+  const h = m.comoSeVe("held", 3400), i = m.comoSeVe("held", 3400, true);
+  assert.strictEqual(h.aclara, i.aclara);
+});
+
+prueba("sin dato no hay edad que declarar", () => {
+  assert.strictEqual(m.comoSeVe("unavailable", 42, true).aclara, "");
+});
+
+prueba("el panel de clima lo pide", () => {
+  /* Se comprueba sobre el `app.js` publicado: la opcion podia existir y el
+     panel no usarla. */
+  const i = fuenteApp.indexOf("const fClima = comoSeVe(");
+  assert.notStrictEqual(i, -1, "no esta la frescura del clima");
+  assert.ok(/true\s*\)/.test(fuenteApp.slice(i, i + 120)),
+    "el clima no pide que se diga siempre de cuando es");
+});
+
+
 console.log(hechas + " pruebas de la frescura del contexto: " +
             (process.exitCode ? "hubo fallos" : "OK"));
