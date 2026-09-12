@@ -296,19 +296,43 @@ prueba("un panel declarado que ya no existe si se descarta", () => {
   assert.ok(!d.some(w => w.id === "panel-que-ya-no-existe"));
 });
 
-prueba("un grafico no se puede quitar desde los mandos del tablero", () => {
-  /* Que un grafico este es lo mismo que que su señal este encendida, y eso lo
-     manda el panel «Señales». Dos sitios decidiendo lo mismo terminan en
-     desacuerdo: el tablero diria que el grafico esta quitado mientras el panel
-     de señales dice que el canal esta encendido, y no habria como arreglarlo
-     desde ninguno de los dos. */
+prueba("quitar un grafico no hace nada, ni siquiera en la operacion", () => {
+  /* La puerta se cierra en `mostrarWidget` y no solo en el boton. Con la
+     operacion abierta, la bandeja de quitados podia listar un grafico que la
+     reconciliacion vuelve a mostrar en la proxima lectura: un boton que promete
+     algo que se deshace solo. */
   const cat = CAT(["speed"]);
-  const escondido = m.mostrarWidget(m.reconciliarDisposicion(null, cat), G("speed"), false);
-  assert.strictEqual(escondido.find(w => w.id === G("speed")).visible, false,
-    "la operacion no hizo nada, y entonces la prueba no prueba nada");
-  const releido = m.reconciliarDisposicion(JSON.stringify(escondido), cat);
+  const d = m.reconciliarDisposicion(null, cat);
+  const tras = m.mostrarWidget(d, G("speed"), false);
+  assert.strictEqual(tras.find(w => w.id === G("speed")).visible, true,
+    "la operacion escondio un grafico");
+  // Y a un panel declarado si lo esconde: si no, esta prueba pasaria con
+  // `mostrarWidget` devolviendo siempre lo que recibe.
+  const panel = m.mostrarWidget(d, m.WIDGETS[0].id, false);
+  assert.strictEqual(panel.find(w => w.id === m.WIDGETS[0].id).visible, false,
+    "dejo de poder quitarse un panel declarado");
+});
+
+prueba("una disposicion guardada no puede dejar un grafico escondido", () => {
+  /* La segunda puerta, y hace falta aunque la operacion ya se niegue: lo
+     guardado viene del pasado. Una disposicion escrita por una version que si
+     dejaba esconderlos ---o editada a mano--- traeria `visible: false` sobre un
+     grafico, y entonces el canal estaria encendido en el panel «Señales» y su
+     grafico no estaria en ningun lado, sin forma de traerlo desde ninguno de
+     los dos sitios. */
+  const cat = CAT(["speed"]);
+  const guardada = m.reconciliarDisposicion(null, cat)
+    .map(w => w.id === G("speed") ? { ...w, visible: false } : w);
+  assert.strictEqual(guardada.find(w => w.id === G("speed")).visible, false,
+    "el caso de prueba no tiene el grafico escondido, y entonces no prueba nada");
+  const releido = m.reconciliarDisposicion(JSON.stringify(guardada), cat);
   assert.strictEqual(releido.find(w => w.id === G("speed")).visible, true,
     "un grafico quedo escondido por la disposicion");
+  // Y un panel declarado si conserva su «quitado»: esconder no es olvidar.
+  const panel = m.reconciliarDisposicion(JSON.stringify(
+    guardada.map(w => w.id === m.WIDGETS[0].id ? { ...w, visible: false } : w)), cat);
+  assert.strictEqual(panel.find(w => w.id === m.WIDGETS[0].id).visible, false,
+    "la reconciliacion dejo de recordar un panel quitado");
 });
 
 prueba("un grafico nuevo entra con los graficos, no debajo de la barra de señales", () => {
@@ -408,25 +432,42 @@ prueba("redimensionar acota a la grilla", () => {
   assert.strictEqual(chico.alto, m.PASO_DE_MEDIDA);
 });
 
-prueba("el salto es medio, y el mismo a lo ancho que a lo alto", () => {
-  /* Lo que el usuario pidio: «alturas cuantificadas de a 0,5 igual que el
-     ancho». Antes el alto saltaba de a 150 px y el ancho de a un cuarto de
-     pantalla, y ninguno de los dos tenia medio. */
+prueba("el salto es de una unidad, y el mismo a lo ancho que a lo alto", () => {
+  /* La grilla estuvo partida en dos y se volvio atras: con dos pistas por
+     unidad, los catorce pixeles de hueco que quedan **entre** esas dos pistas
+     caen adentro de la unidad, y una unidad medía 164 px contra los 150 que el
+     modelo declara. Los tamaños dejaban de ser multiplos de lo declarado. */
   const d = orig(); const id = d[0].id;
-  const r = m.redimensionarWidget(d, id, 1.5, 2.5).find(w => w.id === id);
-  assert.strictEqual(r.ancho, 1.5);
-  assert.strictEqual(r.alto, 2.5);
+  const r = m.redimensionarWidget(d, id, 2, 3).find(w => w.id === id);
+  assert.strictEqual(r.ancho, 2);
+  assert.strictEqual(r.alto, 3);
+  assert.strictEqual(m.PASO_DE_MEDIDA, 1, "el salto dejo de ser de una unidad");
 });
 
-prueba("una medida entre medios se lleva al medio mas cercano", () => {
-  /* El tirador entrega fracciones: arrastrar da 1,3 columnas, no 1,5. Un ancho
-     de 1,3 seria un panel colocado a un tercio de columna, con todos los de al
-     lado corridos a la nada. */
+prueba("una medida fraccionaria se lleva a la unidad mas cercana", () => {
+  /* El tirador entrega fracciones: arrastrar da 1,3 columnas, no 1. Un ancho de
+     1,3 seria un panel colocado a un tercio de columna, con todos los de al lado
+     corridos a la nada. Y las disposiciones guardadas mientras la grilla estuvo
+     partida traen medios: se acotan al leerse, sin que nadie migre nada. */
   const d = orig(); const id = d[0].id;
-  for (const [pedido, esperado] of [[1.3, 1.5], [1.2, 1], [0.7, 0.5], [2.26, 2.5]]) {
+  for (const [pedido, esperado] of [[1.3, 1], [1.6, 2], [0.5, 1], [2.26, 2], [0.2, 1]]) {
     const r = m.redimensionarWidget(d, id, pedido, pedido).find(w => w.id === id);
     assert.strictEqual(r.ancho, esperado, "pedi " + pedido + " y dio " + r.ancho);
     assert.strictEqual(r.alto, esperado);
+    assert.ok(Number.isInteger(r.ancho), "quedo una medida que no es entera");
+  }
+});
+
+prueba("una disposicion guardada con medios se lee en unidades enteras", () => {
+  /* Quien haya ordenado su tablero mientras la grilla estuvo partida tiene
+     medios guardados. No hay migracion: la reconciliacion los acota, y lo unico
+     que se pierde es la media unidad que ya no existe. */
+  const guardada = m.WIDGETS.map(w => ({ id: w.id, ancho: 1.5, alto: 0.5, visible: true }));
+  const d = m.reconciliarDisposicion(JSON.stringify(guardada));
+  for (const w of d) {
+    assert.ok(Number.isInteger(w.ancho) && Number.isInteger(w.alto),
+      w.id + " quedo en " + w.ancho + "x" + w.alto);
+    assert.ok(w.ancho >= 1 && w.alto >= 1, w.id + " quedo por debajo de una unidad");
   }
 });
 

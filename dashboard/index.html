@@ -98,6 +98,11 @@
     <button class="boton secundario" id="btn-restablecer-tablero" type="button" hidden
             title="Volver a las posiciones y tamaños originales">Restablecer</button>
     <button class="boton secundario" id="btn-cancelar-tablero" type="button" hidden>Cancelar</button>
+    <!-- LO QUE SE QUITO, PARA PODER TRAERLO. Es la contrapartida de que el panel
+         quitado desaparezca de la grilla: sin esta lista, quitar seria
+         irreversible desde la pantalla. Se llena desde `pintarQuitados` y no
+         esta cuando no hay ninguno. -->
+    <div class="quitados" id="widgets-quitados" hidden></div>
   </div>
 
   <!-- ============================================================

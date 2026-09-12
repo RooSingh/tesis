@@ -131,8 +131,8 @@ class DashboardFrontendTests(unittest.TestCase):
         estilos = ESTILOS.read_text(encoding="utf-8")
         self.assertNotIn("col-cabina", estilos,
                          "quedan reglas de los envoltorios que ya no existen")
-        self.assertIn("grid-template-columns: repeat(8, minmax(0, 1fr));", estilos)
-        self.assertIn("grid-auto-rows: 75px;", estilos)
+        self.assertIn("grid-template-columns: repeat(4, minmax(0, 1fr));", estilos)
+        self.assertIn("grid-auto-rows: 150px;", estilos)
         # Ninguna regla coloca un panel a mano.
         colocan = [
             l for l in estilos.split("\n")
@@ -179,6 +179,49 @@ class DashboardFrontendTests(unittest.TestCase):
         ayuda = html[html.index('id="ayuda-g"'):html.index("</span>", html.index('id="ayuda-g"'))]
         self.assertNotIn("1, 2 y 3 g", ayuda,
                          "la ayuda vuelve a declarar una escala fija que no existe")
+
+    def test_un_panel_quitado_se_va_aunque_otra_regla_le_de_display(self) -> None:
+        """Quitar tiene que ganarle a cualquier regla que le de `display` al panel.
+
+        `[data-quitado="si"]` es una clase de especificidad, y
+        `.instrumento { display: flex }` tambien: empatan, y entre iguales gana
+        **la que este escrita despues**. Esa esta doscientas lineas mas abajo.
+
+        Comprobado en pantalla el 2026-09-12: con el panel marcado como quitado
+        seguia ocupando su sitio, y el tablero media 1.462 px con dos paneles
+        fuera y 1.462 con ninguno. Y no lo agarro ninguna prueba: quitar un panel
+        se veia bien en la lista de quitados y no pasaba nada en la grilla.
+
+        Subir la especificidad arreglaria este par y se romperia con la proxima
+        regla que le hable al panel. La afirmacion es «quitado gana siempre», y
+        eso en una hoja de estilos se escribe con `!important`.
+        """
+        estilos = ESTILOS.read_text(encoding="utf-8")
+        limpio = re.sub(r"/\*.*?\*/", "", estilos, flags=re.DOTALL)
+        reglas = list(re.finditer(r"([^{}]+)\{([^{}]*)\}", limpio))
+
+        quitado = [r for r in reglas
+                   if 'data-quitado="si"' in r.group(1) and "display" in r.group(2)]
+        self.assertEqual(len(quitado), 1,
+                         "no hay exactamente una regla que saque el panel quitado")
+        donde = quitado[0].start()
+        self.assertIn("!important", quitado[0].group(2),
+                      "quitar un panel no se impone sobre las demas reglas de `display`")
+
+        # Y la prueba solo vale si la competencia existe: si algun dia
+        # `.instrumento` deja de declarar `display`, esto deja de proteger algo y
+        # corresponde enterarse.
+        competidoras = [
+            r for r in reglas
+            if r.start() > donde
+            and re.search(r"(^|,)\s*\.instrumento\s*$", r.group(1).strip())
+            and re.search(r"(^|;)\s*display\s*:", r.group(2))
+        ]
+        self.assertTrue(
+            competidoras,
+            "ya no hay una regla posterior que le de `display` al panel: "
+            "esta prueba dejo de proteger nada y hay que revisarla",
+        )
 
     def test_la_tabla_medida_no_pisa_la_tabla_declarada(self) -> None:
         """Son dos preguntas distintas y estaban en el mismo hueco.
@@ -251,6 +294,29 @@ class DashboardFrontendTests(unittest.TestCase):
         self.assertIn(f"grid-auto-rows: {alto // subdivisiones}px;", estilos,
                       "la fila de la hoja no es la unidad del guion partida")
 
+        # UNA UNIDAD TIENE QUE MEDIR LO QUE EL MODELO DICE, y partir la grilla no
+        # lo respeta solo: un widget de una unidad ocupa `subdivisiones` pistas y
+        # los huecos que quedan **entre** esas pistas caen adentro de la unidad.
+        #
+        # unidad = subdivisiones x (alto / subdivisiones) + (subdivisiones - 1) x hueco
+        #        = alto + (subdivisiones - 1) x hueco
+        #
+        # o sea que solo coincide con `alto` cuando no hay subdivision, o cuando
+        # el hueco es cero. Medido en pantalla el 2026-09-12 con dos
+        # subdivisiones y catorce pixeles de hueco: una unidad media **164 px**
+        # donde el modelo declara 150, dos median 342 contra 314 y tres 520
+        # contra 478. El error es de catorce pixeles por unidad y crece con el
+        # tamaño, de modo que los paneles grandes son los que mas se corren.
+        hueco = int(re.search(r"^const HUECO_DEL_TABLERO_PX = (\d+);", codigo,
+                              re.MULTILINE).group(1))
+        unidad = alto + (subdivisiones - 1) * hueco
+        self.assertEqual(
+            unidad, alto,
+            f"una unidad mide {unidad} px y el modelo declara {alto}: partir la "
+            f"grilla en {subdivisiones} con {hueco} px de hueco mete "
+            f"{(subdivisiones - 1) * hueco} px adentro de cada unidad",
+        )
+
     def _reglas(self, estilos: str) -> list[tuple[str, str]]:
         """`(selector, declaraciones)` de cada regla de la hoja, sin comentarios.
 
@@ -322,8 +388,14 @@ class DashboardFrontendTests(unittest.TestCase):
         self.assertIn("container-type: size;", estilos,
                       "la celda no es un contenedor: ninguna consulta de tamaño corre")
         self.assertIn("container-name: widget;", estilos)
-        self.assertIn("@container widget (max-height: 110px)", estilos,
-                      "no hay reparto para media unidad de alto")
+        # El panel mas bajo que la grilla admite es de una unidad ---150 px---,
+        # asi que el reparto apretado se declara contra ese alto. Estuvo contra
+        # 110 px, de cuando la grilla se partia en dos, y esa consulta no podia
+        # dispararse nunca.
+        self.assertIn("@container widget (max-height: 200px)", estilos,
+                      "no hay reparto para el panel de una unidad de alto")
+        self.assertNotIn("max-height: 110px", estilos,
+                         "vuelve una consulta para un alto que la grilla no admite")
         # Sin los comentarios: los comentarios cuentan de donde se saco la regla,
         # y esa historia tiene que poder seguir escrita.
         declarado = re.sub(r"/\*.*?\*/", "", estilos, flags=re.DOTALL)

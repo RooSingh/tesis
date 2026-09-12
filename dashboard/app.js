@@ -9186,20 +9186,33 @@ const HUECO_DEL_TABLERO_PX = 14;
 //: cualquier pantalla: por encima de eso el panel deja de poder mirarse entero.
 const FILAS_MAXIMAS_DE_UN_WIDGET = 12;
 
-/* MEDIA UNIDAD ES UNA MEDIDA POSIBLE, A LO ANCHO Y A LO ALTO.
-   Un cuarto de pantalla era el ancho mas chico que se podia pedir, y una fila de
-   150 px el alto mas chico. Hay paneles ---el cronometraje, el clima--- que se
-   miran de reojo y no necesitan tanto: pidiendoles una unidad entera ocupan
-   sitio que otro estaba necesitando.
+/* LAS MEDIDAS SON MULTIPLOS DE UNA UNIDAD, Y NADA MAS.
+   Un panel mide 1, 2, 3 columnas de ancho y 1, 2, 3 filas de alto. No hay
+   medios, ni cuartos.
 
-   La grilla se subdivide, y las medidas siguen contandose en **unidades**: un
-   `ancho: 1` guardado hace meses sigue siendo un cuarto del tablero. Lo unico
-   que cambia es que ahora existe el medio, que es lo que hace que el salto sea
-   el mismo a lo ancho y a lo alto ---la mitad de lo que ya habia--- y no dos
-   escalas distintas. */
-const SUBDIVISIONES = 2;
+   ESTUVO PARTIDA EN DOS Y SE VOLVIO ATRAS, por dos razones.
 
-//: El salto mas chico que se puede pedir, y tambien la medida mas chica: media
+   La primera es que los tamaños dejaban de caer en multiplos de lo que el modelo
+   declara. Con la grilla en dos pistas por unidad, un widget de una unidad ocupa
+   **dos pistas y el hueco que queda entre ellas**: los catorce pixeles del
+   `gap` caen adentro de la unidad. Medido en pantalla: una unidad media 164 px
+   contra los 150 declarados, dos median 342 contra 314 y tres 520 contra 478.
+   Catorce pixeles por unidad, creciendo con el tamaño. La formula es
+   `unidad = alto + (subdivisiones - 1) x hueco`, de modo que subdividir solo es
+   inocuo con el hueco en cero, y el hueco no es cero: es lo que separa un panel
+   del de al lado.
+
+   La segunda es de uso: media unidad se pidio para que el cronometraje y el
+   clima ocuparan menos, y lo que hacia falta ahi era que **entraran** en una
+   unidad, no que hubiera una medida mas chica. Eso ya esta hecho ---ver las
+   consultas `@container` de la hoja---.
+
+   La constante se queda en uno y no se borra: es lo que la prueba del estilo
+   compara contra la grilla, y dejar el numero escrito es lo que hace que
+   cambiarlo vuelva a exigir mirar el hueco. */
+const SUBDIVISIONES = 1;
+
+//: El salto mas chico que se puede pedir, y tambien la medida mas chica: una
 //: unidad. Cero haria desaparecer el panel sin decirlo.
 const PASO_DE_MEDIDA = 1 / SUBDIVISIONES;
 
@@ -9291,10 +9304,11 @@ function disposicionPorOmision(catalogo) {
    fabrica y no cero: una disposicion guardada antes de que el alto existiera no
    nombra el campo, y leerla como cero dejaria el panel sin alto. */
 function medidaAcotada(valor, porOmision, tope) {
-  /* Se redondea al medio mas cercano, no al entero: un 1,3 pedido a mano ---o
-     arrastrado con el tirador--- vale 1,5, que es una medida que la grilla sabe
-     dibujar. Un valor entre medios no existe: seria un panel colocado a un
-     tercio de columna, con todos los de al lado corridos a la nada. */
+  /* Se redondea al multiplo de `PASO_DE_MEDIDA` mas cercano: un 1,3 pedido a
+     mano ---o arrastrado con el tirador--- vale 1. Un valor intermedio no
+     existe: seria un panel colocado a un tercio de columna, con todos los de al
+     lado corridos a la nada. Y una disposicion guardada con medios ---las hubo
+     mientras la grilla estuvo partida--- se acota sola al leerse. */
   const n = Math.round(Number(valor) * SUBDIVISIONES) / SUBDIVISIONES;
   if (!Number.isFinite(n)) return porOmision;
   return Math.max(PASO_DE_MEDIDA, Math.min(tope, n));
@@ -9489,6 +9503,15 @@ function redimensionarWidget(disposicion, id, ancho, alto) {
    ---habria que adivinar que existio--- y la reconciliacion lo repondria
    visible en la proxima recarga, de modo que quitarlo no duraria nada. */
 function mostrarWidget(disposicion, id, visible) {
+  /* UN GRAFICO NO SE PUEDE QUITAR DESDE ACA, y la puerta se cierra en la
+     operacion y no solo en el boton. Que un grafico este es lo mismo que que su
+     señal este encendida, y eso lo manda el panel «Señales»: por eso no se le
+     dibuja el boton «Quitar». Pero la operacion lo aceptaba igual, de modo que
+     la bandeja de quitados podia listar un grafico que **la reconciliacion
+     vuelve a mostrar en la proxima lectura** ---ahi tambien se fuerza a
+     visible---. Un boton que promete algo que se deshace solo es peor que no
+     tenerlo. */
+  if (esGrafico(id) && !visible) return disposicion || [];
   return (disposicion || []).map(w => w.id !== id ? w : {
     id: w.id, ancho: w.ancho, alto: w.alto, visible: !!visible,
   });
@@ -9560,6 +9583,46 @@ function refrescarSoloEstilos() {
   }
 }
 
+/* LOS QUE SE QUITARON, PARA PODER TRAERLOS.
+   Es la contrapartida de que el panel quitado desaparezca de la grilla: sin esta
+   lista, quitar seria irreversible desde la pantalla ---habria que saber que el
+   panel existio para poder pedirlo de vuelta---.
+
+   No se muestra cuando no hay ninguno: una bandeja vacia ocupa sitio para decir
+   que no hay nada que decir. */
+function pintarQuitados() {
+  const caja = document.getElementById("widgets-quitados");
+  if (!caja) return;
+  const fuera = editando() ? EDITANDO.filter(w => !w.visible) : [];
+  caja.hidden = !fuera.length;
+  if (!fuera.length) { caja.innerHTML = ""; return; }
+  const titulo = fuera.length === 1 ? "1 panel quitado:" : fuera.length + " paneles quitados:";
+  caja.innerHTML = '<span class="eyebrow">' + titulo + "</span>" +
+    fuera.map(w => '<button class="boton-menor" type="button" data-traer="' +
+                   textoSeguro(w.id) + '">' + textoSeguro(nombreDelWidget(w.id)) +
+                   "</button>").join("");
+  caja.querySelectorAll("[data-traer]").forEach(b => {
+    b.addEventListener("click", () => {
+      EDITANDO = mostrarWidget(EDITANDO, b.dataset.traer, true);
+      refrescarBorrador();
+    });
+  });
+}
+
+/* Como se llama un panel para quien lo mira. El catalogo trae el titulo de los
+   declarados; un grafico se llama como su señal, que es lo que el panel de
+   señales usa para nombrarlo ---dos nombres para el mismo grafico serian dos
+   graficos---. */
+function nombreDelWidget(id) {
+  if (esGrafico(id)) {
+    const canal = id.slice(PREFIJO_DE_GRAFICO.length);
+    const m = METRICAS.find(x => x.id === canal);
+    return m ? m.rotulo : canal;
+  }
+  const w = WIDGETS.find(x => x.id === id);
+  return w ? w.titulo : id;
+}
+
 function pintarModoEdicion() {
   const tablero = document.getElementById("tablero");
   if (tablero) tablero.dataset.editando = editando() ? "si" : "no";
@@ -9590,12 +9653,29 @@ function pintarBotonesDeEdicion() {
      arrastre, apilados en la misma esquina. Lo que se agrega en cada pasada se
      saca en cada pasada. */
   tablero.querySelectorAll(".mandos-widget, .tirador-widget").forEach(n => n.remove());
-  if (!editando()) return;
+  pintarQuitados();
+  if (!editando()) {
+    /* Al salir del modo, los quitados vuelven a estar quitados por la
+       disposicion vigente y no por el borrador. */
+    for (const w of (DISPOSICION || [])) {
+      const el = tablero.querySelector('[data-panel="' + w.id + '"]');
+      if (el) { el.dataset.quitado = w.visible ? "no" : "si"; el.dataset.apagado = "no"; }
+    }
+    return;
+  }
   for (const w of EDITANDO) {
     const el = tablero.querySelector('[data-panel="' + w.id + '"]');
     if (!el) continue;
-    el.dataset.quitado = "no";            // se ve apagado, no escondido
-    el.dataset.apagado = w.visible ? "no" : "si";
+    /* UN PANEL QUITADO SE VA, TAMBIEN MIENTRAS SE EDITA.
+       Se quedaba apagado y en su sitio, y el motivo escrito era que si
+       desapareciera no habria como traerlo de vuelta. Eso dejo de ser cierto:
+       la barra de edicion lista los quitados y cada uno tiene su boton. Y
+       mientras tanto costaba caro: quitar cuatro paneles no liberaba un solo
+       pixel, de modo que lo unico que hacia «Quitar» era apagar el panel y
+       mentir sobre lo que iba a pasar al guardar. */
+    el.dataset.quitado = w.visible ? "no" : "si";
+    el.dataset.apagado = "no";
+    if (!w.visible) continue;             // no lleva mandos: no esta
     el.setAttribute("draggable", "true");
     const mandos = document.createElement("div");
     mandos.className = "mandos-widget";

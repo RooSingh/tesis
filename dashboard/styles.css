@@ -801,14 +801,19 @@
        la disposicion, en columnas y en filas, y una fila mide siempre lo mismo:
        asi el panel sigue recibiendo un alto ---que es lo que sus reglas de
        adentro necesitan--- y quien lo elige es quien mira. */
-    /* OCHO PISTAS PARA CUATRO COLUMNAS, Y FILAS DE MEDIA UNIDAD.
-       La grilla tiene el doble de pistas que unidades declara el modelo, para
-       que media unidad sea una medida que se pueda pedir. Los numeros de aca
-       son `COLUMNAS_DEL_TABLERO * SUBDIVISIONES` y `ALTO_DE_FILA_PX /
-       SUBDIVISIONES`, y hay una prueba que compara los dos sitios: si uno se
-       mueve sin el otro, cada panel mide el doble o la mitad de lo que pidio. */
-    grid-template-columns: repeat(8, minmax(0, 1fr));
-    grid-auto-rows: 75px;
+    /* UNA PISTA POR UNIDAD. Los numeros de aca son
+       `COLUMNAS_DEL_TABLERO * SUBDIVISIONES` y `ALTO_DE_FILA_PX / SUBDIVISIONES`,
+       y hay una prueba que compara los dos sitios.
+
+       ESTUVO EN OCHO PISTAS DE 75 PX Y SE VOLVIO ATRAS. La idea era que media
+       unidad fuera una medida posible; el efecto fue que **ninguna** medida caia
+       donde el modelo decia. Un widget de una unidad ocupa `SUBDIVISIONES`
+       pistas, y los huecos que quedan entre esas pistas caen adentro de la
+       unidad: medido, una unidad media 164 px contra 150, dos 342 contra 314 y
+       tres 520 contra 478. Subdividir solo es inocuo con `gap: 0`, y el hueco es
+       justamente lo que separa un panel del de al lado. */
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    grid-auto-rows: 150px;
     gap: 14px;
     /* EL ALTO LO PONEN LAS FILAS, NO LA VENTANA.
        Aca decia `height: calc(100vh - 290px)`, para que trazado, graficos,
@@ -1366,7 +1371,7 @@
      pedia 211 px de ancho en una caja de 173 y el rotulo «Coche de seg.» se
      salia por el costado. Lo que cede es el rotulo, que se corta con puntos
      suspensivos; la cifra no, porque una cifra a medias es un numero falso. */
-  @container widget ((max-width: 260px) or (max-height: 110px)) {
+  @container widget (max-width: 260px) {
     .cabina .clima-mini .clima-rejilla {
       grid-template-columns: repeat(2, minmax(0, 1fr));
     }
@@ -1418,7 +1423,7 @@
      ---medido: quince pixeles de mas--- y ahi el ancho sobra, asi que el titular
      se queda en linea. Los dos ejes no piden lo mismo, y por eso no comparten
      regla. */
-  @container widget ((max-width: 260px) and (min-height: 111px)) {
+  @container widget (max-width: 260px) {
     .cabina .clima-mini .clima-principal > div {
       display: flex; flex-direction: column; align-items: flex-start; gap: 0;
     }
@@ -1430,94 +1435,14 @@
     }
   }
 
-  /* ---------- BAJO PERO ANCHO: media fila de alto, una columna o mas ----------
-     Con ancho de sobra y alto justo, las casillas se reparten en una sola linea
-     en vez de dos y lo que era un desborde pasa a entrar entero.
+  /* AQUI VIVIAN TRES CONSULTAS PARA PANELES DE MEDIA FILA ---75 px de alto---,
+     y ya no pueden dispararse: con la grilla en unidades enteras el panel mas
+     bajo mide 150. Se borran en vez de dejarlas puestas. Una regla que no puede
+     aplicarse nunca se lee como que el caso esta contemplado, y el dia que
+     alguien mire por que no se aplica va a buscar el defecto donde no esta.
 
-     EL UMBRAL SON 420 PX, NO 261. Con una columna justa ---360 px--- cada
-     casilla queda en ochenta y cinco y «COCHE DE SEG. -0,0 s» en un renglon no
-     entra: el rotulo se sale por el costado. Desde columna y media el reparto
-     en linea es el que menos sitio pide; por debajo, apiladas. */
-  /* Las cinco celdas del cronometraje en una fila desde una columna justa: sus
-     rotulos son mas cortos que los del clima y entran en ochenta y cinco
-     pixeles, asi que su umbral es mas bajo. Dos paneles distintos aguantan
-     aprietos distintos; un solo umbral para los dos rompia uno de los dos. */
-  @container widget ((max-height: 110px) and (min-width: 261px)) {
-    .cabina .vertical .tira-cronometraje { grid-template-columns: repeat(4, minmax(0, 1fr)); }
-  }
-
-  @container widget ((max-height: 110px) and (min-width: 420px)) {
-    .cabina .clima-mini .clima-rejilla { grid-template-columns: repeat(4, minmax(0, 1fr)); }
-    /* Y la casilla del clima vuelve a poner el rotulo al costado: con ochenta y
-       cinco pixeles de columna «PISTA 20,0 °C» entra en un renglon, y ese
-       renglon que se ahorra es el que faltaba ---medido: ocho pixeles---. El
-       cronometraje no lo necesita: sus cinco cifras ya entran apiladas. */
-    .cabina .clima-mini .clima-rejilla div {
-      flex-direction: row; align-items: baseline; justify-content: space-between; gap: 5px;
-    }
-  }
-
-  /* ---------- MUY APRETADO: media unidad de alto, 75 px con el marco ----------
-     Aca no alcanza con quitar aire: hay que rehacer como se reparte.
-
-     EL ROTULO VA ARRIBA DE LA CIFRA, NO AL COSTADO. Al costado ocupa menos alto
-     ---que es lo que escasea--- pero le come el ancho a la cifra, y en 173 px el
-     rotulo terminaba cortado con puntos suspensivos: «PI…», «COC…». Un rotulo a
-     medias no es un rotulo corto, es otra palabra. Arriba, en medio cuerpo,
-     «Coche de seg.» entra entero en una columna de ochenta pixeles.
-
-     Y LA CIFRA NO SE ESCONDE. Probe sacar la temperatura grande del clima
-     ---repite la casilla «Aire»--- y quedaba un «°C» solo, sin numero: la
-     unidad es un elemento aparte. Una unidad sin cifra es peor que la
-     repeticion. Se achica, y la que se va es la pastilla de bandera, que si es
-     la misma casilla entera repetida. */
-  @container widget (max-height: 110px) {
-    .cabina .instrumento > header { padding: 2px 8px 1px; border-bottom: none; }
-    .cabina .instrumento > header h2 { font-size: .6rem; }
-    .cabina .instrumento > .cuerpo-instrumento { padding: 1px 7px 3px; }
-
-    /* El cronometraje: rotulo arriba, cifra abajo, en dos columnas. */
-    .cabina .vertical .tira-cronometraje { grid-auto-rows: minmax(0, auto); gap: 1px; }
-    /* Los ultimos seis pixeles: dos renglones de casillas a un pixel de relleno
-       arriba y abajo en vez de tres. Es lo que faltaba para que las cinco
-       cifras del cronometraje entren enteras en media fila de alto. */
-    .cabina .vertical .tira-cronometraje div,
-    .cabina .clima-mini .clima-rejilla div { padding: 1px 6px; }
-    .cabina .vertical .tira-cronometraje dt {
-      font-size: .5rem; letter-spacing: .02em; line-height: 1.25;
-      white-space: nowrap; overflow: visible; text-overflow: clip;
-    }
-    .cabina .vertical .tira-cronometraje dd { font-size: .76rem; line-height: 1.2; }
-    .cabina .vertical .tira-cronometraje .secundario { display: none; }
-
-    /* El clima: lo mismo, y el titular en una linea baja. */
-    .cabina .clima-mini .clima { gap: 1px; }
-    .cabina .clima-mini .clima-principal { gap: 5px; }
-    .cabina .clima-mini .clima-principal .icono { width: 15px; height: 15px; }
-    .cabina .clima-mini .clima-principal .cifra-grande { font-size: .82rem; line-height: 1.2; }
-    .cabina .clima-mini .clima-principal .unidad-grande { font-size: .58rem; }
-    .cabina .clima-mini .clima-principal .eyebrow {
-      margin: 0; font-size: .5rem; letter-spacing: .02em; line-height: 1.2;
-    }
-    /* La pastilla de bandera dice lo mismo que la casilla «Bandera» de abajo:
-       es lo unico de las seis cosas que esta dos veces, y por eso es lo que se
-       va cuando el sitio no alcanza. */
-    .cabina .clima-mini .clima-principal .bandera { display: none; }
-    .cabina .clima-mini .clima-rejilla { gap: 1px; }
-    /* La direccion NO se repite aca: la pone el bloque angosto ---en columna---
-       y el bloque bajo-y-ancho ---en linea---, y este esta escrito despues que
-       los dos. Volviendo a decir «columna» le ganaba al bajo-y-ancho, y el
-       panel de 360 x 75 seguia con las casillas apiladas y la cifra cortada
-       contra el borde. */
-    .cabina .clima-mini .clima-rejilla div {
-      display: flex; padding: 1px 5px; border-radius: 5px;
-    }
-    .cabina .clima-mini .clima-rejilla dt {
-      font-size: .5rem; letter-spacing: .02em; line-height: 1.25;
-      white-space: nowrap; overflow: visible; text-overflow: clip;
-    }
-    .cabina .clima-mini .clima-rejilla dd { font-size: .76rem; line-height: 1.2; }
-  }
+     Lo que decian sigue estando donde importa: la consulta de 200 px alcanza a
+     los paneles de una fila, que es el caso apretado que queda. */
   .cabina .ejes-g .lista-canales div { padding: 4px 7px; }
   /* En la cabina los avisos viven en una columna angosta: la fecha se pone
      encima en vez de al costado ---asi el texto del aviso usa el ancho
@@ -1567,7 +1492,16 @@
      otra ausencia la declara `data-estado` con su motivo y el panel se queda en
      su sitio diciendo por que esta vacio; este se va, porque alguien decidio
      que no lo queria ver. */
-  [data-quitado="si"] { display: none; }
+  /* `!important` porque la que compite no es una excepcion sino la regla general
+     del panel: `.instrumento { display: flex }` tiene la misma especificidad y
+     esta escrita doscientas lineas mas abajo, de modo que gana por orden. Lo
+     comprobe: el panel quitado seguia ocupando su sitio y el tablero media lo
+     mismo con dos paneles fuera que con ninguno.
+
+     Subir la especificidad ---`.cabina > [data-quitado="si"]`--- lo arreglaria
+     hoy y volveria a romperse con la proxima regla que le hable al panel. Esto
+     es «quitado gana siempre», que es lo que se quiere decir. */
+  [data-quitado="si"] { display: none !important; }
 
   /* ---------- ordenar el tablero ----------
      Mientras se edita, cada panel muestra sus mandos y se puede arrastrar. El
@@ -1592,6 +1526,14 @@
   .cabina[data-editando="si"] > [data-panel] > *:not(.mandos-widget) {
     pointer-events: none;
   }
+  /* La bandeja de quitados vive en la barra de edicion, al lado de Guardar y
+     Cancelar: es parte de la misma decision y se lee en el mismo renglon. */
+  .quitados {
+    display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+    padding: 4px 8px; border: 1px dashed var(--linea-fuerte); border-radius: 9px;
+  }
+  .quitados .eyebrow { margin: 0; color: var(--texto-tenue); }
+
   .mandos-widget {
     position: absolute; inset: auto 6px 6px auto; z-index: 3;
     display: flex; gap: 4px; align-items: center; flex-wrap: wrap;
@@ -1743,7 +1685,7 @@
   }
   @media (max-width: 1180px) {
     .cabina {
-      grid-template-columns: repeat(4, minmax(0, 1fr));
+      grid-template-columns: repeat(2, minmax(0, 1fr));
       height: auto !important; min-height: 0;
     }
     .cabina .grafico-chico canvas { min-height: 104px; }
@@ -1757,7 +1699,7 @@
      especificidad a las consultas de tamaño, que es lo que ahora decide como se
      reparte el panel. */
   @media (max-width: 860px) {
-    .cabina { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .cabina { grid-template-columns: minmax(0, 1fr); }
   }
 
   .tablero {
