@@ -183,6 +183,7 @@ const NOMBRES = [
   "cambiaronLasSeries",
   "esCanalEscalonado", "_cacheTemporal", "serieTemporal", "_serieTemporalCruda",
   "continuidadDeVuelta", "_umbralDeVuelta", "tiempoEfectivoEntre", "hayCorteEntre",
+  "huecoQueContiene",
   "_antesDe", "valorContinuoEn", "valorEscalonadoEn", "abscisaContinua",
   "loQueSeSabeDelVehiculo", "faltanVehiculosPorAprender", "nombreCortoDeVehiculo",
   "muestrasQueAporta", "idsParaComparar", "sePuedeComparar",
@@ -285,7 +286,7 @@ const {
   unidadDeCanal, sinCambiosEnElTramo,
   divisorDeUnidad, unidadDeclaradaDe, divisorDePresentacion,
   estaEnLaUnidadQueSeMuestra, serieCrudaDeCanal, trazarSerie, _cruzaUnHueco, huecosDeLaSerie,
-  huecoDeLaSerie, comoSeVeElFlujo, _enUnidad,
+  huecoDeLaSerie, comoSeVeElFlujo, huecoQueContiene, _enUnidad,
   serieDeCanal, serieAcumuladaDeCanal,
   tiempoDeVuelta, diferenciaEnSegundos, esCanalEscalonado, serieTemporal,
   valorEscalonadoEn, valorContinuoEn, calcularInstante,
@@ -1332,6 +1333,34 @@ prueba("una continua se une con una recta", () => {
   trazarSerie(ctx, [[100, 200], [200, 250]], x => x, y => y, false);
   assert.deepStrictEqual(ctx.ordenes,
     [["moveTo", 100, 200], ["lineTo", 200, 250]]);
+});
+
+prueba("dentro de un hueco el valor esta sostenido y se sabe cual hueco", () => {
+  /* LO QUE EL USUARIO PIDIO, Y LO QUE YA ESTABA. Dentro de un hueco los
+     valores **no caen a cero**: `valorContinuoEn` devuelve el ultimo medido en
+     vez de interpolar. Lo que faltaba era decirlo: 295 km/h sostenidos y 295
+     km/h de ahora se ven iguales.
+
+     Para poder decirlo hay que saber **en que hueco** se esta, no solo que se
+     esta en uno: sin eso no se puede escribir cuanto dura. */
+  const cont = { huecos: [[1000, 3000], [8000, 8500]] };
+  assert.deepStrictEqual(huecoQueContiene(cont, 2000), [1000, 3000]);
+  assert.deepStrictEqual(huecoQueContiene(cont, 8100), [8000, 8500]);
+  assert.strictEqual(huecoQueContiene(cont, 5000), null);
+});
+
+prueba("en los bordes del hueco todavia hay medicion", () => {
+  /* El instante en que se corto y aquel en que volvio **son muestras**: el
+     hueco es lo de en medio. Marcarlos como sostenidos diria que dos valores
+     medidos no lo estan. */
+  const cont = { huecos: [[1000, 3000]] };
+  assert.strictEqual(huecoQueContiene(cont, 1000), null);
+  assert.strictEqual(huecoQueContiene(cont, 3000), null);
+});
+
+prueba("sin cortes declarados no se inventa un hueco", () => {
+  assert.strictEqual(huecoQueContiene(null, 2000), null);
+  assert.strictEqual(huecoQueContiene({ huecos: [] }, 2000), null);
 });
 
 prueba("dos capturas de la misma carrera son una sola carrera", () => {

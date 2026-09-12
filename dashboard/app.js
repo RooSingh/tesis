@@ -4014,6 +4014,28 @@ function _cruzaUnHueco(huecos, a, b) {
   return false;
 }
 
+/* EN QUE HUECO ESTA EL CABEZAL, SI ES QUE ESTA EN UNO.
+   ------------------------------------------------------------
+   Dentro de un hueco los valores **no caen a cero**: `valorContinuoEn` devuelve
+   el ultimo medido en vez de interpolar, que es lo correcto ---el coche venia
+   de algun sitio--- y es exactamente por eso que hace falta decirlo: 295 km/h
+   sostenidos y 295 km/h de ahora se ven iguales.
+
+   DEVUELVE EL HUECO Y NO UN BOOLEANO. Saber que se esta en uno no alcanza para
+   escribir cuanto dura, y «el sistema dejo de recibir» sin la duracion es la
+   mitad de la frase.
+
+   LOS BORDES NO ESTAN ADENTRO. El instante en que se corto y aquel en que
+   volvio son muestras medidas; el hueco es lo de en medio. Incluirlos diria que
+   dos valores medidos estan sostenidos. */
+function huecoQueContiene(cont, t) {
+  const huecos = (cont && cont.huecos) || [];
+  for (let i = 0; i < huecos.length; i++) {
+    if (t > huecos[i][0] && t < huecos[i][1]) return huecos[i];
+  }
+  return null;
+}
+
 /* ============================================================
    CUANDO EL FLUJO SE CORTA, LOS VALORES TIENEN QUE DECIR QUE SON VIEJOS
    ------------------------------------------------------------
@@ -4082,18 +4104,45 @@ function edadDelFlujo(ahora) {
    `opacity` sobre el contenedor se atenuaria tambien el aviso que explica por
    que esta atenuado, que es la unica cosa de la pantalla que en ese momento
    tiene que leerse bien. */
+/* Lo mismo, pero para la reproduccion: el cabezal parado dentro de un hueco.
+   No es lo mismo que el flujo caido ---aca no se espera nada, ya paso--- y por
+   eso el texto es otro. Lo que comparten es la afirmacion: **lo que se ve es lo
+   ultimo que se midio**, no lo de ahora. */
+function huecoBajoElCabezal() {
+  if (estadoSesion === "vivo") return null;
+  const i = typeof instante === "function" ? instante() : null;
+  if (!i || i.tUtcMs === null || i.tUtcMs === undefined) return null;
+  const cont = continuidadDeVuelta(i.vuelta, claveVehiculoPropio());
+  return huecoQueContiene(cont, i.tUtcMs);
+}
+
 function marcarFrescuraDelFlujo() {
+  const hueco = huecoBajoElCabezal();
+  if (hueco) {
+    const dura = Math.round((hueco[1] - hueco[0]) / 1000);
+    return _ponerFrescura("held",
+      "acá el sistema dejó de recibir durante " +
+      (dura < 90 ? dura + " s" : Math.round(dura / 60) + " min") +
+      ": los valores son los últimos que se midieron, no los de este momento");
+  }
   const f = comoSeVeElFlujo(edadDelFlujo());
+  return _ponerFrescura(f.estado, f.texto);
+}
+
+/* Un solo sitio que escribe la marca. Con dos ---uno para el vivo y otro para
+   la reproduccion--- el dia que uno limpie y el otro no, el tablero se queda
+   atenuado sin nada que lo explique. */
+function _ponerFrescura(estado, texto) {
   const cabina = document.querySelector(".cabina");
   if (cabina) {
-    if (f.estado) cabina.dataset.frescuraFlujo = f.estado;
+    if (estado) cabina.dataset.frescuraFlujo = estado;
     else delete cabina.dataset.frescuraFlujo;
   }
   const aviso = document.getElementById("aviso-flujo");
   if (aviso) {
-    aviso.textContent = f.texto;
-    aviso.dataset.frescura = f.estado || "";
-    aviso.hidden = !f.texto;
+    aviso.textContent = texto;
+    aviso.dataset.frescura = estado || "";
+    aviso.hidden = !texto;
   }
 }
 

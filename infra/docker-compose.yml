@@ -99,6 +99,22 @@ services:
       - ./mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
       - mosquitto_data:/mosquitto/data
       - mosquitto_log:/mosquitto/log
+    # QUE «ARRANCADO» SIGNIFIQUE «CONTESTA».
+    #
+    # Sin esto, lo unico que se puede esperar es que el contenedor exista, y un
+    # contenedor existe desde antes de aceptar una conexion. Esa ventana es la
+    # que produjo el defecto que `DESPLIEGUE.md` documenta: el servicio web
+    # arrancaba antes que el intermediario, la conexion fallaba, y como no
+    # reintenta el sistema quedaba **vivo y con el flujo muerto**, sin avisar.
+    #
+    # Se pregunta suscribiendose de verdad a las estadisticas del propio
+    # intermediario: un puerto abierto no prueba que el servicio conteste.
+    healthcheck:
+      test: ["CMD-SHELL", "mosquitto_sub -h 127.0.0.1 -p 1883 -t '$$SYS/broker/version' -C 1 -W 2 >/dev/null 2>&1"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
 
   timescaledb:
     # La misma que corre hoy: PostgreSQL 16.14 con TimescaleDB 2.28.3.
@@ -203,6 +219,238 @@ services:
       - default_toast_compression=lz4
       - -c
       - timezone=UTC
+    # La base tarda mas que el intermediario en estar lista: carga la extension
+    # y recupera el registro de escritura si el ultimo apagado fue sucio ---que
+    # es justo el caso del corte de corriente que se probo el 2026-09-12---. Se
+    # le da un margen de arranque generoso y despues se pregunta seguido.
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER:-tesis_user} -d $${POSTGRES_DB:-tesis_db} -h 127.0.0.1"]
+      interval: 5s
+      timeout: 5s
+      retries: 24
+      start_period: 30s
+
+  # ==========================================================================
+  # LA APLICACION, EN CONTENEDOR
+  # --------------------------------------------------------------------------
+  # POR QUE ESTAS TRES ESTAN BAJO UN PERFIL Y LAS DE ARRIBA NO.
+  #
+  # Hasta hoy el reparto era: la infraestructura en contenedor y la aplicacion
+  # sobre el anfitrion, en unidades de systemd. Eso funciona y esta medido ---el
+  # 2026-09-12 la Raspberry volvio sola de un corte de corriente en 58
+  # segundos---, de modo que reemplazarlo de golpe seria cambiar algo que anda
+  # por algo que todavia no se probo en esa maquina.
+  #
+  # Con `profiles`, estos tres **no arrancan** con un `docker compose up -d`
+  # normal: hay que pedirlos. El despliegue de hoy sigue comportandose igual
+  # hasta que alguien decida cambiarlo, y volver atras es dejar de pedirlos.
+  #
+  # QUE SE GANA AL MOVERLOS AQUI, y es una sola cosa que vale por si sola: hoy
+  # hay **dos planificadores** ---systemd para la aplicacion, Docker para la
+  # infraestructura--- y ninguno sabe del otro. De ahi salio el defecto que
+  # `DESPLIEGUE.md` documenta: en un arranque en frio las unidades le ganan la
+  # carrera a los contenedores, la conexion al intermediario no reintenta, y el
+  # servicio queda activo respondiendo la consulta de estado con el flujo en
+  # vivo muerto. Hoy eso se evita con una espera escrita a mano en cada unidad,
+  # que cuenta hasta noventa preguntando por dos puertos. Aqui lo evita
+  # `depends_on ... service_healthy`, que no es una espera sino una condicion:
+  # el contenedor **no arranca** hasta que los otros dos contestan.
+  #
+  # LAS DIRECCIONES DEJAN DE SER `127.0.0.1`. Adentro de la red del compose cada
+  # servicio se llama por su nombre y usa su puerto interno, de modo que la
+  # aplicacion ya no depende de en que puerto del anfitrion se publico la base.
+  # `DB_PUERTO_ANFITRION` sigue existiendo para quien se conecte desde afuera.
+
+  api:
+    profiles: ["completo"]
+    build:
+      context: ..
+      dockerfile: infra/Dockerfile
+    image: tesis-app:local
+    container_name: tesis-api
+    restart: ${DOCKER_REINICIO:-no}
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+      mosquitto:
+        condition: service_healthy
+    environment:
+      # Por nombre de servicio y puerto interno: ver el comentario de arriba.
+      DB_HOST: timescaledb
+      DB_PORT: 5432
+      DB_NAME: ${DB_NAME:-tesis_db}
+      DB_USER: ${DB_USER:-tesis_user}
+      # HACE FALTA UNA CONTRASENA DE VERDAD, Y LA GUARDA ESTA EN EL CODIGO.
+      #
+      # `backend/config.py:182` se niega a arrancar si la base no es local y la
+      # contrasena es la que el repositorio publica. En contenedor la base
+      # **nunca** es local: se la alcanza por nombre de servicio sobre una red
+      # compartida, que es justo el caso que esa guarda describe ---«una base
+      # alcanzable desde fuera de esta maquina, con la clave que cualquiera
+      # puede leer en el repositorio»---.
+      #
+      # Comprobado el 2026-09-12 corriendo la imagen: sin definirla, el servicio
+      # arranca y muere en el evento de inicio, con el motivo escrito.
+      #
+      # NO SE REPITE LA GUARDA AQUI. Se probo con `${DB_PASSWORD:?...}` y tiene
+      # un defecto: el compose interpola **todo el archivo** antes de mirar los
+      # perfiles, de modo que exigirla rompia tambien el modo de hoy, que no
+      # levanta estos servicios. Y ademas serian dos guardas que hay que
+      # mantener de acuerdo. Una sola, en el lugar que sabe por que.
+      DB_PASSWORD: ${DB_PASSWORD:-tesis_pass}
+      MQTT_HOST: mosquitto
+      MQTT_PORT: 1883
+      # El servicio web sirve tambien el tablero. No es comodidad: es lo que
+      # evita a la vez el control de origen cruzado y una segunda cookie del
+      # portal de acceso. Ver la seccion «Un solo origen» de `DESPLIEGUE.md`.
+      SERVIR_TABLERO: 1
+    # ADENTRO ESCUCHA EN TODAS LAS INTERFACES, Y AFUERA SOLO EN LA LOCAL.
+    #
+    # La unidad de systemd ataba el proceso a `127.0.0.1`. Un contenedor que se
+    # ate a su propio `127.0.0.1` no es alcanzable ni siquiera desde el
+    # anfitrion, de modo que el proceso escucha en `0.0.0.0` **de su red
+    # privada** y quien decide desde donde se llega es la publicacion de abajo.
+    # La propiedad que importa ---que no quede expuesto a la red de casa--- la
+    # sigue dando `BIND_ANFITRION`, no la direccion del proceso.
+    command:
+      - python
+      - -m
+      - uvicorn
+      - backend.app:app
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8080"
+    ports:
+      - "${BIND_ANFITRION:-127.0.0.1}:${API_PUERTO_ANFITRION:-8080}:8080"
+    volumes:
+      # De solo lectura: el servicio web lee capturas para declarar procedencia
+      # y no tiene por que poder cambiarlas.
+      - ../datasets:/app/datasets:ro
+      - ../logs:/app/logs
+
+  consumidor:
+    profiles: ["completo"]
+    build:
+      context: ..
+      dockerfile: infra/Dockerfile
+    image: tesis-app:local
+    container_name: tesis-consumidor
+    restart: ${DOCKER_REINICIO:-no}
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+      mosquitto:
+        condition: service_healthy
+    environment:
+      DB_HOST: timescaledb
+      DB_PORT: 5432
+      DB_NAME: ${DB_NAME:-tesis_db}
+      DB_USER: ${DB_USER:-tesis_user}
+      # HACE FALTA UNA CONTRASENA DE VERDAD, Y LA GUARDA ESTA EN EL CODIGO.
+      #
+      # `backend/config.py:182` se niega a arrancar si la base no es local y la
+      # contrasena es la que el repositorio publica. En contenedor la base
+      # **nunca** es local: se la alcanza por nombre de servicio sobre una red
+      # compartida, que es justo el caso que esa guarda describe ---«una base
+      # alcanzable desde fuera de esta maquina, con la clave que cualquiera
+      # puede leer en el repositorio»---.
+      #
+      # Comprobado el 2026-09-12 corriendo la imagen: sin definirla, el servicio
+      # arranca y muere en el evento de inicio, con el motivo escrito.
+      #
+      # NO SE REPITE LA GUARDA AQUI. Se probo con `${DB_PASSWORD:?...}` y tiene
+      # un defecto: el compose interpola **todo el archivo** antes de mirar los
+      # perfiles, de modo que exigirla rompia tambien el modo de hoy, que no
+      # levanta estos servicios. Y ademas serian dos guardas que hay que
+      # mantener de acuerdo. Una sola, en el lugar que sabe por que.
+      DB_PASSWORD: ${DB_PASSWORD:-tesis_pass}
+      MQTT_HOST: mosquitto
+      MQTT_PORT: 1883
+      # El valor que la Raspberry ya tiene puesto por un agregado de systemd.
+      # Estaba declarado dos veces y en conflicto ---1000 en el archivo de
+      # entorno y 5000 en el agregado---; aca queda una sola vez.
+      MQTT_BATCH_SIZE: ${MQTT_BATCH_SIZE:-5000}
+    command:
+      - python
+      - scripts/run_mqtt_consumer.py
+      - --metrics-file
+      - logs/consumidor_metricas.json
+      - --metrics-history-file
+      - logs/consumidor_historial.jsonl
+    volumes:
+      - ../logs:/app/logs
+
+  capturador:
+    # PERFIL PROPIO, Y NO EL DE LA APLICACION.
+    #
+    # El capturador no es un servicio permanente: escucha una consola que la
+    # mayor parte del tiempo no esta jugando. Su unidad de systemd lo dice ---
+    # `Restart=no`, «si nadie esta jugando no hay nada que capturar»--- y esa
+    # decision se conserva aqui con un perfil aparte, de modo que `--profile
+    # completo` levanta el sistema y `--profile captura` agrega la escucha.
+    #
+    # El 2026-09-12 se midio el costo de esa decision: tras un corte de
+    # corriente el sistema vuelve entero y **sordo**, y el tablero mostraba
+    # valores congelados sin decir que lo estaban. Lo segundo ya se arreglo; lo
+    # primero sigue siendo a proposito.
+    profiles: ["captura"]
+    build:
+      context: ..
+      dockerfile: infra/Dockerfile
+    image: tesis-app:local
+    container_name: tesis-capturador
+    # `no`, igual que la unidad: un capturador que se rearranca solo vuelve a
+    # abrir el puerto y pelea con el que lo lanzo desde el tablero.
+    restart: "no"
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+      mosquitto:
+        condition: service_healthy
+    environment:
+      DB_HOST: timescaledb
+      DB_PORT: 5432
+      DB_NAME: ${DB_NAME:-tesis_db}
+      DB_USER: ${DB_USER:-tesis_user}
+      # HACE FALTA UNA CONTRASENA DE VERDAD, Y LA GUARDA ESTA EN EL CODIGO.
+      #
+      # `backend/config.py:182` se niega a arrancar si la base no es local y la
+      # contrasena es la que el repositorio publica. En contenedor la base
+      # **nunca** es local: se la alcanza por nombre de servicio sobre una red
+      # compartida, que es justo el caso que esa guarda describe ---«una base
+      # alcanzable desde fuera de esta maquina, con la clave que cualquiera
+      # puede leer en el repositorio»---.
+      #
+      # Comprobado el 2026-09-12 corriendo la imagen: sin definirla, el servicio
+      # arranca y muere en el evento de inicio, con el motivo escrito.
+      #
+      # NO SE REPITE LA GUARDA AQUI. Se probo con `${DB_PASSWORD:?...}` y tiene
+      # un defecto: el compose interpola **todo el archivo** antes de mirar los
+      # perfiles, de modo que exigirla rompia tambien el modo de hoy, que no
+      # levanta estos servicios. Y ademas serian dos guardas que hay que
+      # mantener de acuerdo. Una sola, en el lugar que sabe por que.
+      DB_PASSWORD: ${DB_PASSWORD:-tesis_pass}
+      MQTT_HOST: mosquitto
+      MQTT_PORT: 1883
+      CAPTURA_SOLO_VEHICULO_PROPIO: ${CAPTURA_SOLO_VEHICULO_PROPIO:-1}
+    command: ["python", "scripts/capturar_f1_25.py"]
+    # EL PUERTO DEL JUEGO SE PUBLICA, NO SE USA LA RED DEL ANFITRION.
+    #
+    # `network_mode: host` tambien funcionaria en Linux, y ademas dejaria al
+    # contenedor fuera de la red del compose: tendria que volver a hablarle a la
+    # base por `127.0.0.1` y un puerto publicado, que es lo que se estaba
+    # sacando. Publicar el puerto lo deja adentro.
+    #
+    # La traduccion de direcciones no molesta porque el capturador **descarta la
+    # direccion de origen**: `datos, _ = sock.recvfrom(4096)`. Si algun dia la
+    # usara, esto habria que revisarlo.
+    ports:
+      - "${BIND_CAPTURA:-0.0.0.0}:20777:20777/udp"
+    volumes:
+      # De escritura: aqui se graban las capturas crudas y sus metadatos.
+      - ../datasets:/app/datasets
+      - ../logs:/app/logs
 
 volumes:
   # Nombrados en lugar de anonimos. Los anteriores eran anonimos y quedan
