@@ -299,6 +299,7 @@ def telemetry_latest(limit: int = 20) -> list[dict]:
     - limit: cantidad maxima de mensajes a devolver.
     """
 
+    _validar_limite(limit)
     return obtener_ultimos_mensajes(limit)
 
 
@@ -311,6 +312,7 @@ def telemetry_by_signal(signal_name: str, limit: int = 50) -> list[dict]:
     - limit: cantidad maxima de mensajes a devolver.
     """
 
+    _validar_limite(limit)
     return obtener_mensajes_por_senal(signal_name, limit)
 
 
@@ -325,6 +327,7 @@ def telemetry_latest_by_signal() -> list[dict]:
 def telemetry_by_session(session_id: str, limit: int = 100) -> list[dict]:
     """Devuelve mensajes persistidos pertenecientes a una sesion concreta."""
 
+    _validar_limite(limit)
     return obtener_mensajes_por_sesion(session_id, limit)
 
 
