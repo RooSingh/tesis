@@ -81,13 +81,14 @@ const m = new Function(`
   ${extraer("sePuedeRehacer")}
   ${extraer("unPasoAtras")}
   ${extraer("unPasoAdelante")}
+  ${extraer("dondeCaeSuelto")}
   const pila = () => ({ pasos: PASOS, en: PASO });
   return { COLUMNAS_DEL_TABLERO, ALTO_DE_FILA_PX, FILAS_MAXIMAS_DE_UN_WIDGET,
            SUBDIVISIONES, PASO_DE_MEDIDA, WIDGETS,
            PREFIJO_DE_GRAFICO, MEDIDA_DE_UN_GRAFICO, esGrafico, catalogoDeWidgets,
            disposicionPorOmision, reconciliarDisposicion, moverWidget, redimensionarWidget, mostrarWidget,
            empezarLosPasos, anotarPaso, sePuedeDeshacer, sePuedeRehacer,
-           unPasoAtras, unPasoAdelante, pila };
+           unPasoAtras, unPasoAdelante, dondeCaeSuelto, pila };
 `)();
 
 let hechas = 0;
@@ -250,6 +251,47 @@ prueba("una disposicion vieja sin alto toma el de fabrica", () => {
     assert.strictEqual(d.find(x => x.id === w.id).alto, w.alto,
       "el panel " + w.id + " no tomo su alto de fabrica");
   }
+});
+
+/* -------- soltar en un hueco de la grilla -------- */
+
+/* Una fila de tres celdas de cien por cien, separadas por diez, y la cuarta
+   columna vacia ---que es el caso reportado: el hueco al final de una fila. */
+const FILA = [
+  { id: "a", x: 0,   y: 0, ancho: 100, alto: 100 },
+  { id: "b", x: 110, y: 0, ancho: 100, alto: 100 },
+  { id: "c", x: 220, y: 0, ancho: 100, alto: 100 },
+];
+
+prueba("soltar en el hueco del final de una fila entra despues del ultimo", () => {
+  /* EL DEFECTO REPORTADO. La cuarta columna estaba vacia y ahi apuntaba el
+     usuario; el `dragover` caia sobre el div del tablero, no habia panel abajo y
+     el gesto se descartaba entero. El panel de 1x2 no subia nunca. */
+  const caida = m.dondeCaeSuelto(FILA, 360, 50);
+  assert.strictEqual(caida.id, "c", "no eligio al mas cercano");
+  assert.strictEqual(caida.despues, true, "entro antes del ultimo y no despues");
+});
+
+prueba("el lado lo decide en que mitad del panel cayo el puntero", () => {
+  /* Sin el lado, soltar a la izquierda del primero y a la derecha del ultimo
+     serian el mismo destino. */
+  assert.strictEqual(m.dondeCaeSuelto(FILA, 10, 50).despues, false);
+  assert.strictEqual(m.dondeCaeSuelto(FILA, 90, 50).despues, true);
+  assert.strictEqual(m.dondeCaeSuelto(FILA, 115, 50).despues, false);
+});
+
+prueba("el hueco de abajo de todo elige al de la fila de arriba", () => {
+  /* La distancia se mide a los dos ejes. Con solo la horizontal, un hueco muy
+     abajo elegiria al panel que tiene encima aunque este a media pantalla. */
+  const conFilas = FILA.concat([{ id: "d", x: 0, y: 110, ancho: 100, alto: 100 }]);
+  assert.strictEqual(m.dondeCaeSuelto(conFilas, 50, 220).id, "d");
+  assert.strictEqual(m.dondeCaeSuelto(conFilas, 50, 20).id, "a");
+});
+
+prueba("sin ninguna celda no se inventa un destino", () => {
+  /* Con el tablero entero quitado no hay a quien acercarse, y devolver el
+     primero de una lista vacia seria `undefined` corriendo por el gesto. */
+  assert.strictEqual(m.dondeCaeSuelto([], 10, 10), null);
 });
 
 /* -------- los graficos, que son widgets que el catalogo no puede declarar ----- */

@@ -641,6 +641,52 @@ class ClimaTests(unittest.TestCase):
         self.assertEqual(r["clima"], {})
         self.assertIn("contexto de sesion", r["motivo_ausencia"])
 
+    def test_dice_de_cuando_es_el_clima_que_devuelve(self) -> None:
+        """La consulta trae el instante de cada muestra y esto lo tiraba.
+
+        `_ultimos_valores` devuelve `{valor, unidad, instante}` por señal, y este
+        punto de acceso se quedaba solo con el valor. Un clima sin su instante no
+        se puede situar: en una carrera que empieza seca y termina en tormenta,
+        «lluvia ligera» sin decir de cuando no dice nada sobre la vuelta que se
+        esta mirando.
+        """
+        from datetime import datetime, timezone
+        t = datetime(2026, 9, 6, 12, 0, 0, tzinfo=timezone.utc)
+        filas = [("air_temperature", 23.4, None, None, "C", t),
+                 ("weather_code", 0.0, None, None, "", t)]
+        falsa, parche = _con(filas)
+        with parche:
+            r = api_sesion.clima("f1_25:session:1")
+        self.assertEqual(r["medido_utc"], t.isoformat())
+        self.assertEqual(r["instantes"]["temperatura_aire_c"], t.isoformat())
+
+    def test_con_muestras_de_distinto_momento_declara_la_mas_nueva(self) -> None:
+        """Y conserva la de cada una, porque no todas tienen por que coincidir.
+
+        El panel dice una sola fecha ---las magnitudes del clima suelen venir de
+        la misma muestra--- pero «suelen» no es «siempre», y quedarse solo con la
+        mas nueva haria pasar por reciente a una bandera de hace media hora.
+        """
+        from datetime import datetime, timedelta, timezone
+        t = datetime(2026, 9, 6, 12, 0, 0, tzinfo=timezone.utc)
+        viejo = t - timedelta(minutes=30)
+        filas = [("air_temperature", 23.4, None, None, "C", t),
+                 ("fia_flag", 1.0, None, None, "", viejo)]
+        falsa, parche = _con(filas)
+        with parche:
+            r = api_sesion.clima("f1_25:session:1")
+        self.assertEqual(r["medido_utc"], t.isoformat(),
+                         "no declara la muestra mas nueva")
+        self.assertEqual(r["instantes"]["bandera"], viejo.isoformat(),
+                         "se perdio de cuando es cada magnitud")
+
+    def test_sin_clima_no_se_inventa_un_instante(self) -> None:
+        falsa, parche = _con([])
+        with parche:
+            r = api_sesion.clima("9939")
+        self.assertIsNone(r["medido_utc"])
+        self.assertEqual(r["instantes"], {})
+
 
 class SinVueltasPeroConAlguienConduciendoTests(unittest.TestCase):
     """`/vueltas` es donde se declara el vehiculo propio, y es autoritativa.

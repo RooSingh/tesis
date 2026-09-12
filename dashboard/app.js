@@ -2352,8 +2352,13 @@ function pintarMedidores() {
      cifra llega ya escrita ---"R" y "N" no son numeros--- y `barraMedida` no
      encuentra que llenar, que es lo correcto: la marcha atras no es una octava
      parte de nada. */
-  const arriba = [barraMedida("Marcha", marcha, 8, "de 8", 8),
-                  barraMedida("Máxima", cifra(maxima, 0), 360, "km/h", 10)];
+  /* LA MARCHA SE MUDO AL PANEL DE LOS RELOJES y deja de estar aca: dos sitios
+     mostrando la misma señal son dos sitios que pueden discrepar, y uno de los
+     dos siempre esta de mas. Se dibuja igual ---la misma `barraMedida`--- para
+     que sea la misma marcha y no una segunda version de ella. */
+  const bandaMarcha = document.getElementById("marcha-relojes");
+  if (bandaMarcha) bandaMarcha.innerHTML = barraMedida("Marcha", marcha, 8, "de 8", 8);
+  const arriba = [barraMedida("Máxima", cifra(maxima, 0), 360, "km/h", 10)];
   const abajo = [];
   /* OpenF1 no publica combustible, temperatura de motor, energia ni frenos: esas
      tiras no se dibujan en lugar de mostrar un dato que no existe. El regimen,
@@ -2899,10 +2904,32 @@ function pintarClima() {
        Se dice una vez para todo el panel, no en cada casilla: las siete
        magnitudes vienen de la **misma** muestra de clima, asi que todas tienen
        la misma edad y repetirla siete veces seria decir siete veces lo mismo. */
+    /* Y LA HORA DE LA MUESTRA, QUE LA API YA DECLARA.
+       `medido_utc` es el instante de la magnitud mas nueva de este clima. La
+       frescura de arriba dice **cuanto hace**; esto dice **cuando**, que es lo
+       que se puede cruzar con el reloj de la reproduccion. Cuando la fuente no
+       lo declara no se escribe nada: una hora inventada seria peor que ninguna. */
+    (horaDelClima(estado.climaMedidoUtc)
+      ? '<p class="hora-del-clima">' + textoSeguro(horaDelClima(estado.climaMedidoUtc)) + '</p>'
+      : "") +
     (fClima.sufijo || fClima.aclara
       ? '<p class="frescura-panel" data-frescura="' + fClima.estado + '">' +
         textoSeguro(fClima.aclara || fClima.sufijo) + '</p>'
       : "");
+}
+
+/* La hora de la muestra de clima, en el reloj de quien mira. `null` cuando la
+   fuente no la declara: es la diferencia entre «de las 14:02» y «no se de
+   cuando», y escribir la primera sin saberlo es lo unico que no se puede hacer. */
+function horaDelClima(iso) {
+  if (!iso) return "";
+  const t = new Date(iso);
+  if (!Number.isFinite(t.getTime())) return "";
+  /* Reloj de veinticuatro, que es el que se usa acá y el que usa el resto del
+     tablero: `toLocaleTimeString` devolvia «10:23 p. m.» y eso, al lado de un
+     cronometro que dice «0:46,683», se lee como otra clase de cosa. */
+  return "medido " + t.toLocaleTimeString("es-AR",
+    { hour: "2-digit", minute: "2-digit", hour12: false });
 }
 
 /* LOS TRES RENGLONES DEL PANEL DE ACELERACIONES, CON EL NOMBRE DE LA SEÑAL QUE
@@ -8354,7 +8381,7 @@ function vaciarVivo(sesion) {
 }
 
 function limpiarContextoDeSesion() {
-  estado.clima = null; estado.climaMotivo = "";
+  estado.clima = null; estado.climaMedidoUtc = null; estado.climaMotivo = "";
   /* El contexto de carrera se va con la sesion: es de esa carrera y de esos
      pilotos, y sobrevivir a un cambio dejaria el puesto de otro en pantalla. */
   estado.contextoCarrera = null; estado.climaDeCarrera = null;
@@ -9885,6 +9912,34 @@ function pintarBotonesDeEdicion() {
   }
 }
 
+/* SOLTAR EN UN HUECO TAMBIEN TIENE QUE SIGNIFICAR ALGO.
+   El destino es la posicion del panel de abajo, y cuando no hay panel abajo
+   ---el hueco que queda al final de una fila, o el de un panel quitado--- no
+   pasaba nada. Y ese hueco es justamente donde alguien apunta: reportado el
+   2026-09-12, un panel de 1x2 que no subia al nivel del de motor, con la octava
+   columna de esa fila vacia. Comprobado: el `dragover` caia sobre el `div` del
+   tablero, `closest("[data-panel]")` daba `null` y el gesto se descartaba.
+
+   La regla es la mas corta que resuelve el caso: **el panel mas cercano manda**,
+   y de que lado se entra lo dice en cual mitad de ese panel cayo el puntero. Con
+   el hueco al final de una fila, el mas cercano es el ultimo panel de esa fila y
+   el puntero esta a su derecha, de modo que el que se suelta entra despues: la
+   columna vacia. Que es lo que alguien quiso decir.
+
+   NO SE CALCULA LA CELDA DE LA GRILLA. Traducir un pixel a fila y columna seria
+   adivinar lo que la grilla ya sabe ---y volveria a adivinarlo mal en cuanto el
+   ancho cambie---. Lo unico que se saca del pixel es a quien esta mas cerca. */
+function dondeCaeSuelto(celdas, x, y) {
+  let mejor = null, cerca = Infinity;
+  for (const c of celdas) {
+    const cx = c.x + c.ancho / 2;
+    const cy = c.y + c.alto / 2;
+    const d = (x - cx) * (x - cx) + (y - cy) * (y - cy);
+    if (d < cerca) { cerca = d; mejor = { id: c.id, despues: x > cx }; }
+  }
+  return mejor;
+}
+
 /* Arrastrar y soltar. El destino es **la posicion del panel sobre el que se
    solto**, no un pixel: la grilla ya decide donde cae cada uno, y calcular
    coordenadas seria adivinar lo que la grilla sabe. */
@@ -9915,10 +9970,31 @@ function conectarArrastre() {
     ev.preventDefault();
     if (!arrastrado) return;
     const sobre = ev.target.closest("[data-panel]");
-    const id = sobre && sobre.dataset.panel;
-    if (!id || id === arrastrado || id === ultimoSobre) return;
-    ultimoSobre = id;
-    EDITANDO = moverWidget(EDITANDO, arrastrado, EDITANDO.findIndex(w => w.id === id));
+    let id = sobre && sobre.dataset.panel;
+    let despues = false;
+    if (!id) {
+      /* El puntero esta en un hueco de la grilla. Se busca al mas cercano entre
+         los que se ven: uno quitado no esta en pantalla y elegirlo mandaria el
+         panel a un sitio que nadie puede ver. */
+      const celdas = [...tablero.children]
+        .filter(c => c.dataset && c.dataset.panel && c.offsetParent !== null)
+        .map(c => { const r = c.getBoundingClientRect();
+                    return { id: c.dataset.panel, x: r.left, y: r.top,
+                             ancho: r.width, alto: r.height }; });
+      const caida = dondeCaeSuelto(celdas, ev.clientX, ev.clientY);
+      if (!caida) return;
+      id = caida.id;
+      despues = caida.despues;
+    }
+    /* La marca incluye el lado: pasar de la mitad izquierda a la derecha del
+       mismo panel es un destino distinto, y sin el lado el gesto se congelaba
+       hasta salir de ese panel. */
+    const marca = id + (despues ? ">" : "<");
+    if (id === arrastrado || marca === ultimoSobre) return;
+    ultimoSobre = marca;
+    const donde = EDITANDO.findIndex(w => w.id === id);
+    if (donde === -1) return;
+    EDITANDO = moverWidget(EDITANDO, arrastrado, donde + (despues ? 1 : 0));
     refrescarSoloEstilos();
   });
   tablero.addEventListener("drop", ev => {
@@ -10795,7 +10871,12 @@ function cargarDatosDeSesion(ruta, apertura, senal, s) {
         : sufijoDeCorrida(false)), { senal: senal })
       .then(ctx => {
         if (!sigueVigente(apertura) || !ctx) return;
+        /* Los dos sitios que escriben el clima escriben tambien su hora. Son dos
+           caminos hacia la misma respuesta ---la apertura y el refresco--- y
+           poner el campo en uno solo deja la hora apareciendo y desapareciendo
+           segun cual de los dos contesto ultimo. */
         estado.clima = ctx.clima || null;
+        estado.climaMedidoUtc = ctx.clima_medido_utc || null;
         estado.climaMotivo = ctx.clima_motivo || "";
         estado.vehiculo = (ctx.esquinas && Object.keys(ctx.esquinas).length)
           ? { esquinas: ctx.esquinas, carroceria: ctx.carroceria } : null;
@@ -11030,6 +11111,7 @@ function refrescarContexto() {
       .then(d => {
         if (!sigueVigente(apertura)) return;
         estado.clima = d.clima || null;
+        estado.climaMedidoUtc = d.clima_medido_utc || null;
         estado.climaMotivo = d.clima_motivo || "";
         estado.vehiculo = (d.esquinas && Object.keys(d.esquinas).length)
           ? { esquinas: d.esquinas, carroceria: d.carroceria } : null;

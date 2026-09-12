@@ -948,9 +948,19 @@
     grid-template-columns: minmax(0, auto) minmax(46px, 1fr) auto;
     gap: 0 8px; align-items: center;
   }
+  /* EL ROTULO CEDE, PERO RECIEN CUANDO HACE FALTA.
+     Tenia un tope de 118 px escrito a mano, de cuando este panel compartia su
+     ancho con dos relojes: con ese tope, «Combustible» y «Temp. motor» salian
+     cortados ---«COM…», «TEMP…»--- **aunque sobrara sitio**. Los relojes se
+     fueron a su propio panel y ese ancho volvio a estar disponible.
+
+     El recorte se queda como red para el panel angosto: lo que cambia es que
+     ahora lo decide el sitio que hay y no un numero de otra epoca. La barra
+     conserva sus 46 px minimos, de modo que el rotulo no se puede comer la
+     parte que se mira. */
   .panel-motor .barra-medida .eyebrow {
     grid-column: 1; margin: 0; font-size: .54rem; white-space: nowrap;
-    overflow: hidden; text-overflow: ellipsis; max-width: 118px;
+    overflow: hidden; text-overflow: ellipsis; min-width: 0;
   }
   .panel-motor .segmentos { gap: 2px; }
   .panel-motor .segmentos i { height: 7px; }
@@ -1584,8 +1594,12 @@
      mitad del cuadrado permita. El arco se lee por la posicion de la aguja: lo
      que necesita es tamaño, y lo que sobra es el aire alrededor. */
   .cabina .panel-medidores .cuerpo-instrumento {
-    display: flex; min-height: 0; padding: 6px 10px 10px;
+    display: flex; flex-direction: column; min-height: 0; padding: 6px 10px 8px;
   }
+  /* La marcha toma su renglon y los relojes se quedan con el resto: los arcos
+     aguantan ser mas chicos, la tira de ocho segmentos no ---con menos alto los
+     segmentos dejan de distinguirse uno del otro---. */
+  .cabina .panel-medidores .marcha-con-relojes { flex: 0 0 auto; margin-top: 4px; }
   .cabina .panel-medidores .fila-medidores {
     flex: 1; min-height: 0;
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1618,6 +1632,14 @@
     flex: 1 1 0; min-height: 0;
   }
   .cabina .panel-medidores .medidor .rotulo { flex: 0 0 auto; }
+
+  /* La hora de la muestra de clima: un renglon bajo, del mismo cuerpo que la
+     frescura, porque las dos dicen lo mismo desde dos angulos ---cuanto hace y
+     cuando--- y una de las dos mas grande se leeria como la importante. */
+  .hora-del-clima {
+    margin: 2px 0 0; font-size: .6rem; letter-spacing: .04em;
+    color: var(--texto-tenue); font-family: var(--cifra);
+  }
 
   /* La bandeja de quitados vive en la barra de edicion, al lado de Guardar y
      Cancelar: es parte de la misma decision y se lee en el mismo renglon. */

@@ -3364,11 +3364,17 @@ def contexto(
             cursor, fuente, session_id, propio, instante_puesta, hasta,
             ventana=_cv, limites_fase=_lf))
 
+    # De cuando es cada magnitud, que la consulta ya traia y esto tiraba. Es el
+    # mismo dato que `/clima` declara; el tablero pide por aca, asi que tiene que
+    # viajar por los dos o la hora aparece en un panel y no en el otro.
     clima = {}
+    instantes_clima: dict[str, str] = {}
     for clave, canal in CANALES_CLIMA.items():
         v = valores.get(canal)
         if v is not None:
             clima[clave] = v["valor"]
+            if v.get("instante"):
+                instantes_clima[clave] = v["instante"]
     if "codigo_de_clima" in clima:
         clima["clima"] = CLIMA_TEXTO.get(int(clima["codigo_de_clima"]), "desconocido")
     if "bandera" in clima:
@@ -3424,6 +3430,10 @@ def contexto(
         "fuente": fuente,
         "hasta": hasta,
         "clima": clima or None,
+        "clima_instantes": instantes_clima,
+        # La mas nueva de las magnitudes que contestaron. Las del clima suelen
+        # venir de la misma muestra, pero «suelen» no es «siempre».
+        "clima_medido_utc": max(instantes_clima.values()) if instantes_clima else None,
         "clima_motivo": None if clima else "Esta fuente no publica clima ni estado de pista.",
         "esquinas": esquinas,
         "carroceria": carroceria,
@@ -3461,11 +3471,24 @@ def clima(session_id: str,
         valores = _ultimos_valores(cursor, fuente, session_id,
                                    list(CANALES_CLIMA.values()), hasta)
 
+    # DE CUANDO ES CADA MAGNITUD, QUE LA CONSULTA YA TRAIA.
+    #
+    # `_ultimos_valores` devuelve `{valor, unidad, instante}` por señal y esto se
+    # quedaba solo con el valor. Un clima sin su instante no se puede situar: en
+    # una carrera que empieza seca y termina en tormenta, «lluvia ligera» sin
+    # decir de cuando no dice nada sobre la vuelta que se esta mirando.
+    #
+    # Se declara el de cada una **y** el mas nuevo. Las magnitudes del clima
+    # suelen venir de la misma muestra, pero «suelen» no es «siempre», y una sola
+    # fecha haria pasar por reciente a una bandera de hace media hora.
     datos = {}
+    instantes: dict[str, str] = {}
     for clave, canal in CANALES_CLIMA.items():
         v = valores.get(canal)
         if v is not None:
             datos[clave] = v["valor"]
+            if v.get("instante"):
+                instantes[clave] = v["instante"]
 
     if "codigo_de_clima" in datos:
         datos["clima"] = CLIMA_TEXTO.get(int(datos["codigo_de_clima"]), "desconocido")
@@ -3476,6 +3499,8 @@ def clima(session_id: str,
         "session_id": session_id,
         "fuente": fuente,
         "clima": datos,
+        "instantes": instantes,
+        "medido_utc": max(instantes.values()) if instantes else None,
         "motivo_ausencia": None if datos else (
             "El clima no viaja en la telemetria de esta fuente; llega por el "
             "contexto de sesion, aparte."),
