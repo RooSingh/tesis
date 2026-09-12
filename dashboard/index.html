@@ -457,7 +457,7 @@
          Cuantos hay lo decide quien mira desde el panel de señales; la
          linea se reparte sola y, si son muchos, se parte en dos.
          ============================================================ -->
-    <div class="graficos-cabina" id="graficos-cabina"></div>
+    <div class="graficos-cabina" id="graficos-cabina" data-panel="graficos"></div>
 
   <!-- ============================================================
        LO QUE SE CONSULTA, NO LO QUE SE VIGILA
@@ -476,7 +476,7 @@
     <!-- Los tres a la par: quien esta en sesion, como quedo la huella de
          aceleraciones y que señales se grafican arriba. Los tres se
          consultan, ninguno se vigila. -->
-    <section class="instrumento celda-1" data-panel="vehiculos">
+    <section class="instrumento" data-panel="vehiculos">
       <header><h2>Vehículos</h2><span class="fuente-canal" id="canal-autos"></span></header>
       <div class="cuerpo-instrumento">
         <div class="segmentado" id="sel-alcance" role="group" aria-label="Cuántos vehículos">
@@ -487,7 +487,7 @@
         <div class="lista-autos" id="lista-autos"></div>
       </div>
     </section>
-    <section class="instrumento celda-1 vertical abajo" data-panel="aceleraciones" data-necesita="glat">
+    <section class="instrumento vertical abajo" data-panel="aceleraciones" data-necesita="glat">
       <header>
         <h2>Aceleraciones</h2>
         <span class="fuente-canal" id="canal-g"></span>
@@ -551,7 +551,7 @@
          la pista. La referencia externa se muestra al lado y declara su alcance;
          no se presenta como un optimo.
          ============================================================ -->
-    <section class="instrumento celda-2" data-panel="puesta" data-necesita="setup_front_wing">
+    <section class="instrumento" data-panel="puesta" data-necesita="setup_front_wing">
       <header>
         <h2>Puesta a punto</h2>
         <span class="fuente-canal" id="canal-puesta"></span>
@@ -567,7 +567,7 @@
       </div>
     </section>
 
-    <section class="instrumento ancho-total barra-canales">
+    <section class="instrumento barra-canales" data-panel="senales">
       <header>
         <h2>Señales</h2>
         <span class="fuente-canal" id="canal-traza"></span>

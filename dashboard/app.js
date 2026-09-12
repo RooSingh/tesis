@@ -8987,9 +8987,18 @@ const WIDGETS = [
      aviso a medio leer es peor que ninguno---. Quien quiera menos lo achica. */
   { id: "avisos",        titulo: "Avisos",            ancho: 1, alto: 2 },
   { id: "clima",         titulo: "Clima y pista",     ancho: 1, alto: 1 },
+  /* LOS GRAFICOS TAMBIEN SON UN PANEL. Eran una celda del tablero que el
+     catalogo no nombraba: la hoja les clavaba el ancho entero y la segunda
+     fila, asi que ni se movian ni se agrandaban ni contaban en el acomodo de
+     los demas. Nacen anchos porque una vuelta se lee de largo, pero cuantas
+     columnas ocupan ya lo decide quien mira. */
+  { id: "graficos",      titulo: "Gráficos",          ancho: 4, alto: 2 },
   { id: "vehiculos",     titulo: "Vehículos",         ancho: 1, alto: 2 },
   { id: "aceleraciones", titulo: "Aceleraciones",     ancho: 1, alto: 2 },
   { id: "puesta",        titulo: "Puesta a punto",    ancho: 2, alto: 2 },
+  /* La barra de señales: la misma historia, con `ancho-total` en vez de una
+     regla propia. Va ultima porque es un mando, no algo que se vigile. */
+  { id: "senales",       titulo: "Señales",           ancho: 4, alto: 1 },
 ];
 
 function disposicionPorOmision() {
@@ -9084,10 +9093,20 @@ function recordarDisposicion(disposicion) {
 function aplicarDisposicion(disposicion) {
   const tablero = document.getElementById("tablero");
   if (!tablero) return;
+  /* UNA CELDA ES UN HIJO DIRECTO DE ESTA GRILLA, y nada mas que eso. El filtro
+     era `classList.contains("instrumento")`, que dejaba fuera al bloque de
+     graficos ---un `div`--- y ademas no distinguia el panel de un `[data-panel]`
+     anidado o de las filas de la tabla del pie, que llevan el mismo atributo a
+     proposito. Preguntarle a los hijos es preguntarle a la grilla. */
+  const celdas = new Map();
+  for (const hijo of tablero.children) {
+    const cual = hijo.dataset && hijo.dataset.panel;
+    if (cual && !celdas.has(cual)) celdas.set(cual, hijo);
+  }
   const colocados = new Set();
   (disposicion || []).forEach((w, i) => {
-    const el = document.querySelector('[data-panel="' + w.id + '"]');
-    if (!el || !el.classList.contains("instrumento")) return;
+    const el = celdas.get(w.id);
+    if (!el) return;
     colocados.add(el);
     el.style.gridColumn = "span " + w.ancho;
     el.style.gridRow = "span " + w.alto;

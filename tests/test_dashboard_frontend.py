@@ -144,6 +144,142 @@ class DashboardFrontendTests(unittest.TestCase):
         self.assertEqual(html.count('id="tablero"'), 1,
                          "hay mas de un contenedor de tablero, o ninguno")
 
+    def _reglas(self, estilos: str) -> list[tuple[str, str]]:
+        """`(selector, declaraciones)` de cada regla de la hoja, sin comentarios.
+
+        Una regla dentro de `@media` sale con la consulta pegada al frente del
+        selector. No molesta: lo que se mira de un selector es su ultimo termino,
+        que es el elemento al que la regla le habla.
+        """
+        limpio = re.sub(r"/\*.*?\*/", "", estilos, flags=re.DOTALL)
+        return [
+            (m.group(1).strip(), m.group(2))
+            for m in re.finditer(r"([^{}]+)\{([^{}]*)\}", limpio)
+        ]
+
+    @staticmethod
+    def _a_quien_le_habla(parte: str) -> str:
+        """El ultimo termino de un selector: el elemento que la regla toca.
+
+        `.cabina .graficos-cabina` le habla a los graficos; `.graficos-cabina
+        .grafico-chico`, a lo que tienen adentro. Distinguirlos es la diferencia
+        entre clavar una celda del tablero y darle forma a su contenido.
+        """
+        terminos = parte.replace(">", " ").split()
+        return terminos[-1] if terminos else ""
+
+    def test_las_columnas_del_tablero_miden_todas_lo_mismo(self) -> None:
+        """Cuatro columnas de proporciones elegidas a mano ya no significan nada.
+
+        Las proporciones `.98 / .86 / 1.24 / .98` venian de cuando cada columna
+        tenia dueño fijo: la tercera era mas ancha porque ahi vivia el vehiculo.
+        Con el tablero editable el panel ya no sabe en que columna va a caer, de
+        modo que una columna mas ancha que las otras le toca a quien pase por
+        ahi. Medido en pantalla: la tercera media 1,44 veces la segunda.
+
+        Toda via de la grilla mide `minmax(0, 1fr)` ---y `minmax(0, ...)` porque
+        `1fr` a secas se niega a bajar del tamaño de su contenido, y un panel con
+        una linea larga ensancha su columna y angosta las demas---.
+        """
+        estilos = ESTILOS.read_text(encoding="utf-8")
+        declaradas = []
+        for selector, cuerpo in self._reglas(estilos):
+            for parte in selector.split(","):
+                if self._a_quien_le_habla(parte) != ".cabina":
+                    continue
+                for m in re.finditer(r"grid-template-columns\s*:\s*([^;}]+)", cuerpo):
+                    declaradas.append((parte.strip(), m.group(1).strip()))
+        self.assertTrue(declaradas, "nadie declara las columnas del tablero")
+        for donde, valor in declaradas:
+            self.assertRegex(
+                valor,
+                r"^(repeat\(\d+, minmax\(0, 1fr\)\)|minmax\(0, 1fr\))$",
+                f"columnas desparejas en «{donde}»: {valor}",
+            )
+
+    def test_ninguna_celda_del_tablero_esta_clavada_por_la_hoja(self) -> None:
+        """Una celda colocada por el estilo no se puede mover ni agrandar.
+
+        La prueba de al lado ya lo exigia, pero solo miraba las reglas escritas
+        con `[data-panel=...]`, y los graficos se nombraban por su clase: tenian
+        `grid-column: 1 / -1` y, peor, `grid-row: 2`. Una fila declarada saca al
+        elemento del acomodo automatico, asi que el bloque se quedaba pegado en
+        la segunda fila **y los demas paneles se acomodaban sin contarlo**.
+        Reportado el 2026-09-12: «es como que estan anclados».
+
+        Se miran los ganchos con los que la hoja puede nombrar una celda, y solo
+        cuando el selector le habla **a la celda**: darle forma a lo que una
+        celda tiene adentro es justamente para lo que estan las reglas.
+        """
+        ganchos = ("data-panel=", "graficos-cabina", "barra-canales")
+        estilos = ESTILOS.read_text(encoding="utf-8")
+        clavadas = []
+        for selector, cuerpo in self._reglas(estilos):
+            for parte in selector.split(","):
+                destino = self._a_quien_le_habla(parte)
+                if not any(g in destino for g in ganchos):
+                    continue
+                for m in re.finditer(r"\bgrid-(column|row|area)\s*:\s*([^;}]+)", cuerpo):
+                    clavadas.append(f"{parte.strip()} -> grid-{m.group(1)}: {m.group(2).strip()}")
+        self.assertEqual(clavadas, [], "\n".join(clavadas))
+
+    def test_toda_celda_del_tablero_esta_en_el_catalogo_de_widgets(self) -> None:
+        """Lo que es hijo de la grilla es un widget, o no se comporta como uno.
+
+        El bloque de graficos y la barra de señales eran celdas del tablero sin
+        estar en el catalogo: no se podian mover, ni agrandar, ni quitar, y
+        `aplicarDisposicion` les daba un `order` al final para que al menos no
+        saltaran adelante. Media medida. Un hijo de esta grilla que no este
+        declarado es un panel que quien mira no puede tocar.
+        """
+        html = INDICE.read_text(encoding="utf-8")
+        codigo = APP.read_text(encoding="utf-8")
+        bloque = codigo[codigo.index("const WIDGETS = ["):codigo.index("\n];", codigo.index("const WIDGETS = ["))]
+        declarados = set(re.findall(r'id: "([^"]+)"', bloque))
+        sin_declarar = [c for c in self._celdas_del_tablero(html) if c not in declarados]
+        self.assertEqual(sin_declarar, [], f"celdas fuera del catalogo: {sin_declarar}")
+
+    @staticmethod
+    def _celdas_del_tablero(html: str) -> list[str]:
+        """Los hijos directos de `#tablero`, por su `data-panel`.
+
+        Un hijo sin `data-panel` se devuelve por su etiqueta y su clase, que es
+        lo que hace falta para poder nombrarlo en el mensaje de la falla.
+        """
+        from html.parser import HTMLParser
+
+        vacios = {"br", "img", "input", "meta", "link", "hr", "source", "area", "col"}
+
+        class Lector(HTMLParser):
+            def __init__(self) -> None:
+                super().__init__(convert_charrefs=True)
+                self.nivel = -1
+                self.celdas: list[str] = []
+
+            def handle_starttag(self, tag: str, attrs) -> None:
+                if tag in vacios:
+                    return
+                d = dict(attrs)
+                if self.nivel < 0:
+                    if d.get("id") == "tablero":
+                        self.nivel = 0
+                    return
+                if self.nivel == 0:
+                    self.celdas.append(d.get("data-panel") or f"<{tag} class={d.get('class')}>")
+                self.nivel += 1
+
+            def handle_startendtag(self, tag: str, attrs) -> None:
+                return
+
+            def handle_endtag(self, tag: str) -> None:
+                if tag in vacios or self.nivel < 0:
+                    return
+                self.nivel -= 1
+
+        lector = Lector()
+        lector.feed(html)
+        return lector.celdas
+
     def test_ninguna_fuente_esconde_paneles_desde_la_hoja_de_estilos(self) -> None:
         """El selector por atributo no distingue el panel de su fila en el pie.
 

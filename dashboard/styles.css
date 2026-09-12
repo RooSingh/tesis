@@ -815,7 +815,7 @@
   }
   /* `min-height: 0` en cada panel: sin eso un hijo con contenido largo se
      niega a encogerse y estira la columna mas alla del alto de la cabina. */
-  .cabina .instrumento { min-height: 0; }
+  .cabina > [data-panel] { min-height: 0; }
   .cabina .cuerpo-instrumento { min-height: 0; }
 
   /* LAS DOS FRANJAS SE QUEDAN CON LO MINIMO.
@@ -824,7 +824,6 @@
      barra de mandos: no necesita ni encabezado ni explicacion en pantalla
      ---la explicacion vive en el titulo del panel---. La de motor entrega sus
      cuatro medidores y sus cuatro barras en una tira baja. */
-  .cabina .graficos-cabina { grid-column: 1 / -1; }
   .franja-senales > header { display: none; }
   .franja-senales .nota { display: none; }
   .franja-senales .cuerpo-instrumento { padding: 9px 14px; }
@@ -940,7 +939,6 @@
   .panel-motor .segmentos { gap: 2px; }
   .panel-motor .segmentos i { height: 7px; }
   .panel-motor .barra-medida b { font-size: .8rem; }
-  .cabina .graficos-cabina { grid-row: 2; }
 
   /* CAN REAL ES UNA CABINA TEMPORAL, NO UNA CABINA DE CARRERA.
      Esta captura no publica posicion, clima, danos ni cronometraje. Dejar esos
@@ -964,19 +962,14 @@
      para que quede constancia de lo que la fuente no sostiene---: esconder el
      panel escondia ademas el unico sitio donde el hecho seguia escrito. */
 
-  :root[data-fuente="can"] .cabina .graficos-cabina {
-    grid-column: 2; grid-row: 1;
-    grid-template-columns: repeat(4, minmax(0, 1fr));
-    grid-template-rows: repeat(2, minmax(0, 1fr));
-  }
-  /* Con la cabina partida en dos, cuatro graficos por fila dejan de entrar: a
-     partir de aca van de a dos, en cuatro filas, que es el mismo alto. */
-  @media (max-width: 1500px) {
-    :root[data-fuente="can"] .cabina .graficos-cabina {
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-      grid-template-rows: repeat(4, minmax(0, 1fr));
-    }
-  }
+  /* CUANTOS GRAFICOS ENTRAN POR FILA LO DECIDE EL ANCHO, NO LA FUENTE.
+     Aca vivian tres rejillas escritas a mano ---cuatro por dos en el bus, dos
+     por cuatro debajo de 1500 px, dos columnas debajo de 1180---, y todas
+     contaban el mismo cuento: «la cabina esta partida en dos, asi que el bloque
+     mide tanto». Esa cabina ya no existe: cuantas columnas ocupa el bloque lo
+     elige quien mira, de modo que un numero de filas escrito aca deja un hueco
+     o desborda apenas alguien lo estira. La regla general ---`auto-fit` sobre
+     210 px--- se entera del ancho que le tocó y reparte contra eso. */
 
   /* OPENF1 ES UNA CABINA DE CARRERA A LA QUE LE FALTA EL VEHICULO.
      De las cuatro columnas se va la del medio entera: esta fuente no publica
@@ -1017,7 +1010,6 @@
      envoltorios disueltos, ese orden pondria el clima segundo y empujaria todo
      lo demas un lugar. */
 
-  :root[data-fuente="openf1"] .cabina .graficos-cabina { grid-row: 3; }
 
   /* Las casillas del clima dejan de apretarse en una fila de cuatro ---que con
      seis magnitudes se partia en dos y desbordaba--- y van de a tres, que es lo
@@ -1071,10 +1063,6 @@
      OpenF1 no sostiene ninguna de las dos. Dejar la lista en una celda de
      cuarto de ancho con tres huecos al lado es peor que darsela entera: son
      veinte pilotos declarados y los que tengan telemetria se eligen ahi. */
-  :root[data-fuente="openf1"] .tablero [data-panel="vehiculos"] {
-    grid-column: 1 / -1;
-  }
-
   /* EL TRAZADO SE QUEDA CON EL SITIO DE LA LEYENDA.
      Once nombres de curva ocupaban un tercio del panel y el dibujo quedaba
      del tamaño de un sello. Los numeros sobre el trazado ya identifican cada
@@ -1362,23 +1350,29 @@
      otra ausencia la declara `data-estado` con su motivo y el panel se queda en
      su sitio diciendo por que esta vacio; este se va, porque alguien decidio
      que no lo queria ver. */
-  .instrumento[data-quitado="si"] { display: none; }
+  [data-quitado="si"] { display: none; }
 
   /* ---------- ordenar el tablero ----------
      Mientras se edita, cada panel muestra sus mandos y se puede arrastrar. El
      panel quitado **no desaparece**: se ve apagado, con el boton para traerlo.
      Si desapareciera, quitarlo seria irreversible desde la pantalla: habria que
      saber que existio para poder pedirlo de vuelta. */
-  .cabina[data-editando="si"] .instrumento {
+  /* SE LE HABLA A LA CELDA, NO AL INSTRUMENTO.
+     Escrito contra `.instrumento` esto dejaba fuera al bloque de graficos ---que
+     es un `div`, no un panel--- y de paso alcanzaba a los graficos chicos de
+     adentro, que se dibujaban con su propio borde punteado sin ser nada que se
+     pudiera mover. El hijo directo del tablero con `data-panel` es exactamente
+     lo que el catalogo declara y lo unico que se ordena. */
+  .cabina[data-editando="si"] > [data-panel] {
     cursor: grab; outline: 1px dashed var(--acento); outline-offset: -1px;
   }
-  .cabina[data-editando="si"] .instrumento[data-arrastrando="si"] { opacity: .4; }
-  .cabina[data-editando="si"] .instrumento[data-apagado="si"] {
+  .cabina[data-editando="si"] > [data-panel][data-arrastrando="si"] { opacity: .4; }
+  .cabina[data-editando="si"] > [data-panel][data-apagado="si"] {
     opacity: .35; filter: grayscale(1);
   }
   /* Mientras se ordena, el contenido no recibe el raton: arrastrar un panel no
      puede activar un boton que tenga adentro. Los mandos si, que para eso son. */
-  .cabina[data-editando="si"] .instrumento > *:not(.mandos-widget) {
+  .cabina[data-editando="si"] > [data-panel] > *:not(.mandos-widget) {
     pointer-events: none;
   }
   .mandos-widget {
@@ -1400,7 +1394,7 @@
     padding: 0 2px;
   }
   /* El panel es el marco de referencia de sus mandos. */
-  .cabina[data-editando="si"] .instrumento { position: relative; }
+  .cabina[data-editando="si"] > [data-panel] { position: relative; }
 
   /* EL TIRADOR DE LA ESQUINA. Se estira y el tamaño cambia en columnas y filas,
      con los demas paneles corriendose en vivo. Las flechas de los mandos siguen
@@ -1416,11 +1410,11 @@
   /* Mientras se arrastra un panel, los demas se corren y la transicion hace que
      el movimiento se lea como un acomodo y no como un salto. Pero solo dentro
      del modo: fuera de el, el tablero no se mueve. */
-  .cabina[data-editando="si"] .instrumento {
+  .cabina[data-editando="si"] > [data-panel] {
     transition: grid-column .12s ease, grid-row .12s ease;
   }
   @media (prefers-reduced-motion: reduce) {
-    .cabina[data-editando="si"] .instrumento { transition: none; }
+    .cabina[data-editando="si"] > [data-panel] { transition: none; }
   }
 
   /* LA LISTA LLENA SU PANEL EN VEZ DE PARARSE A LOS 190 PIXELES.
@@ -1517,21 +1511,16 @@
     padding: 0 0 10px; box-sizing: border-box; background: var(--fondo);
   }
 
-  /* Cinco columnas piden ancho. Debajo de eso la cabina deja de ser una
-     pantalla y vuelve a ser una lista, que es lo correcto: apretar cinco
-     columnas en mil pixeles no muestra mas, muestra peor. */
-  /* HASTA 1620 PX LAS CINCO COLUMNAS SIGUEN, APRETANDO EL TEXTO.
-     Lo primero que intente fue apilar el vehiculo ---dibujo arriba, esquinas
-     en cuadro debajo---. Entraba, pero el dibujo quedaba en sesenta pixeles:
-     las dos filas de esquinas se comian el alto del panel. Sale mas barato
-     ganar ancho, porque las esquinas se aprietan bien: «Presión 23.0 psi» en
-     un cuerpo un punto menor entra en ciento treinta pixeles. Asi el dibujo
-     conserva las dos filas y el doble de tamaño.  */
+  /* HASTA 1620 PX SE APRIETA EL TEXTO, NO SE REPARTE LA GRILLA.
+     Aca vivia la unica excepcion a las columnas iguales: cuatro proporciones
+     elegidas a mano ---«.98 / .86 / 1.24 / .98»--- para darle mas ancho a la
+     tercera, que era donde vivia el vehiculo. Con el tablero editable ningun
+     panel sabe en que columna va a caer, de modo que esa columna ancha le
+     tocaba a quien pasara por ahi. Lo que si sigue es apretar las esquinas del
+     vehiculo, que se aprietan bien: «Presión 23.0 psi» en un cuerpo un punto
+     menor entra en ciento treinta pixeles, y asi el dibujo conserva sus dos
+     filas en vez de quedar en sesenta pixeles de alto. */
   @media (max-width: 1620px) {
-    .cabina {
-      grid-template-columns:
-        minmax(0, .98fr) minmax(0, .86fr) minmax(0, 1.24fr) minmax(0, .98fr);
-    }
     .cabina .esquema-auto { grid-template-columns: minmax(0, 1fr) 124px minmax(0, 1fr); gap: 7px; }
     .cabina .esquina { padding: 6px 8px; }
     .cabina .esquina .fila-canal span { font-size: .58rem; }
@@ -1541,19 +1530,13 @@
   }
   @media (max-width: 1180px) {
     .cabina {
-      grid-template-columns: minmax(0, 1fr) minmax(0, 1.25fr);
-      grid-template-rows: auto auto auto auto;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
       height: auto !important; min-height: 0;
     }
-    .cabina .graficos-cabina { grid-auto-rows: minmax(150px, 220px); }
     .graficos-cabina .grafico-chico canvas { min-height: 104px; }
     .cabina[data-pantalla="completa"] { position: static; inset: auto; z-index: auto; overflow: visible; }
   }
   @media (max-width: 1180px) {
-    :root[data-fuente="can"] .cabina .graficos-cabina {
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-      grid-template-rows: none;
-    }
     /* Las tres columnas de OpenF1 se declaran con la fuente en el selector, y
        eso le gana por especificidad a la regla de ancho de arriba aunque este
        escrita despues: sin esto, la cabina seguiria en tres columnas en una
@@ -1572,11 +1555,6 @@
   @media (max-width: 860px) {
     .cabina { grid-template-columns: minmax(0, 1fr); }
     :root[data-fuente="openf1"] .cabina { }
-  }
-  @media (max-width: 640px) {
-    :root[data-fuente="can"] .cabina .graficos-cabina {
-      grid-template-columns: minmax(0, 1fr);
-    }
   }
 
   .tablero {
