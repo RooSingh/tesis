@@ -1777,6 +1777,28 @@
   /* Ya no cruza el grafico de arriba abajo: marca donde esta la punta de lo
      que se lleva escrito, que es lo unico que hace falta senalar cuando el
      trazo se dibuja solo. */
+  /* EL BLOQUE DE LA FUERZA. Un trazo grueso con puntas redondeadas: leido de
+     lejos es un bloque, que es lo que la television dibuja, y no hay que rellenar
+     ninguna figura para conseguirlo. El color lo pone el guion segun la fuerza. */
+  .bloque-g {
+    fill: none; stroke-width: 13; stroke-linecap: round; opacity: .92;
+  }
+  /* LA PLACA Y LA CIFRA DEL MODULO. Lo que se lee cuando el dibujo ya dijo de
+     donde viene la fuerza. La placa la separa de la estela, que pasa por el
+     centro: sin ella el numero quedaba cruzado por el trazo de la vuelta. */
+  .placa-g {
+    fill: var(--superficie); fill-opacity: .88;
+    stroke: var(--linea-fuerte); stroke-width: 1;
+  }
+  .cifra-g {
+    font-family: var(--cifra); font-variant-numeric: tabular-nums;
+    font-size: 17px; font-weight: 700;
+  }
+  .unidad-cifra-g {
+    font-family: var(--titulo); font-size: 9px; letter-spacing: .1em;
+    text-transform: uppercase; fill: var(--texto-tenue);
+  }
+
   .cabezal-grafico {
     position: absolute; top: 0; bottom: 0; left: 0; width: 1px;
     margin-left: -0.5px; background: var(--acento); opacity: .5;

@@ -610,6 +610,12 @@
                  un coche de calle en autopista y para uno de carrera en una
                  curva rapida. Van sobre la diagonal de arriba a la izquierda,
                  que es donde no pisan ni los ejes ni los rotulos de sentido. -->
+            <!-- EL BLOQUE DE LA FUERZA DEL INSTANTE, como lo dibuja F1 TV: un
+                 tramo grueso de arco apoyado a la distancia que la fuerza
+                 tiene. Hacia donde esta es de donde empuja; cuan lejos del
+                 centro, cuanta. Va **debajo** de la estela para que el recorrido
+                 de la vuelta se siga leyendo por encima. -->
+            <path class="bloque-g" id="bloque-g"></path>
             <path class="estela-g" id="estela-g"></path>
             <!-- Los rotulos van **despues** de la estela: dibujados antes, el
                  trazo de la vuelta les pasaba por encima y el del anillo de
@@ -619,6 +625,18 @@
             <text class="escala-g" id="escala-g-3" x="42" y="45" text-anchor="middle"></text>
             <circle class="halo-g" id="halo-g" cx="90" cy="90" r="9"></circle>
             <circle class="punto-g" id="punto-g" cx="90" cy="90" r="5"></circle>
+            <!-- LA CIFRA EN EL MEDIO, SOBRE SU PLACA. Dice el modulo ---cuanta
+                 fuerza hay, venga de donde venga---, que es lo que el dibujo no
+                 puede decir con una forma.
+
+                 LA PLACA NO ES ADORNO: el centro es el unico sitio que el
+                 bloque no ocupa, pero la estela **si** pasa por ahi, y sin fondo
+                 la cifra quedaba cruzada por el trazo de la vuelta. Se probo sin
+                 ella: con 30 px de cuerpo tapaba media estela y aun asi se leia
+                 mal. Chica y sobre fondo se lee, y deja ver el dibujo. -->
+            <rect class="placa-g" id="placa-g" x="66" y="79" width="48" height="22" rx="5"></rect>
+            <text class="cifra-g" id="cifra-g" x="97" y="95" text-anchor="end"></text>
+            <text class="unidad-cifra-g" id="unidad-cifra-g" x="99" y="95">g</text>
           </svg>
           <dl class="lista-canales" id="canales-g"></dl>
         </div>

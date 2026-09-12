@@ -199,7 +199,7 @@ const NOMBRES = [
   "panelEstaPresente",
   "renglonesDelPanelG",
   "escalaDelDiagramaG",
-  "_estelaG",
+  "puntoDelDiagramaG", "_estelaG",
   "cifra",
   "hayCoordenadasMedidas", "porQueNoHayCoordenadas", "hayEjeDeDistancia",
   "ejeQueLaFuenteSostiene", "porQueNoHayDistancia", "hayVueltas",
@@ -251,6 +251,7 @@ const sacadas = new Function(
   "let zoom = null;\n" +
   "let modoDetalle = true;\n" +
   constante("ZONA_MINIMA_PX") + "\n" + constante("ZONA_CON_ROTULO_PX") + "\n" +
+  constante("CENTRO_DEL_DIAGRAMA_G") + "\n" + constante("RADIO_DEL_DIAGRAMA_G") + "\n" +
   "const _fijar = { eje: v => { ejeComparacion = v; }," +
   "  alcance: v => { alcanceComparacion = v; }," +
   "  curvas: v => { CURVAS = v; }," +

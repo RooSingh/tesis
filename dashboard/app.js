@@ -3010,6 +3010,39 @@ function pintarG() {
      La estela esta decimada y puede haber perdido el pico: si el valor del
      instante se sale del recuadro, se lo sujeta al borde en vez de dibujarlo
      fuera del panel. */
+  /* EL BLOQUE Y LA CIFRA, que son lo que se mira de reojo.
+     El punto sigue existiendo ---marca el sitio exacto sobre la estela--- pero
+     dejo de ser lo unico que dice que esta pasando: un punto obliga a ubicarlo
+     respecto del centro y despues estimar la distancia, y eso es leer. */
+  const bloque = document.getElementById("bloque-g");
+  if (bloque) {
+    const d = sectorDeFuerzaG(t.gLat, t.gLong, huella.maximo);
+    if (d) {
+      const modulo = Math.hypot(Number(t.gLat) || 0, Number(t.gLong) || 0);
+      bloque.setAttribute("d", d);
+      bloque.setAttribute("stroke", tintaDeLaFuerzaG(modulo, huella.maximo));
+      bloque.removeAttribute("hidden");
+    } else {
+      /* Sin fuerza medida no se dibuja nada. Un bloque en el centro seria decir
+         que la fuerza es cero, que es una afirmacion y no una ausencia. */
+      bloque.setAttribute("d", "");
+    }
+  }
+  const cifraG = document.getElementById("cifra-g");
+  const unidadG = document.getElementById("unidad-cifra-g");
+  if (cifraG) {
+    const hay = t.gLat !== null && t.gLat !== undefined &&
+                t.gLong !== null && t.gLong !== undefined &&
+                Number.isFinite(Number(t.gLat)) && Number.isFinite(Number(t.gLong));
+    const modulo = hay ? Math.hypot(Number(t.gLat), Number(t.gLong)) : null;
+    const escrito = hay ? cifra(modulo, 1) : "—";
+    if (cifraG.textContent !== escrito) cifraG.textContent = escrito;
+    if (cifraG.getAttribute("fill") !== (hay ? tintaDeLaFuerzaG(modulo, huella.maximo) : "")) {
+      cifraG.setAttribute("fill", hay ? tintaDeLaFuerzaG(modulo, huella.maximo) : "");
+    }
+    if (unidadG) unidadG.style.display = hay ? "" : "none";
+  }
+
   const punto = document.getElementById("punto-g");
   const halo = document.getElementById("halo-g");
   if (punto && halo) {
@@ -3017,9 +3050,8 @@ function pintarG() {
     const gx = t.gLat, gy = t.gLong;
     if (typeof gx === "number" && Number.isFinite(gx) &&
         typeof gy === "number" && Number.isFinite(gy)) {
-      const norm = v => Math.max(-1, Math.min(1, v / huella.maximo));
-      cx = 90 + norm(gx) * 68;
-      cy = 90 - norm(gy) * 68;
+      const q = puntoDelDiagramaG(gx, gy, huella.maximo);
+      cx = q.x; cy = q.y;
     } else {
       const idx = Math.min(pts.length - 1,
                            Math.max(0, Math.round(t.fraccion * (pts.length - 1))));
@@ -3092,6 +3124,93 @@ function textoDeLaValidacion(v) {
    escalones y por encima el trazo se vuelve una mancha. */
 const PUNTOS_DE_LA_ESTELA = 80;
 
+/* ============================================================
+   DE QUE LADO EMPUJA, Y CUANTO
+   ------------------------------------------------------------
+   El diagrama es un circulo de 180 x 180 con el centro en 90 y los datos
+   dibujados hasta el radio 68 ---los tres anillos son tercios de ese radio---.
+
+   EL EJE HORIZONTAL ESTABA ESPEJADO, y no se veia porque la figura es simetrica.
+   `g_force_lateral` de F1 25 declara **negativo a la derecha** ---verificado
+   contra tres curvas cuyo sentido publica una fuente externa, ver
+   `backend/analisis/curvas.py`--- y esto colocaba el punto en `90 + lateral`, o
+   sea positivo a la derecha, debajo de un rotulo que dice «DER». Cada curva a
+   derecha se venia dibujando del lado que dice izquierda.
+
+   Medido sobre Spa el 2026-09-12: La Source ---horquilla a derecha--- da un
+   lateral medio de -1,33 sobre 885 muestras, y la entrada de Eau Rouge ---a
+   izquierda--- da +0,18 sobre 400.
+   ============================================================ */
+const CENTRO_DEL_DIAGRAMA_G = 90;
+const RADIO_DEL_DIAGRAMA_G = 68;
+
+/* Donde cae una fuerza en el dibujo. El lateral se invierte porque la fuente lo
+   declara al reves de la pantalla; el longitudinal no, porque frenar ya es
+   positivo y arriba es frenar. */
+function puntoDelDiagramaG(lateral, longitudinal, maximo) {
+  const c = CENTRO_DEL_DIAGRAMA_G, r = RADIO_DEL_DIAGRAMA_G;
+  const escala = (Number.isFinite(maximo) && maximo > 0) ? maximo : 1;
+  const acotar = v => Math.max(-1, Math.min(1, (Number(v) || 0) / escala));
+  return { x: c - acotar(lateral) * r, y: c - acotar(longitudinal) * r };
+}
+
+//: Cuanto abre el bloque, en grados a cada lado de la direccion de la fuerza.
+//: Angosto se lee como una aguja fina y se pierde de vista; ancho deja de
+//: apuntar a un lado.
+const APERTURA_DEL_SECTOR_G = 24;
+
+/* EL BLOQUE QUE SE MUEVE POR EL ANILLO, COMO LO DIBUJA F1 TV.
+   No es una cuña que sale del centro: es un tramo grueso de arco **apoyado a la
+   distancia que la fuerza tiene**. Las dos lecturas se hacen sin leer: hacia
+   donde esta el bloque es de donde empuja, y cuan lejos del centro esta es
+   cuanto. La cifra va en el medio, que es el unico sitio que no tapa.
+
+   Devuelve `null` sin fuerza: un arco de radio cero sigue siendo una figura, y
+   dibujado queda una mancha en el centro que se lee como una fuerza que no hay. */
+function sectorDeFuerzaG(lateral, longitudinal, maximo) {
+  /* `null` y `undefined` se descartan **antes** de convertir: `Number(null)` da
+     cero, y un eje sin medir dibujado como cero no es una ausencia, es la
+     afirmacion de que no hubo fuerza en ese eje. Es la misma distincion que el
+     resto del tablero hace con la raya. */
+  if (lateral === null || lateral === undefined ||
+      longitudinal === null || longitudinal === undefined) return null;
+  const lat = Number(lateral), lon = Number(longitudinal);
+  if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null;
+  const modulo = Math.hypot(lat, lon);
+  if (modulo < 1e-3) return null;
+
+  const c = CENTRO_DEL_DIAGRAMA_G;
+  const escala = (Number.isFinite(maximo) && maximo > 0) ? maximo : 1;
+  /* El bloque no arranca en el centro: se apoya donde la fuerza llega. Con poca
+     fuerza queda cerca del medio y con mucha contra el anillo de afuera, que es
+     lo que se ve de un vistazo en el dibujo de la television. */
+  const radio = Math.min(1, modulo / escala) * RADIO_DEL_DIAGRAMA_G;
+  /* La direccion sale del mismo sitio que el punto, y no de un `atan2` escrito
+     aparte: dos cuentas para el mismo angulo se separan el dia que una cambie. */
+  const punta = puntoDelDiagramaG(lat, lon, modulo);   // normalizado al modulo
+  const ang = Math.atan2(punta.y - c, punta.x - c);
+  const media = (APERTURA_DEL_SECTOR_G * Math.PI) / 180;
+  const a1 = ang - media, a2 = ang + media;
+  const x1 = c + Math.cos(a1) * radio, y1 = c + Math.sin(a1) * radio;
+  const x2 = c + Math.cos(a2) * radio, y2 = c + Math.sin(a2) * radio;
+  return "M" + x1.toFixed(2) + " " + y1.toFixed(2) +
+         " A" + radio.toFixed(2) + " " + radio.toFixed(2) +
+         " 0 0 1 " + x2.toFixed(2) + " " + y2.toFixed(2);
+}
+
+/* DE QUE COLOR SE PINTA EL BLOQUE. Cerca del limite de la escala se vuelve el
+   color de alerta y despues el critico, que es lo que hace que un pico se note
+   sin mirar la cifra. Los umbrales son fracciones de la escala **de esta
+   vuelta** y no gravedades fijas: la escala se ajusta, y un umbral en g seria
+   rojo siempre en un coche de carrera y nunca en uno de calle. */
+function tintaDeLaFuerzaG(modulo, maximo) {
+  const escala = (Number.isFinite(maximo) && maximo > 0) ? maximo : 1;
+  const parte = Math.min(1, Math.abs(Number(modulo) || 0) / escala);
+  if (parte >= 0.85) return tinta("--critico");
+  if (parte >= 0.6) return tinta("--alerta");
+  return tinta("--acento");
+}
+
 /* LA HUELLA DE LA VUELTA, SIN PERDER SUS EXTREMOS.
    Un diagrama de aceleraciones **es** su envolvente: lo que dice es cuanto se
    empujo al vehiculo y en que direcciones. Tomar una muestra de cada tantas
@@ -3137,7 +3256,14 @@ function _estelaG(vuelta) {
      aceleraciones interpoladas y tiene que caer en el mismo dibujo que la
      estela, no en uno normalizado aparte. */
   return {
-    puntos: valores.map(p => [90 + (p[0] / maximo) * 68, 90 - (p[1] / maximo) * 68]),
+    /* Por `puntoDelDiagramaG` y no con la cuenta escrita aca: la estela, el
+       punto del instante y el sector tienen que caer en el mismo dibujo, y tres
+       copias de la misma formula se separan el dia que una cambie. Esta tenia el
+       eje lateral espejado. */
+    puntos: valores.map(p => {
+      const q = puntoDelDiagramaG(p[0], p[1], maximo);
+      return [q.x, q.y];
+    }),
     maximo: maximo,
   };
 }

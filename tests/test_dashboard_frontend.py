@@ -159,12 +159,17 @@ class DashboardFrontendTests(unittest.TestCase):
         Se comprueban las dos cosas contra el radio que usa el guion: los tres
         anillos son tercios de **ese** radio, y cada uno tiene su rotulo.
         """
+        # EL RADIO SE LEE DE SU CONSTANTE, y antes se sacaba de dos expresiones
+        # sueltas del codigo ---la de la estela y la del punto--- porque la
+        # cuenta estaba escrita dos veces. Ahora hay una sola funcion que coloca
+        # todo lo del diagrama, asi que hay un solo sitio que preguntar.
         codigo = APP.read_text(encoding="utf-8")
-        radios = set(re.findall(r"/ maximo\) \* (\d+)", codigo)) | set(
-            re.findall(r"norm\(g[xy]\) \* (\d+)", codigo))
-        self.assertEqual(len(radios), 1,
-                         f"el guion dibuja el diagrama con varios radios: {radios}")
-        radio = int(radios.pop())
+        m = re.search(r"^const RADIO_DEL_DIAGRAMA_G = (\d+);", codigo, re.MULTILINE)
+        self.assertIsNotNone(m, "no esta la constante del radio del diagrama")
+        radio = int(m.group(1))
+        # Y nadie vuelve a escribir la cuenta a mano.
+        self.assertNotIn("norm(gx)", codigo,
+                         "el punto del instante volvio a colocarse por su cuenta")
 
         html = INDICE.read_text(encoding="utf-8")
         rejilla = re.findall(r'<circle class="rejilla-g"[^>]*r="([\d.]+)"', html)
