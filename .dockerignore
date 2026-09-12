@@ -1,0 +1,28 @@
+# Lo que no entra en la imagen.
+#
+# EL CRITERIO: entra el codigo, no los datos ni el estado. Una imagen que lleve
+# adentro las capturas pesa 1,6 GB de mas, tarda ese tiempo en construirse en
+# cada despliegue, y ademas congela una copia de datos que despues nadie sabe
+# si es la buena.
+.git
+.venv
+__pycache__
+*.pyc
+.pytest_cache
+.DS_Store
+
+# Datos y estado. Los que el sistema necesita se montan como volumen.
+datasets/
+logs/
+docs/mediciones/grabaciones/
+imagenes/
+
+# El informe. Son 269 paginas de LaTeX y sus figuras: no lo usa ningun proceso.
+informe/
+revision/
+referencias/
+
+# Respaldos, si alguien los deja en el arbol.
+*.tar.gz
+*.f1raw
+*.sql.gz

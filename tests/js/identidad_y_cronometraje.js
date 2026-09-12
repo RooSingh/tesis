@@ -177,7 +177,8 @@ const NOMBRES = [
   "pieDeExportacion", "exportarComparacion", "extremosDeDistancia",
   "reducirAAncho", "escalaDe", "dominioAmpliado",
   "pintarLeyendaTraza", "exportarCsv", "elegirCorrida",
-  "alcanceElegidoEsValido", "adquisicionSeSolapa", "faseDeLaDireccion",
+  "alcanceElegidoEsValido", "adquisicionSeSolapa", "sonUnaSolaCarrera",
+  "faseDeLaDireccion",
   "olvidarLoDeLaCorrida", "nuevaSesionEnCurso", "aperturaVigente", "sigueVigente",
   "cambiaronLasSeries",
   "esCanalEscalonado", "_cacheTemporal", "serieTemporal", "_serieTemporalCruda",
@@ -294,6 +295,7 @@ const {
   bandasDeVuelta, bandasParaElTramo, pintarZonas,
   pintarLeyendaTraza, exportarCsv,
   elegirCorrida, nuevaSesionEnCurso, fijarContextoDeCorrida, selloDeIdentidad,
+  sonUnaSolaCarrera,
   _fijar,
   trazadoAPath, puntoDelBusEn, _indiceEnElRecorrido,
   hayCoordenadasMedidas, porQueNoHayCoordenadas, hayEjeDeDistancia,
@@ -1330,6 +1332,47 @@ prueba("una continua se une con una recta", () => {
   trazarSerie(ctx, [[100, 200], [200, 250]], x => x, y => y, false);
   assert.deepStrictEqual(ctx.ordenes,
     [["moveTo", 100, 200], ["lineTo", 200, 250]]);
+});
+
+prueba("dos capturas de la misma carrera son una sola carrera", () => {
+  /* EL CASO: se corta la corriente en plena carrera, el usuario vuelve a
+     escuchar, y quedan dos capturas bajo el mismo identificador del juego ---que
+     no cambia, porque lo pone el juego---. Medido en la Pi: cinco sesiones asi,
+     una con tres capturas.
+
+     El tablero preguntaba cual mirar, con el motivo «juntas no son una carrera
+     continua». Para Spa eso es cierto: son una captura y dos **reproducciones**
+     separadas por tres dias. Para dos capturas separadas por treinta y un
+     segundos es falso: son la misma carrera con un agujero. */
+  const dos = [{ clave: "original-1", es_reproduccion: false, fases: [] },
+               { clave: "original-2", es_reproduccion: false, fases: [] }];
+  assert.strictEqual(sonUnaSolaCarrera(dos), true);
+});
+
+prueba("una reproduccion nunca se une a su captura", () => {
+  /* Es la misma sesion grabada y despues reproducida: unirlas mostraria cada
+     vuelta dos veces. Que sea el mismo identificador es justamente el problema,
+     no el permiso. */
+  const conReproduccion = [
+    { clave: "original-1", es_reproduccion: false, fases: [] },
+    { clave: "corrida-de-prueba", es_reproduccion: true, fases: [] }];
+  assert.strictEqual(sonUnaSolaCarrera(conReproduccion), false);
+});
+
+prueba("si el reloj del juego se reinicia adentro, no se unen", () => {
+  /* La formacion y la carrera llevan el mismo reloj puesto a cero, de modo que
+     sus ventanas se solapan aunque en orden de captura no lo hagan. Unirlas
+     apilaria dos lineas de tiempo. */
+  const conReinicio = [
+    { clave: "original-1", es_reproduccion: false,
+      fases: [{ orden: 1 }, { orden: 2, reloj_del_juego_reinicia_al_entrar: true }] },
+    { clave: "original-2", es_reproduccion: false, fases: [] }];
+  assert.strictEqual(sonUnaSolaCarrera(conReinicio), false);
+});
+
+prueba("una sola captura no es una union", () => {
+  assert.strictEqual(sonUnaSolaCarrera(
+    [{ clave: "original-1", es_reproduccion: false, fases: [] }]), false);
 });
 
 prueba("con el flujo caido los valores dicen que son viejos", () => {

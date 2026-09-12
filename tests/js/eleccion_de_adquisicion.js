@@ -48,7 +48,8 @@ const NOMBRES = ["nombreDeFase", "etiquetaDeCorrida", "duracionCorta",
                  "nombreDeAdquisicion", "textoSeguro",
                  "queEsLaFase", "numeroMedido",
                   "alcanceEsAmbiguo", "hayAlcanceQueElegir",
-                  "adquisicionSeSolapa", "alcanceElegidoEsValido", "faseDeLaDireccion",
+                  "adquisicionSeSolapa", "sonUnaSolaCarrera",
+                  "alcanceElegidoEsValido", "faseDeLaDireccion",
                   "filaDeCorrida", "fechaAr", "cifra", "hayEjeDeDistancia", "porQueNoHayDistancia",
                   "alcanceResuelto", "alcancePermitePedir"];
 /* La tabla de que fuentes tienen eje de distancia: la compuerta la mira antes
@@ -190,7 +191,11 @@ prueba("se carga sin preguntar solo cuando el alcance no es ambiguo", () => {
      el alcance por supuesto». */
   const i = fuente.indexOf("if (!pedida && !alcanceEsAmbiguo()) {");
   assert.ok(i > 0, "la salida temprana ya no consulta si el alcance es ambiguo");
-  const bloque = fuente.slice(i, i + 200);
+  /* La ventana era de 200 caracteres, que es un limite de longitud disfrazado
+     de prueba: un comentario nuevo adentro del bloque la hacia caer sin que
+     nada se hubiera roto. Lo que se comprueba es que la salida temprana
+     cargue, no cuanto se escribe antes. */
+  const bloque = fuente.slice(i, i + 1200);
   assert.ok(bloque.indexOf("cargarDatosDeSesion") !== -1,
     "sin ambiguedad tiene que seguir cargando sin preguntar");
   assert.ok(fuente.indexOf("if (!a.mezclada) {") === -1,
@@ -206,7 +211,16 @@ prueba("una sola adquisicion con etapas que reinician el reloj es ambigua", () =
     { orden: 1, reloj_del_juego_reinicia_al_entrar: false },
     { orden: 2, reloj_del_juego_reinicia_al_entrar: false }] }] };
   const unaSola = { disponibles: [{ clave: "original", fases: [{ orden: 1 }] }] };
-  const dos = { disponibles: [{ clave: "original", fases: [] }, { clave: "r1", fases: [] }] };
+  /* UNA CAPTURA Y UNA REPRODUCCION. El fixture decia solo «dos» y se apoyaba en
+     que cualquier par fuera ambiguo; ahora que dos capturas de la misma carrera
+     se unen, tiene que declarar cual es cual. No se debilita la prueba: se le
+     hace decir lo que siempre quiso decir. */
+  const dos = { disponibles: [{ clave: "original", es_reproduccion: false, fases: [] },
+                              { clave: "r1", es_reproduccion: true, fases: [] }] };
+  /* Y el caso nuevo: dos capturas de la misma carrera, sin reproducciones. */
+  const dosCapturas = { disponibles: [
+    { clave: "original-1", es_reproduccion: false, fases: [] },
+    { clave: "original-2", es_reproduccion: false, fases: [] }] };
 
   const antes = globalThis.corrida;
   globalThis.corrida = conReinicio;
@@ -223,7 +237,11 @@ prueba("una sola adquisicion con etapas que reinician el reloj es ambigua", () =
   assert.strictEqual(sacadas.hayAlcanceQueElegir(), false,
     "sin nada que elegir el boton sobra");
   globalThis.corrida = dos;
-  assert.strictEqual(sacadas.alcanceEsAmbiguo(), true);
+  assert.strictEqual(sacadas.alcanceEsAmbiguo(), true,
+    "una reproduccion junto a su captura repetiria cada vuelta");
+  globalThis.corrida = dosCapturas;
+  assert.strictEqual(sacadas.alcanceEsAmbiguo(), false,
+    "dos capturas de la misma carrera son una carrera con un agujero");
   globalThis.corrida = antes;
 });
 

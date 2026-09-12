@@ -10785,6 +10785,18 @@ function abrirSesionGuardada(id) {
         const faseDelEnlace = faseDeLaDireccion(p.get("fase"));
         const existe = (corrida.disponibles || []).some(x => x.clave === pedida);
         if (!pedida && !alcanceEsAmbiguo()) {
+          /* VARIAS CAPTURAS DE LA MISMA CARRERA SE PIDEN COMO «original», Y NO
+             DEJANDO EL ALCANCE EN BLANCO. Sin clave el backend no filtra nada y
+             entrarian tambien las reproducciones, que es lo unico que no se
+             puede unir. La clave existe y abarca todas las capturas: es la
+             ventana que la API ya arma. */
+          if (sonUnaSolaCarrera(corrida.disponibles)) {
+            corrida.adquisicion = TODAS_LAS_CAPTURAS;
+            corrida.fase = null;
+            decirEstadoApi("Esta carrera quedó en " + corrida.disponibles.length +
+              " capturas ---se dejó de recibir y se volvió a escuchar---. Se " +
+              "muestran unidas, y el hueco queda marcado donde estuvo.", false);
+          }
           declararAlcance();
           cargarDatosDeSesion(ruta, apertura, senalDeSesion(), s);
           return;
@@ -11085,8 +11097,46 @@ function adquisicionSeSolapa(a) {
   return fases.length > 1 && fases.some(f => f.reloj_del_juego_reinicia_al_entrar);
 }
 
+/* La clave con la que el backend entrega **todas las capturas juntas**, sin
+   las reproducciones. La define `api_sesion.ORIGEN_SIN_CORRIDA`. */
+const TODAS_LAS_CAPTURAS = "original";
+
+/* CUANDO VARIAS ADQUISICIONES SON UNA SOLA CARRERA.
+   ------------------------------------------------------------
+   EL CASO. Se corta la corriente en plena carrera; el usuario vuelve a
+   escuchar; quedan dos capturas bajo el mismo identificador del juego, que no
+   cambia porque lo pone el juego. Medido en la Pi: cinco sesiones asi, una con
+   tres capturas.
+
+   El tablero preguntaba cual mirar, y el motivo que daba ---«juntas no son una
+   carrera continua»--- es cierto para Spa, que son **una captura y dos
+   reproducciones** separadas por tres dias, y falso para dos capturas
+   separadas por treinta y un segundos: eso es la misma carrera con un agujero.
+
+   LAS DOS CONDICIONES SON LAS QUE HACEN LA DIFERENCIA:
+
+   1. **Ninguna es una reproduccion.** Una reproduccion es la misma sesion
+      grabada y despues reproducida: unirla a su captura mostraria cada vuelta
+      dos veces. Que compartan identificador es el problema, no el permiso.
+
+   2. **Ninguna reinicia el reloj del juego adentro.** La formacion y la carrera
+      llevan el mismo reloj puesto a cero, de modo que sus ventanas se solapan
+      aunque en orden de captura no lo hagan. Unirlas apilaria dos lineas de
+      tiempo, que es exactamente lo que la compuerta existe para evitar.
+
+   Y NO HAY QUE CONSTRUIR LA UNION: el backend ya arma la ventana que abarca
+   todas las capturas bajo la clave `original`. Estaba hecha y nadie la pedia. */
+function sonUnaSolaCarrera(lista) {
+  const l = lista || [];
+  if (l.length < 2) return false;
+  if (l.some(a => a.es_reproduccion)) return false;
+  if (l.some(adquisicionSeSolapa)) return false;
+  return true;
+}
+
 function alcanceEsAmbiguo() {
   const lista = corrida.disponibles || [];
+  if (sonUnaSolaCarrera(lista)) return false;
   if (lista.length > 1) return true;
   return lista.some(adquisicionSeSolapa);
 }

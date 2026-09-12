@@ -277,6 +277,7 @@ const PIEZAS = [
   fn("porQueNoHayDistancia"),
   fn("adquisicionSeSolapa"),
   fn("alcanceEsAmbiguo"),
+  fn("sonUnaSolaCarrera"),
   fn("alcanceElegidoEsValido"),
   fn("alcanceResuelto"),
   fn("alcancePermitePedir"),
