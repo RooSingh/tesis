@@ -544,7 +544,15 @@ def obtener_ultimos_por_senal() -> list[dict]:
                     can_id,
                     src
                 FROM telemetry_messages
-                ORDER BY signal_name, timestamp DESC
+                -- EL DESEMPATE NO ES UN ADORNO. Esto elige **una** fila por
+                -- senal sobre la tabla entera, sin acotar sesion ni vehiculo:
+                -- dos filas de la misma senal en el mismo instante ---dos
+                -- coches, o dos sesiones--- empatan, y sin mas columnas la base
+                -- elige la que quiere y puede elegir distinto en dos corridas.
+                -- Con sesion y vehiculo el resultado se repite. Que la eleccion
+                -- entre dos coches distintos sea arbitraria sigue siendo cierto;
+                -- lo que deja de ser cierto es que sea **inestable**.
+                ORDER BY signal_name, timestamp DESC, session_id, vehicle_id
                 """
             )
 

@@ -735,7 +735,7 @@ def posiciones_en_pista(
             SELECT DISTINCT ON (vehicle_id, cubo) vehicle_id, cubo, d, timestamp
               FROM m
              WHERE d IS NOT NULL
-             ORDER BY vehicle_id, cubo, timestamp
+             ORDER BY vehicle_id, cubo, timestamp, d
         """, tuple([t0, t1, puntos, fuente, session_id, senal_distancia, t0, t1]
                    + tramo_par))
 
@@ -2892,6 +2892,24 @@ def _restar(instante_iso: str, segundos: int) -> str | None:
     return (t - timedelta(seconds=segundos)).isoformat()
 
 
+#: POR QUE ESTAS CONSULTAS DESEMPATAN, Y NO ES UN ADORNO.
+#:
+#: `DISTINCT ON` elige **una** fila por grupo: la primera segun el `ORDER BY`.
+#: Cuando dos filas empatan en todas las columnas de ese orden, **la base elige
+#: la que quiere**, y puede elegir distinto en dos corridas del mismo dato.
+#:
+#: No es teorico: el 2026-09-12 el analisis de sectores devolvio 0,341 s y
+#: 0,491 s para el mismo coche en dos corridas seguidas, porque emparejaba
+#: señales que llegan con la misma marca de tiempo y el orden entre ellas no
+#: estaba definido. Un analisis que no repite su propio numero no es una
+#: medicion.
+#:
+#: Aca el empate solo puede darse con dos filas de la misma señal, el mismo
+#: vehiculo y el mismo instante ---una duplicada---, que es raro. El desempate
+#: cuesta una columna y convierte «raro» en «imposible». Las otras consultas de
+#: este archivo que eligen la primera por marca de tiempo **ya agrupan por
+#: `timestamp`**, de modo que ahi no hay dos filas que puedan empatar.
+
 def _ultimos_valores(cursor, fuente: str, session_id: str, senales: list[str],
                      hasta_utc: str | None = None,
                      ventana_alcance: tuple[str, str] | None = None,
@@ -2974,7 +2992,7 @@ def _ultimos_valores(cursor, fuente: str, session_id: str, senales: list[str],
                AND timestamp >= %s AND timestamp <= %s
                AND (%s::timestamptz IS NULL OR timestamp <= %s)
                AND (%s::timestamptz IS NULL OR timestamp BETWEEN %s AND %s)
-             ORDER BY signal_name, timestamp DESC
+             ORDER BY signal_name, timestamp DESC, value_numeric DESC NULLS LAST
         """, tuple([fuente, session_id, faltan] + _cvp + _cfp + [desde, hasta,
               hasta_utc, hasta_utc,
               ventana_alcance[0] if ventana_alcance else None,
@@ -3007,7 +3025,7 @@ def _ultimos_valores(cursor, fuente: str, session_id: str, senales: list[str],
              WHERE source_type = %s AND session_id = %s AND signal_name = ANY(%s)"""
                    + _cv + _cf + """""" +
             condicion + """
-             ORDER BY signal_name, timestamp DESC
+             ORDER BY signal_name, timestamp DESC, value_numeric DESC NULLS LAST
         """, tuple(parametros))
         for nombre, num, boo, txt, unidad, ts in cursor.fetchall():
             valor = num if num is not None else (boo if boo is not None else txt)
