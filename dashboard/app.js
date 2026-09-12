@@ -8966,6 +8966,11 @@ const COLUMNAS_DEL_TABLERO = 4;
    alto impuesto: es quien lo elige. */
 const ALTO_DE_FILA_PX = 150;
 
+//: El hueco entre celdas, el mismo que declara `gap` en la hoja de estilos.
+//: Hace falta para convertir pixeles arrastrados en columnas y filas: sin
+//: contarlo, estirar tres columnas se lee como dos y pico.
+const HUECO_DEL_TABLERO_PX = 14;
+
 //: Tope de filas de un widget. Doce filas son 1.800 px, que es mas alto que
 //: cualquier pantalla: por encima de eso el panel deja de poder mirarse entero.
 const FILAS_MAXIMAS_DE_UN_WIDGET = 12;
@@ -9188,6 +9193,23 @@ function refrescarBorrador() {
   pintarBotonesDeEdicion();
 }
 
+/* LO MISMO PERO SIN TOCAR EL ARBOL, para usar **durante** un gesto.
+   `pintarBotonesDeEdicion` quita y vuelve a crear los mandos de cada panel, y
+   hacer eso en medio de un arrastre mata el gesto: el navegador cancela el
+   `drag` si el elemento que se arrastra se saca del documento. Mover y estirar
+   solo cambian `order` y `grid-*`, que son estilos. */
+function refrescarSoloEstilos() {
+  aplicarDisposicion(EDITANDO);
+  const t = document.getElementById("tablero");
+  if (!t) return;
+  for (const w of EDITANDO) {
+    const m = t.querySelector('[data-panel="' + w.id + '"] .medida-widget');
+    if (m) m.innerHTML = w.ancho + "&times;" + w.alto;
+    const el = t.querySelector('[data-panel="' + w.id + '"]');
+    if (el) el.dataset.apagado = w.visible ? "no" : "si";
+  }
+}
+
 function pintarModoEdicion() {
   const tablero = document.getElementById("tablero");
   if (tablero) tablero.dataset.editando = editando() ? "si" : "no";
@@ -9211,7 +9233,11 @@ function pintarModoEdicion() {
 function pintarBotonesDeEdicion() {
   const tablero = document.getElementById("tablero");
   if (!tablero) return;
-  tablero.querySelectorAll(".mandos-widget").forEach(n => n.remove());
+  /* Se limpian **los dos** adornos. Quitar solo los mandos dejaba un tirador
+     por cada vez que esto corriera: dieciocho para nueve paneles despues de un
+     arrastre, apilados en la misma esquina. Lo que se agrega en cada pasada se
+     saca en cada pasada. */
+  tablero.querySelectorAll(".mandos-widget, .tirador-widget").forEach(n => n.remove());
   if (!editando()) return;
   for (const w of EDITANDO) {
     const el = tablero.querySelector('[data-panel="' + w.id + '"]');
@@ -9221,6 +9247,9 @@ function pintarBotonesDeEdicion() {
     el.setAttribute("draggable", "true");
     const mandos = document.createElement("div");
     mandos.className = "mandos-widget";
+    /* Las flechas se conservan **ademas** del tirador de la esquina, y no en su
+       lugar: son la unica forma de cambiar el tamaño con el teclado, y estirar
+       una esquina exige un raton y una mano firme. */
     mandos.innerHTML =
       '<button type="button" data-hace="angosto" title="Menos ancho" aria-label="Menos ancho">&#8592;</button>' +
       '<span class="medida-widget">' + w.ancho + '&times;' + w.alto + '</span>' +
@@ -9242,6 +9271,42 @@ function pintarBotonesDeEdicion() {
       refrescarBorrador();
     });
     el.appendChild(mandos);
+
+    /* EL TIRADOR DE LA ESQUINA: se estira y los demas se corren en vivo.
+       Con flechas hay que contar pulsaciones y mirar un numero; estirando se ve
+       el tamaño que va quedando y como se acomoda el resto. */
+    const tirador = document.createElement("div");
+    tirador.className = "tirador-widget";
+    tirador.title = "Estirar para cambiar el tamaño";
+    tirador.addEventListener("pointerdown", ev => {
+      ev.preventDefault(); ev.stopPropagation();
+      tirador.setPointerCapture(ev.pointerId);
+      /* La celda se mide **de la grilla que hay**, no de una constante: el ancho
+         de columna depende de la ventana, y un numero escrito aca quedaria
+         viejo en cuanto alguien cambie el tamaño del navegador. */
+      const caja = el.getBoundingClientRect();
+      const columnas = getComputedStyle(document.getElementById("tablero"))
+                         .gridTemplateColumns.split(" ").length || COLUMNAS_DEL_TABLERO;
+      const anchoCelda = (caja.width + HUECO_DEL_TABLERO_PX) / w.ancho;
+      const altoCelda = (caja.height + HUECO_DEL_TABLERO_PX) / w.alto;
+      const x0 = ev.clientX, y0 = ev.clientY, a0 = w.ancho, b0 = w.alto;
+      const mover = e2 => {
+        const a = a0 + Math.round((e2.clientX - x0) / anchoCelda);
+        const b = b0 + Math.round((e2.clientY - y0) / altoCelda);
+        const antes = EDITANDO.find(x => x.id === w.id);
+        if (antes.ancho === anchoAcotado(a, a0) && antes.alto === altoAcotado(b, b0)) return;
+        EDITANDO = redimensionarWidget(EDITANDO, w.id, a, b);
+        refrescarSoloEstilos();
+      };
+      const soltar = () => {
+        tirador.removeEventListener("pointermove", mover);
+        tirador.removeEventListener("pointerup", soltar);
+        pintarBotonesDeEdicion();
+      };
+      tirador.addEventListener("pointermove", mover);
+      tirador.addEventListener("pointerup", soltar);
+    });
+    el.appendChild(tirador);
   }
 }
 
@@ -9259,20 +9324,35 @@ function conectarArrastre() {
     el.dataset.arrastrando = "si";
     if (ev.dataTransfer) ev.dataTransfer.effectAllowed = "move";
   });
-  tablero.addEventListener("dragover", ev => { if (editando()) ev.preventDefault(); });
-  tablero.addEventListener("drop", ev => {
-    if (!editando() || !arrastrado) return;
+  /* EL REACOMODO OCURRE MIENTRAS SE ARRASTRA, NO AL SOLTAR.
+     Antes el panel se movia recien en `drop`: durante todo el gesto no pasaba
+     nada y habia que soltar para ver donde caia. O sea que ordenar el tablero
+     era una sucesion de intentos a ciegas. Ahora los demas se corren a medida
+     que uno pasa por encima, y lo que se ve durante el arrastre **es** el
+     resultado: soltar solo lo confirma, y Escape lo deshace entero.
+
+     Se actua solo cuando cambia el panel de abajo. `dragover` se dispara
+     decenas de veces por segundo sobre el mismo elemento, y rehacer la
+     disposicion en cada una es trabajo tirado que ademas hace parpadear. */
+  let ultimoSobre = null;
+  tablero.addEventListener("dragover", ev => {
+    if (!editando()) return;
     ev.preventDefault();
+    if (!arrastrado) return;
     const sobre = ev.target.closest("[data-panel]");
-    if (sobre && sobre.dataset.panel !== arrastrado) {
-      const hacia = EDITANDO.findIndex(w => w.id === sobre.dataset.panel);
-      EDITANDO = moverWidget(EDITANDO, arrastrado, hacia);
-      refrescarBorrador();
-    }
+    const id = sobre && sobre.dataset.panel;
+    if (!id || id === arrastrado || id === ultimoSobre) return;
+    ultimoSobre = id;
+    EDITANDO = moverWidget(EDITANDO, arrastrado, EDITANDO.findIndex(w => w.id === id));
+    refrescarSoloEstilos();
+  });
+  tablero.addEventListener("drop", ev => {
+    if (editando()) ev.preventDefault();     // ya esta donde se lo dejo
   });
   tablero.addEventListener("dragend", () => {
     tablero.querySelectorAll('[data-arrastrando]').forEach(n => delete n.dataset.arrastrando);
-    arrastrado = null;
+    arrastrado = null; ultimoSobre = null;
+    pintarBotonesDeEdicion();   // recien aca se puede tocar el arbol
   });
 }
 

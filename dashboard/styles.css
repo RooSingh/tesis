@@ -1402,6 +1402,27 @@
   /* El panel es el marco de referencia de sus mandos. */
   .cabina[data-editando="si"] .instrumento { position: relative; }
 
+  /* EL TIRADOR DE LA ESQUINA. Se estira y el tamaño cambia en columnas y filas,
+     con los demas paneles corriendose en vivo. Las flechas de los mandos siguen
+     estando: son la unica forma de hacerlo con el teclado. */
+  .tirador-widget {
+    position: absolute; right: 0; bottom: 0; width: 18px; height: 18px;
+    z-index: 4; cursor: nwse-resize; touch-action: none;
+    background:
+      linear-gradient(135deg, transparent 0 46%, var(--acento) 46% 54%, transparent 54%),
+      linear-gradient(135deg, transparent 0 70%, var(--acento) 70% 78%, transparent 78%);
+    border-bottom-right-radius: 10px;
+  }
+  /* Mientras se arrastra un panel, los demas se corren y la transicion hace que
+     el movimiento se lea como un acomodo y no como un salto. Pero solo dentro
+     del modo: fuera de el, el tablero no se mueve. */
+  .cabina[data-editando="si"] .instrumento {
+    transition: grid-column .12s ease, grid-row .12s ease;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .cabina[data-editando="si"] .instrumento { transition: none; }
+  }
+
   /* LA LISTA LLENA SU PANEL EN VEZ DE PARARSE A LOS 190 PIXELES.
      El panel se estira al alto de su fila ---`align-items: stretch` unas lineas
      mas abajo--- de modo que con veinte pilotos la lista se desplazaba dentro
