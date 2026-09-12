@@ -105,6 +105,7 @@ const preludio = `
 
 const PIEZAS = [
   extraerConstanteNumerica("MAX_MUESTRAS_VIVO"),
+  extraerConstanteNumerica("SILENCIO_QUE_APAGA_MS"),
   extraerConstanteNumerica("MUESTRAS_RECORDADAS"),
   extraerConstanteNumerica("LATENCIAS_RECORDADAS"),
   extraerDesde("const TESTIGO = {", ";"),

@@ -4014,6 +4014,89 @@ function _cruzaUnHueco(huecos, a, b) {
   return false;
 }
 
+/* ============================================================
+   CUANDO EL FLUJO SE CORTA, LOS VALORES TIENEN QUE DECIR QUE SON VIEJOS
+   ------------------------------------------------------------
+   EL CASO REAL, FOTOGRAFIADO EL 2026-09-12. Se le corto la corriente a la Pi
+   en plena sesion. La maquina volvio sola en cincuenta y ocho segundos ---los
+   dos contenedores, las dos unidades y el difusor--- pero el capturador esta
+   `disabled` a proposito, con el motivo escrito en su unidad: si nadie esta
+   jugando no hay nada que capturar. Asi que el sistema volvio **entero y
+   sordo**, y el usuario dio dos vueltas que se emitieron al vacio.
+
+   Lo grave no fue eso, que se arregla con un boton. Lo grave es lo que mostraba
+   la pantalla: **11.819 rpm, 295 km/h y marcha 7 de 8** ---congelados desde
+   antes del corte--- y abajo, al mismo tiempo, «sin telemetria todavia». Las
+   dos cosas no pueden ser ciertas, y nada en los paneles decia cual.
+
+   EL VOCABULARIO YA EXISTIA Y NO SE INVENTA OTRO. La hoja define
+   `data-frescura="aged"` al 62 %, y su comentario dice que es **una sola
+   convencion** para «esto no describe el ahora con la misma autoridad», en vez
+   de una por panel. Esto la extiende al tablero entero.
+
+   LOS DOS UMBRALES TAMPOCO SE INVENTAN. `held` a los dos segundos es el mismo
+   `HUECO_DE_CAPTURA_MS` con el que todo este archivo decide que una captura se
+   corto ---a veinte hercios son cuarenta muestras que no llegaron---. `aged` a
+   los diez es el silencio que ya hacia pasar la sesion de «vivo» a
+   «escuchando». Dos cifras ya justificadas, usadas para una tercera cosa.
+   ============================================================ */
+const SILENCIO_QUE_APAGA_MS = 10000;
+
+/* Como se ve el flujo segun hace cuanto que no llega nada.
+
+   `null` es «no se sabe» y **no** se trata como cero: eso convertiria una
+   ignorancia en la afirmacion de que el dato es de ahora, que es exactamente
+   el error que se esta arreglando. */
+function comoSeVeElFlujo(edad_s) {
+  if (edad_s === null || edad_s === undefined || !Number.isFinite(edad_s)) {
+    return { estado: "", texto: "" };
+  }
+  const ms = edad_s * 1000;
+  if (ms < HUECO_DE_CAPTURA_MS) return { estado: "", texto: "" };
+  /* El texto dice **hace cuanto**, que es lo que decide. «Sin telemetria» no le
+     sirve a nadie parado frente a una pantalla que marca 295 km/h. */
+  const cuanto = edad_s < 90
+    ? Math.round(edad_s) + " s"
+    : Math.round(edad_s / 60) + " min";
+  return {
+    estado: ms < SILENCIO_QUE_APAGA_MS ? "held" : "aged",
+    texto: "hace " + cuanto + " que no llega telemetría: lo que se ve es lo " +
+           "último que llegó",
+  };
+}
+
+/* Hace cuanto que no llega una muestra, en segundos, o `null` si no se sabe.
+
+   No se sabe cuando nunca llego ninguna: ahi el tablero ya dice «sin telemetria
+   todavia», que es otra afirmacion y la correcta. */
+function edadDelFlujo(ahora) {
+  /* `vivo` se declara mas abajo en el archivo. Se lo lee en tiempo de llamada
+     y no de definicion, asi que para cuando esto corre ya existe. */
+  if (typeof vivo === "undefined" || !vivo.ultimaLlegada) return null;
+  return ((ahora || Date.now()) - vivo.ultimaLlegada) / 1000;
+}
+
+/* Pone la marca de frescura sobre el tablero y escribe el aviso.
+
+   LA MARCA VA EN EL CUERPO DE CADA INSTRUMENTO Y NO EN EL TABLERO ENTERO. Con
+   `opacity` sobre el contenedor se atenuaria tambien el aviso que explica por
+   que esta atenuado, que es la unica cosa de la pantalla que en ese momento
+   tiene que leerse bien. */
+function marcarFrescuraDelFlujo() {
+  const f = comoSeVeElFlujo(edadDelFlujo());
+  const cabina = document.querySelector(".cabina");
+  if (cabina) {
+    if (f.estado) cabina.dataset.frescuraFlujo = f.estado;
+    else delete cabina.dataset.frescuraFlujo;
+  }
+  const aviso = document.getElementById("aviso-flujo");
+  if (aviso) {
+    aviso.textContent = f.texto;
+    aviso.dataset.frescura = f.estado || "";
+    aviso.hidden = !f.texto;
+  }
+}
+
 /* UN HUECO NO SE CRUZA CON UNA RECTA.
    Esta funcion unia cada muestra con la siguiente sin mirar cuanto las
    separaba. Con el flujo en vivo caido treinta segundos, eso dibuja una recta
@@ -8710,6 +8793,7 @@ function pedirProcedenciaViva(sesion, intentos) {
 function vaciarVivo(sesion) {
   vivo.sesion = sesion || null;
   vivo.ultimos.clear(); vivo.series.clear(); vivo.distancia.clear(); vivo.vuelta.clear();
+  vivo.ultimaLlegada = null;
   vivo.reloj.clear(); vivo.vistos.clear(); vivo.ordenVistos.length = 0;
   vivo.anotaciones.clear();
   /* El recorrido es de la sesion que se deja: reusarlo dibujaria el circuito
@@ -9191,6 +9275,11 @@ function incorporarTelemetriaViva(m, recuperando) {
   }
 
   estadoSesion = "vivo";
+  /* CUANDO LLEGO LA ULTIMA. Sin esto el tablero sabe que hace rato que no
+     recibe ---el temporizador de abajo lo usa para cambiar de estado--- y no
+     sabe **cuanto**, que es justamente lo que hay que poder decir al lado de un
+     valor congelado. */
+  vivo.ultimaLlegada = Date.now();
   if (vivo.silencio) clearTimeout(vivo.silencio);
   vivo.silencio = setTimeout(() => {
     if (estadoSesion === "vivo") {
@@ -9199,7 +9288,7 @@ function incorporarTelemetriaViva(m, recuperando) {
         ? "escuchando" : (estado.abierta ? "cargado" : "vacio");
       render();
     }
-  }, 10000);
+  }, SILENCIO_QUE_APAGA_MS);
   /* Una muestra cambia valores y trazas, nunca la estructura. La unica
      excepcion es un vehiculo que aparece por primera vez, y eso se pide donde
      ocurre, no en cada mensaje. */
@@ -14478,6 +14567,11 @@ function arrancar() {
      segundos, un punado de veces: no es un sondeo permanente, es esperar a que
      un calculo que ya arranco termine. */
   cuandoHayaGrafico(() => pedirMatriz(0));
+  /* LA EDAD SE MIDE SOLA Y NO CON CADA MUESTRA. Atarla a la llegada de datos
+     tiene el defecto obvio: **cuando no llegan datos, no corre**, que es
+     exactamente el caso que hay que detectar. Un segundo alcanza porque lo que
+     se informa son segundos. */
+  setInterval(marcarFrescuraDelFlujo, 1000);
   vigilarEnVivo();
   conectarFlujoEnVivo();
 }

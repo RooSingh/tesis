@@ -265,6 +265,27 @@
      posicion estimada: una sola convencion para «esto no describe el ahora con
      la misma autoridad», en vez de una por panel. */
   [data-frescura="aged"] { opacity: .62; }
+
+  /* ---------- el flujo cortado ----------
+     Los valores que quedaron en pantalla son ciertos: son los ultimos que
+     llegaron. Lo que deja de ser cierto es que describan el ahora, y el tablero
+     no tenia forma de decirlo. Fotografiado el 2026-09-12 sobre un corte real:
+     11.819 rpm y 295 km/h congelados, con «sin telemetria todavia» debajo.
+
+     LA ATENUACION VA EN EL CUERPO DE CADA INSTRUMENTO Y NO EN LA CABINA
+     ENTERA: con `opacity` sobre el contenedor se atenuaria tambien el aviso
+     que explica por que esta atenuado. Los encabezados quedan legibles, que es
+     lo que permite seguir sabiendo que panel es cual. */
+  .cabina[data-frescura-flujo] .cuerpo-instrumento { opacity: .62; }
+  .cabina[data-frescura-flujo="held"] .cuerpo-instrumento { opacity: .82; }
+  .aviso-flujo {
+    margin: 0 0 9px; padding: 7px 14px; border-radius: 10px;
+    border: 1px solid var(--alerta); background: var(--superficie);
+    color: var(--texto); font-size: .82rem; font-weight: 600;
+  }
+  /* Sostenido todavia: se avisa sin gritar. Apagado: se grita. */
+  .aviso-flujo[data-frescura="held"] { border-color: var(--linea-fuerte);
+    color: var(--texto-medio); font-weight: 500; }
   /* El sostenido lleva su punto desde la hoja y no desde el texto: asi esta
      tambien cuando la edad no se sabe, que es cuando mas falta hace distinguirlo
      de un valor de ahora. */

@@ -68,6 +68,12 @@
   <!-- El estado de la conexion con la API. Es lo primero que hay que saber:
        si el tablero no puede hablar con el backend, todo lo demas es ruido. -->
   <p class="estado-api" id="estado-api" role="status" aria-live="polite" hidden></p>
+  <!-- CUANDO EL FLUJO SE CORTA, LOS VALORES SIGUEN AHI Y HAY QUE DECIRLO.
+       Tiene sitio propio y no comparte el renglon de estado porque ese lo
+       reescribe `pintarCiclo` en cada pintada, y este aviso tiene que
+       sobrevivir a eso. `role="status"` con `aria-live` para que tambien lo
+       anuncie un lector de pantalla: un valor congelado no se oye. -->
+  <p class="aviso-flujo" id="aviso-flujo" role="status" aria-live="polite" hidden></p>
 
   <div class="barra">
     <div class="marca">

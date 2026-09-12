@@ -168,6 +168,7 @@ const NOMBRES = [
   "divisorDeUnidad", "unidadDeclaradaDe", "divisorDePresentacion",
   "estaEnLaUnidadQueSeMuestra", "serieCrudaDeCanal", "_armarSerieDeCanal",
   "_enUnidad", "trazarSerie", "_cruzaUnHueco", "huecosDeLaSerie", "huecoDeLaSerie",
+  "comoSeVeElFlujo",
   "tiempoDeVuelta", "diferenciaEnSegundos",
   "reservaDeArriba", "encuadrarTrazado",
   "metroDeCurva", "zonasDeCurva", "bandasDeVuelta", "bandasParaElTramo",
@@ -213,7 +214,8 @@ const NOMBRES = [
 ];
 
 const CONSTANTES = ["SENAL_DE", "SENAL_CAN", "SENAL_OPENF1",
-                    "VECES_EL_PASO_HABITUAL",
+                    "VECES_EL_PASO_HABITUAL", "SILENCIO_QUE_APAGA_MS",
+                    "HUECO_DE_CAPTURA_MS",
                     "UNIDAD_QUE_MUESTRA_EL_TABLERO",
                     "DIVISOR_ENTRE_UNIDADES", "SIN_VEHICULO",
                     "UNIDAD_POR_FUENTE",
@@ -282,7 +284,7 @@ const {
   unidadDeCanal, sinCambiosEnElTramo,
   divisorDeUnidad, unidadDeclaradaDe, divisorDePresentacion,
   estaEnLaUnidadQueSeMuestra, serieCrudaDeCanal, trazarSerie, _cruzaUnHueco, huecosDeLaSerie,
-  huecoDeLaSerie, _enUnidad,
+  huecoDeLaSerie, comoSeVeElFlujo, _enUnidad,
   serieDeCanal, serieAcumuladaDeCanal,
   tiempoDeVuelta, diferenciaEnSegundos, esCanalEscalonado, serieTemporal,
   valorEscalonadoEn, valorContinuoEn, calcularInstante,
@@ -1328,6 +1330,42 @@ prueba("una continua se une con una recta", () => {
   trazarSerie(ctx, [[100, 200], [200, 250]], x => x, y => y, false);
   assert.deepStrictEqual(ctx.ordenes,
     [["moveTo", 100, 200], ["lineTo", 200, 250]]);
+});
+
+prueba("con el flujo caido los valores dicen que son viejos", () => {
+  /* EL CASO REAL, FOTOGRAFIADO EL 2026-09-12. Se corto la corriente de la Pi
+     en plena sesion. La maquina volvio sola en 58 s, pero el capturador esta
+     `disabled` a proposito y no rearranca, de modo que el tablero quedo sin
+     flujo. La pantalla mostraba **a la vez** 11.819 rpm, 295 km/h y marcha 7
+     ---congelados desde antes del corte--- y abajo «sin telemetria todavia».
+     Las dos cosas no pueden ser ciertas.
+
+     Nada en los paneles decia que esos valores eran viejos. */
+  assert.strictEqual(comoSeVeElFlujo(0.4).estado, "");
+  assert.strictEqual(comoSeVeElFlujo(4).estado, "held");
+  assert.strictEqual(comoSeVeElFlujo(30).estado, "aged");
+});
+
+prueba("el vocabulario de frescura es el que ya existia", () => {
+  /* La hoja ya define `aged` al 62 % con un comentario que dice que es **una
+     sola convencion** para «esto no describe el ahora con la misma autoridad»,
+     en vez de una por panel. Inventar otra palabra seria la segunda. */
+  assert.ok(["", "held", "aged"].indexOf(comoSeVeElFlujo(4).estado) !== -1);
+  assert.ok(["", "held", "aged"].indexOf(comoSeVeElFlujo(99).estado) !== -1);
+});
+
+prueba("el aviso dice cuanto hace, no solo que pasa algo", () => {
+  /* «Sin telemetria» no le sirve a nadie parado frente a una pantalla que
+     marca 295 km/h: lo que decide es **hace cuanto**. */
+  assert.ok(/4 s/.test(comoSeVeElFlujo(4.2).texto), comoSeVeElFlujo(4.2).texto);
+  assert.ok(/2 min/.test(comoSeVeElFlujo(125).texto), comoSeVeElFlujo(125).texto);
+});
+
+prueba("sin saber la edad no se afirma que el dato es fresco", () => {
+  /* `null` es «no se sabe», y no se puede tratar como cero: eso convertiria
+     una ignorancia en una afirmacion. */
+  assert.strictEqual(comoSeVeElFlujo(null).estado, "");
+  assert.strictEqual(comoSeVeElFlujo(null).texto, "");
 });
 
 prueba("un hueco de captura corta la linea en vez de cruzarlo", () => {
