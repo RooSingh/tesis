@@ -946,6 +946,84 @@ class SinNumeroDeVueltaElRelojLaDiceTests(unittest.TestCase):
                          "se consulto el contexto sin saber de quien")
 
 
+class LoQueElTrazadoNecesitaParaNoInventarUnTramo(unittest.TestCase):
+    """Por que la respuesta del trazado lleva el tiempo y la velocidad.
+
+    EL DEFECTO. El simulador teletransporta el coche ---al empezar una vuelta
+    lanzada, con un `flashback`, al reiniciar en boxes--- y los puntos del
+    trazado se dibujan como una sola polilinea. Medido el 2026-09-12 sobre
+    `f1_25:session:16227589096132074312`: entre dos puntos consecutivos de la
+    respuesta hay **476 m**, con una mediana de 12 m y un segundo mayor de 39 m.
+    Esa recta cruza el circuito y nadie la recorrio. Y en la reproduccion el
+    coche se ubica **sobre el camino dibujado**, de modo que la recorre toda.
+
+    POR QUE LA REGLA NO SE ESCRIBE ACA. Ya existe y esta probada en el tablero
+    ---`pudoRecorrer`, ver `tests/js/un_salto_no_es_un_tramo.js`---: un
+    vehiculo no pudo moverse mas de lo que su velocidad declarada permite en el
+    tiempo transcurrido. Escribirla de nuevo en Python daria **dos
+    implementaciones de una misma fisica**, que es el defecto que este tablero
+    ya tuvo con `estado.clima`, con el pie de avisos, con el constructor del
+    trazado y con la ficha del circuito.
+
+    Asi que el punto de acceso no decide: **entrega lo que hace falta para
+    decidir**. Y tiene que entregarlo por punto devuelto y no por muestra,
+    porque la respuesta viene reducida ---2.478 muestras en 497 puntos--- y
+    entre dos puntos vecinos de la respuesta el coche recorrio mucho mas que
+    entre dos muestras.
+    """
+
+    @staticmethod
+    def _filas(velocidades, dt=1.0):
+        from datetime import datetime, timedelta, timezone
+        t0 = datetime(2025, 7, 6, 14, 0, tzinfo=timezone.utc)
+        return [(float(i), float(i), None, float(i) * 10, 1,
+                 t0 + timedelta(seconds=i * dt), None, v)
+                for i, v in enumerate(velocidades)]
+
+    def test_el_primer_punto_no_tiene_tramo_anterior(self) -> None:
+        pasos = api_sesion._pasos_del_trazado(self._filas([100.0, 200.0]))
+        self.assertIsNone(pasos["dt_s"][0])
+        self.assertEqual(pasos["velocidad_kmh"][0], 100.0)
+
+    def test_el_tiempo_es_entre_puntos_devueltos_y_no_entre_muestras(self) -> None:
+        """Con la respuesta reducida, dos puntos vecinos estan a varios
+        segundos. Usar el periodo de muestreo daria una cota diez veces mas
+        chica y todo tramo pareceria un salto."""
+
+        pasos = api_sesion._pasos_del_trazado(self._filas([300.0] * 4, dt=0.5))
+        self.assertEqual(pasos["dt_s"][1:], [0.5, 0.5, 0.5])
+
+    def test_cada_punto_lleva_su_velocidad(self) -> None:
+        pasos = api_sesion._pasos_del_trazado(self._filas([0.0, 332.0, 330.0]))
+        self.assertEqual(pasos["velocidad_kmh"], [0.0, 332.0, 330.0])
+
+    def test_una_velocidad_ausente_se_dice_y_no_se_rellena(self) -> None:
+        """Sin velocidad no se puede acotar nada, y poner cero convertiria cada
+        tramo en un salto. Va `null` y quien dibuje decide ---el tablero, ante
+        la duda, dibuja."""
+
+        pasos = api_sesion._pasos_del_trazado(self._filas([100.0, None, 200.0]))
+        self.assertEqual(pasos["velocidad_kmh"], [100.0, None, 200.0])
+
+    def test_sin_instante_no_se_inventa_un_tramo(self) -> None:
+        filas = [(0.0, 0.0, None, 0.0, 1, None, None, 100.0),
+                 (1.0, 1.0, None, 10.0, 1, None, None, 100.0)]
+        self.assertEqual(api_sesion._pasos_del_trazado(filas)["dt_s"], [None, None])
+
+    def test_el_largo_coincide_con_los_puntos(self) -> None:
+        """Dos arreglos paralelos que no midan lo mismo desalinean todo el
+        dibujo, y en silencio."""
+
+        filas = self._filas([1.0] * 7)
+        pasos = api_sesion._pasos_del_trazado(filas)
+        self.assertEqual(len(pasos["dt_s"]), len(filas))
+        self.assertEqual(len(pasos["velocidad_kmh"]), len(filas))
+
+    def test_sin_filas_no_revienta(self) -> None:
+        self.assertEqual(api_sesion._pasos_del_trazado([]),
+                         {"dt_s": [], "velocidad_kmh": []})
+
+
 class LosSectoresDelTrazadoTests(unittest.TestCase):
     """Donde empieza cada sector, y de donde sale ese limite.
 

@@ -796,6 +796,49 @@ def posiciones_en_pista(
 # 1 y 4. Series contra distancia, para uno o varios vehiculos
 # --------------------------------------------------------------------------
 
+def _pasos_del_trazado(recorte: list) -> dict:
+    """Lo que hace falta para saber si el vehiculo pudo recorrer cada tramo.
+
+    EL PROBLEMA. El simulador teletransporta el coche ---al empezar una vuelta
+    lanzada, con un `flashback`, al reiniciar en boxes--- y los puntos se
+    dibujan como una sola polilinea, de modo que aparece una recta cruzando el
+    circuito que nadie recorrio. Medido el 2026-09-12 sobre
+    `f1_25:session:16227589096132074312`: **476 m entre dos puntos vecinos**,
+    contra una mediana de 12 m y un segundo mayor de 39 m.
+
+    ESTA FUNCION NO DECIDE, Y ES DELIBERADO. La regla ---un vehiculo no pudo
+    moverse mas de lo que su velocidad declarada permite en el tiempo
+    transcurrido--- ya existe y esta probada en el tablero, en `pudoRecorrer`.
+    Escribirla otra vez aca daria **dos implementaciones de una misma fisica**,
+    que es exactamente el defecto que este sistema ya tuvo cuatro veces: dos
+    escritores para `estado.clima`, para el pie de avisos, para el constructor
+    del trazado y para la ficha del circuito. Asi que el punto de acceso
+    entrega el dato y el dibujo decide.
+
+    POR PUNTO DEVUELTO Y NO POR MUESTRA. La respuesta viene reducida ---2.478
+    muestras en 497 puntos--- y entre dos puntos vecinos de la respuesta el
+    coche recorrio mucho mas que entre dos muestras. Usar el periodo de
+    muestreo daria una cota diez veces mas chica y **todo tramo pareceria un
+    salto**.
+
+    Lo que falta se dice con `None` y no se rellena: sin velocidad no se puede
+    acotar nada, y poner cero convertiria cada tramo en un salto.
+    """
+
+    dt: list[float | None] = []
+    velocidad: list[float | None] = []
+    anterior = None
+    for fila in recorte:
+        instante = fila[5] if len(fila) > 5 else None
+        velocidad.append(fila[7] if len(fila) > 7 else None)
+        if instante is None or anterior is None:
+            dt.append(None)
+        else:
+            dt.append(round((instante - anterior).total_seconds(), 4))
+        anterior = instante
+    return {"dt_s": dt, "velocidad_kmh": velocidad}
+
+
 def _reducir(filas: list, puntos: int,
              plegables: tuple[int, int] | None = None) -> tuple[list, bool]:
     """Deja como mucho `puntos` filas, conservando los dos extremos.
@@ -2516,6 +2559,10 @@ def trazado(session_id: str, vuelta: int | None = None,
     interes = [eje_x, eje_z]
     if senal_distancia:
         interes.append(senal_distancia)
+    # LA VELOCIDAD SE PIDE PARA TODAS LAS FUENTES QUE LA TENGAN. No se dibuja:
+    # junto con el tiempo entre puntos es lo que permite saber si el vehiculo
+    # pudo recorrer un tramo o si salto. Ver `_pasos_del_trazado`.
+    interes.append("speed")
     if fuente == "f1_25_udp_simulation":
         # `sector_index` viaja en cada muestra del paquete de vuelta y es lo que
         # hace que los sectores sean medicion y no anotacion.
@@ -2562,13 +2609,18 @@ def trazado(session_id: str, vuelta: int | None = None,
                        max(value_numeric) FILTER (WHERE signal_name = 'world_position_y') AS y,
                        max(value_numeric) FILTER (WHERE signal_name = 'lap_distance') AS distancia,
                        max(value_numeric) FILTER (WHERE signal_name = 'lap_number') AS vuelta,
-                       max(value_numeric) FILTER (WHERE signal_name = 'sector_index') AS sector
+                       max(value_numeric) FILTER (WHERE signal_name = 'sector_index') AS sector,
+                       -- LA VELOCIDAD NO SE DIBUJA: ACOTA. Con ella y con el
+                       -- tiempo entre puntos, quien dibuje puede saber si el
+                       -- vehiculo **pudo** recorrer el tramo o si salto. Ver
+                       -- `_pasos_del_trazado`.
+                       max(value_numeric) FILTER (WHERE signal_name = 'speed') AS velocidad
                   FROM telemetry_messages
                  WHERE source_type = %s AND session_id = %s AND signal_name = ANY(%s)
                    AND (%s::timestamptz IS NULL OR timestamp BETWEEN %s AND %s)""" +
             _cv + _tramo + """
                  GROUP BY timestamp)
-            SELECT x, z, y, distancia, vuelta, timestamp, sector FROM p
+            SELECT x, z, y, distancia, vuelta, timestamp, sector, velocidad FROM p
              WHERE x IS NOT NULL AND z IS NOT NULL
              ORDER BY vuelta NULLS LAST, distancia NULLS LAST, timestamp
         """, tuple([eje_x, eje_z, fuente, session_id, interes,
@@ -2642,6 +2694,16 @@ def trazado(session_id: str, vuelta: int | None = None,
         "desnivel_m": round(max(alturas) - min(alturas), 1) if alturas else None,
         "largo_m": round(max(distancias), 1) if distancias else None,
         "muestras_originales": len(filas),
+        # QUE HACE FALTA PARA NO DIBUJAR UN TRAMO QUE NADIE RECORRIO.
+        # Dos arreglos alineados con `puntos`. No deciden nada: la regla vive en
+        # un solo lugar, en el dibujo. Ver `_pasos_del_trazado`.
+        **_pasos_del_trazado(recorte),
+        "por_que_el_tiempo_y_la_velocidad": (
+            "el vehiculo puede teletransportarse ---vuelta lanzada, flashback, "
+            "reinicio en boxes--- y entonces dos puntos vecinos no describen un "
+            "tramo recorrido. Con el tiempo transcurrido y la velocidad "
+            "declarada, quien dibuje puede saber cual es cual sin que este "
+            "punto de acceso lo decida por el."),
         # CUANTO LE FALTA AL LAZO PARA CERRAR, DICHO EN LA RESPUESTA.
         #
         # Es la medida de si esta vuelta describe el circuito. Una cuerda

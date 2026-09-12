@@ -3609,6 +3609,40 @@ function pudoRecorrer(saltoM, dtS, kmhAntes, kmhDespues) {
   return saltoM <= (kmh / 3.6) * dtS * MARGEN_DE_MOVIMIENTO + PISO_DE_MOVIMIENTO_M;
 }
 
+/* MARCA LOS PUNTOS DE UNA SESION GUARDADA DONDE EL CAMINO SE CORTA.
+
+   POR QUE HIZO FALTA UNA SEGUNDA VEZ. El primer arreglo cubrio el camino **en
+   vivo**, donde el tablero acumula las posiciones a medida que llegan. Una
+   sesion guardada dibuja lo que devuelve `/trazado`, y ahi el salto seguia
+   entero: medido el 2026-09-12 sobre `f1_25:session:16227589096132074312`,
+   **476 m entre dos puntos vecinos**, con una mediana de 12 m. Se veia como una
+   recta cruzando el circuito, y como la reproduccion ubica al coche **sobre el
+   camino dibujado**, el coche la recorria toda al cerrar la vuelta.
+
+   LA REGLA ES LA MISMA Y VIVE EN UN SOLO SITIO. El punto de acceso no decide:
+   entrega `dt_s` y `velocidad_kmh` por punto, y `pudoRecorrer` ---la misma
+   funcion que usa el camino vivo--- resuelve. Escribir la fisica de nuevo en
+   Python habria dado dos implementaciones de una sola cosa, que es el defecto
+   que este sistema ya tuvo cuatro veces.
+
+   NO SE ESCRIBE SOBRE LO QUE LLEGO. Los puntos son el dato medido y se copian
+   antes de marcarlos; y si los arreglos no vienen alineados no se marca nada,
+   porque marcar por indice desplazado cortaria el circuito en un sitio donde el
+   coche si paso ---un defecto peor que el que se arregla. */
+function marcarSaltos(puntos, dtS, velocidadKmh) {
+  if (!Array.isArray(puntos) || !puntos.length) return puntos || [];
+  if (!Array.isArray(dtS) || !Array.isArray(velocidadKmh) ||
+      dtS.length !== puntos.length || velocidadKmh.length !== puntos.length) {
+    return puntos;
+  }
+  return puntos.map((p, i) => {
+    if (i === 0) return p;
+    const salto = Math.hypot(p[0] - puntos[i - 1][0], p[1] - puntos[i - 1][1]);
+    return pudoRecorrer(salto, dtS[i], velocidadKmh[i - 1], velocidadKmh[i])
+      ? p : [p[0], p[1], true];
+  });
+}
+
 function trazadoAPath(puntos, invertirY, cerrar) {
   if (!puntos || puntos.length < 3) return { path: "", proyectar: null };
 
@@ -10945,7 +10979,11 @@ function moverCochesDelTrazadoGrande() {
 function armarPista(t, curvas) {
   const invertir = /invertir/i.test(t.para_dibujarlo || "") &&
                    !/no invertir/i.test(t.para_dibujarlo || "");
-  const armado = trazadoAPath(t.puntos, invertir);
+  /* Los tramos que el vehiculo no pudo haber recorrido se marcan antes de
+     armar el camino: la posicion se midio y se conserva, lo que se deja de
+     afirmar es el trazo entre ella y la anterior. Ver `marcarSaltos`. */
+  const puntos = marcarSaltos(t.puntos, t.dt_s, t.velocidad_kmh);
+  const armado = trazadoAPath(puntos, invertir);
   return {
     path: armado.path,
     largo_m: t.largo_m,
@@ -10966,8 +11004,10 @@ function armarPista(t, curvas) {
     sectoresOrigen: t.sectores_origen || "",
     /* Los puntos crudos, para poder orientar la marca de sector: una raya que
        marca un limite tiene que cruzar la pista, y para eso hace falta saber
-       hacia donde va la pista en ese punto. */
-    puntos: t.puntos || [],
+       hacia donde va la pista en ese punto. Van los **marcados**, que son los
+       mismos con la marca de corte: los sectores se ubican por indice y dos
+       arreglos distintos se desalinearian. */
+    puntos: puntos || [],
     invertirY: invertir,
   };
 }

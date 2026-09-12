@@ -158,4 +158,71 @@ prueba("el punto del corte no se borra del dibujo", () => {
     "el corte movio o perdio coordenadas; solo debe cambiar M por L");
 });
 
+/* -------- el mismo salto, pero en una sesion guardada -------- */
+
+const marcarSaltos = new Function(`
+  ${constante("MARGEN_DE_MOVIMIENTO")}
+  ${constante("PISO_DE_MOVIMIENTO_M")}
+  ${extraer("pudoRecorrer")}
+  ${extraer("marcarSaltos")}
+  return marcarSaltos;
+`)();
+
+prueba("EL CASO QUE FALTABA: la sesion guardada traia el salto igual", () => {
+  /* El primer arreglo cubrio solo el camino **en vivo**, donde el tablero
+     acumula las posiciones. Una sesion guardada dibuja lo que devuelve
+     `/trazado`, y ahi el salto seguia. Medido el 2026-09-12 sobre
+     `f1_25:session:16227589096132074312`: **476 m entre los puntos 11 y 12**,
+     con una mediana de 12 m. Se reproduce la forma de esa respuesta. */
+  const puntos = [[0, 0], [12, 0], [24, 0], [500, 0], [512, 0]];
+  const dt = [null, 0.5, 0.5, 0.5, 0.5];
+  const kmh = [300, 300, 0, 332, 330];
+  const marcados = marcarSaltos(puntos, dt, kmh);
+  assert.strictEqual(marcados[3][2], true,
+    "el salto de 476 m no quedo marcado");
+  assert.ok(!marcados[1][2] && !marcados[2][2] && !marcados[4][2],
+    "se marco un tramo que si se recorrio");
+});
+
+prueba("sin los datos del paso no se marca nada", () => {
+  /* Una fuente que no publique velocidad, o una respuesta vieja sin estos
+     campos, tiene que seguir dibujando su trazado entero. */
+  const puntos = [[0, 0], [500, 0]];
+  assert.ok(!marcarSaltos(puntos, null, null)[1][2]);
+  assert.ok(!marcarSaltos(puntos, [null, null], [null, null])[1][2]);
+});
+
+prueba("los arreglos desalineados no corrompen el dibujo", () => {
+  /* Si llegaran con largos distintos, marcar por indice desplazaria el corte a
+     otro tramo: un defecto peor que el que se esta arreglando, porque partiria
+     el circuito en un sitio donde el coche si paso.
+
+     EL CASO TIENE QUE LLEGAR A MARCAR. La primera version usaba arreglos
+     cortos, y ahi el indice sobrante da `undefined`, `pudoRecorrer` no puede
+     decidir y no marca igual: la guarda se podia borrar sin que ninguna prueba
+     se quejara. Aca el desalineado **si** produciria un corte. */
+  const puntos = [[0, 0], [500, 0], [512, 0]];
+  const salida = marcarSaltos(puntos, [null, 0.1, 0.1, 0.1], [0, 0, 0]);
+  assert.deepStrictEqual(salida.map(p => !!p[2]), [false, false, false],
+    "se marco con los arreglos desalineados");
+});
+
+prueba("el constructor del trazado guardado la usa", () => {
+  /* Se comprueba sobre el `app.js` publicado. La funcion podia existir, estar
+     probada y no llamarla nadie: quitarla de `armarPista` no mataba ninguna
+     prueba, que es como quedan los arreglos a medias. */
+  const i = fuenteApp.indexOf("function armarPista(");
+  assert.notStrictEqual(i, -1, "no esta armarPista");
+  const cuerpo = fuenteApp.slice(i, i + 800);
+  assert.ok(/marcarSaltos\(/.test(cuerpo),
+    "armarPista no marca los saltos: la sesion guardada vuelve a dibujarlos");
+});
+
+prueba("no se modifica el arreglo que llego", () => {
+  const puntos = [[0, 0], [500, 0]];
+  marcarSaltos(puntos, [null, 0.1], [0, 0]);
+  assert.strictEqual(puntos[1].length, 2,
+    "se escribio sobre los puntos originales, que son el dato medido");
+});
+
 console.log("ok " + hechas + " pruebas de saltos y cortes");
