@@ -446,17 +446,70 @@
      las leeria como piezas separadas. Lo unico propio es el selector de
      circuito y que la columna del motivo respire, porque son frases y no
      celdas de si o no. */
-  .mando-entre-fuentes { display: flex; flex-direction: row; align-items: center;
-    gap: 10px; margin: 0 0 10px; flex-wrap: wrap; }
-  .mando-entre-fuentes label { font-family: var(--titulo); font-size: .72rem;
-    letter-spacing: .09em; text-transform: uppercase; color: var(--texto-tenue); }
-  .mando-entre-fuentes select { font: inherit; font-size: .82rem;
-    color: var(--texto); background: var(--superficie-2); padding: 5px 9px;
-    border: 1px solid var(--linea); border-radius: 6px; }
   table.disponibilidad.entre-fuentes td.nota { font-weight: 400;
     color: var(--texto-tenue); font-size: .76rem; line-height: 1.35; }
   table.disponibilidad.entre-fuentes td:first-child { white-space: nowrap; }
-  #limites-entre-fuentes { margin: 10px 0 0; line-height: 1.5; }
+  /* ============================================================
+     LA PAGINA DE CONTRASTE ENTRE FUENTES
+     ------------------------------------------------------------
+     Vive en esta hoja y no en una propia a proposito: es el mismo trabajo
+     visto de otro lado y comparte los colores, la tipografia y la tabla. Una
+     segunda hoja obligaria a mantener dos paletas que tienen que coincidir.
+     ============================================================ */
+  .pagina-comparar { padding: 0; }
+  .cabecera-comparar { max-width: 1280px; margin: 0 auto;
+    padding: 28px 24px 8px; }
+  .cabecera-comparar h1 { margin: 6px 0 8px; font-family: var(--titulo);
+    font-size: 1.6rem; letter-spacing: -.01em; }
+  .cabecera-comparar .bajada { margin: 0; max-width: 62ch; line-height: 1.55;
+    color: var(--texto-medio); }
+  .cabecera-comparar a { color: var(--texto-tenue); text-decoration: none; }
+  .cabecera-comparar a:hover { color: var(--texto); }
+  .cuerpo-comparar { max-width: 1280px; margin: 0 auto; padding: 8px 24px 48px; }
+
+  /* Los mandos en fila, y que bajen a columna cuando no entran. El circuito
+     manda sobre los otros dos y por eso va primero y separado. */
+  .mandos-comparar { display: flex; flex-direction: row; flex-wrap: wrap;
+    gap: 14px; align-items: flex-start; margin: 18px 0 14px; }
+  .mandos-comparar .mando { display: flex; flex-direction: column; gap: 4px; }
+  .mandos-comparar label, .mandos-comparar .eyebrow { font-family: var(--titulo);
+    font-size: .7rem; letter-spacing: .09em; text-transform: uppercase;
+    color: var(--texto-tenue); margin: 0; }
+  .mandos-comparar select { font: inherit; font-size: .82rem; color: var(--texto);
+    background: var(--superficie-2); padding: 6px 9px; border-radius: 6px;
+    border: 1px solid var(--linea); max-width: 22rem; }
+  .lado-comparar { display: flex; flex-direction: column; gap: 8px;
+    padding: 10px 14px; border: 1px solid var(--linea); border-radius: 10px;
+    background: var(--superficie); }
+
+  /* Quien contra quien. Es lo primero que hay que poder leer y por eso es lo
+     mas grande de la pagina despues del titulo. */
+  .quien-contra-quien { display: flex; flex-direction: row; flex-wrap: wrap;
+    align-items: baseline; gap: 10px; margin: 20px 0 10px; }
+  .quien-contra-quien .lado-nombre { font-family: var(--titulo); font-size: 1.05rem;
+    font-weight: 600; color: var(--texto); }
+  .quien-contra-quien .contra, .quien-contra-quien .en-circuito {
+    font-size: .8rem; color: var(--texto-tenue); }
+
+  .estado-comparar { margin: 10px 0; }
+
+  /* Las salvedades en tarjetas y no en un parrafo corrido: son cuatro cosas
+     distintas y en un parrafo la cuarta no se lee. */
+  .limites-comparar { display: grid; gap: 12px; margin: 18px 0 0;
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); }
+  .limites-comparar .salvedad { padding: 12px 14px; border-radius: 10px;
+    border: 1px solid var(--linea); background: var(--superficie); }
+  .limites-comparar .salvedad p { margin: 0; line-height: 1.5;
+    color: var(--texto-medio); font-size: .82rem; }
+  .limites-comparar .salvedad .eyebrow { margin: 0 0 4px; font-size: .68rem;
+    letter-spacing: .09em; text-transform: uppercase; color: var(--texto-tenue); }
+
+  @media (max-width: 700px) {
+    .cabecera-comparar, .cuerpo-comparar { padding-left: 16px; padding-right: 16px; }
+    .mandos-comparar { flex-direction: column; }
+    .mandos-comparar select { max-width: 100%; width: 100%; }
+    .lado-comparar { width: 100%; }
+  }
 
   .nota { margin: 10px 0 0; color: var(--texto-medio); font-size: .82rem; max-width: 82ch; }
   .nota code { font-family: var(--cifra); font-size: .76rem; color: var(--acento); }

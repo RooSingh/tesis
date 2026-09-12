@@ -744,40 +744,18 @@
             <tbody><tr><td colspan="5" class="nota" id="estado-matriz">Midiendo sobre la base…</td></tr></tbody>
           </table>
         </div>
-        <!-- ============================================================
-             QUE DICE CADA FUENTE DEL MISMO CIRCUITO
-             ------------------------------------------------------------
-             Las dos tablas de arriba dicen que publica cada fuente. Esto dice
-             **en que se parecen y en que no cuando midieron el mismo trazado**,
-             que es la unica manera de contrastar un simulador contra lo que se
-             mide en pista.
+        <!-- El contraste entre fuentes vive en su propia pagina. Aca queda el
+             enlace y no la tabla: necesita elegir circuito y piloto de los dos
+             lados, y tres menus desplegables no van en la pantalla donde
+             alguien esta siguiendo una vuelta. El hecho no se pierde ---esta a
+             un clic y dicho con todas las letras--- y la pagina puede dedicarle
+             el ancho que la tabla necesita. -->
+        <p class="nota"><strong>Simulador contra pista:</strong> cuando dos fuentes midieron
+        el mismo circuito se las puede enfrentar magnitud por magnitud —qué velocidad alcanzó
+        cada una, a qué régimen, cuánto tiempo con el freno puesto y a qué frecuencia lo
+        entregó—. Está en <a href="comparar.html">su propia página</a>, con elección de
+        circuito y de piloto de los dos lados.</p>
 
-             EL SELECTOR NO ES UNA COMODIDAD. Que exista un circuito con datos
-             de dos fuentes es una pregunta de medicion, y la respuesta puede
-             ser ninguno: se pregunta primero y, cuando no hay, se dice por que
-             en lugar de ofrecer una comparacion vacia.
-
-             LO QUE NO SE PUEDE HACER, Y SE DECLARA: no se alinean las dos sobre
-             el circuito. La fuente deportiva no publica distancia de vuelta y
-             su muestreo deja huecos de hasta ochenta y tres metros, de modo que
-             se comparan los valores alcanzados y la frecuencia, no el punto a
-             punto. Y el mismo circuito no alcanza para que toda cifra sea
-             atribuible a la fuente: dos carreras distintas mueven las medias
-             solas. Cada columna dice cuanto aguanta.
-             ============================================================ -->
-        <div class="envoltura-tabla entre-fuentes" id="entre-fuentes">
-          <h3 class="eyebrow" style="margin:18px 0 2px">Qué dice cada fuente del mismo circuito</h3>
-          <p class="nota" style="margin:0 0 8px" id="pie-entre-fuentes">Buscando circuitos con datos de más de una fuente…</p>
-          <div class="mando-entre-fuentes" id="mando-entre-fuentes" hidden>
-            <label for="circuito-entre-fuentes">Circuito</label>
-            <select id="circuito-entre-fuentes"></select>
-          </div>
-          <table class="disponibilidad entre-fuentes" id="tabla-entre-fuentes" hidden>
-            <thead><tr><th>Magnitud</th><th>Fuente deportiva</th><th>Simulador</th><th>Diferencia</th><th>Qué aguanta la cifra</th></tr></thead>
-            <tbody></tbody>
-          </table>
-          <p class="nota" id="limites-entre-fuentes" hidden></p>
-        </div>
         <!-- ============================================================
              LO QUE LA FUENTE ABIERTA NO SOSTIENE, Y POR ESO NO ESTA EN PANTALLA
              ------------------------------------------------------------
