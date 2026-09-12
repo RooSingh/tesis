@@ -319,6 +319,11 @@ class AyudantesDeSerieTests(unittest.TestCase):
 
         self._correr("de_cuando_es_este_valor.js")
 
+    def test_un_salto_del_vehiculo_no_se_dibuja_como_tramo(self) -> None:
+        """El coche teletransportado unia dos puntos con una recta."""
+
+        self._correr("un_salto_no_es_un_tramo.js")
+
     def test_un_trazado_dibujado_no_se_anuncia_como_ausente(self) -> None:
         """El encabezado decidia por el largo y negaba el dibujo sin el."""
 

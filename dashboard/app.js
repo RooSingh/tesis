@@ -3444,6 +3444,55 @@ globoDeCurvas(document.querySelector("#velo-trazado .panel-comparacion"),
    se esta construyendo: cerrarlo dibujaria una cuerda recta desde el ultimo
    punto medido hasta el primero, y esa linea **no se recorrio**. Es la
    diferencia entre un circuito y un tramo. */
+/* CUANTO MAS DE LO POSIBLE SE TOLERA ANTES DE LLAMARLO SALTO.
+   Medido sobre `f1_25:session:16227589096132074312` el 2026-09-12: el mayor
+   movimiento real de la sesion fue de 10,72 m, y con la velocidad declarada el
+   maximo posible era 10,73 m. El movimiento real **roza su cota**, asi que el
+   margen no esta para acomodar el movimiento: esta para el desfase entre la
+   muestra de posicion y la de velocidad, que no son el mismo paquete. */
+const MARGEN_DE_MOVIMIENTO = 1.5;
+
+/* Y un piso, porque al soltar el freno la velocidad previa es cero y el coche
+   igual se mueve unos centimetros. Sin esto, cada arranque cortaria el
+   trazado. */
+const PISO_DE_MOVIMIENTO_M = 1.0;
+
+/* Si el vehiculo pudo haber recorrido esa distancia en ese tiempo.
+
+   POR QUE EXISTE. En una contrarreloj de Shanghai, al empezar la vuelta lanzada
+   el simulador **teletransporta el coche** a la linea. El recorrido en vivo se
+   acumula como una sola polilinea, asi que el tablero dibujo un segmento recto
+   cruzando el circuito entre el sitio donde estaba y el sitio donde aparecio:
+   afirmaba un camino que nadie recorrio.
+
+   NO ES UNA REGLA DEL MODO. Lo primero que se penso fue «en contrarreloj no
+   dibujes eso». Pero un salto ocurre igual con un `flashback` o con un
+   reinicio en boxes, en cualquier modo, y en contrarreloj el resto del
+   recorrido es tan real como en una carrera. Lo que separa un salto de un
+   movimiento no es el modo: es que **el vehiculo publica su propia velocidad**
+   y con ella declara cuanto pudo haberse movido.
+
+   Medido: el salto fue de 479,3 m en 0,094 s con el coche declarando 0,0 km/h
+   ---maximo posible, 0,00 m---. Los otros 4.590 saltos de la sesion tuvieron
+   mediana 4,96 m y maximo 10,72 m.
+
+   ANTE LA DUDA SE DIBUJA. Sin velocidad declarada o sin tiempo entre muestras
+   no se puede acotar nada, y cortar ante la duda desarmaria el trazado de
+   cualquier fuente que no publique velocidad. No poder decidir no es lo mismo
+   que haber decidido. */
+function pudoRecorrer(saltoM, dtS, kmhAntes, kmhDespues) {
+  if (!(dtS > 0)) return true;
+  const a = (kmhAntes === null || kmhAntes === undefined) ? null : Number(kmhAntes);
+  const b = (kmhDespues === null || kmhDespues === undefined) ? null : Number(kmhDespues);
+  if (a === null && b === null) return true;
+  /* La mayor de las dos, y no la previa. En el salto medido la previa era cero
+     ---el coche estaba detenido--- y tomarla cortaria tambien cada arranque.
+     Con la mayor el salto se rechaza igual, por treinta y cuatro veces. */
+  const kmh = Math.max(a === null ? 0 : a, b === null ? 0 : b);
+  if (!isFinite(kmh)) return true;
+  return saltoM <= (kmh / 3.6) * dtS * MARGEN_DE_MOVIMIENTO + PISO_DE_MOVIMIENTO_M;
+}
+
 function trazadoAPath(puntos, invertirY, cerrar) {
   if (!puntos || puntos.length < 3) return { path: "", proyectar: null };
 
@@ -3484,9 +3533,14 @@ function trazadoAPath(puntos, invertirY, cerrar) {
     return proyectar([dx * cos - dy * sen, dx * sen + dy * cos]);
   };
 
+  /* Un tercer elemento en el punto lo marca como comienzo de figura nueva. El
+     punto **no se borra**: la posicion se midio y sigue siendo cierta. Lo que
+     se deja de afirmar es el camino entre ella y la anterior. Ver
+     `pudoRecorrer`. */
   const d = giro.map((p, i) => {
     const q = proyectar(p);
-    return (i === 0 ? "M" : "L") + q[0].toFixed(1) + " " + q[1].toFixed(1);
+    return (i === 0 || puntos[i][2] ? "M" : "L")
+           + q[0].toFixed(1) + " " + q[1].toFixed(1);
   }).join(" ") + (cerrar === false ? "" : " Z");
   return { path: d, proyectar: proyectar, proyectarMundo: proyectarMundo };
 }
@@ -7736,6 +7790,11 @@ const vivo = {
   //: La ultima coordenada es estado movil, no geometria del circuito. Sigue
   //: cambiando despues de cerrar la primera vuelta aunque `recorrido` se congele.
   posicionMundo: new Map(),
+  /* La marca de tiempo y la velocidad de la posicion anterior, por vehiculo.
+     Hacen falta para decidir si el coche **pudo** haber recorrido lo que hay
+     entre dos posiciones, o si salto. Ver `pudoRecorrer`. */
+  marcaDePosicion: new Map(),
+  velocidadAnterior: new Map(),
   //: Cuantos puntos habia la ultima vez que se rehizo el dibujo. Rehacerlo en
   //: cada punto significa recalcular la orientacion de la nube entera, y el
   //: dibujo salta de sitio a cada paso.
@@ -7869,6 +7928,7 @@ function vaciarVivo(sesion) {
   /* El recorrido es de la sesion que se deja: reusarlo dibujaria el circuito
      anterior debajo del coche de la nueva. */
   vivo.recorrido.clear(); vivo.posicionMundo.clear();
+  vivo.marcaDePosicion.clear(); vivo.velocidadAnterior.clear();
   vivo.recorridoDibujado = 0;
   /* Y lo derivado de las series tambien: las vistas temporales y los relojes de
      vuelta viven en otra cache, con la vuelta y el vehiculo por clave, y esos
@@ -7997,7 +8057,28 @@ function anotarPosicionViva(vehiculo, marca) {
   // Un vehiculo detenido publica la misma posicion muchas veces por segundo.
   if (ultimo && ultimo[0] === x && ultimo[1] === z) return;
   TESTIGO.posicionesDistintas++;
-  puntos.push([x, z]);
+
+  /* SI EL COCHE SALTO, EL TRAMO NO SE DIBUJA ---PERO LA POSICION SI SE GUARDA.
+     El simulador teletransporta el coche al empezar una vuelta lanzada, y
+     tambien con un `flashback` o un reinicio en boxes. Sin esto el recorrido
+     los une con una recta que cruza el circuito. Ver `pudoRecorrer`. */
+  const marcaAnterior = vivo.marcaDePosicion.get(vehiculo);
+  let corte = false;
+  if (ultimo && marcaAnterior !== undefined) {
+    const dt = (marca - marcaAnterior) / 1000;
+    const salto = Math.hypot(x - ultimo[0], z - ultimo[1]);
+    const vel = ultimos.get("speed");
+    const kmh = vel ? numeroMedido(vel.value) : null;
+    corte = !pudoRecorrer(salto, dt, vivo.velocidadAnterior.get(vehiculo), kmh);
+    if (corte) TESTIGO.saltosDeVehiculo = (TESTIGO.saltosDeVehiculo || 0) + 1;
+    vivo.velocidadAnterior.set(vehiculo, kmh);
+  } else {
+    const vel = ultimos.get("speed");
+    vivo.velocidadAnterior.set(vehiculo, vel ? numeroMedido(vel.value) : null);
+  }
+  vivo.marcaDePosicion.set(vehiculo, marca);
+
+  puntos.push(corte ? [x, z, true] : [x, z]);
   if (puntos.length > MAX_PUNTOS_DE_RECORRIDO) puntos.shift();
   /* CUANTAS POSICIONES DISTINTAS ENTRARON, NO CUANTAS QUEDAN.
      El redibujo se decidia por cuanto habia crecido el arreglo. Deja de crecer
@@ -8805,6 +8886,7 @@ function olvidarLoDeLaCorrida() {
           sectores: [], sectoresOrigen: "", puntos: [] };
   CURVAS = [];
   vivo.recorrido.clear();
+  vivo.marcaDePosicion.clear(); vivo.velocidadAnterior.clear();
   vivo.recorridoDibujado = 0;
   AUTOS = [];
   seleccion = new Set();

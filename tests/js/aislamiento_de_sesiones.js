@@ -42,7 +42,10 @@ function extraerFuncion(nombre) {
 }
 
 function extraerConstanteNumerica(nombre) {
-  const re = new RegExp("const\\s+" + nombre + "\\s*=\\s*(\\d+)\\s*;");
+  /* Acepta decimales. Aceptaba solo enteros, y `MARGEN_DE_MOVIMIENTO = 1.5`
+     ---que es una cifra medida y no se puede redondear para que entre--- lo
+     hacia fallar con «no esta la constante», que apunta al sitio equivocado. */
+  const re = new RegExp("const\\s+" + nombre + "\\s*=\\s*(-?\\d+(?:\\.\\d+)?)\\s*;");
   const m = fuenteJs.match(re);
   if (!m) throw new Error("no esta la constante " + nombre);
   return "const " + nombre + " = " + m[1] + ";";
@@ -118,6 +121,11 @@ const PIEZAS = [
   extraerConstanteNumerica("MAX_PUNTOS_DE_RECORRIDO"),
   extraerConstanteNumerica("PUNTOS_ENTRE_REDIBUJOS"),
   extraerFuncion("trazadoAPath"),
+  // El acumulador de posiciones decide si el coche pudo haber recorrido lo que
+  // hay entre dos muestras. Ver `tests/js/un_salto_no_es_un_tramo.js`.
+  extraerConstanteNumerica("MARGEN_DE_MOVIMIENTO"),
+  extraerConstanteNumerica("PISO_DE_MOVIMIENTO_M"),
+  extraerFuncion("pudoRecorrer"),
   extraerFuncion("anotarPosicionViva"),
   extraerFuncion("armarTrazadoVivo"),
   extraerFuncion("congelarTrazadoVivo"),

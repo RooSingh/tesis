@@ -99,7 +99,13 @@ globalThis.TINTAS_DE_AUTO = ["--auto-1", "--auto-2", "--auto-3",
                              "--auto-4", "--auto-5", "--auto-6"];
 globalThis._tintaPorVehiculo = new Map();
 globalThis.vivo = { series: new Map(), ultimos: new Map(), recorrido: new Map(),
-                    distancia: new Map(), vuelta: new Map(), recorridoDibujado: 0 };
+                    distancia: new Map(), vuelta: new Map(),
+                    /* Copia a mano de `const vivo` de `app.js`: se
+                       desincroniza. Ver la nota de
+                       `tests/js/tiempo_de_presentacion.js`. */
+                    marcaDePosicion: new Map(),
+                    velocidadAnterior: new Map(),
+                    recorridoDibujado: 0 };
 globalThis.document = { getElementById: () => null };
 globalThis.seleccion = new Set();
 globalThis.CURVAS = [];
@@ -327,7 +333,13 @@ function reiniciar() {
   globalThis.corrida = { adquisicion: "original", fase: 3, disponibles: null, mezclada: false };
   globalThis.AUTOS = [];
   globalThis.vivo = { series: new Map(), ultimos: new Map(), recorrido: new Map(),
-                      distancia: new Map(), vuelta: new Map(), recorridoDibujado: 0 };
+                      distancia: new Map(), vuelta: new Map(),
+                    /* Copia a mano de `const vivo` de `app.js`: se
+                       desincroniza. Ver la nota de
+                       `tests/js/tiempo_de_presentacion.js`. */
+                    marcaDePosicion: new Map(),
+                    velocidadAnterior: new Map(),
+                    recorridoDibujado: 0 };
   globalThis.estadoSesion = "cargado";
   globalThis._selloSeries++;
   globalThis.cabezal = 0;
