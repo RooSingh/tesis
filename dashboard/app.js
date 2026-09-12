@@ -11119,10 +11119,21 @@ function pintarPuestaAPunto() {
   const sinDecodificar = (d && d.sin_decodificar) || [];
   const nota = document.getElementById("nota-puesta");
   if (nota) {
+    /* SI REGIA EL PARC FERME, PORQUE CAMBIA LO QUE SIGNIFICA QUE NO CAMBIE.
+       Es la regla que impide tocar la puesta a punto entre la clasificación y
+       la carrera: con ella puesta, un reglaje idéntico al de la vuelta anterior
+       **no se podía** cambiar, y sin ella es que no se quiso. El capturador lo
+       guardaba desde siempre y la ficha de sesión lo tiraba.
+
+       No se dice cuando la captura no lo declara: «no regía» y «no se sabe» son
+       cosas distintas y acá la diferencia es el dato entero. */
+    const proc = (estado.abierta && estado.abierta.procedencia) || {};
+    const regla = proc.parc_ferme
+      ? " Parc fermé: reglas " + proc.parc_ferme + "." : "";
     nota.textContent = !campos.length ? "" :
-      ((d.puesta_asentada || d.asentada)
+      (((d.puesta_asentada || d.asentada)
         ? "Configuración asentada: se observó rodaje posterior con este paquete completo."
-        : "Configuración observada, todavía no confirmada por rodaje posterior.");
+        : "Configuración observada, todavía no confirmada por rodaje posterior.") + regla);
   }
   const bloqueReferencia = document.getElementById("referencia-puesta");
   if (bloqueReferencia) {

@@ -25,12 +25,14 @@ COLAPINTO = {"indice": 18, "nombre": "COLAPINTO", "numero": 43, "equipo": "Alpin
              "equipo_id": 5, "es_ia": False, "plataforma": "PlayStation"}
 
 
-def _procedencia(uid, tipo, parrilla=None, disponible=True):
+def _procedencia(uid, tipo, parrilla=None, disponible=True, parc_ferme="activadas"):
     return {"disponible": disponible, "session_uid": uid, "tipo_sesion": tipo,
             "circuito": "spielberg", "circuito_id": 17, "longitud_declarada_m": 4323,
             "modo_juego": "pantalla-dividida", "clima": "despejado",
             "temperatura_pista_c": 34, "temperatura_aire_c": 23,
             "vueltas_totales": 5, "dificultad_ia": 10,
+            "ajustes": {"parc_ferme_rules": {"valor": 1 if parc_ferme == "activadas" else 0,
+                                             "nombre": parc_ferme}},
             "parrilla": parrilla, "vehiculos_en_carrera_al_leer": 20}
 
 
@@ -80,6 +82,33 @@ class IndicePorSesionTests(unittest.TestCase):
     def test_una_sesion_que_no_declaro_su_tipo_no_se_inventa(self) -> None:
         self._escribir(_meta_con_varias_sesiones())
         self.assertNotIn("f1_25:session:333", ps.indice())
+
+    def test_la_sesion_dice_si_regia_el_parc_ferme(self) -> None:
+        """El capturador lo guarda y la proyeccion lo tiraba.
+
+        `parc_ferme_rules` viaja en `ajustes` de la procedencia ---medido sobre
+        las veinticuatro capturas de la Pi: activadas en 23, desactivadas en
+        1--- y `_una_sesion` no lo pasaba a la ficha que el tablero lee. Es la
+        regla que impide tocar la puesta a punto entre la clasificacion y la
+        carrera, de modo que sin ella un reglaje que no cambia no se distingue
+        de uno que **no se podia** cambiar.
+        """
+        self._escribir(_meta_con_varias_sesiones())
+        ficha = ps.indice()["f1_25:session:111"]
+        self.assertEqual(ficha["parc_ferme"], "activadas")
+
+    def test_una_captura_sin_ese_ajuste_no_lo_inventa(self) -> None:
+        """Las capturas viejas no lo traen, y `desactivadas` seria una mentira.
+
+        Es la diferencia entre «la regla no regia» y «no sabemos si regia», y
+        justo en este campo esa diferencia es el dato entero.
+        """
+        meta = _meta_con_varias_sesiones()
+        for s_ in meta["sesiones_en_la_captura"]:
+            (s_.get("procedencia") or {}).pop("ajustes", None)
+        meta["procedencia"].pop("ajustes", None)
+        self._escribir(meta)
+        self.assertIsNone(ps.indice()["f1_25:session:111"]["parc_ferme"])
 
     def test_la_parrilla_es_la_de_esa_sesion(self) -> None:
         self._escribir(_meta_con_varias_sesiones())

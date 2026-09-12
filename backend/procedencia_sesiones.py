@@ -239,6 +239,17 @@ def _una_sesion(datos: dict, proc: dict, duracion: Any,
         "temperatura_aire_c": proc.get("temperatura_aire_c"),
         "vueltas_totales": proc.get("vueltas_totales"),
         "dificultad_ia": proc.get("dificultad_ia"),
+        # SI REGIA EL PARC FERME. Es la regla que impide tocar la puesta a punto
+        # entre la clasificacion y la carrera, y sin ella un reglaje que no
+        # cambia no se distingue de uno que **no se podia** cambiar.
+        #
+        # El capturador ya lo guardaba ---viaja en `ajustes`, medido sobre las
+        # veinticuatro capturas: activadas en 23 y desactivadas en 1--- y esta
+        # proyeccion lo tiraba. Sin ajuste declarado va `None` y no
+        # «desactivadas»: la diferencia entre «no regia» y «no se sabe» es, en
+        # este campo, el dato entero.
+        "parc_ferme": ((proc.get("ajustes") or {}).get("parc_ferme_rules")
+                       or {}).get("nombre"),
         "capturado_utc": datos.get("inicio_utc"),
         "duracion_capturada_s": duracion,
         "archivo": datos.get("archivo"),
