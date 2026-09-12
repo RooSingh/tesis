@@ -74,6 +74,20 @@
       <p class="eyebrow" id="marca-eyebrow">Banco de instrumentos</p>
       <h1 id="marca-titulo">Sin sesión</h1>
     </div>
+    <!-- LA NAVEGACION VA EN LA BARRA Y NO ENTRE LOS BOTONES DE ABAJO.
+         Esa fila de abajo es el ciclo de vida de **la sesion abierta** ---abrir,
+         escuchar, limpiar--- y un enlace a otra pagina metido ahi se leeria
+         como una accion sobre la sesion. El contraste entre fuentes no depende
+         de cual este abierta: es de la pagina, y por eso viaja con el titulo.
+
+         El enunciado sigue al pie, donde se lo puede leer entero. Esto es la
+         puerta, no el resumen: sin ella habia que bajar hasta el cierre para
+         encontrarla. -->
+    <div class="grupo-control">
+      <p class="eyebrow">Comparar</p>
+      <a class="enlace-de-barra" href="comparar.html"
+         title="Enfrentar dos fuentes que midieron el mismo circuito">Simulador contra pista</a>
+    </div>
     <div class="grupo-control">
       <p class="eyebrow">Fuente</p>
       <div class="segmentado" id="sel-fuente" role="group" aria-label="Fuente de datos">

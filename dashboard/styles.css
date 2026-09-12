@@ -92,6 +92,21 @@
   .eyebrow { margin: 0 0 2px; font-size: .68rem; font-weight: 600; letter-spacing: .14em; text-transform: uppercase; color: var(--texto-tenue); }
   .grupo-control { display: flex; align-items: center; gap: 8px; }
 
+  /* Un enlace de navegacion en la barra. Se viste como los botones
+     segmentados de al lado ---mismo alto, mismo borde, mismo hueco--- porque
+     esta en la misma fila y ocupa el mismo lugar; con otra forma se leeria
+     como un elemento suelto. No es un boton: navega, y por eso es un enlace
+     de verdad y se puede abrir en otra pestana. */
+  .enlace-de-barra {
+    display: inline-flex; align-items: center; padding: 6px 11px;
+    border: 1px solid var(--linea); border-radius: 10px;
+    background: var(--superficie-hueca); color: var(--texto-medio);
+    text-decoration: none; font-size: .82rem; font-weight: 600;
+    white-space: nowrap;
+  }
+  .enlace-de-barra:hover { color: var(--texto); border-color: var(--linea-fuerte); }
+  .enlace-de-barra:focus-visible { outline: 2px solid var(--acento); outline-offset: 2px; }
+
   .segmentado { display: flex; padding: 3px; gap: 3px; border: 1px solid var(--linea); border-radius: 10px; background: var(--superficie-hueca); }
   .segmentado button {
     padding: 7px 13px; border: 0; border-radius: 7px; background: transparent; color: var(--texto-medio);
@@ -459,12 +474,8 @@
   .pagina-comparar { padding: 0; }
   .cabecera-comparar { max-width: 1280px; margin: 0 auto;
     padding: 28px 24px 8px; }
-  .cabecera-comparar h1 { margin: 6px 0 8px; font-family: var(--titulo);
-    font-size: 1.6rem; letter-spacing: -.01em; }
-  .cabecera-comparar .bajada { margin: 0; max-width: 62ch; line-height: 1.55;
+  .cabecera-comparar .bajada { margin: 12px 0 0; max-width: 62ch; line-height: 1.55;
     color: var(--texto-medio); }
-  .cabecera-comparar a { color: var(--texto-tenue); text-decoration: none; }
-  .cabecera-comparar a:hover { color: var(--texto); }
   .cuerpo-comparar { max-width: 1280px; margin: 0 auto; padding: 8px 24px 48px; }
 
   /* Los mandos en fila, y que bajen a columna cuando no entran. El circuito
