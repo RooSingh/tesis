@@ -801,8 +801,14 @@
        la disposicion, en columnas y en filas, y una fila mide siempre lo mismo:
        asi el panel sigue recibiendo un alto ---que es lo que sus reglas de
        adentro necesitan--- y quien lo elige es quien mira. */
-    grid-template-columns: repeat(4, minmax(0, 1fr));
-    grid-auto-rows: 150px;
+    /* OCHO PISTAS PARA CUATRO COLUMNAS, Y FILAS DE MEDIA UNIDAD.
+       La grilla tiene el doble de pistas que unidades declara el modelo, para
+       que media unidad sea una medida que se pueda pedir. Los numeros de aca
+       son `COLUMNAS_DEL_TABLERO * SUBDIVISIONES` y `ALTO_DE_FILA_PX /
+       SUBDIVISIONES`, y hay una prueba que compara los dos sitios: si uno se
+       mueve sin el otro, cada panel mide el doble o la mitad de lo que pidio. */
+    grid-template-columns: repeat(8, minmax(0, 1fr));
+    grid-auto-rows: 75px;
     gap: 14px;
     /* EL ALTO LO PONEN LAS FILAS, NO LA VENTANA.
        Aca decia `height: calc(100vh - 290px)`, para que trazado, graficos,
@@ -1011,18 +1017,20 @@
      lo demas un lugar. */
 
 
-  /* Las casillas del clima dejan de apretarse en una fila de cuatro ---que con
-     seis magnitudes se partia en dos y desbordaba--- y van de a tres, que es lo
-     que entra en una celda ancha y baja sin cortar ningun rotulo. */
-  :root[data-fuente="openf1"] .cabina .clima-mini .clima-rejilla {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    flex: 1; min-height: 0; align-content: stretch;
-    grid-auto-rows: minmax(0, 1fr);
-  }
-  :root[data-fuente="openf1"] .cabina .clima-mini .clima-rejilla div {
-    display: flex; flex-direction: column; justify-content: center;
-  }
-  :root[data-fuente="openf1"] .cabina .clima-mini .clima-rejilla dd { font-size: .9rem; }
+  /* COMO SE REPARTE UN PANEL LO DECIDE SU TAMAÑO, NO LA FUENTE.
+     Aca habia tres reglas para el clima y tres para el cronometraje, escritas
+     contra `data-fuente="openf1"`: casillas de a tres «que es lo que entra en
+     una celda ancha y baja», rotulos apilados, cifras mas grandes. Todas
+     describian **la celda que esa fuente le daba al panel** en la cabina de
+     tamaño fijo. Con el tablero editable esa celda no existe: el mismo panel
+     puede ser ancho y bajo, angosto y alto, o media unidad por media unidad, y
+     la fuente no se entera. Lo que decide ahora es `@container`, que pregunta
+     por el tamaño de verdad y vale para las tres fuentes.
+
+     Ademas eran un segundo escritor: `:root[data-fuente]` le gana por
+     especificidad a cualquier regla de tamaño, de modo que con OpenF1 el panel
+     se negaba a apretarse ---medido: la casilla seguia en 45 px de alto dentro
+     de una caja de 132---. */
 
   /* EL TOPE DE ALTO DEL DIBUJO ERA DE CUANDO COMPARTIA COLUMNA.
      `.pista svg` esta acotado a 320 px para que, compartiendo columna con el
@@ -1047,16 +1055,6 @@
      Van uno sobre otro. Nada se corta, no depende de la cifra, y el renglon de
      mas lo paga la fila del cronometraje ---que es `min-content` y crece--- y
      no una casilla a medias. */
-  :root[data-fuente="openf1"] .cabina .vertical .tira-cronometraje div {
-    display: flex; flex-direction: column; align-items: flex-start;
-    justify-content: center; gap: 1px; padding: 6px 14px;
-  }
-  :root[data-fuente="openf1"] .cabina .vertical .tira-cronometraje dt {
-    white-space: nowrap;
-  }
-  :root[data-fuente="openf1"] .cabina .vertical .tira-cronometraje dd {
-    font-size: 1.2rem;
-  }
 
   /* ABAJO, LA LISTA DE PILOTOS SOLA EN SU FILA.
      Puesta a punto y aceleraciones ocupaban tres de las cuatro celdas y
@@ -1242,7 +1240,13 @@
     display: inline; margin-left: 7px;
   }
   .cabina .vertical .tira-cronometraje dd { flex: 0 0 auto; white-space: nowrap; }
-  .cabina .vertical .tira-cronometraje dd { font-size: clamp(.85rem, 1.9vh, 1.15rem); }
+  /* LA CIFRA NO SE MIDE CONTRA LA VENTANA.
+     Decia `clamp(.85rem, 1.9vh, 1.15rem)`: era de cuando el alto de este panel
+     lo repartia la pantalla, de modo que en una ventana alta la cifra crecia
+     con ella. Con el tablero editable el alto lo elige quien mira, y una cifra
+     atada a la ventana no se entera de que su panel se achico ---ni de que se
+     agrando---. El que se entera es `@container`, mas abajo. */
+  .cabina .vertical .tira-cronometraje dd { font-size: 1rem; }
 
   /* El diagrama de aceleraciones se dibuja sobre un cuadrado de 180x180 y
      hasta ahora tomaba todo el ancho del panel: en la cabina, donde el alto
@@ -1300,7 +1304,220 @@
   .cabina .ejes-g svg { min-height: 40px; }
   /* Ningun panel derrama sobre el de al lado: si el contenido no entra, se
      corta dentro de su caja y se ve que falta, en vez de pisar al vecino. */
+  /* ============================================================
+     UN PANEL CHICO MUESTRA MENOS, PERO NO MUESTRA UN RENGLON POR LA MITAD
+     ------------------------------------------------------------
+     `overflow: hidden` sobre el panel cortaba en seco: con el cronometraje en
+     una unidad quedaba media fila asomando contra el borde ---«P6» y un «4»
+     partidos al medio--- y ninguna forma de leer lo que faltaba. Medido el
+     2026-09-12: la caja media 173x75 px y el contenido pedia 171x120.
+
+     Se separan las dos cosas. El **marco** sigue sin derramarse, que es lo que
+     mantiene la esquina redondeada. Lo que **lleva el contenido** se desplaza:
+     lo que no entra sigue estando y se llega con la rueda.
+
+     Y ademas el panel se aprieta segun el tamaño que le dieron, con `@container`
+     ---la celda es el contenedor---. La consulta es por **alto**, que es lo que
+     escasea: el ancho lo reparte la grilla y el alto lo impone la fila. */
+  .cabina > [data-panel] {
+    container-type: size;
+    container-name: widget;
+    overflow: hidden;
+  }
   .cabina .instrumento { overflow: hidden; }
+  /* El cuerpo de un panel es lo que crece y, por lo tanto, lo que se desplaza.
+     El cronometraje no tiene `.cuerpo-instrumento`: su tira **es** el cuerpo. */
+  .cabina > [data-panel] > .cuerpo-instrumento,
+  .cabina > [data-panel] > .tira-cronometraje { flex: 1; min-height: 0; overflow: auto; }
+
+  /* ---------- APRETADO: el panel pedido en una unidad de alto o menos ----------
+     Lo primero que se va es lo que explica, no lo que se mide: el pie de cada
+     panel dice de donde sale el dato, y eso se lee una vez. Lo que se mira todo
+     el tiempo ---la cifra--- se queda, y lo que cede es el aire.
+
+     LOS SELECTORES LLEVAN EL MISMO LASTRE QUE LOS QUE TIENEN QUE GANARLE. Una
+     consulta `@container` no agrega especificidad: `.tira-cronometraje dt` a
+     secas perdia contra `.cabina .vertical .tira-cronometraje dt`, que esta
+     escrito mas arriba, y el panel se apretaba a medias ---medido: el rotulo
+     seguia en 8,6 px y la celda en 6 px de relleno---. */
+  @container widget (max-height: 200px) {
+    .cabina .instrumento > header { padding: 6px 11px 5px; }
+    .cabina .instrumento > header h2 { font-size: .74rem; }
+    .cabina .instrumento .pie-instrumento { display: none; }
+    .cabina .instrumento > .cuerpo-instrumento { padding: 7px 11px 8px; }
+    /* EL MARGEN QUE NADIE PUSO. Un `<dl>` trae `margin: 1em 0` del navegador, y
+       nadie lo habia reseteado: en un panel grande son catorce pixeles arriba y
+       catorce abajo que pasan por aire de diseño. En media fila de alto son
+       **veintiocho de los cincuenta y seis** que quedan bajo el encabezado, y
+       por eso la tira se quedaba en 28 px con 34 de contenido y las cifras se
+       cortaban. El aire de este panel lo pone su `gap`, no el navegador. */
+    .cabina .vertical .tira-cronometraje { grid-auto-rows: minmax(0, auto); margin: 0; }
+    .cabina .vertical .tira-cronometraje div { padding: 4px 9px; }
+    /* LA CIFRA DEJA DE MEDIRSE CONTRA LA VENTANA. Decia
+       `clamp(.85rem, 1.9vh, 1.15rem)`, de cuando el alto del panel lo repartia
+       la ventana: con el tablero editable el alto lo elige quien mira, y una
+       cifra atada a la pantalla no se entera de que su panel se achico. */
+    .cabina .vertical .tira-cronometraje dd { font-size: .88rem; }
+  }
+
+  /* ---------- ANGOSTO: media unidad de ancho, 173 px ----------
+     El otro eje. Un panel puede ser angosto y alto ---media columna por dos
+     filas--- y entonces la consulta de alto no lo alcanza: medido, el clima
+     pedia 211 px de ancho en una caja de 173 y el rotulo «Coche de seg.» se
+     salia por el costado. Lo que cede es el rotulo, que se corta con puntos
+     suspensivos; la cifra no, porque una cifra a medias es un numero falso. */
+  @container widget ((max-width: 260px) or (max-height: 110px)) {
+    .cabina .clima-mini .clima-rejilla {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+    /* EL ROTULO ARRIBA Y EN MEDIO CUERPO, NO AL COSTADO Y CORTADO.
+       Al costado la casilla pide un renglon en vez de dos ---menos alto, que es
+       lo que escasea--- pero el rotulo se queda con lo que la cifra le deje, y
+       en 173 px eso era «PI…», «BA…», «COC…». Arriba y en medio cuerpo,
+       «Coche de seg.» entra entero. */
+    .cabina .clima-mini .clima-rejilla div,
+    .cabina .vertical .tira-cronometraje div {
+      display: flex; flex-direction: column; align-items: flex-start;
+      justify-content: center; gap: 0; padding: 1px 6px; min-width: 0;
+      overflow: visible;
+    }
+    .cabina .clima-mini .clima-rejilla dt,
+    .cabina .vertical .tira-cronometraje dt {
+      margin: 0; font-size: .52rem; line-height: 1.25;
+      white-space: nowrap; overflow: visible; text-overflow: clip;
+    }
+    .cabina .clima-mini .clima-rejilla dd,
+    .cabina .vertical .tira-cronometraje dd { font-size: .82rem; line-height: 1.2; }
+    /* El equipo, al lado del nombre, no entra en media columna. El nombre si, y
+       es lo que identifica: el equipo se deduce de el. */
+    .cabina .vertical .tira-cronometraje .secundario { display: none; }
+    /* EL ESTADO DEL TIEMPO SE LLAMA `.eyebrow`, NO `.estado`.
+       Escribi tres reglas para `.clima-principal .estado` ---que es como lo
+       nombra una regla de mas arriba--- y en este marcado el elemento es
+       `<p class="eyebrow">lluvia ligera</p>`. Ninguna tocaba nada: medido, el
+       texto seguia saliendose veinte pixeles por el costado.
+
+       En media columna «16,0 °C» y «lluvia ligera» no entran en el mismo
+       renglon, asi que el estado baja al siguiente. Cortarlo con puntos
+       suspensivos daria «lluvia lig…», que no dice si llueve poco o mucho, y es
+       lo unico que el titular tiene de propio: las otras dos cosas que muestra
+       ---la temperatura y la bandera--- las repiten las casillas de abajo. */
+    .cabina .clima-mini .clima { gap: 3px; }
+    .cabina .clima-mini .clima-principal { flex-wrap: nowrap; min-width: 0; gap: 8px; }
+    .cabina .clima-mini .clima-principal > div { min-width: 0; }
+    .cabina .clima-mini .clima-principal .icono { width: 22px; height: 22px; }
+    .cabina .clima-mini .clima-principal .cifra-grande { font-size: 1.2rem; line-height: 1.2; }
+    .cabina .clima-mini .clima-principal .unidad-grande { font-size: .8rem; }
+    .cabina .clima-mini .clima-principal .eyebrow {
+      margin: 0; font-size: .54rem; letter-spacing: .04em; line-height: 1.25;
+    }
+  }
+
+  /* ---------- ANGOSTO Y CON ALTO: el titular baja a dos renglones ----------
+     Esto es solo del eje angosto. En un panel bajo cuesta un renglon que no hay
+     ---medido: quince pixeles de mas--- y ahi el ancho sobra, asi que el titular
+     se queda en linea. Los dos ejes no piden lo mismo, y por eso no comparten
+     regla. */
+  @container widget ((max-width: 260px) and (min-height: 111px)) {
+    .cabina .clima-mini .clima-principal > div {
+      display: flex; flex-direction: column; align-items: flex-start; gap: 0;
+    }
+    /* Y «lluvia ligera» se parte en dos renglones si hace falta. Son dos
+       palabras: partidas se leen, cortadas no ---«lluvia lig…» no dice si
+       llueve poco o mucho---, y aca el alto es lo que sobra. */
+    .cabina .clima-mini .clima-principal .eyebrow {
+      white-space: normal; overflow-wrap: anywhere;
+    }
+  }
+
+  /* ---------- BAJO PERO ANCHO: media fila de alto, una columna o mas ----------
+     Con ancho de sobra y alto justo, las casillas se reparten en una sola linea
+     en vez de dos y lo que era un desborde pasa a entrar entero.
+
+     EL UMBRAL SON 420 PX, NO 261. Con una columna justa ---360 px--- cada
+     casilla queda en ochenta y cinco y «COCHE DE SEG. -0,0 s» en un renglon no
+     entra: el rotulo se sale por el costado. Desde columna y media el reparto
+     en linea es el que menos sitio pide; por debajo, apiladas. */
+  /* Las cinco celdas del cronometraje en una fila desde una columna justa: sus
+     rotulos son mas cortos que los del clima y entran en ochenta y cinco
+     pixeles, asi que su umbral es mas bajo. Dos paneles distintos aguantan
+     aprietos distintos; un solo umbral para los dos rompia uno de los dos. */
+  @container widget ((max-height: 110px) and (min-width: 261px)) {
+    .cabina .vertical .tira-cronometraje { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  }
+
+  @container widget ((max-height: 110px) and (min-width: 420px)) {
+    .cabina .clima-mini .clima-rejilla { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+    /* Y la casilla del clima vuelve a poner el rotulo al costado: con ochenta y
+       cinco pixeles de columna «PISTA 20,0 °C» entra en un renglon, y ese
+       renglon que se ahorra es el que faltaba ---medido: ocho pixeles---. El
+       cronometraje no lo necesita: sus cinco cifras ya entran apiladas. */
+    .cabina .clima-mini .clima-rejilla div {
+      flex-direction: row; align-items: baseline; justify-content: space-between; gap: 5px;
+    }
+  }
+
+  /* ---------- MUY APRETADO: media unidad de alto, 75 px con el marco ----------
+     Aca no alcanza con quitar aire: hay que rehacer como se reparte.
+
+     EL ROTULO VA ARRIBA DE LA CIFRA, NO AL COSTADO. Al costado ocupa menos alto
+     ---que es lo que escasea--- pero le come el ancho a la cifra, y en 173 px el
+     rotulo terminaba cortado con puntos suspensivos: «PI…», «COC…». Un rotulo a
+     medias no es un rotulo corto, es otra palabra. Arriba, en medio cuerpo,
+     «Coche de seg.» entra entero en una columna de ochenta pixeles.
+
+     Y LA CIFRA NO SE ESCONDE. Probe sacar la temperatura grande del clima
+     ---repite la casilla «Aire»--- y quedaba un «°C» solo, sin numero: la
+     unidad es un elemento aparte. Una unidad sin cifra es peor que la
+     repeticion. Se achica, y la que se va es la pastilla de bandera, que si es
+     la misma casilla entera repetida. */
+  @container widget (max-height: 110px) {
+    .cabina .instrumento > header { padding: 2px 8px 1px; border-bottom: none; }
+    .cabina .instrumento > header h2 { font-size: .6rem; }
+    .cabina .instrumento > .cuerpo-instrumento { padding: 1px 7px 3px; }
+
+    /* El cronometraje: rotulo arriba, cifra abajo, en dos columnas. */
+    .cabina .vertical .tira-cronometraje { grid-auto-rows: minmax(0, auto); gap: 1px; }
+    /* Los ultimos seis pixeles: dos renglones de casillas a un pixel de relleno
+       arriba y abajo en vez de tres. Es lo que faltaba para que las cinco
+       cifras del cronometraje entren enteras en media fila de alto. */
+    .cabina .vertical .tira-cronometraje div,
+    .cabina .clima-mini .clima-rejilla div { padding: 1px 6px; }
+    .cabina .vertical .tira-cronometraje dt {
+      font-size: .5rem; letter-spacing: .02em; line-height: 1.25;
+      white-space: nowrap; overflow: visible; text-overflow: clip;
+    }
+    .cabina .vertical .tira-cronometraje dd { font-size: .76rem; line-height: 1.2; }
+    .cabina .vertical .tira-cronometraje .secundario { display: none; }
+
+    /* El clima: lo mismo, y el titular en una linea baja. */
+    .cabina .clima-mini .clima { gap: 1px; }
+    .cabina .clima-mini .clima-principal { gap: 5px; }
+    .cabina .clima-mini .clima-principal .icono { width: 15px; height: 15px; }
+    .cabina .clima-mini .clima-principal .cifra-grande { font-size: .82rem; line-height: 1.2; }
+    .cabina .clima-mini .clima-principal .unidad-grande { font-size: .58rem; }
+    .cabina .clima-mini .clima-principal .eyebrow {
+      margin: 0; font-size: .5rem; letter-spacing: .02em; line-height: 1.2;
+    }
+    /* La pastilla de bandera dice lo mismo que la casilla «Bandera» de abajo:
+       es lo unico de las seis cosas que esta dos veces, y por eso es lo que se
+       va cuando el sitio no alcanza. */
+    .cabina .clima-mini .clima-principal .bandera { display: none; }
+    .cabina .clima-mini .clima-rejilla { gap: 1px; }
+    /* La direccion NO se repite aca: la pone el bloque angosto ---en columna---
+       y el bloque bajo-y-ancho ---en linea---, y este esta escrito despues que
+       los dos. Volviendo a decir «columna» le ganaba al bajo-y-ancho, y el
+       panel de 360 x 75 seguia con las casillas apiladas y la cifra cortada
+       contra el borde. */
+    .cabina .clima-mini .clima-rejilla div {
+      display: flex; padding: 1px 5px; border-radius: 5px;
+    }
+    .cabina .clima-mini .clima-rejilla dt {
+      font-size: .5rem; letter-spacing: .02em; line-height: 1.25;
+      white-space: nowrap; overflow: visible; text-overflow: clip;
+    }
+    .cabina .clima-mini .clima-rejilla dd { font-size: .76rem; line-height: 1.2; }
+  }
   .cabina .ejes-g .lista-canales div { padding: 4px 7px; }
   /* En la cabina los avisos viven en una columna angosta: la fecha se pone
      encima en vez de al costado ---asi el texto del aviso usa el ancho
@@ -1526,31 +1743,21 @@
   }
   @media (max-width: 1180px) {
     .cabina {
-      grid-template-columns: repeat(2, minmax(0, 1fr));
+      grid-template-columns: repeat(4, minmax(0, 1fr));
       height: auto !important; min-height: 0;
     }
     .cabina .grafico-chico canvas { min-height: 104px; }
     .cabina[data-pantalla="completa"] { position: static; inset: auto; z-index: auto; overflow: visible; }
   }
-  @media (max-width: 1180px) {
-    /* Las tres columnas de OpenF1 se declaran con la fuente en el selector, y
-       eso le gana por especificidad a la regla de ancho de arriba aunque este
-       escrita despues: sin esto, la cabina seguiria en tres columnas en una
-       ventana donde ni siquiera entran dos. Se repite el apilado, que es lo
-       que la regla general ya decia. */
-    :root[data-fuente="openf1"] .cabina {
-    }
-    /* Apilado no hay columnas que repartir, asi que los envoltorios vuelven a
-       serlo y las celdas fluyen: colocarlas a mano dejaria huecos donde antes
-       habia paneles, y una fila declarada a mano donde no hay tres filas. */
-    /* Y el clima vuelve a su rejilla de siempre: apilado sobra el ancho. */
-    :root[data-fuente="openf1"] .cabina .clima-mini .clima-rejilla {
-      grid-template-columns: repeat(auto-fit, minmax(88px, 1fr));
-    }
-  }
+  /* EL ULTIMO RESTO DE LA CABINA POR FUENTE.
+     Aca quedaban dos reglas vacias ---`:root[data-fuente="openf1"] .cabina {}`,
+     con el comentario de cuando repartian columnas--- y una que le devolvia al
+     clima «su rejilla de siempre» en pantalla angosta. Esa ultima ya no hace
+     falta y ademas estorbaba: con la fuente en el selector le ganaba por
+     especificidad a las consultas de tamaño, que es lo que ahora decide como se
+     reparte el panel. */
   @media (max-width: 860px) {
-    .cabina { grid-template-columns: minmax(0, 1fr); }
-    :root[data-fuente="openf1"] .cabina { }
+    .cabina { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   }
 
   .tablero {

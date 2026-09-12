@@ -58,6 +58,8 @@ const m = new Function(`
   ${extraerDesde("const COLUMNAS_DEL_TABLERO", ";")}
   ${extraerDesde("const ALTO_DE_FILA_PX", ";")}
   ${extraerDesde("const FILAS_MAXIMAS_DE_UN_WIDGET", ";")}
+  ${extraerDesde("const SUBDIVISIONES", ";")}
+  ${extraerDesde("const PASO_DE_MEDIDA", ";")}
   ${extraerDesde("const WIDGETS = [", "\n];")}
   ${extraerDesde("const PREFIJO_DE_GRAFICO", ";")}
   ${extraerDesde("const MEDIDA_DE_UN_GRAFICO", ";")}
@@ -72,7 +74,8 @@ const m = new Function(`
   ${extraer("moverWidget")}
   ${extraer("redimensionarWidget")}
   ${extraer("mostrarWidget")}
-  return { COLUMNAS_DEL_TABLERO, ALTO_DE_FILA_PX, FILAS_MAXIMAS_DE_UN_WIDGET, WIDGETS,
+  return { COLUMNAS_DEL_TABLERO, ALTO_DE_FILA_PX, FILAS_MAXIMAS_DE_UN_WIDGET,
+           SUBDIVISIONES, PASO_DE_MEDIDA, WIDGETS,
            PREFIJO_DE_GRAFICO, MEDIDA_DE_UN_GRAFICO, esGrafico, catalogoDeWidgets,
            disposicionPorOmision, reconciliarDisposicion, moverWidget, redimensionarWidget, mostrarWidget };
 `)();
@@ -156,9 +159,10 @@ prueba("un ancho imposible se acota, no se acepta ni se descarta el panel", () =
     { id: m.WIDGETS[3].id, ancho: "dos", visible: true },
   ]));
   for (const w of d) {
-    assert.ok(w.ancho >= 1 && w.ancho <= m.COLUMNAS_DEL_TABLERO,
+    assert.ok(w.ancho >= m.PASO_DE_MEDIDA && w.ancho <= m.COLUMNAS_DEL_TABLERO,
       w.id + " quedo con ancho " + w.ancho);
-    assert.ok(Number.isInteger(w.ancho), w.id + " tiene un ancho que no es entero");
+    assert.ok(Number.isInteger(w.ancho * m.SUBDIVISIONES),
+      w.id + " tiene un ancho que la grilla no puede dibujar: " + w.ancho);
   }
 });
 
@@ -219,9 +223,10 @@ prueba("un alto imposible se acota igual que el ancho", () => {
     { id: m.WIDGETS[3].id, ancho: 1, alto: "tres", visible: true },
   ]));
   for (const w of d) {
-    assert.ok(w.alto >= 1 && w.alto <= m.FILAS_MAXIMAS_DE_UN_WIDGET,
+    assert.ok(w.alto >= m.PASO_DE_MEDIDA && w.alto <= m.FILAS_MAXIMAS_DE_UN_WIDGET,
       w.id + " quedo con alto " + w.alto);
-    assert.ok(Number.isInteger(w.alto), w.id + " tiene un alto que no es entero");
+    assert.ok(Number.isInteger(w.alto * m.SUBDIVISIONES),
+      w.id + " tiene un alto que la grilla no puede dibujar: " + w.alto);
   }
 });
 
@@ -399,8 +404,30 @@ prueba("redimensionar acota a la grilla", () => {
   assert.strictEqual(grande.ancho, m.COLUMNAS_DEL_TABLERO);
   assert.strictEqual(grande.alto, m.FILAS_MAXIMAS_DE_UN_WIDGET);
   const chico = m.redimensionarWidget(d, id, 0, -3).find(w => w.id === id);
-  assert.strictEqual(chico.ancho, 1);
-  assert.strictEqual(chico.alto, 1);
+  assert.strictEqual(chico.ancho, m.PASO_DE_MEDIDA);
+  assert.strictEqual(chico.alto, m.PASO_DE_MEDIDA);
+});
+
+prueba("el salto es medio, y el mismo a lo ancho que a lo alto", () => {
+  /* Lo que el usuario pidio: «alturas cuantificadas de a 0,5 igual que el
+     ancho». Antes el alto saltaba de a 150 px y el ancho de a un cuarto de
+     pantalla, y ninguno de los dos tenia medio. */
+  const d = orig(); const id = d[0].id;
+  const r = m.redimensionarWidget(d, id, 1.5, 2.5).find(w => w.id === id);
+  assert.strictEqual(r.ancho, 1.5);
+  assert.strictEqual(r.alto, 2.5);
+});
+
+prueba("una medida entre medios se lleva al medio mas cercano", () => {
+  /* El tirador entrega fracciones: arrastrar da 1,3 columnas, no 1,5. Un ancho
+     de 1,3 seria un panel colocado a un tercio de columna, con todos los de al
+     lado corridos a la nada. */
+  const d = orig(); const id = d[0].id;
+  for (const [pedido, esperado] of [[1.3, 1.5], [1.2, 1], [0.7, 0.5], [2.26, 2.5]]) {
+    const r = m.redimensionarWidget(d, id, pedido, pedido).find(w => w.id === id);
+    assert.strictEqual(r.ancho, esperado, "pedi " + pedido + " y dio " + r.ancho);
+    assert.strictEqual(r.alto, esperado);
+  }
 });
 
 prueba("QUITAR NO ES BORRAR", () => {

@@ -8993,6 +8993,23 @@ const HUECO_DEL_TABLERO_PX = 14;
 //: cualquier pantalla: por encima de eso el panel deja de poder mirarse entero.
 const FILAS_MAXIMAS_DE_UN_WIDGET = 12;
 
+/* MEDIA UNIDAD ES UNA MEDIDA POSIBLE, A LO ANCHO Y A LO ALTO.
+   Un cuarto de pantalla era el ancho mas chico que se podia pedir, y una fila de
+   150 px el alto mas chico. Hay paneles ---el cronometraje, el clima--- que se
+   miran de reojo y no necesitan tanto: pidiendoles una unidad entera ocupan
+   sitio que otro estaba necesitando.
+
+   La grilla se subdivide, y las medidas siguen contandose en **unidades**: un
+   `ancho: 1` guardado hace meses sigue siendo un cuarto del tablero. Lo unico
+   que cambia es que ahora existe el medio, que es lo que hace que el salto sea
+   el mismo a lo ancho y a lo alto ---la mitad de lo que ya habia--- y no dos
+   escalas distintas. */
+const SUBDIVISIONES = 2;
+
+//: El salto mas chico que se puede pedir, y tambien la medida mas chica: media
+//: unidad. Cero haria desaparecer el panel sin decirlo.
+const PASO_DE_MEDIDA = 1 / SUBDIVISIONES;
+
 /* EL CATALOGO DE PANELES, Y SU ORDEN DE FABRICA.
    `id` es el mismo `data-panel` del HTML ---hay una prueba que lo exige--- y
    `ancho` es cuantas columnas ocupa cuando nadie lo movio. */
@@ -9063,6 +9080,12 @@ function catalogoDeWidgets(graficos) {
     .concat(suyos, WIDGETS.filter(w => w.alPie));
 }
 
+/* Una medida, escrita para leerse: «1», «0,5», «1,5». El punto decimal del
+   idioma de la maquina no es el del idioma en el que esta escrito el tablero. */
+function comoSeMide(valor) {
+  return String(valor).replace(".", ",");
+}
+
 function disposicionPorOmision(catalogo) {
   return (catalogo || catalogoDeWidgets())
     .map(w => ({ id: w.id, ancho: w.ancho, alto: w.alto, visible: true }));
@@ -9075,9 +9098,13 @@ function disposicionPorOmision(catalogo) {
    fabrica y no cero: una disposicion guardada antes de que el alto existiera no
    nombra el campo, y leerla como cero dejaria el panel sin alto. */
 function medidaAcotada(valor, porOmision, tope) {
-  const n = Math.round(Number(valor));
+  /* Se redondea al medio mas cercano, no al entero: un 1,3 pedido a mano ---o
+     arrastrado con el tirador--- vale 1,5, que es una medida que la grilla sabe
+     dibujar. Un valor entre medios no existe: seria un panel colocado a un
+     tercio de columna, con todos los de al lado corridos a la nada. */
+  const n = Math.round(Number(valor) * SUBDIVISIONES) / SUBDIVISIONES;
   if (!Number.isFinite(n)) return porOmision;
-  return Math.max(1, Math.min(tope, n));
+  return Math.max(PASO_DE_MEDIDA, Math.min(tope, n));
 }
 
 function anchoAcotado(valor, porOmision) {
@@ -9204,8 +9231,12 @@ function aplicarDisposicion(disposicion) {
     const el = celdas.get(w.id);
     if (!el) return;
     colocados.add(el);
-    el.style.gridColumn = "span " + w.ancho;
-    el.style.gridRow = "span " + w.alto;
+    /* De unidades a pistas de la grilla. La grilla tiene el doble de columnas y
+       filas que unidades declara el modelo, y esa conversion vive **solo aca**:
+       el resto del codigo ---lo que se guarda, lo que se acota, lo que muestran
+       los mandos--- habla siempre en unidades. */
+    el.style.gridColumn = "span " + (w.ancho * SUBDIVISIONES);
+    el.style.gridRow = "span " + (w.alto * SUBDIVISIONES);
     el.style.order = String(i);
     /* Quitado por quien mira, que no es lo mismo que ausente por la fuente. Esa
        otra ausencia la declara `data-estado` con su motivo, y las dos tienen
@@ -9330,7 +9361,7 @@ function refrescarSoloEstilos() {
   if (!t) return;
   for (const w of EDITANDO) {
     const m = t.querySelector('[data-panel="' + w.id + '"] .medida-widget');
-    if (m) m.innerHTML = w.ancho + "&times;" + w.alto;
+    if (m) m.innerHTML = comoSeMide(w.ancho) + "&times;" + comoSeMide(w.alto);
     const el = t.querySelector('[data-panel="' + w.id + '"]');
     if (el) el.dataset.apagado = w.visible ? "no" : "si";
   }
@@ -9380,7 +9411,7 @@ function pintarBotonesDeEdicion() {
        una esquina exige un raton y una mano firme. */
     mandos.innerHTML =
       '<button type="button" data-hace="angosto" title="Menos ancho" aria-label="Menos ancho">&#8592;</button>' +
-      '<span class="medida-widget">' + w.ancho + '&times;' + w.alto + '</span>' +
+      '<span class="medida-widget">' + comoSeMide(w.ancho) + '&times;' + comoSeMide(w.alto) + '</span>' +
       '<button type="button" data-hace="ancho" title="Más ancho" aria-label="Más ancho">&#8594;</button>' +
       '<button type="button" data-hace="bajo" title="Menos alto" aria-label="Menos alto">&#8593;</button>' +
       '<button type="button" data-hace="alto" title="Más alto" aria-label="Más alto">&#8595;</button>' +
@@ -9396,11 +9427,14 @@ function pintarBotonesDeEdicion() {
       const b = ev.target.closest("button");
       if (!b) return;
       const hace = b.dataset.hace;
+      /* Las flechas saltan **lo mismo que el tirador**: medio. Con el teclado
+         saltando de a uno y el raton de a medio, la mitad de las medidas que la
+         grilla admite serian inalcanzables sin raton. */
       if (hace === "ver") EDITANDO = mostrarWidget(EDITANDO, w.id, !w.visible);
-      else if (hace === "ancho") EDITANDO = redimensionarWidget(EDITANDO, w.id, w.ancho + 1, w.alto);
-      else if (hace === "angosto") EDITANDO = redimensionarWidget(EDITANDO, w.id, w.ancho - 1, w.alto);
-      else if (hace === "alto") EDITANDO = redimensionarWidget(EDITANDO, w.id, w.ancho, w.alto + 1);
-      else if (hace === "bajo") EDITANDO = redimensionarWidget(EDITANDO, w.id, w.ancho, w.alto - 1);
+      else if (hace === "ancho") EDITANDO = redimensionarWidget(EDITANDO, w.id, w.ancho + PASO_DE_MEDIDA, w.alto);
+      else if (hace === "angosto") EDITANDO = redimensionarWidget(EDITANDO, w.id, w.ancho - PASO_DE_MEDIDA, w.alto);
+      else if (hace === "alto") EDITANDO = redimensionarWidget(EDITANDO, w.id, w.ancho, w.alto + PASO_DE_MEDIDA);
+      else if (hace === "bajo") EDITANDO = redimensionarWidget(EDITANDO, w.id, w.ancho, w.alto - PASO_DE_MEDIDA);
       refrescarBorrador();
     });
     el.appendChild(mandos);
@@ -9418,14 +9452,17 @@ function pintarBotonesDeEdicion() {
          de columna depende de la ventana, y un numero escrito aca quedaria
          viejo en cuanto alguien cambie el tamaño del navegador. */
       const caja = el.getBoundingClientRect();
-      const columnas = getComputedStyle(document.getElementById("tablero"))
-                         .gridTemplateColumns.split(" ").length || COLUMNAS_DEL_TABLERO;
+      /* El paso de una unidad, medido del panel mismo: su ancho mas el hueco que
+         lo sigue, repartido entre las unidades que ocupa. Sale exacto tenga la
+         grilla las pistas que tenga, porque los huecos de adentro entran en la
+         cuenta junto con las pistas. */
       const anchoCelda = (caja.width + HUECO_DEL_TABLERO_PX) / w.ancho;
       const altoCelda = (caja.height + HUECO_DEL_TABLERO_PX) / w.alto;
       const x0 = ev.clientX, y0 = ev.clientY, a0 = w.ancho, b0 = w.alto;
+      const alMedio = px => Math.round(px * SUBDIVISIONES) / SUBDIVISIONES;
       const mover = e2 => {
-        const a = a0 + Math.round((e2.clientX - x0) / anchoCelda);
-        const b = b0 + Math.round((e2.clientY - y0) / altoCelda);
+        const a = a0 + alMedio((e2.clientX - x0) / anchoCelda);
+        const b = b0 + alMedio((e2.clientY - y0) / altoCelda);
         const antes = EDITANDO.find(x => x.id === w.id);
         if (antes.ancho === anchoAcotado(a, a0) && antes.alto === altoAcotado(b, b0)) return;
         EDITANDO = redimensionarWidget(EDITANDO, w.id, a, b);

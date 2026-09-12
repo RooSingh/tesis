@@ -131,8 +131,8 @@ class DashboardFrontendTests(unittest.TestCase):
         estilos = ESTILOS.read_text(encoding="utf-8")
         self.assertNotIn("col-cabina", estilos,
                          "quedan reglas de los envoltorios que ya no existen")
-        self.assertIn("grid-template-columns: repeat(4, minmax(0, 1fr));", estilos)
-        self.assertIn("grid-auto-rows: 150px;", estilos)
+        self.assertIn("grid-template-columns: repeat(8, minmax(0, 1fr));", estilos)
+        self.assertIn("grid-auto-rows: 75px;", estilos)
         # Ninguna regla coloca un panel a mano.
         colocan = [
             l for l in estilos.split("\n")
@@ -143,6 +143,36 @@ class DashboardFrontendTests(unittest.TestCase):
         self.assertNotIn("col-cabina", html)
         self.assertEqual(html.count('id="tablero"'), 1,
                          "hay mas de un contenedor de tablero, o ninguno")
+
+    def test_la_grilla_del_estilo_dice_lo_mismo_que_las_constantes(self) -> None:
+        """La grilla esta descrita en dos sitios, y tienen que coincidir.
+
+        El guion cuenta en **unidades** ---`ancho: 1` es un cuarto del tablero,
+        `alto: 1` son 150 px--- y la hoja dibuja **pistas**, que son el doble:
+        asi media unidad es una medida que se puede pedir. Si uno de los dos se
+        mueve sin el otro, cada panel mide el doble o la mitad de lo que pidio y
+        nada en pantalla dice por que.
+        """
+        codigo = APP.read_text(encoding="utf-8")
+
+        def constante(nombre: str) -> int:
+            m = re.search(rf"^const {nombre} = (\d+);", codigo, re.MULTILINE)
+            self.assertIsNotNone(m, f"no esta la constante {nombre}")
+            return int(m.group(1))
+
+        columnas = constante("COLUMNAS_DEL_TABLERO")
+        alto = constante("ALTO_DE_FILA_PX")
+        subdivisiones = constante("SUBDIVISIONES")
+        estilos = ESTILOS.read_text(encoding="utf-8")
+        self.assertIn(
+            f"grid-template-columns: repeat({columnas * subdivisiones}, minmax(0, 1fr));",
+            estilos,
+            "las pistas de la hoja no son las unidades del guion por las subdivisiones",
+        )
+        self.assertEqual(alto % subdivisiones, 0,
+                         "el alto de unidad no se puede partir en subdivisiones enteras")
+        self.assertIn(f"grid-auto-rows: {alto // subdivisiones}px;", estilos,
+                      "la fila de la hoja no es la unidad del guion partida")
 
     def _reglas(self, estilos: str) -> list[tuple[str, str]]:
         """`(selector, declaraciones)` de cada regla de la hoja, sin comentarios.
@@ -196,6 +226,56 @@ class DashboardFrontendTests(unittest.TestCase):
                 r"^(repeat\(\d+, minmax\(0, 1fr\)\)|minmax\(0, 1fr\))$",
                 f"columnas desparejas en «{donde}»: {valor}",
             )
+
+    def test_un_panel_se_aprieta_por_su_tamaño_y_no_por_la_ventana(self) -> None:
+        """Quien decide como se reparte un panel es su tamaño, y nada mas.
+
+        Antes lo decidian dos cosas equivocadas: la **ventana** ---el
+        cronometraje pedia `clamp(.85rem, 1.9vh, 1.15rem)`, de cuando el alto lo
+        repartia la pantalla--- y la **fuente**, con seis reglas
+        `:root[data-fuente="openf1"]` que describian la celda que esa fuente le
+        daba al panel en la cabina de tamaño fijo. Ninguna de las dos se entera
+        de que alguien achico el panel a media unidad.
+
+        Lo que queda es `@container`, y para eso la celda tiene que declararse
+        contenedor: sin `container-type` ninguna consulta se evalua y el panel
+        se corta igual que antes, sin que nada avise.
+        """
+        estilos = ESTILOS.read_text(encoding="utf-8")
+        self.assertIn("container-type: size;", estilos,
+                      "la celda no es un contenedor: ninguna consulta de tamaño corre")
+        self.assertIn("container-name: widget;", estilos)
+        self.assertIn("@container widget (max-height: 110px)", estilos,
+                      "no hay reparto para media unidad de alto")
+        # Sin los comentarios: los comentarios cuentan de donde se saco la regla,
+        # y esa historia tiene que poder seguir escrita.
+        declarado = re.sub(r"/\*.*?\*/", "", estilos, flags=re.DOTALL)
+        atadas = re.findall(r"[\w-]+:[^;{}]*\b\d*\.?\d+v[hw]\b[^;{}]*;", declarado)
+        atadas = [d for d in atadas if "tira-cronometraje" in declarado[
+            max(0, declarado.index(d) - 300):declarado.index(d)]]
+        self.assertEqual(atadas, [],
+                         f"una cifra atada a la ventana no se entera de que su panel cambio: {atadas}")
+        por_fuente = re.findall(
+            r':root\[data-fuente="[^"]+"\] \.cabina \.(clima-mini|vertical) [^{]*\{',
+            estilos,
+        )
+        self.assertEqual(por_fuente, [], f"la fuente vuelve a decidir el reparto: {por_fuente}")
+
+    def test_la_tira_de_cronometraje_no_arrastra_el_margen_del_navegador(self) -> None:
+        """Un `<dl>` trae `margin: 1em 0` y nadie lo habia reseteado.
+
+        En un panel grande son catorce pixeles arriba y catorce abajo que pasan
+        por aire de diseño. Pedido en media fila de alto son **veintiocho de los
+        cincuenta y seis** que quedan bajo el encabezado: medido, la tira se
+        quedaba en 28 px con 34 de contenido y las cinco cifras se cortaban por
+        la mitad. El aire de este panel lo pone su `gap`.
+        """
+        estilos = ESTILOS.read_text(encoding="utf-8")
+        self.assertRegex(
+            estilos,
+            r"\.cabina \.vertical \.tira-cronometraje \{[^}]*margin: 0;",
+            "la tira vuelve a arrastrar el margen por omision del `<dl>`",
+        )
 
     def test_ninguna_celda_del_tablero_esta_clavada_por_la_hoja(self) -> None:
         """Una celda colocada por el estilo no se puede mover ni agrandar.
