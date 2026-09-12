@@ -75,9 +75,26 @@ SENAL_VELOCIDAD = "speed"
 #: sin que nada lo dijera.
 PUNTOS_MAXIMOS = 5000
 
-#: Cuanto puede alejarse un anclaje de la posicion derivada del mapa antes de
-#: que la comprobacion se considere fallada. Silverstone dio 6,7 m y 11,8 m.
-TOLERANCIA_FIA_M = 15.0
+#: LA COMPROBACION ES DE PERTENENCIA, NO DE DISTANCIA, y esto es lo que se
+#: aprendio midiendo tres circuitos.
+#:
+#: El mapa declara un **punto** y la deteccion encuentra un **intervalo**.
+#: Preguntar a cuantos metros esta el punto del anclaje es la pregunta
+#: equivocada: una curva de trescientos metros no tiene una posicion, y cual de
+#: sus metros es «la curva» depende de una convencion que el mapa no publica.
+#:
+#: Medido el 2026-09-12, la distancia del punto declarado al apice: Silverstone
+#: 6,7 y 11,8 m; Spielberg 0,7 y 30,5; Abu Dhabi 48,8 y 135,1. Con un umbral de
+#: distancia, la mitad «falla» sin que el mapeo tenga nada malo.
+#:
+#: La pregunta buena ---si el punto cae DENTRO del tramo que se nombra con ese
+#: numero--- da **6 de 6** sobre los mismos tres circuitos. Y es la que importa:
+#: lo que se quiere comprobar es que la curva numerada X sea esta y no la de al
+#: lado, no ubicarla al metro.
+#:
+#: Se conserva un margen chico para el punto que cae justo afuera por el
+#: muestreo: a 250 km/h dos muestras consecutivas distan siete metros.
+MARGEN_DE_PERTENENCIA_M = 15.0
 
 #: Fraccion del circuito que una vuelta tiene que abarcar para servir de
 #: anclaje. Es un criterio de cobertura y no de limpieza: una vuelta con entrada
@@ -229,13 +246,27 @@ def main() -> int:
             fallas += 1
             continue
         esperado = curva_declarada_en(decl, limite)
-        cercana = min(catalogo.curvas, key=lambda c: abs(c.apice_m - esperado))
-        d = abs(cercana.apice_m - esperado)
-        marca = "ok" if d <= TOLERANCIA_FIA_M else "NO COINCIDE"
-        fallas += d > TOLERANCIA_FIA_M
-        print(f"       curva {decl.curva}: el mapa la pone en {esperado:.1f} m, "
-              f"el apice mas cercano esta en {cercana.apice_m:.1f} m "
-              f"({d:.1f} m) -- {marca}")
+        dentro = [c for c in catalogo.curvas
+                  if c.desde_m - MARGEN_DE_PERTENENCIA_M <= esperado
+                  <= c.hasta_m + MARGEN_DE_PERTENENCIA_M]
+        if len(dentro) == 1:
+            c = dentro[0]
+            print(f"       curva {decl.curva}: el mapa la pone en {esperado:.1f} m "
+                  f"y cae dentro del tramo {c.desde_m:.0f}-{c.hasta_m:.0f} m "
+                  f"(curva {c.numero}, apice {c.apice_m:.0f}) -- ok")
+        elif not dentro:
+            cer = min(catalogo.curvas,
+                      key=lambda c: min(abs(c.desde_m - esperado),
+                                        abs(c.hasta_m - esperado)))
+            fallas += 1
+            print(f"       curva {decl.curva}: el mapa la pone en {esperado:.1f} m "
+                  f"y NO cae en ningun tramo; el mas cercano es "
+                  f"{cer.desde_m:.0f}-{cer.hasta_m:.0f} m -- NO COINCIDE")
+        else:
+            # Dos tramos reclamando el mismo metro es un catalogo que no ubica.
+            fallas += 1
+            print(f"       curva {decl.curva}: el mapa la pone en {esperado:.1f} m "
+                  f"y cae en {len(dentro)} tramos a la vez -- AMBIGUO")
     return 1 if fallas else 0
 
 

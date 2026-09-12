@@ -63,6 +63,12 @@ TOLERANCIA_AGRUPAMIENTO_M = 60.0
 #: otra. Exigir mayoria los elimina sin tener que saber cuales son.
 FRACCION_MINIMA_DE_VUELTAS = 0.6
 
+#: Cuanto tienen que compartir dos tramos de vueltas distintas para ser la misma
+#: curva, como fraccion del mas corto de los dos. No es un umbral de distancia:
+#: es una proporcion, y por eso no hay que elegirla distinta para un circuito de
+#: curvas largas y otro de curvas cortas.
+FRACCION_DE_SOLAPE = 0.5
+
 
 @dataclass
 class Curva:
@@ -218,19 +224,73 @@ def derivar(
 
     por_vuelta = [tramos_de_una_vuelta(v) for v in vueltas]
 
-    # Se agrupan los apices de todas las vueltas por cercania. Un grupo es una
-    # curva candidata; cuantas vueltas distintas lo alimentan es su evidencia.
+    # SE AGRUPA POR DONDE CAE EL TRAMO, NO POR DONDE ESTA SU MAXIMO.
+    #
+    # Antes se agrupaban los **apices** por cercania, con la tolerancia de
+    # abajo. En una curva corta el pico de aceleracion lateral es agudo y cae
+    # siempre en el mismo sitio, asi que funcionaba. En una larga la lateral es
+    # casi constante durante cientos de metros, de modo que **cual de todas las
+    # muestras resulta la maxima lo deciden el ruido y la linea que se manejo
+    # esa vuelta**.
+    #
+    # Medido el 2026-09-12 sobre `f1_25:session:1535856705959104755`, la misma
+    # curva de Yas Marina en cinco vueltas: empieza siempre alrededor del metro
+    # 3.590 y termina siempre alrededor del 3.922, y su **apice se movio 163 m**.
+    # Con 60 m de tolerancia eso eran dos grupos ---tres vueltas y dos--- y el
+    # criterio de mayoria descartaba el segundo: el circuito quedaba con catorce
+    # curvas de dieciseis.
+    #
+    # Dispersion entre vueltas del mismo tramo, mediana sobre todas las curvas:
+    #
+    #     circuito     apice   entrada   salida
+    #     abu-dhabi    104 m     36 m      31 m
+    #     spielberg     54 m     34 m      43 m
+    #
+    # Dos tramos son la misma curva si **se solapan**: ocupan metros en comun.
+    # Eso no depende de donde cayo el maximo ni de cuanta tolerancia se elija.
+    #
+    # NO SE CAMBIO EL ANCLAJE, que fue lo primero que se penso. El apice sigue
+    # siendo lo que se publica: contra el mapa de la FIA da 6,7 m y 11,8 m en
+    # Silverstone, y la entrada da 49,2 m y 70,3 m. Lo que estaba mal no era
+    # donde se ancla sino como se agrupa.
     marcas: list[tuple[float, int, dict]] = sorted(
-        (t["apice"], i, t)
+        (t["desde"], i, t)
         for i, tramos in enumerate(por_vuelta) for t in tramos
     )
 
+    # EL SOLAPE TIENE QUE SER REAL Y PROPORCIONAL, NO «ESTAR CERCA».
+    #
+    # El primer intento unia un tramo al grupo si empezaba antes del final del
+    # grupo mas la tolerancia. Eso **encadena**: cada tramo que entra estira el
+    # final del grupo, el grupo alcanza al siguiente, y una vuelta entera
+    # termina en cinco o seis curvas. Se vio sobre los tres circuitos medidos
+    # ---Silverstone paso de 17 a 6--- y no lo agarro la prueba unitaria, que
+    # usaba curvas separadas trescientos metros.
+    #
+    # Dos tramos son la misma curva cuando comparten **la mitad del mas corto**.
+    # Asi, un tramo que se estira unos metros sobre el siguiente ---lo que pasa
+    # en las vueltas donde dos curvas se toman sin levantar--- no los funde.
+    def _mismo(a: dict, b: dict) -> bool:
+        comun = min(a["hasta"], b["hasta"]) - max(a["desde"], b["desde"])
+        if comun <= 0:
+            return False
+        corto = min(a["hasta"] - a["desde"], b["hasta"] - b["desde"])
+        return corto <= 0 or comun >= corto * FRACCION_DE_SOLAPE
+
     grupos: list[list[tuple[float, int, dict]]] = []
     for marca in marcas:
-        if grupos and marca[0] - grupos[-1][-1][0] <= tolerancia_m:
-            grupos[-1].append(marca)
-        else:
-            grupos.append([marca])
+        # Se compara contra el tramo **representativo** del grupo ---la mediana
+        # de sus bordes--- y no contra el ultimo que entro ni contra la
+        # envolvente: lo primero hace que el orden decida, y lo segundo vuelve a
+        # encadenar en cuanto una vuelta trae un tramo largo de mas.
+        if grupos:
+            miembros = [t for _, _, t in grupos[-1]]
+            representativo = {"desde": _mediana([t["desde"] for t in miembros]),
+                              "hasta": _mediana([t["hasta"] for t in miembros])}
+            if _mismo(representativo, marca[2]):
+                grupos[-1].append(marca)
+                continue
+        grupos.append([marca])
 
     # Se redondea **hacia arriba**, no al mas cercano.
     #

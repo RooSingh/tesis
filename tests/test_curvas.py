@@ -231,3 +231,205 @@ class SobreLasCapturasReales(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class UnaCurvaLargaNoSePARTE(unittest.TestCase):
+    """Los tramos se agrupan por donde caen, no por donde esta su maximo.
+
+    QUE PASABA. `derivar` agrupaba los tramos de distintas vueltas por su
+    **apice**, con 60 m de tolerancia. En una curva corta el pico de aceleracion
+    lateral es agudo y cae siempre en el mismo sitio; en una larga la lateral es
+    casi constante durante cientos de metros, de modo que **cual de todas las
+    muestras resulta la maxima lo deciden el ruido y la linea que se manejo esa
+    vuelta**.
+
+    Medido el 2026-09-12 sobre `f1_25:session:1535856705959104755`, entre los
+    metros 3.300 y 4.000 de Yas Marina:
+
+        vuelta 3:  3.575,4 -> 3.920,4     apice 3.709,0
+        vuelta 4:  3.599,4 -> 3.920,3     apice 3.872,8
+        vuelta 5:  3.610,5 -> 3.914,3     apice 3.870,4
+        vuelta 6:  3.562,2 -> 3.934,3     apice 3.849,7
+        vuelta 7:  3.615,8 -> 3.921,7     apice 3.751,8
+
+    Es UNA curva, detectada en las CINCO vueltas, que empieza siempre alrededor
+    del metro 3.590 y termina siempre alrededor del 3.922. Su apice se movio
+    163 m. Con 60 m de tolerancia eso fueron dos grupos ---uno de tres vueltas y
+    uno de dos--- y el criterio de mayoria descarto el segundo. El circuito
+    quedo con catorce curvas de dieciseis, y la 9 que declara el mapa de la FIA
+    cayo justo en el hueco.
+
+    Dispersion entre vueltas, mediana sobre todas las curvas del circuito:
+
+        circuito     apice   entrada   salida
+        abu-dhabi    104 m     36 m     31 m
+        spielberg     54 m     34 m     43 m
+
+    NO SE CAMBIO EL ANCLAJE, que era lo primero que se penso. El apice sigue
+    siendo lo que el catalogo publica: medido contra el mapa de la FIA da 6,7 m
+    y 11,8 m en Silverstone, y la entrada da 49,2 m y 70,3 m. Lo que estaba mal
+    no era **donde se ancla** sino **como se agrupa**.
+    """
+
+    @staticmethod
+    def _vuelta(tramos):
+        """Arma una vuelta cuyos tramos de giro caen donde se pide.
+
+        Cada tramo es (desde, hasta, metro_del_pico): entre `desde` y `hasta` la
+        lateral esta sobre el umbral, y en `metro_del_pico` es mayor que en el
+        resto, que es lo que `tramos_de_una_vuelta` toma como apice.
+        """
+
+        puntos = []
+        for metro in range(0, 5300, 5):
+            lat = 0.0
+            for desde, hasta, pico in tramos:
+                if desde <= metro <= hasta:
+                    lat = 2.0 if abs(metro - pico) > 7 else 3.0
+            puntos.append((float(metro), lat))
+        return puntos
+
+    def test_el_apice_que_se_corre_no_parte_la_curva(self) -> None:
+        """Los metros son los medidos en Yas Marina, no inventados."""
+
+        vueltas = [
+            self._vuelta([(3575, 3920, 3709)]),
+            self._vuelta([(3599, 3920, 3873)]),
+            self._vuelta([(3610, 3914, 3870)]),
+            self._vuelta([(3562, 3934, 3850)]),
+            self._vuelta([(3615, 3921, 3752)]),
+        ]
+        catalogo = mod.derivar(vueltas, circuito="yas-marina")
+        self.assertEqual(len(catalogo.curvas), 1,
+                         "una curva larga se conto como dos, o se perdio")
+        self.assertEqual(catalogo.curvas[0].vueltas_en_que_aparece, 5,
+                         "no se reconocio que aparece en las cinco vueltas")
+
+    def test_el_punto_declarado_cae_dentro_de_la_curva(self) -> None:
+        """LA COMPROBACION QUE DE VERDAD SIRVE. El mapa declara un **punto** y la
+        deteccion encuentra un **intervalo**. Preguntar a cuantos metros esta el
+        punto del anclaje es la pregunta equivocada: la buena es si cae adentro
+        de la curva que se nombra con ese numero. Asi pasa 6 de 6 sobre los tres
+        circuitos medidos, incluida la curva 9 de Yas Marina, que con la
+        distancia al apice fallaba por 211 m."""
+
+        vueltas = [self._vuelta([(3575, 3920, 3709)]),
+                   self._vuelta([(3599, 3920, 3873)]),
+                   self._vuelta([(3610, 3914, 3870)])]
+        c = mod.derivar(vueltas, circuito="yas-marina").curvas[0]
+        self.assertTrue(c.contiene(3638.1),
+                        "la curva 9 declarada por la FIA quedo fuera del tramo")
+
+    def test_dos_curvas_vecinas_de_verdad_no_se_funden(self) -> None:
+        """El agrupamiento por solape no puede juntar lo que esta separado: si
+        lo hiciera, el arreglo cambiaria un defecto por otro peor."""
+
+        vueltas = [self._vuelta([(1000, 1100, 1050), (1400, 1500, 1450)])] * 3
+        catalogo = mod.derivar(vueltas, circuito="dos")
+        self.assertEqual(len(catalogo.curvas), 2)
+
+    def test_curvas_pegadas_no_se_encadenan(self) -> None:
+        """EL ERROR QUE LOS DATOS REALES AGARRARON Y ESTA PRUEBA NO.
+
+        El primer arreglo unia un tramo al grupo si empezaba antes del final del
+        grupo **mas una tolerancia**. Eso encadena: cada tramo que entra estira
+        el final, el grupo alcanza al siguiente, y una vuelta entera termina en
+        cinco o seis curvas. Silverstone paso de 17 a 6.
+
+        La prueba de arriba no lo vio porque usaba curvas separadas trescientos
+        metros. Aca estan pegadas ---veinte metros entre una y la siguiente, que
+        es lo que pasa en una chicana--- y encadenar se nota.
+        """
+
+        # Separadas 60 m: por encima de `UNION_M`, que une los tramos del
+        # mismo sentido a menos de 45 m **antes** de que se agrupen. La primera
+        # version las puso a 20 m y estaba probando la union, no el
+        # agrupamiento: fallaba sin que hubiera nada roto.
+        seguidas = [(1000, 1100, 1050), (1160, 1260, 1210),
+                    (1320, 1420, 1370), (1480, 1580, 1530)]
+        catalogo = mod.derivar([self._vuelta(seguidas)] * 3, circuito="pegadas")
+        self.assertEqual(len(catalogo.curvas), 4,
+                         "las curvas pegadas se encadenaron en una sola")
+
+    @staticmethod
+    def _chicana(tramos):
+        """Como `_vuelta`, pero cada tramo lleva su sentido.
+
+        Hace falta para poder poner dos tramos que **se pisan**: dos del mismo
+        sentido a menos de `UNION_M` los une `tramos_de_una_vuelta` antes de que
+        lleguen a agruparse, asi que con una sola direccion el caso no se puede
+        construir. Una chicana si: derecha e izquierda, y en la transicion los
+        dos tramos comparten unos metros.
+        """
+
+        puntos = []
+        for metro in range(0, 5300, 5):
+            lat = 0.0
+            for desde, hasta, pico, signo in tramos:
+                if desde <= metro <= hasta:
+                    v = 2.0 if abs(metro - pico) > 7 else 3.0
+                    if abs(v) > abs(lat):
+                        lat = v * signo
+            puntos.append((float(metro), lat))
+        return puntos
+
+    def test_compartir_una_punta_no_vuelve_dos_curvas_en_una(self) -> None:
+        """LA QUE SOBREVIVIA A TODAS LAS DEMAS, Y ES LA QUE ROMPIO DE VERDAD.
+
+        Bajar `FRACCION_DE_SOLAPE` hasta que baste con tocarse encadena: cada
+        tramo que entra estira el grupo, el grupo alcanza al siguiente, y el
+        circuito entero termina en cinco o seis curvas. Eso paso sobre los tres
+        circuitos medidos ---Silverstone de 17 a 6--- y ninguna prueba de este
+        archivo lo veia, porque todas usaban tramos que no se solapan nunca.
+
+        Aca los dos tramos de una chicana comparten veinte metros en la
+        transicion. Con la fraccion en su valor son dos curvas; con «basta con
+        tocarse», una sola.
+        """
+
+        # DOS TRAMOS DE LA MISMA VUELTA NUNCA SE SOLAPAN: `tramos_de_una_vuelta`
+        # los produce disjuntos, recorriendo las muestras en orden. El solape
+        # solo puede venir de vueltas DISTINTAS, y por eso el caso necesita una
+        # vuelta donde la primera curva se tomo mas larga: ahi el tramo
+        # representativo del grupo alcanza al comienzo del tramo siguiente.
+        largas = [(1000, 1300, 1150, +1), (1310, 1500, 1400, -1)]
+        corta  = [(1000, 1150, 1075, +1), (1160, 1500, 1330, -1)]
+        catalogo = mod.derivar(
+            [self._chicana(largas), self._chicana(largas), self._chicana(corta)],
+            circuito="chicana")
+        self.assertEqual(len(catalogo.curvas), 2,
+                         "los dos tramos de la chicana se fundieron en uno")
+        # NO ALCANZA CON CONTAR. Encadenando, el grupo de la primera curva se
+        # traga el tramo de la vuelta corta y ese tramo le falta a la segunda:
+        # siguen siendo dos curvas, pero una de ellas pierde una vuelta de
+        # evidencia. Con muchas vueltas eso es exactamente lo que hace caer una
+        # curva por debajo de la mayoria, que es como se perdia la curva 9 de
+        # Yas Marina.
+        self.assertEqual([c.vueltas_en_que_aparece for c in catalogo.curvas],
+                         [3, 3],
+                         "una curva perdio evidencia: su tramo se lo quedo la "
+                         "curva anterior")
+
+    def test_un_tramo_que_se_estira_sobre_el_siguiente_no_los_funde(self) -> None:
+        """En las vueltas donde dos curvas se toman sin levantar, el tramo de
+        una se extiende unos metros sobre la otra. Compartir una punta no las
+        vuelve la misma curva: por eso el solape se exige como **fraccion del
+        mas corto** y no como «se tocan»."""
+
+        limpia = [(1000, 1100, 1050), (1160, 1260, 1210)]
+        pegada = [(1000, 1180, 1050), (1160, 1260, 1210)]   # la primera invade
+        catalogo = mod.derivar(
+            [self._vuelta(limpia), self._vuelta(limpia), self._vuelta(pegada)],
+            circuito="sin-levantar")
+        self.assertEqual(len(catalogo.curvas), 2)
+
+    def test_un_incidente_de_una_sola_vuelta_se_sigue_descartando(self) -> None:
+        """La mayoria es lo que distingue una curva de un trompo, y cambiar el
+        agrupamiento no puede costar eso."""
+
+        vueltas = [self._vuelta([(1000, 1100, 1050)]),
+                   self._vuelta([(1000, 1100, 1050)]),
+                   self._vuelta([(1000, 1100, 1050), (2500, 2600, 2550)])]
+        catalogo = mod.derivar(vueltas, circuito="con-trompo")
+        self.assertEqual(len(catalogo.curvas), 1,
+                         "el trompo de una sola vuelta entro al catalogo")
