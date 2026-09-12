@@ -167,7 +167,8 @@ const NOMBRES = [
   "unidadDeCanal", "sinCambiosEnElTramo",
   "divisorDeUnidad", "unidadDeclaradaDe", "divisorDePresentacion",
   "estaEnLaUnidadQueSeMuestra", "serieCrudaDeCanal", "_armarSerieDeCanal",
-  "_enUnidad", "trazarSerie", "tiempoDeVuelta", "diferenciaEnSegundos",
+  "_enUnidad", "trazarSerie", "_cruzaUnHueco", "huecosDeLaSerie", "huecoDeLaSerie",
+  "tiempoDeVuelta", "diferenciaEnSegundos",
   "reservaDeArriba", "encuadrarTrazado",
   "metroDeCurva", "zonasDeCurva", "bandasDeVuelta", "bandasParaElTramo",
   "pintarZonas", "partirEnRenglones", "vistaDeComparacion",
@@ -212,6 +213,7 @@ const NOMBRES = [
 ];
 
 const CONSTANTES = ["SENAL_DE", "SENAL_CAN", "SENAL_OPENF1",
+                    "VECES_EL_PASO_HABITUAL",
                     "UNIDAD_QUE_MUESTRA_EL_TABLERO",
                     "DIVISOR_ENTRE_UNIDADES", "SIN_VEHICULO",
                     "UNIDAD_POR_FUENTE",
@@ -279,7 +281,8 @@ const {
   camposDeIdentidad, quienConduce,
   unidadDeCanal, sinCambiosEnElTramo,
   divisorDeUnidad, unidadDeclaradaDe, divisorDePresentacion,
-  estaEnLaUnidadQueSeMuestra, serieCrudaDeCanal, trazarSerie, _enUnidad,
+  estaEnLaUnidadQueSeMuestra, serieCrudaDeCanal, trazarSerie, _cruzaUnHueco, huecosDeLaSerie,
+  huecoDeLaSerie, _enUnidad,
   serieDeCanal, serieAcumuladaDeCanal,
   tiempoDeVuelta, diferenciaEnSegundos, esCanalEscalonado, serieTemporal,
   valorEscalonadoEn, valorContinuoEn, calcularInstante,
@@ -1325,6 +1328,93 @@ prueba("una continua se une con una recta", () => {
   trazarSerie(ctx, [[100, 200], [200, 250]], x => x, y => y, false);
   assert.deepStrictEqual(ctx.ordenes,
     [["moveTo", 100, 200], ["lineTo", 200, 250]]);
+});
+
+prueba("un hueco de captura corta la linea en vez de cruzarlo", () => {
+  /* EL DEFECTO DEL PUNTO 6, Y NO ES DECORACION. Con el flujo caido treinta
+     segundos, unir la ultima muestra con la primera de la vuelta dibuja una
+     recta sobre un tramo donde **no hubo dato**: la curva afirma que el coche
+     estuvo ahi. Una linea que no se corta es una medicion inventada. */
+  const ctx = lienzoDePrueba();
+  trazarSerie(ctx, [[0, 10], [100, 20], [9000, 30], [9100, 40]],
+              x => x, y => y, false, [[100, 9000]]);
+  assert.deepStrictEqual(ctx.ordenes, [
+    ["moveTo", 0, 10], ["lineTo", 100, 20],
+    ["moveTo", 9000, 30],            // el hueco no se cruza: se levanta la pluma
+    ["lineTo", 9100, 40],
+  ]);
+});
+
+prueba("sin huecos declarados se une todo, como siempre", () => {
+  /* La correccion no puede cambiar lo que dibujan los que no declaran huecos:
+     una vuelta reproducida entera no tiene cortes de flujo. */
+  const ctx = lienzoDePrueba();
+  trazarSerie(ctx, [[0, 10], [9000, 30]], x => x, y => y, false);
+  assert.deepStrictEqual(ctx.ordenes,
+    [["moveTo", 0, 10], ["lineTo", 9000, 30]]);
+});
+
+prueba("una escalonada tambien corta, y no arrastra el valor viejo", () => {
+  /* Es el caso peor: una escalonada sostiene el valor anterior hasta la
+     muestra siguiente, de modo que sin cortar dibujaria treinta segundos de
+     linea plana afirmando que el dato no cambio. No es que no cambio: es que
+     no llego. */
+  const ctx = lienzoDePrueba();
+  trazarSerie(ctx, [[0, 5], [9000, 8]], x => x, y => y, true, [[0, 9000]]);
+  assert.deepStrictEqual(ctx.ordenes,
+    [["moveTo", 0, 5], ["moveTo", 9000, 8]]);
+});
+
+prueba("el corte se decide por lo medido y no por lo dibujado", () => {
+  /* EL CASO QUE OBLIGO A CAMBIAR EL DISENO. La serie que llega al dibujo viene
+     reducida al ancho del lienzo: sobre una vuelta de Shanghai son dieciocho
+     metros por punto contra dos y medio medidos. Un umbral deducido de lo
+     dibujado deja pasar los cortes de dos segundos ---ciento diez metros---,
+     que estan justo por debajo de ese paso grueso y son cortes de verdad.
+
+     Aca se dibujan dos puntos separados por ciento veinte metros, que para lo
+     dibujado es normal, y el hueco declarado cae en el medio: tiene que
+     cortar igual. */
+  const ctx = lienzoDePrueba();
+  trazarSerie(ctx, [[0, 10], [120, 20]], x => x, y => y, false, [[30, 90]]);
+  assert.deepStrictEqual(ctx.ordenes, [["moveTo", 0, 10], ["moveTo", 120, 20]]);
+});
+
+prueba("donde estan los huecos se puede preguntar", () => {
+  /* Cortar la linea deja un blanco, y un blanco se lee igual que el borde de
+     los datos. Quien dibuja necesita saber **donde** estuvieron para poder
+     decirlo. */
+  const huecos = huecosDeLaSerie([[0, 1], [100, 2], [9000, 3]], 2000);
+  assert.deepStrictEqual(huecos, [[100, 9000]]);
+});
+
+prueba("el umbral sale del paso habitual de la propia serie", () => {
+  /* No puede ser una cifra fija: el eje se lee en metros cuando la fuente mide
+     distancia y en segundos cuando no. Medido sobre una vuelta limpia de
+     Shanghai: paso mediano 2,47 m, mayor legitimo 6,07. */
+  const paso = [];
+  for (let i = 0; i < 40; i++) paso.push([i * 2.5, 100]);
+  assert.ok(Math.abs(huecoDeLaSerie(paso) - 15) < 0.01, huecoDeLaSerie(paso));
+});
+
+prueba("la frenada mas fuerte no se toma por un corte", () => {
+  /* El salto legitimo mas grande medido es 2,46 veces la mediana. El umbral
+     esta en seis: si esta prueba cae, el tablero empezo a partir curvas
+     buenas, que es peor que unir de mas. */
+  const puntos = [];
+  for (let i = 0; i < 40; i++) puntos.push([i * 2.5, 100]);
+  puntos.push([puntos[puntos.length - 1][0] + 6.1, 100]);   // la frenada
+  assert.deepStrictEqual(huecosDeLaSerie(puntos, huecoDeLaSerie(puntos)), []);
+});
+
+prueba("con pocas muestras no se deduce un umbral", () => {
+  /* Preferible unir de mas que partir una curva por una mediana de dos
+     puntos. */
+  assert.strictEqual(huecoDeLaSerie([[0, 1], [5, 2], [10, 3]]), 0);
+});
+
+prueba("sin umbral no hay huecos que declarar", () => {
+  assert.deepStrictEqual(huecosDeLaSerie([[0, 1], [9000, 3]], 0), []);
 });
 
 prueba("una escalonada se sostiene y cambia en la muestra siguiente", () => {

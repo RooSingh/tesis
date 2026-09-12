@@ -4005,16 +4005,92 @@ function reducirAAncho(serie, ini, fin, ancho) {
    NO SE AGREGAN PUNTOS A LOS DATOS. El escalon lo da el **camino de dibujo**:
    los arreglos que se exportan, se comparan y se reducen siguen teniendo una
    muestra por observacion. */
-function trazarSerie(ctx, puntos, enX, enY, escalonada) {
+/* Si el tramo entre dos muestras dibujadas pisa algun hueco declarado. */
+function _cruzaUnHueco(huecos, a, b) {
+  if (!huecos || !huecos.length) return false;
+  for (let i = 0; i < huecos.length; i++) {
+    if (Math.min(b, huecos[i][1]) > Math.max(a, huecos[i][0])) return true;
+  }
+  return false;
+}
+
+/* UN HUECO NO SE CRUZA CON UNA RECTA.
+   Esta funcion unia cada muestra con la siguiente sin mirar cuanto las
+   separaba. Con el flujo en vivo caido treinta segundos, eso dibuja una recta
+   sobre un tramo donde **no hubo dato**: la curva afirma que el coche estuvo
+   ahi, y esa afirmacion no la hizo ninguna medicion.
+
+   En una escalonada es peor: el valor anterior se sostiene hasta la muestra
+   siguiente, de modo que el corte se dibuja como treinta segundos de linea
+   plana. No es que el dato no cambio; es que no llego.
+
+   EL UMBRAL ES OPCIONAL Y POR ESO NO CAMBIA NADA DE LO QUE YA ANDABA. Quien no
+   lo pasa dibuja exactamente igual que antes: una vuelta reproducida desde la
+   base no tiene cortes de flujo que declarar. */
+function trazarSerie(ctx, puntos, enX, enY, escalonada, huecos) {
   for (let i = 0; i < puntos.length; i++) {
     const x = enX(puntos[i][0]), y = enY(puntos[i][1]);
-    if (i === 0) { ctx.moveTo(x, y); continue; }
+    /* SE LE DICEN LOS HUECOS, NO LOS DEDUCE. La serie que llega aca ya viene
+       reducida al ancho del lienzo, de modo que su paso es mucho mas grueso
+       que el de la medicion: sobre una vuelta de Shanghai, dieciocho metros
+       dibujados contra dos y medio medidos. Un umbral deducido de lo dibujado
+       deja pasar los cortes cortos ---dos segundos de flujo caido son ciento
+       diez metros, por debajo de ese paso grueso--- y esos cortes existen.
+       Quien llama mira la serie **antes** de reducirla, que es donde estan. */
+    const corta = i > 0 && _cruzaUnHueco(huecos, puntos[i - 1][0], puntos[i][0]);
+    if (i === 0 || corta) { ctx.moveTo(x, y); continue; }
     /* El vertice va en la x de la muestra nueva: el valor anterior se sostiene
        hasta ahi. Ponerlo antes adelantaria el cambio a un sitio donde nadie lo
        midio. */
     if (escalonada) ctx.lineTo(x, enY(puntos[i - 1][1]));
     ctx.lineTo(x, y);
   }
+}
+
+/* CUANTO SEPARA A DOS MUESTRAS QUE SE TOCAN, DEDUCIDO DE LA PROPIA SERIE.
+   EL UMBRAL NO PUEDE SER UNA CIFRA FIJA porque el eje cambia de unidad: estas
+   curvas se leen en metros de vuelta cuando la fuente mide distancia y en
+   segundos cuando no. Dos mil ---que es el umbral de captura en
+   milisegundos--- no significa nada sobre un eje de metros.
+
+   Sale del dato: un hueco es un salto mucho mayor que el paso habitual.
+   Medido sobre una vuelta limpia de Shanghai, con `lap_distance` a 20 Hz: paso
+   mediano **2,47 m**, percentil 99 **4,58**, y el mayor legitimo **6,07** ---o
+   sea dos veces y media la mediana, que es la frenada mas fuerte contra la
+   recta mas rapida---. Seis veces la mediana deja el umbral en unos quince
+   metros: mas del doble del mayor salto legitimo, y muy por debajo de
+   cualquier corte real, porque dos segundos sin flujo a doscientos por hora
+   son ciento once metros.
+
+   CON POCAS MUESTRAS NO SE DEDUCE NADA y se devuelve cero, que apaga el corte:
+   preferible unir de mas que partir una curva por una mediana de dos puntos. */
+const VECES_EL_PASO_HABITUAL = 6;
+
+function huecoDeLaSerie(puntos, veces) {
+  if (!puntos || puntos.length < 8) return 0;
+  const pasos = [];
+  for (let i = 1; i < puntos.length; i++) {
+    const d = puntos[i][0] - puntos[i - 1][0];
+    if (d > 0) pasos.push(d);
+  }
+  if (pasos.length < 4) return 0;
+  pasos.sort((a, b) => a - b);
+  const mediana = pasos[pasos.length >> 1];
+  return mediana * (veces || VECES_EL_PASO_HABITUAL);
+}
+
+/* DONDE ESTUVIERON LOS HUECOS, PARA PODER DECIRLO.
+   Cortar la linea deja un blanco, y un blanco se lee igual que el borde de los
+   datos: quien mira no distingue «aca no llego nada» de «aca termina lo que
+   hay». Quien dibuja necesita los tramos para marcarlos. */
+function huecosDeLaSerie(puntos, hueco) {
+  const salida = [];
+  if (!(hueco > 0)) return salida;
+  for (let i = 1; i < puntos.length; i++) {
+    const a = puntos[i - 1][0], b = puntos[i][0];
+    if (b - a > hueco) salida.push([a, b]);
+  }
+  return salida;
 }
 
 /* Parte un texto en renglones que entren en `ancho`, midiendolos con la fuente
@@ -6733,14 +6809,25 @@ function dibujarTraza() {
          un recorrido que nadie midio. */
       ctx.beginPath();
       let ultimo = null, cuantos = 0;
+      const huecosVistos = [];
       ts.forEach(d => {
         // Reducida al ancho del lienzo, conservando minimo y maximo por columna:
         // un pico de una muestra sobrevive, que es lo que una anotacion señala.
         const dd = reducirAAncho(recortarConBordes(d, vIni, vFin, escalonada),
                                  vIni, vFin, w);
+        /* EL CORTE SOLO EN LA RAMA QUE NO LO TENIA. La vista acumulada ya
+           llega partida en tramos continuos ---`trazaContinua` lo hace--- y
+           volver a cortar ahi no cambiaria nada. La vista por vuelta llegaba
+           de un trazo, y con el flujo caido unia los dos lados del corte con
+           una recta sobre un tramo donde no hubo dato. */
+        /* Los huecos salen de `d`, la serie **medida**, y no de `dd`, que ya
+           esta reducida al ancho del lienzo: el paso de lo dibujado es siete
+           veces el de lo medido y ahi los cortes cortos desaparecen. */
+        const huecos = conAcumulada ? [] : huecosDeLaSerie(d, huecoDeLaSerie(d));
+        huecos.forEach(g => huecosVistos.push(g));
         trazarSerie(ctx, dd, enX,
                     v => (h - 6) - ((v - mn) / (mx - mn)) * (h - 12) + 3,
-                    escalonada);
+                    escalonada, huecos);
         cuantos += dd.length;
         if (dd.length) ultimo = dd[dd.length - 1];
       });
@@ -6761,6 +6848,24 @@ function dibujarTraza() {
       ctx.lineWidth = ids.length > 2 ? 1.2 : 1.7;
       ctx.lineJoin = "round";
       ctx.stroke();
+
+      /* EL HUECO SE MARCA, PORQUE UN BLANCO NO DICE NADA.
+         Cortar la linea es la mitad correcta: deja de afirmar un recorrido que
+         nadie midio. Pero un blanco en la curva se lee igual que el borde de
+         los datos o que un canal que todavia no arranco. La banda dice que ahi
+         **se esperaba dato y no llego**, que es una afirmacion distinta.
+
+         Va una sola vez y no por vehiculo: el corte es del flujo, no de un
+         coche. */
+      if (ai === 0 && huecosVistos.length) {
+        ctx.fillStyle = tinta("--alerta");
+        ctx.globalAlpha = 0.13;
+        huecosVistos.forEach(g => {
+          const x0 = enX(g[0]), x1 = enX(g[1]);
+          if (x1 > x0) ctx.fillRect(x0, 3, x1 - x0, h - 6);
+        });
+        ctx.globalAlpha = 1;
+      }
     });
 
     const dec = (canal === "glong" || canal === "glat" || canal === "gvert" ||
