@@ -138,6 +138,11 @@ def cargar_telemetria(paquete: str | Path, pilotos: list[int] | None = None,
     corrida = identidad_de_corrida(session_key)
     resumen = {"paquete": str(ruta), "session_key": session_key,
                "corrida": corrida, "archivos": len(elegidos),
+               # DE QUIENES, Y NO CUANTOS ARCHIVOS. Quien lea esto no tiene por
+               # que saber que cada piloto trae dos conjuntos: derivar «tres
+               # pilotos» de «seis archivos» seria una convencion escrita de un
+               # solo lado, que es como se rompen los acuerdos entre dos.
+               "pilotos": sorted({a[1] for a in elegidos}),
                "validados": 0, "insertados": 0, "rechazados": 0, "motivo": ""}
 
     if not elegidos:

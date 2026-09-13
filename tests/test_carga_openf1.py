@@ -208,6 +208,18 @@ class QueSeInsertaTests(unittest.TestCase):
         self.assertEqual(r["insertados"], 0)
         self.assertIn("telemetr", r["motivo"])
 
+    def test_declara_de_que_pilotos_es_y_no_cuantos_archivos(self) -> None:
+        """Quien lea el resumen no tiene por que saber que cada piloto trae dos
+        conjuntos: derivar «tres pilotos» de «seis archivos» seria una convencion
+        escrita de un solo lado."""
+        paquete = paquete_de_prueba(Path(self._dir.name) / "tres",
+                                    pilotos=((44, "HAM"), (1, "VER"), (16, "LEC")))
+        lote = LoteFalso()
+        with patch.object(carga_openf1.db, "insertar_telemetria_lote", lote):
+            r = carga_openf1.cargar_telemetria(paquete)
+        self.assertEqual(r["pilotos"], [1, 16, 44])
+        self.assertEqual(r["archivos"], 6)
+
     def test_SE_PUEDE_ACOTAR_POR_PILOTO(self) -> None:
         """Una carrera son veinte pilotos y millones de muestras.
 

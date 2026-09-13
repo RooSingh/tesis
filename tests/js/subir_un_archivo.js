@@ -627,6 +627,12 @@ prueba("un conteo en cero no se anuncia como si hubiera entrado algo", () => {
   assert.strictEqual(loQueImporto(vacio), "");
 });
 
+const loQueSeDice = new Function(
+  [extraer("cifra"), extraer("loQueCargo"),
+   constante("LO_QUE_SE_CUENTA_DE_UNA_IMPORTACION"), extraer("loQueImporto"),
+   extraer("loQueSeDiceDeLaImportacion"),
+   "return loQueSeDiceDeLaImportacion;"].join("\n"))();
+
 prueba("CONTAR LO QUE ENTRO NO ALCANZA: HAY QUE DECIR QUE FALTA", () => {
   /* REPORTADO POR EL USUARIO EL 2026-09-13, y con razon. El mensaje contaba
      bien ---20 pilotos, 1.425 vueltas, 59 tandas--- y despues fue a «Abrir
@@ -642,11 +648,17 @@ prueba("CONTAR LO QUE ENTRO NO ALCANZA: HAY QUE DECIR QUE FALTA", () => {
      sabe como procesar algo: «no saber es una respuesta, y decirla vale mas que
      ofrecer un boton que falla». Aca el equivalente es decir que el contexto es
      una mitad. */
-  const i = fuenteApp.indexOf("function subirLoElegido(");
-  const cuerpo = soloCodigo(fuenteApp.slice(i, fuenteApp.indexOf("\n}", i)));
-  assert.ok(/telemetr/i.test(cuerpo),
+  /* SE MIRA LA FUNCION Y NO EL MANEJADOR. El texto vivia suelto en
+     `subirLoElegido` y se extrajo a `loQueSeDiceDeLaImportacion` para poder
+     ejercerlo; esta guarda se quedo apuntando al sitio viejo y **se puso en
+     rojo por una mudanza**, no por un defecto. Es el precio justo: una guarda
+     que sigue al codigo cuando el codigo se mueve es mejor que una que no se
+     entera. */
+  const solo = { detalle: { importacion: { counts: { drivers: 20, laps: 827 } } } };
+  const dichos = loQueSeDice(solo).map(p => p[0]).join(" ");
+  assert.ok(/telemetr/i.test(dichos),
     "el desenlace de una importacion no dice que la telemetria es otra cosa");
-  assert.ok(/Abrir sesi/.test(cuerpo),
+  assert.ok(/Abrir sesi/.test(dichos),
     "no nombra la lista donde la persona la va a ir a buscar");
 });
 
@@ -660,13 +672,87 @@ prueba("y lo que se dice del contexto no depende de que haya una ruta hoy", () =
     "el mensaje afirma que no existe un camino, que es un estado y no un hecho");
 });
 
+/* ==================================================================
+   Y CUANDO LA TELEMETRIA SI ENTRA, NO SE PUEDE DECIR QUE FALTA
+   ------------------------------------------------------------------
+   REPORTADO POR EL USUARIO EL 2026-09-13 con las dos pantallas al lado. Subio
+   Silverstone con la telemetria del podio. **Entro**: 932.625 filas en 82 s,
+   cero rechazadas, conciliacion exacta, y la sesion quedo abierta y
+   reproduciendose con sus tres pilotos. El tablero le dijo «hasta que entre, la
+   sesion no aparece en Abrir sesion guardada».
+
+   ES MI PROPIO DEFECTO Y ES EL MAS COMUN DE TODOS: se arreglo el servidor y la
+   pantalla se quedo contando lo de ayer. El aviso se escribia sin mirar si la
+   telemetria habia entrado, porque cuando se escribio **no podia entrar**.
+
+   Y el desenlace cortaba antes de tiempo: la rama de la importacion devolvia sin
+   llegar a mirar el catalogo, de modo que la sesion que si aparecio nunca se
+   anuncio como aparecida.
+   ================================================================== */
+
+const loQueCargo = new Function(
+  extraer("cifra") + "\n" + extraer("loQueCargo") + "\nreturn loQueCargo;")();
+
+const CON_TELEMETRIA = { detalle: {
+  session_id: "openf1:session:9947",
+  importacion: { counts: { drivers: 20, laps: 827 } },
+  telemetria: { insertados: 932625, pilotos: [4, 27, 81], rechazados: 0 } } };
+
+prueba("EL DEFECTO: la telemetria que entro se cuenta, no se declara ausente", () => {
+  const dice = loQueCargo(CON_TELEMETRIA);
+  assert.ok(/932\.625/.test(dice), dice);
+  assert.ok(/3 pilotos/.test(dice), dice);
+});
+
+prueba("sin telemetria no se inventa una carga", () => {
+  assert.strictEqual(loQueCargo({ detalle: { importacion: { counts: {} } } }), "");
+  assert.strictEqual(loQueCargo({ detalle: { telemetria: { insertados: 0 } } }), "");
+  assert.strictEqual(loQueCargo(null), "");
+});
+
+prueba("LO QUE SE RECHAZO SE DICE, aunque haya entrado casi todo", () => {
+  /* «932.625 filas» sobre una carga con muestras rotas es una verdad que
+     esconde otra. */
+  const con = { detalle: { telemetria: {
+    insertados: 900, pilotos: [4], rechazados: 25 } } };
+  assert.ok(/25/.test(loQueCargo(con)), loQueCargo(con));
+});
+
+prueba("EL AVISO DE «ES UNA MITAD» NO SALE CUANDO LA TELEMETRIA ENTRO", () => {
+  /* Se ejerce la funcion en vez de mirar el texto de al lado: una guarda que
+     busca `if (cargado)` a cuatrocientos caracteres comprueba **cercania**, no
+     conducta, y pasa igual si el aviso queda fuera de la rama. Se comprobo:
+     sacando el `else` la guarda vieja seguia contenta. */
+  const dichos = loQueSeDice(CON_TELEMETRIA).map(p => p[0]).join(" ");
+  assert.ok(/932\.625 filas de telemetr/.test(dichos), dichos);
+  assert.ok(!/es una mitad/.test(dichos),
+    "le dijo que faltaba la telemetria que acababa de entrar");
+});
+
+prueba("y SI sale cuando de verdad falta", () => {
+  const solo = { detalle: { importacion: { counts: { drivers: 20, laps: 827 } } } };
+  const dichos = loQueSeDice(solo).map(p => p[0]).join(" ");
+  assert.ok(/es una mitad/.test(dichos), dichos);
+  assert.ok(/Abrir sesi/.test(dichos), dichos);
+});
+
+prueba("un trabajo que no importo nada no dice nada", () => {
+  assert.deepStrictEqual(loQueSeDice({ detalle: { sesiones: ["x"] } }), []);
+});
+
+prueba("EL CONTEXTO SE CUENTA SIEMPRE, entre o no la telemetria", () => {
+  /* Las dos mitades son dos hechos: que entrara una no borra a la otra. */
+  [CON_TELEMETRIA, { detalle: { importacion: { counts: { laps: 827 } } } }]
+    .forEach(t => assert.ok(/se importó el contexto/.test(loQueSeDice(t)[0][0])));
+});
+
 prueba("EL DESENLACE LO DECIDE LO QUE EL TRABAJO DECLARA", () => {
   /* Si el trabajo dice que importo, se cuenta eso; si dice que sesiones toco,
      se mira la lista. Preguntarle a la lista por una importacion de contexto
      es preguntarle a un sitio que esa importacion no escribe. */
   const i = fuenteApp.indexOf("function subirLoElegido(");
   const cuerpo = fuenteApp.slice(i, fuenteApp.indexOf("\n}", i));
-  assert.ok(/loQueImporto\(/.test(cuerpo),
+  assert.ok(/loQueSeDiceDeLaImportacion\(/.test(cuerpo),
     "el desenlace no mira lo que el trabajo importo");
 });
 

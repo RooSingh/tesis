@@ -2319,26 +2319,13 @@ function subirLoElegido(archivos) {
            y no estaba. */
         /* UNA IMPORTACION DE CONTEXTO SE CUENTA POR LO QUE DEJO, y no se le
            pregunta a una lista que no escribe. */
-        const importado = loQueImporto(t);
-        if (importado) {
+        const pasos = loQueSeDiceDeLaImportacion(t);
+        if (pasos.length) {
           _quitarUltimoPaso();
-          anotarPasoDeSubida("Listo: se importó el contexto de la sesión · " +
-                             importado + ".", "hecho");
-          /* CONTAR LO QUE ENTRO NO ALCANZA: HAY QUE DECIR QUE FALTA.
-             El contexto es una mitad. «Abrir sesión guardada» sale de las
-             sesiones con filas de telemetría, y una importación de contexto no
-             trae ninguna: quien leyó los pilotos y las vueltas se va a la lista
-             y no encuentra la sesión. Pasó el 2026-09-13.
-
-             LA FRASE HABLA DE QUE **ES** UN CONTEXTO, no de si hoy existe un
-             camino para traer la telemetría. Atarla a lo segundo la volvería
-             falsa el día que ese camino exista, y nadie vendría a cambiarla. */
-          anotarPasoDeSubida(
-            "El contexto es una mitad: son las vueltas, las paradas y el clima " +
-            "de la carrera. La telemetría de cada piloto entra aparte, y hasta " +
-            "que entre, la sesión no aparece en «Abrir sesión guardada».", "");
-          refrescarCatalogo(2);
-          return;
+          pasos.forEach(([texto, estado]) => anotarPasoDeSubida(texto, estado));
+          /* Y SE SIGUE MIRANDO EL CATALOGO. Esta rama volvía aquí mismo, de modo
+             que la sesión que **sí** aparecía nunca se anunciaba como aparecida.
+             Quien cargó telemetría quiere saber si ya puede abrirla. */
         }
         const suyas = sesionesDelTrabajo(t);
         const estabanAntes = suyas.length &&
@@ -12621,6 +12608,25 @@ const LO_QUE_SE_CUENTA_DE_UNA_IMPORTACION = [
   ["weather", "muestras de clima"], ["intervals", "intervalos"],
 ];
 
+/* Y CUANTA TELEMETRIA ENTRO, QUE ES LA QUE HACE REPRODUCIBLE A LA SESION.
+   El 2026-09-13 esto no existia porque **la telemetria no podia entrar**:
+   ninguna ruta del servidor la cargaba. El dia que empezo a entrar, el aviso de
+   al lado siguio diciendo que faltaba. Es el defecto mas comun de todos:
+   arreglar el servidor y dejar la pantalla contando lo de ayer. */
+function loQueCargo(t) {
+  const c = (t && t.detalle && t.detalle.telemetria) || {};
+  if (!c.insertados) return "";
+  const pilotos = (c.pilotos || []).length;
+  /* LO QUE SE RECHAZO SE DICE. «932.625 filas» sobre una carga con muestras
+     rotas es una verdad que esconde otra. */
+  const rotas = c.rechazados
+    ? " · " + cifra(c.rechazados, 0) + " muestras rechazadas"
+    : "";
+  return cifra(c.insertados, 0) + " filas de telemetría" +
+         (pilotos ? " de " + pilotos + (pilotos === 1 ? " piloto" : " pilotos") : "") +
+         rotas;
+}
+
 function loQueImporto(t) {
   const cuentas = ((t && t.detalle && t.detalle.importacion) || {}).counts;
   if (!cuentas) return "";
@@ -12630,6 +12636,37 @@ function loQueImporto(t) {
     .filter(([clave]) => cuentas[clave])
     .map(([clave, como]) => cifra(cuentas[clave], 0) + " " + como)
     .join(" · ");
+}
+
+/* QUE SE DICE DE UNA IMPORTACION, EN ORDEN.
+   ---------------------------------------------------------------------
+   Se extrae porque el aviso de «el contexto es una mitad» **se escribia sin
+   mirar si la telemetria habia entrado**, y el 2026-09-13, el dia que empezo a
+   entrar, le dijo a alguien que faltaba mientras la sesion se reproducia en la
+   pantalla de al lado. Metido en el manejador no habia forma de ejercerlo: una
+   guarda que mira el texto de al lado comprueba cercania, no conducta. */
+function loQueSeDiceDeLaImportacion(t) {
+  const importado = loQueImporto(t);
+  if (!importado) return [];
+  const cargado = loQueCargo(t);
+  const pasos = [["Listo: se importó el contexto de la sesión · " +
+                  importado + ".", "hecho"]];
+  if (cargado) {
+    pasos.push(["Y su telemetría: " + cargado + ".", "hecho"]);
+    return pasos;
+  }
+  /* CONTAR LO QUE ENTRO NO ALCANZA: HAY QUE DECIR QUE FALTA. «Abrir sesión
+     guardada» sale de las sesiones con filas de telemetría, y sin ellas quien
+     leyó los pilotos y las vueltas se va a la lista y no encuentra la sesión.
+
+     LA FRASE HABLA DE QUE **ES** UN CONTEXTO, no de si existe un camino para la
+     telemetría: ese camino ya existe, y atarla a él la habría vuelto falsa el
+     mismo día en que se escribió. */
+  pasos.push(["El contexto es una mitad: son las vueltas, las paradas y el " +
+              "clima de la carrera. La telemetría de cada piloto entra aparte, " +
+              "y hasta que entre, la sesión no aparece en «Abrir sesión " +
+              "guardada».", ""]);
+  return pasos;
 }
 
 /* COMO QUEDO EL CATALOGO, Y «NO CAMBIO» NO ES «NO ESTA».
