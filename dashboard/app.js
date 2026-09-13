@@ -12836,6 +12836,24 @@ function pintarPuestaAPunto() {
   if (cab) cab.textContent = campos.length
     ? campos.length + " ajustes · " + ((d.puesta_asentada || d.asentada) ? "asentada" : "observada")
     : "—";
+
+  /* LOS VEINTITRES VALORES SE PLIEGAN, Y SE DICE CUANTOS SON.
+     Ocupaban el panel entero sin informar: un «alerón delantero 3» no dice nada
+     sin contra qué compararlo, y de los catorce circuitos con reglaje capturado
+     sólo uno tiene referencia externa. Lo que informa es la comparación contra
+     las otras sesiones de la misma pista, que ahora va arriba.
+
+     El resumen lleva la cuenta real y no un «23» escrito: una captura vieja
+     puede traer menos campos, y prometer veintitrés para abrir y encontrar
+     diecinueve es peor que no prometer nada. */
+  const plegado = document.getElementById("ajustes-crudos");
+  if (plegado) plegado.hidden = !campos.length;
+  const resumen = document.getElementById("ver-ajustes");
+  if (resumen) {
+    resumen.textContent = campos.length === 1
+      ? "Ver el ajuste medido"
+      : "Ver los " + campos.length + " ajustes medidos";
+  }
   pintarReglajesDelCircuito();
 }
 

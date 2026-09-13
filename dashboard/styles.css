@@ -2398,6 +2398,15 @@
   .pasos-subida .paso[data-estado="pendiente"] { border-left-color: var(--alerta); }
   .pasos-subida .paso[data-estado="en-curso"] { border-left-color: var(--acento); }
 
+  /* Los valores medidos, apartados de la vista y no borrados: son la medicion,
+     y son lo unico con que se puede verificar la comparacion que va encima. */
+  .ajustes-crudos { margin-top: 10px; }
+  .ajustes-crudos > summary { cursor: pointer; font-size: .74rem; color: var(--texto-tenue);
+    padding: 4px 0; list-style: revert; }
+  .ajustes-crudos > summary:hover { color: var(--texto); }
+  .ajustes-crudos > summary:focus-visible { outline: 2px solid var(--acento); outline-offset: 2px; }
+  .ajustes-crudos[open] > summary { margin-bottom: 6px; }
+
   /* ---------- los reglajes que se corrieron en este circuito ----------
      La lectura va primero y en el cuerpo del texto: es lo unico que afirma
      algo. La tabla esta abajo para poder verificarla, no para leerla antes. */

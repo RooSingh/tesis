@@ -49,6 +49,40 @@ class DashboardFrontendTests(unittest.TestCase):
         self.assertIn('"/importar/archivo?nombre=" +', codigo)
         self.assertIn("xhr.upload.onprogress", codigo)
 
+    def test_los_valores_del_reglaje_no_ocupan_el_panel(self) -> None:
+        """VEINTITRES NUMEROS SIN CONTRA QUE COMPARARLOS NO INFORMAN.
+
+        Un «aleron delantero 3» no dice nada solo, y de los catorce circuitos
+        con reglaje capturado **uno** tiene referencia externa. Lo que informa es
+        la comparacion contra las otras sesiones de la misma pista.
+
+        No se borran, y eso tambien se comprueba: son la medicion, y son lo
+        unico con que se puede verificar la comparacion que va encima. Se
+        pliegan.
+        """
+        indice = INDICE.read_text(encoding="utf-8")
+        self.assertIn('id="lista-puesta"', indice,
+                      "los valores medidos desaparecieron del panel")
+        # El `<dl>` vive dentro del plegado, y el plegado no arranca abierto.
+        plegado = indice[indice.index('<details class="ajustes-crudos"'):]
+        plegado = plegado[:plegado.index("</details>")]
+        self.assertIn('id="lista-puesta"', plegado,
+                      "los valores quedaron fuera del plegado, a la vista")
+        self.assertNotIn(" open", plegado.split(">")[0],
+                         "el plegado arranca abierto: vuelve a ocupar el panel")
+        # Y la comparacion va antes que ellos, porque es lo que se lee primero.
+        self.assertLess(indice.index('id="reglajes-circuito"'),
+                        indice.index('id="lista-puesta"'),
+                        "los valores crudos siguen yendo antes que la lectura")
+
+    def test_el_resumen_del_plegado_cuenta_los_campos_que_hay(self) -> None:
+        """Prometer «23» y abrir con diecinueve es peor que no prometer nada.
+
+        Una captura anterior al paquete normalizado trae menos campos.
+        """
+        codigo = APP.read_text(encoding="utf-8")
+        self.assertIn('"Ver los " + campos.length + " ajustes medidos"', codigo)
+
     def test_el_tablero_no_arma_el_pedido_de_importacion_por_su_cuenta(self) -> None:
         """EL PLAN DE PROCESAMIENTO LO DECLARA EL SERVIDOR.
 
