@@ -1690,6 +1690,37 @@ function accionDeLaFuente() {
   return null;
 }
 
+/* QUE SIGNIFICA QUE LA ACCION FALLE, CUANDO NO SIGNIFICA QUE FALLO.
+   ---------------------------------------------------------------------
+   Las dos acciones de la captura tienen un 409 que **no es un error para quien
+   pulso el boton**, y son simetricos:
+
+   - «Ya hay un trabajo de la misma familia en curso» al empezar: la captura
+     esta corriendo, que es lo que se pidio. Ya estaba manejado desde el
+     2026-09-09, cuando se cayo tres veces en el mismo dia.
+   - «No hay ninguna captura en curso para detener» al detener: no hay nada
+     escuchando, que es lo que se pidio. **No estaba manejado**, y eso es lo que
+     obligo a recargar la pagina el 2026-09-13 despues del corte de corriente:
+     los trabajos viven en la memoria del proceso y el contenedor se recreo, de
+     modo que el boton ofrecia «Detener escucha», pulsarlo daba 409, y
+     `estadoSesion` se quedaba en `escuchando` para siempre.
+
+   LOS DOS CONFLICTOS COMPARTEN CODIGO Y NO SON EL MISMO. El de detener no trae
+   `trabajo_en_curso`; lo que los separa es que pidio quien pulso, y por eso se
+   decide con la accion en la mano y no solo con el error.
+
+   SE EXTRAE PORQUE ADENTRO DE UN `addEventListener` NO HAY FORMA DE EJERCERLA.
+   Ver `tests/js/escuchar_no_es_seguir_recibiendo.js`. */
+function significadoDelFallo(a, e) {
+  if (!e || e.estado !== 409) return "";
+  const enCurso = e.detalle && e.detalle.trabajo_en_curso;
+  if (a.sigueVivo) {
+    return (enCurso && enCurso.familia === "captura") ? "ya estaba" : "";
+  }
+  if (a.dejaDeSeguir) return "ya no está";
+  return "";
+}
+
 document.getElementById("btn-accion").addEventListener("click", () => {
   let a;
   try { a = accionDeLaFuente(); } catch (e) { avisar(e.message, true); return; }
@@ -1729,14 +1760,26 @@ document.getElementById("btn-accion").addEventListener("click", () => {
          Se adopta el flujo igual que en el camino feliz, y se dice desde cuando
          viene escuchando, que es el dato que faltaba para entender que no hacia
          falta hacer nada. */
-      const enCurso = e.estado === 409 && e.detalle && e.detalle.trabajo_en_curso;
-      if (a.sigueVivo && enCurso && enCurso.familia === "captura") {
+      const que = significadoDelFallo(a, e);
+      if (que === "ya estaba") {
+        const enCurso = e.detalle.trabajo_en_curso;
         vivo.objetivo = null; vivo.aceptaNueva = true; vivo.pedida = true; vivo.otra = null;
         prepararEscucha();
         avisar("Ya estaba escuchando" +
                (enCurso.duracion_s ? " desde hace " + Math.round(enCurso.duracion_s) + " s" : "") +
                ". Se sigue esa captura. " + esperaDeTelemetria(), false);
         vigilarEnVivo();
+        render();
+        return;
+      }
+      if (que === "ya no está") {
+        /* No hay nada que detener, que es el estado que se pedia. Se cierra la
+           escucha de este lado y se dice por que, en vez de dejar el boton
+           ofreciendo detener algo que no existe. */
+        terminarEscucha();
+        avisar("No había ninguna captura corriendo: la escucha quedó cerrada. " +
+               "Si el capturador se cayó ---un corte de corriente, un reinicio " +
+               "del servicio---, volvé a empezarla.", false);
         render();
         return;
       }
@@ -4984,11 +5027,75 @@ function marcarFrescuraDelFlujo() {
    momento del ultimo dibujo y no se enteraba de que el flujo se habia cortado.
    Es el mismo argumento que justifica el reloj de un segundo, aplicado a la
    otra cosa que hay que poder decir sin datos nuevos. */
+/* ============================================================
+   NO HACE FALTA PULSAR NADA PARA ENTERARSE DE QUE NO HAY CAPTURA
+   ------------------------------------------------------------
+   Arreglado el 409 de detener, el tablero **sale** del estado de escucha
+   cuando alguien pulsa. Pero seguia haciendo falta pulsar algo que decia
+   «Detener escucha» para descubrir que no habia escucha, y mientras tanto el
+   boton afirmaba lo contrario. El usuario lo pidio con esas palabras: si no
+   podria darse cuenta solo.
+
+   EL BACKEND YA LO SABE Y NADIE SE LO PREGUNTABA. `/trabajos` dice si hay algo
+   de la familia `captura` en curso. No se deduce del silencio: un capturador
+   vivo con el juego apagado tambien esta callado, y cerrar la escucha ahi seria
+   el defecto contrario.
+
+   CUANDO SE PREGUNTA. Solo cuando ya hay motivo para dudar ---el mismo silencio
+   de diez segundos con el que este archivo decide que la sesion deja de estar
+   «viva»--- y como mucho una vez cada cinco. Preguntar en cada latido serian
+   sesenta consultas por minuto para confirmar lo que el flujo ya demuestra al
+   llegar.
+   ============================================================ */
+const CADA_CUANTO_SE_PREGUNTA_POR_LA_CAPTURA_MS = 5000;
+let _ultimaPreguntaPorLaCaptura = 0;
+
+/* Hace cuanto que no se sabe nada del capturador, en milisegundos.
+
+   ES LA ULTIMA MUESTRA, O EL ENCENDIDO SI NO LLEGO NINGUNA. `edadDelFlujo`
+   devuelve nulo sin primera muestra, y con razon: ahi no hay flujo que fechar.
+   Pero «pulse escuchar y el capturador ya estaba muerto» no tiene primera
+   muestra **nunca**, y es justo uno de los dos casos que hay que detectar. Sin
+   este segundo origen, ese se quedaba esperando para siempre. */
+function haceCuantoQueNoSeSabeNada() {
+  const desde = vivo.ultimaLlegada || vivo.escuchaDesde;
+  if (!desde) return null;
+  return Date.now() - desde;
+}
+
+function comprobarQueLaCapturaSigue() {
+  if (estadoSesion !== "escuchando") return;
+  const callado = haceCuantoQueNoSeSabeNada();
+  if (callado === null || callado < SILENCIO_QUE_APAGA_MS) return;
+  const ahora = Date.now();
+  if (ahora - _ultimaPreguntaPorLaCaptura < CADA_CUANTO_SE_PREGUNTA_POR_LA_CAPTURA_MS) return;
+  _ultimaPreguntaPorLaCaptura = ahora;
+  return pedir("/trabajos")
+    .then(r => {
+      /* Pudo cambiar mientras la consulta viajaba: alguien detuvo, o llego una
+         muestra y esto ya no describe nada. */
+      if (estadoSesion !== "escuchando") return;
+      const capturando = ((r && r.trabajos) || []).some(
+        t => t.familia === "captura" && t.estado === "en_curso");
+      if (capturando) return;
+      /* UN FALLO DE LA CONSULTA NO LLEGA ACA, Y ES A PROPOSITO. Un servidor que
+         no contesta no demuestra que la captura murio; cerrar la escucha por eso
+         tiraria un flujo que quiza sigue entrando. */
+      terminarEscucha();
+      avisar("El capturador ya no está corriendo: la escucha se cerró sola. " +
+             "Lo que se ve es lo último que llegó. Volvé a empezarla cuando el " +
+             "capturador esté de pie.", true);
+      render();
+    })
+    .catch(e => { if (convieneAvisar(e)) console.error(e); });
+}
+
 function latidoDeFrescura() {
   marcarFrescuraDelFlujo();
   if (estadoSesion !== "escuchando") return;
   const detalle = document.getElementById("detalle-vivo");
   if (detalle) detalle.textContent = loQueDiceLaEspera();
+  comprobarQueLaCapturaSigue();
 }
 
 /* Un solo sitio que escribe la marca. Con dos ---uno para el vivo y otro para
@@ -9669,6 +9776,9 @@ function terminarEscucha() {
      aunque la persona acabara de pedir exactamente lo contrario. */
   cerrarFlujoEnVivo();
   vaciarVivo(null);
+  //: Ya no se espera nada: una fecha de espera que sobrevive a la espera es una
+  //: cifra que el dia de mañana alguien lee como si significara algo.
+  vivo.escuchaDesde = null;
   estadoSesion = estado.abierta ? "cargado" : "vacio";
   if (!recien) { render(); return; }
   estado.motivo = "Escucha detenida. Abriendo lo que se acaba de grabar…";
@@ -9704,11 +9814,18 @@ function terminarEscucha() {
    se esta mirando nada guardado. Es la espera, y se declara como tal. */
 function prepararEscucha() {
   estadoSesion = "escuchando";
+  /* DESDE CUANDO SE ESPERA. Sin esto, una escucha que no recibe ni una muestra
+     no tiene fecha de nada: `vivo.ultimaLlegada` sigue nulo y no hay forma de
+     decir que lleva un rato callada. Se pone **antes** de `vaciarVivo`, que es
+     quien lo borraria. Ver `haceCuantoQueNoSeSabeNada`. */
+  const encendido = Date.now();
   nuevaSesionEnCurso();
   PISTA = { path: "", curvas: [], largo_m: null, desnivel_m: null, muestras: null,
           sectores: [], sectoresOrigen: "", puntos: [] };
   CURVAS = [];
   vaciarVivo(null);
+  vivo.escuchaDesde = encendido;
+  _ultimaPreguntaPorLaCaptura = 0;
   sesionAbierta = null;
   estado.abierta = null;
   estado.vueltas = []; estado.series = {}; estado.pidiendo = {};
