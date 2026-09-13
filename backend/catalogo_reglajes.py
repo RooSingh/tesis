@@ -65,7 +65,7 @@ ALCANCE = (
 #: todas las sesiones capturadas en este trabajo son contrarreloj, y la propia
 #: fuente repite que «this isn't a time trial setup».
 REFERENCIAS = {
-    ("f1-25", "melbourne"): {
+    ("f1-25", "melbourne", "seco"): {
         "programa": "F1 25",
         "circuito": "Melbourne",
         "modo": "carrera",
@@ -89,7 +89,7 @@ REFERENCIAS = {
         },
         "alcance": ALCANCE,
     },
-    ("f1-25", "shanghai"): {
+    ("f1-25", "shanghai", "seco"): {
         "programa": "F1 25",
         "circuito": "Shanghai",
         "modo": "carrera",
@@ -113,7 +113,7 @@ REFERENCIAS = {
         },
         "alcance": ALCANCE,
     },
-    ("f1-25", "suzuka"): {
+    ("f1-25", "suzuka", "seco"): {
         "programa": "F1 25",
         "circuito": "Suzuka",
         "modo": "carrera",
@@ -137,7 +137,7 @@ REFERENCIAS = {
         },
         "alcance": ALCANCE,
     },
-    ("f1-25", "sakhir"): {
+    ("f1-25", "sakhir", "seco"): {
         "programa": "F1 25",
         "circuito": "Sakhir",
         "modo": "carrera",
@@ -160,7 +160,7 @@ REFERENCIAS = {
         },
         "alcance": ALCANCE,
     },
-    ("f1-25", "miami"): {
+    ("f1-25", "miami", "seco"): {
         "programa": "F1 25",
         "circuito": "Miami",
         "modo": "carrera",
@@ -185,7 +185,7 @@ REFERENCIAS = {
         },
         "alcance": ALCANCE,
     },
-    ("f1-25", "imola"): {
+    ("f1-25", "imola", "seco"): {
         "programa": "F1 25",
         "circuito": "Imola",
         "modo": "carrera",
@@ -209,7 +209,7 @@ REFERENCIAS = {
         },
         "alcance": ALCANCE,
     },
-    ("f1-25", "monte-carlo"): {
+    ("f1-25", "monte-carlo", "seco"): {
         "programa": "F1 25",
         "circuito": "Monte-Carlo",
         "modo": "carrera",
@@ -232,7 +232,7 @@ REFERENCIAS = {
         },
         "alcance": ALCANCE,
     },
-    ("f1-25", "catalunya"): {
+    ("f1-25", "catalunya", "seco"): {
         "programa": "F1 25",
         "circuito": "Catalunya",
         "modo": "carrera",
@@ -255,7 +255,7 @@ REFERENCIAS = {
         },
         "alcance": ALCANCE,
     },
-    ("f1-25", "spielberg"): {
+    ("f1-25", "spielberg", "seco"): {
         "programa": "F1 25",
         "circuito": "Spielberg",
         "modo": "carrera",
@@ -279,7 +279,7 @@ REFERENCIAS = {
         },
         "alcance": ALCANCE,
     },
-    ("f1-25", "silverstone"): {
+    ("f1-25", "silverstone", "seco"): {
         "programa": "F1 25",
         "circuito": "Silverstone",
         "modo": "carrera",
@@ -303,7 +303,49 @@ REFERENCIAS = {
         },
         "alcance": ALCANCE,
     },
-    ("f1-25", "spa-francorchamps"): {
+    #: LA UNICA DE AGUA, Y DE OTRA PROCEDENCIA QUE LAS DE SECO.
+    #:
+    #: Las de seco salen de las paginas de guia que el sitio escribe. Esta sale
+    #: de una **ficha enviada por un usuario**, etiquetada con un equipo y un
+    #: tiempo de vuelta. Es mas debil como fuente y por eso se dice: quien la
+    #: mira tiene que poder distinguirla de la otra.
+    #:
+    #: POR QUE HAY UNA SOLA. De las veintisiete sesiones capturadas, **ninguna
+    #: tiene lluvia** ---veinticuatro despejadas y tres cubiertas--- de modo que
+    #: hoy esta referencia no se muestra en ninguna pantalla. Se carga porque el
+    #: eje ya existe y porque la primera sesion con agua la va a encontrar
+    #: puesta; llenar las diecisiete sin poder contrastar ninguna habria sido
+    #: transcribir a ciegas. Las paginas de guia no publican reglaje de agua, y
+    #: las fichas de usuario que dicen «Dry & Wet» son **un solo reglaje** que se
+    #: ofrece para las dos cosas: eso no es una referencia de lluvia.
+    ("f1-25", "spa-francorchamps", "lluvia"): {
+        "programa": "F1 25",
+        "circuito": "Spa-Francorchamps",
+        "modo": "carrera",
+        "clima": "lluvia",
+        "valores": {
+            "aleron_delantero": 18,
+            "aleron_trasero": 18,
+            "sesgo_de_freno_pct": 58,
+            "diferencial_con_acelerador_pct": 80,
+            "diferencial_sin_acelerador_pct": 40,
+        },
+        "cita": (
+            "Ficha de usuario etiquetada «Wet» y «Race Setup»: «Front Wing "
+            "Aero 18», «Rear Wing Aero 18», «Differential Adjustment On "
+            "Throttle 80», «Differential Adjustment Off Throttle 40», «Brake "
+            "Bias 58». Contra la de seco de la misma pista ---3 y 0--- son "
+            "quince y dieciocho puntos mas de carga"),
+        "fuente": {
+            "titulo": "Belgian Grand Prix 2025 Ferrari Wet 1:47:856",
+            "autor": "SimRacingSetup (ficha enviada por un usuario)",
+            "anio": 2025,
+            "url": "https://simracingsetup.com/setups/f1-25-setups/belgian-grand-prix-2025-ferrari-wet-147856/",
+            "clave_bibliografica": "simracingsetup_f1_25_spa_lluvia",
+        },
+        "alcance": ALCANCE,
+    },
+    ("f1-25", "spa-francorchamps", "seco"): {
         "programa": "F1 25",
         "circuito": "Spa-Francorchamps",
         "modo": "carrera",
@@ -326,7 +368,7 @@ REFERENCIAS = {
         },
         "alcance": ALCANCE,
     },
-    ("f1-25", "monza"): {
+    ("f1-25", "monza", "seco"): {
         "programa": "F1 25",
         "circuito": "Monza",
         "modo": "carrera",
@@ -350,7 +392,7 @@ REFERENCIAS = {
         },
         "alcance": ALCANCE,
     },
-    ("f1-25", "baku"): {
+    ("f1-25", "baku", "seco"): {
         "programa": "F1 25",
         "circuito": "Baku",
         "modo": "carrera",
@@ -374,7 +416,7 @@ REFERENCIAS = {
         },
         "alcance": ALCANCE,
     },
-    ("f1-25", "austin"): {
+    ("f1-25", "austin", "seco"): {
         "programa": "F1 25",
         "circuito": "Austin",
         "modo": "carrera",
@@ -398,7 +440,7 @@ REFERENCIAS = {
         },
         "alcance": ALCANCE,
     },
-    ("f1-25", "las-vegas"): {
+    ("f1-25", "las-vegas", "seco"): {
         "programa": "F1 25",
         "circuito": "Las Vegas",
         "modo": "carrera",
@@ -422,7 +464,7 @@ REFERENCIAS = {
         },
         "alcance": ALCANCE,
     },
-    ("f1-25", "lusail"): {
+    ("f1-25", "lusail", "seco"): {
         "programa": "F1 25",
         "circuito": "Lusail",
         "modo": "carrera",
@@ -445,7 +487,7 @@ REFERENCIAS = {
         },
         "alcance": ALCANCE,
     },
-    ("f1-25", "abu-dhabi"): {
+    ("f1-25", "abu-dhabi", "seco"): {
         "programa": "F1 25",
         "circuito": "Abu Dhabi",
         "modo": "carrera",
@@ -479,19 +521,64 @@ ALIAS_CIRCUITO = {
 }
 
 
-def referencia_de(circuito: str | None, programa: str = "F1 25") -> dict | None:
-    """Devuelve una copia de la referencia aplicable, o ``None``."""
+#: Que clima del juego cae de que lado. La fuente publica «seco» y «lluvia»; el
+#: paquete de sesion distingue seis estados.
+#:
+#: CUBIERTO ES SECO, Y NO ES UN DETALLE. La pista puede estar nublada y la
+#: goma seguir siendo la de seco: lo que cambia el reglaje es el agua, no la
+#: luz. De las veintisiete sesiones capturadas, veinticuatro son despejadas y
+#: **tres cubiertas**; con «cubierto» del lado de la lluvia, esas tres se
+#: compararian contra un reglaje que nadie usaria ahi.
+CLIMA_ES_LLUVIA = {
+    "lluvia ligera": True, "lluvia fuerte": True, "tormenta": True,
+    "despejado": False, "nubes": False, "cubierto": False,
+}
+
+
+def es_lluvia(clima: str | None) -> bool | None:
+    """Si este clima pide un reglaje de agua. `None` cuando no se sabe."""
+
+    if not clima:
+        return None
+    return CLIMA_ES_LLUVIA.get(clima.strip().lower())
+
+
+def referencia_de(circuito: str | None, programa: str = "F1 25",
+                  clima: str | None = None) -> dict | None:
+    """La referencia aplicable a esta pista y este clima, o ``None``.
+
+    ELIGE POR CLIMA Y, SI NO HAY, DEVUELVE LA QUE HAY DECLARANDOLO. Una pista
+    sin referencia de agua no se queda sin nada: se muestra la de seco y se
+    dice que lo es, porque la alternativa ---no mostrar nada--- esconde tambien
+    lo que si se sabe. Lo que no se hace nunca es presentar una por la otra.
+    """
 
     if not circuito:
         return None
     clave_circuito = circuito.strip().lower().replace(" ", "-")
     clave_circuito = ALIAS_CIRCUITO.get(clave_circuito, clave_circuito)
     clave_programa = programa.strip().lower().replace(" ", "-")
-    referencia = REFERENCIAS.get((clave_programa, clave_circuito))
-    if referencia is None:
+
+    fichas = [f for (prog, circ, _clima), f in REFERENCIAS.items()
+              if prog == clave_programa and circ == clave_circuito]
+    if not fichas:
         return None
-    return {
-        **referencia,
-        "valores": dict(referencia["valores"]),
-        "fuente": dict(referencia["fuente"]),
+
+    llueve = es_lluvia(clima)
+    quiere = "lluvia" if llueve else "seco"
+    elegida = next((f for f in fichas if f["clima"] == quiere), None)
+    otro_clima = None
+    if elegida is None:
+        elegida = fichas[0]
+        if llueve is not None and elegida["clima"] != quiere:
+            otro_clima = ("no hay referencia de %s para esta pista: la que se "
+                          "muestra es de %s" % (quiere, elegida["clima"]))
+
+    copia = {
+        **elegida,
+        "valores": dict(elegida["valores"]),
+        "fuente": dict(elegida["fuente"]),
     }
+    if otro_clima:
+        copia["otro_clima"] = otro_clima
+    return copia

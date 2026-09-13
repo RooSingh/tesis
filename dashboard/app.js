@@ -3805,6 +3805,50 @@ function puntoMedidoDe(clave, tUtcMs) {
   return { x: q[0], y: q[1] };
 }
 
+/* DONDE ESTA UN COCHE, CUANDO SE LO MIDIO Y NO SE LO SUPUSO.
+   ---------------------------------------------------------------------
+   TRES ORIGENES, Y LOS TRES SON MEDICION. En vivo, la ultima coordenada que
+   publico el flujo; sobre un recorrido derivado ---el bus--- el punto de su
+   instante; y sobre un circuito guardado, sus coordenadas interpoladas. `null`
+   cuando ninguno alcanza, y entonces quien llama coloca por fraccion **y lo
+   declara**, que no es lo mismo.
+
+   POR QUE ESTAN JUNTOS. Estaban solo en el panel chico, y la vista ampliada
+   resolvia la posicion por su cuenta: probaba las coordenadas guardadas y, si
+   no habia, caia en la fraccion del camino. En vivo eso no funciona por dos
+   razones a la vez ---el instante compartido vale `null` mientras se transmite,
+   y la fraccion esta fijada en uno mientras el circuito se esta midiendo--- de
+   modo que **el coche quedaba clavado en la punta del trazo** en la vista
+   grande mientras el widget chico lo movia bien. Reportado el 2026-09-13.
+
+   Es el mismo defecto que este tablero ya tuvo con `estado.clima`, con el pie
+   de avisos y con el constructor de la pista: dos sitios resolviendo el mismo
+   dato, y uno de los dos quedandose viejo. */
+function puntoMedidoDelCoche(clave, tUtcMs) {
+  /* MIENTRAS SE MIDE EL RECORRIDO, EL COCHE VA POR SU POSICION.
+     El camino dibujado se rehace cada veinticinco puntos ---rehacerlo en cada
+     uno recalcula la orientacion de la nube y el dibujo salta--- pero la
+     posicion llega veinte veces por segundo y no tiene por que esperar al
+     dibujo. Se la proyecta con la misma transformacion del camino vigente. */
+  if (PISTA.proyectarMundo && (PISTA.enConstruccion || PISTA.medidoEnVivo)) {
+    const ult = vivo.posicionMundo.get(clave);
+    if (ult) {
+      const q = PISTA.proyectarMundo(ult[0], ult[1]);
+      return { x: q[0], y: q[1] };
+    }
+  }
+  /* SOBRE UN RECORRIDO DERIVADO, EL COCHE VA POR SU INSTANTE.
+     Una fraccion de tiempo y un camino parametrizado por longitud coinciden
+     solo con velocidad constante. */
+  if (PISTA.derivado) {
+    const q = puntoDelBusEn(tUtcMs);
+    if (q) return q;
+  }
+  /* SOBRE UN CIRCUITO MEDIDO, CADA UNO VA DONDE SE LO MIDIO. Es lo unico que
+     separa a tres vehiculos: la fraccion de vuelta es la misma para los tres. */
+  return puntoMedidoDe(clave, tUtcMs);
+}
+
 /* ---------------- trazado real ---------------- */
 function pintarPista() {
   const linea = document.getElementById("linea-pista");
@@ -4033,31 +4077,10 @@ function pintarPista() {
        posicion del vehiculo es un dato que llega veinte veces por segundo y no
        tiene por que esperar al dibujo. Se la proyecta con la misma
        transformacion del camino vigente. */
-    let p = null;
-    if (PISTA.proyectarMundo && (PISTA.enConstruccion || PISTA.medidoEnVivo)) {
-      const ult = vivo.posicionMundo.get(clave);
-      if (ult) {
-        const q = PISTA.proyectarMundo(ult[0], ult[1]);
-        p = { x: q[0], y: q[1] };
-      }
-    }
-    /* SOBRE UN RECORRIDO DERIVADO, EL COCHE VA POR SU INSTANTE.
-       `frac` es una fraccion de tiempo y el camino esta parametrizado por
-       longitud: las dos coinciden solo con velocidad constante. En este tramo
-       casi lo es, que es lo que haria pasar el error por bueno. */
-    if (!p && PISTA.derivado) {
-      const q = puntoDelBusEn(instante().tUtcMs);
-      if (q) p = q;
-    }
-    /* SOBRE UN CIRCUITO MEDIDO, CADA UNO VA DONDE SE LO MIDIO.
-       Es lo mismo que hace el bus con su recorrido reconstruido, pero con
-       coordenadas que la fuente publica en vez de integradas. Y es lo unico que
-       separa a tres vehiculos: la fraccion de vuelta es la misma para los tres,
-       de modo que sin esto los tres se dibujan en el mismo punto. */
-    if (!p) {
-      const q = puntoMedidoDe(clave, instante().tUtcMs);
-      if (q) { p = q; medidaDeVerdad = true; }
-    }
+    /* Los tres origenes medidos, resueltos donde viven. Ver
+       `puntoMedidoDelCoche`: la vista ampliada llama a la misma. */
+    let p = puntoMedidoDelCoche(clave, instante().tUtcMs);
+    if (p) medidaDeVerdad = true;
     if (!p) p = linea.getPointAtLength(largo * frac);
     /* Por etiqueta y no por posicion: el grupo lleva ademas un `<title>` con la
        identidad completa, y `firstChild` dejo de ser el circulo el dia que se
@@ -12839,6 +12862,7 @@ function pintarPuestaAPunto() {
       bloqueReferencia.append(document.createTextNode(
         "Referencia: " + referencia.fuente.titulo + ". " +
         (referencia.otro_modo ? referencia.otro_modo + ". " : "") +
+        (referencia.otro_clima ? referencia.otro_clima + ". " : "") +
         (referencia.cita ? "Dice: " + referencia.cita + " " : "") +
         referencia.alcance + " "));
       try {
@@ -13531,7 +13555,12 @@ function moverCochesDelTrazadoGrande() {
   const largo = camino.getTotalLength ? camino.getTotalLength() : 0;
   const frac = Math.max(0, Math.min(1, t.fraccion || 0));
   svg.querySelectorAll(".auto-grande").forEach(grupo => {
-    const medido = puntoMedidoDe(grupo.dataset.clave, t.tUtcMs);
+    /* LA MISMA RESOLUCION QUE EL PANEL CHICO, Y POR ESO ESTA EN UN SOLO SITIO.
+       Aca se preguntaba solo por las coordenadas guardadas, que en vivo no
+       existen ---el instante compartido vale `null` mientras se transmite--- y
+       se caia en la fraccion del camino, que mientras el circuito se mide vale
+       uno: el coche quedaba clavado en la punta del trazo. */
+    const medido = puntoMedidoDelCoche(grupo.dataset.clave, t.tUtcMs);
     const q = medido || (largo ? camino.getPointAtLength(largo * frac) : null);
     if (!q) return;
     const c = grupo.querySelector("circle");

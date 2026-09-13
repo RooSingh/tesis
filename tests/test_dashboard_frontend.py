@@ -1346,9 +1346,25 @@ class RepresentacionDeDatosVivosTests(unittest.TestCase):
         self.assertIn('"?hasta=" + encodeURIComponent(cuando)', cuerpo)
 
     def test_la_marca_viva_lee_la_posicion_movil_y_no_el_circuito_congelado(self) -> None:
+        """Y AHORA LO HACE EN UN SOLO SITIO, PARA LAS DOS VISTAS.
+
+        Esta comprobacion miraba dentro de `pintarPista`, que es donde vivia la
+        rama del vivo. Vivia **solo ahi**, y por eso el 2026-09-13 el coche
+        quedaba clavado en la punta del trazo en la vista ampliada mientras el
+        widget chico lo movia bien. Se resuelve en `puntoMedidoDelCoche` y las
+        dos vistas preguntan ahi; la comprobacion sigue el dato en vez de seguir
+        a la funcion donde estaba.
+        """
+        compartido = self.codigo[
+            self.codigo.index("function puntoMedidoDelCoche("):]
+        compartido = compartido[:compartido.index("function pintarPista(")]
+        self.assertIn("vivo.posicionMundo.get(clave)", compartido,
+                      "la posicion viva dejo de leerse")
+
         cuerpo = self.codigo[self.codigo.index("function pintarPista("):]
         cuerpo = cuerpo[:cuerpo.index("function pintarValidacionDeLaForma(")]
-        self.assertIn("vivo.posicionMundo.get(clave)", cuerpo)
+        self.assertIn("puntoMedidoDelCoche(", cuerpo,
+                      "el panel chico dejo de usar el sitio compartido")
 
     def test_el_catalogo_no_pisa_una_sesion_viva(self) -> None:
         """El catalogo llega despues que la primera muestra del flujo.

@@ -119,6 +119,42 @@ class CatalogoReglajesTests(unittest.TestCase):
                 self.assertEqual(colados, set(),
                                  "ejes que la fuente no cuantifica: %s" % colados)
 
+    def test_el_clima_elige_la_ficha_y_cubierto_no_es_lluvia(self) -> None:
+        """CUBIERTO ES SECO, Y NO ES UN DETALLE.
+
+        La pista puede estar nublada y la goma seguir siendo la de seco: lo que
+        cambia el reglaje es el agua, no la luz. De las veintisiete sesiones
+        capturadas **tres son cubiertas**; contadas como lluvia se compararian
+        contra un reglaje que nadie usaria ahi.
+        """
+        self.assertIs(catalogo_reglajes.es_lluvia("cubierto"), False)
+        self.assertIs(catalogo_reglajes.es_lluvia("despejado"), False)
+        self.assertIs(catalogo_reglajes.es_lluvia("lluvia fuerte"), True)
+        self.assertIs(catalogo_reglajes.es_lluvia("tormenta"), True)
+        # No saberlo no es «no llueve»: es no saberlo.
+        self.assertIsNone(catalogo_reglajes.es_lluvia(None))
+        self.assertIsNone(catalogo_reglajes.es_lluvia("un clima nuevo"))
+
+        seco = catalogo_reglajes.referencia_de("spa", clima="cubierto")
+        agua = catalogo_reglajes.referencia_de("spa", clima="lluvia fuerte")
+        self.assertEqual(seco["clima"], "seco")
+        self.assertEqual(agua["clima"], "lluvia")
+        self.assertGreater(agua["valores"]["aleron_trasero"],
+                           seco["valores"]["aleron_trasero"],
+                           "el reglaje de agua no lleva mas carga que el de seco")
+
+    def test_sin_referencia_de_agua_se_muestra_la_de_seco_y_se_dice(self) -> None:
+        """No mostrar nada esconderia tambien lo que si se sabe.
+
+        Lo que no se hace nunca es presentar una por la otra.
+        """
+        r = catalogo_reglajes.referencia_de("monza", clima="lluvia fuerte")
+        self.assertEqual(r["clima"], "seco")
+        self.assertIn("no hay referencia de lluvia", r["otro_clima"])
+        # Y con la que corresponde no se avisa nada: seria ruido.
+        self.assertNotIn("otro_clima",
+                         catalogo_reglajes.referencia_de("monza", clima="despejado"))
+
     def test_monaco_es_carga_maxima_y_monza_minima(self) -> None:
         """LA PRUEBA DE QUE LA TRANSCRIPCION DISTINGUE PISTAS.
 

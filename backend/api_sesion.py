@@ -3356,7 +3356,11 @@ FAMILIA_DEL_MODO = {"carrera": "carrera", "contrarreloj": "contrarreloj",
 def _comparar_con_referencia(session_id: str, puesta: dict,
                              asentada: bool) -> tuple[dict | None, list[dict]]:
     procedencia = procedencia_sesiones.de(session_id) or {}
-    referencia = catalogo_reglajes.referencia_de(procedencia.get("circuito"))
+    # EL CLIMA SALE DE LA PROCEDENCIA Y NO DEL CANAL. El paquete de sesion lo
+    # declara al empezar; leerlo de las muestras seria preguntarle a la lluvia
+    # de un instante por el reglaje con el que se salio a pista.
+    referencia = catalogo_reglajes.referencia_de(
+        procedencia.get("circuito"), clima=procedencia.get("clima"))
     if referencia is not None:
         # PARA QUE MODO VALE LA REFERENCIA, CONTRA EL DE ESTA SESION. Se dice
         # siempre que no coinciden, tambien cuando la sesion no declara el suyo:
