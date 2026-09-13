@@ -726,8 +726,65 @@ const PANELES_QUE_LA_FUENTE_NO_TIENE = {
        canales que levantan un aviso son de competicion o de daño. */
     avisos: "no hay banderas, ni daño, ni tipo de superficie: un bus de serie " +
             "no publica nada con lo que levantar un aviso",
+    /* HOY NO LLEGA NINGUNO DE LOS DOS, Y CADA UNO POR SU MOTIVO MEDIDO. El
+       regimen queda fuera del conjunto que la matriz de evidencia respalda; el
+       campo de marcha se leyo sobre los treinta segmentos y declara estacionado
+       con el vehiculo en movimiento en veintiocho de ellos, de modo que
+       publicarlo seria peor que no tenerlo. Las dos son limites del acceso y no
+       del objeto ---el bus las lleva--- y por eso la marcha figura como
+       candidata **abierta** en `can_decoder.MARCHA_NO_PUBLICADA`: el dia que se
+       identifique el campo poblado de cada variante, esta linea se cae y el
+       panel vuelve. El motivo lo dice en vez de dejar entender «nunca». */
+    motor: "hoy no llega ni el régimen ni la marcha: el régimen queda fuera " +
+           "del conjunto respaldado por la matriz de evidencia, y el campo de " +
+           "marcha declara estacionado con el vehículo en movimiento en 28 de " +
+           "30 segmentos",
   },
 };
+
+/* ============================================================
+   LO QUE NO SOSTIENE LA FUENTE, PERO ADENTRO DE UN PANEL
+   ------------------------------------------------------------
+   Un instrumento que no corresponde no deja de serlo por vivir dentro de un
+   panel que si corresponde. «Regimen y velocidad» se queda con el bus porque la
+   velocidad esta, y dentro seguian el arco del regimen marcando raya y la tira
+   de ocho marchas vacia.
+
+   POR QUE UNA TABLA Y NO UN `if`. Aca habia escrito `if (fuente !== "openf1")`
+   alrededor de cuatro tiras, sin motivo y sin forma de leerlo desde una prueba.
+   Esta declaracion es la misma idea que `PANELES_QUE_LA_FUENTE_NO_TIENE` una
+   escala mas abajo, y por las mismas razones: el motivo viaja con la ausencia y
+   se puede ejercer.
+
+   La clave es el rotulo del instrumento, que es como se lo nombra en pantalla:
+   dos nombres para la misma medida terminarian en desacuerdo.
+   ============================================================ */
+const MEDIDAS_QUE_LA_FUENTE_NO_TIENE = {
+  f1: {},
+  openf1: {
+    "Combustible": "OpenF1 no publica masa de combustible",
+    "Temp. motor": "OpenF1 no publica temperatura de motor",
+    "Energía ERS": "OpenF1 no publica el estado de la unidad de potencia",
+    "Freno delantero": "OpenF1 no publica temperatura de frenos",
+  },
+  can: {
+    "Régimen": "el régimen del motor queda fuera del conjunto respaldado por " +
+               "la matriz de evidencia",
+    "Marcha": "el campo de marcha declara estacionado con el vehículo en " +
+              "movimiento en 28 de 30 segmentos",
+    "Combustible": "un bus de serie no publica masa de combustible",
+    "Temp. motor": "no está entre las señales que este trabajo decodifica del bus",
+    "Energía ERS": "el vehículo no tiene sistema de recuperación de energía",
+    "Freno delantero": "un vehículo de calle no publica temperatura de frenos",
+  },
+};
+
+function porQueLaFuenteNoTieneLaMedida(rotulo, cual) {
+  const d = MEDIDAS_QUE_LA_FUENTE_NO_TIENE[cual === undefined ? fuente : cual];
+  return (d && d[rotulo]) || "";
+}
+
+const laFuenteTieneLaMedida = rotulo => !porQueLaFuenteNoTieneLaMedida(rotulo);
 
 /* DONDE VIVE EL SELECTOR DE PILOTO, EN ORDEN DE PREFERENCIA.
    Vivia en el encabezado de «Vehiculo» y se mudaba a «Cronometraje» cuando la
@@ -2939,7 +2996,8 @@ function pintarMedidores() {
      Quedan dos arcos, y por eso son grandes: la rejilla les reparte a dos lo
      que antes repartia a seis. */
   const cuales = [["Régimen", t0f.rpm, 13000, "rpm", frio, tinta("--critico")],
-                  ["Velocidad", t0f.velocidad, 360, "km/h", frio, tinta("--alerta")]];
+                  ["Velocidad", t0f.velocidad, 360, "km/h", frio, tinta("--alerta")]]
+    .filter(m => laFuenteTieneLaMedida(m[0]));
 
   const firmaSet = [fuente, estadoSesion, tinta("--acento"),
                     cuales.map(m => m[0]).join(",")].join("|");
@@ -2972,19 +3030,33 @@ function pintarMedidores() {
      mostrando la misma señal son dos sitios que pueden discrepar, y uno de los
      dos siempre esta de mas. Se dibuja igual ---la misma `barraMedida`--- para
      que sea la misma marcha y no una segunda version de ella. */
-  const bandaMarcha = document.getElementById("marcha-relojes");
-  if (bandaMarcha) bandaMarcha.innerHTML = barraMedida("Marcha", marcha, 8, "de 8", 8);
-  const arriba = [barraMedida("Máxima", cifra(maxima, 0), 360, "km/h", 10)];
-  const abajo = [];
-  /* OpenF1 no publica combustible, temperatura de motor, energia ni frenos: esas
-     tiras no se dibujan en lugar de mostrar un dato que no existe. El regimen,
-     la velocidad y la marcha si los publica, y esos se quedan. */
-  if (fuente !== "openf1") {
-    arriba.unshift(barraMedida("Combustible", cifra(t0f.combustibleKg, 1), 110, "kg", 10));
-    abajo.push(barraMedida("Temp. motor", cifra(t0f.tempMotor, 0), 140, "°C", 10),
-               barraMedida("Energía ERS", cifra(t0f.ersMJ, 1), 4, "MJ", 10),
-               barraMedida("Freno delantero", cifra(t0f.tempFrenoDel, 0), 1000, "°C", 10));
+  /* LA MAXIMA SE MUDA AL PANEL DE LOS RELOJES, y para las tres fuentes.
+     Vivia dentro de «Motor y energia», que no tiene nada que ver: es la mayor
+     velocidad de la sesion y su sitio es debajo del reloj de velocidad. Se
+     descubrio sacando el panel de motor para el bus ---que no publica motor---:
+     se habria llevado puesta una medida que el bus si tiene. Se mueve para
+     todas y no solo para el bus, porque una medida que vive en un sitio
+     distinto segun quien mire son dos medidas. */
+  const conLosRelojes = [];
+  if (laFuenteTieneLaMedida("Marcha")) {
+    conLosRelojes.push(barraMedida("Marcha", marcha, 8, "de 8", 8));
   }
+  conLosRelojes.push(barraMedida("Máxima", cifra(maxima, 0), 360, "km/h", 10));
+  const bandaMarcha = document.getElementById("marcha-relojes");
+  if (bandaMarcha) bandaMarcha.innerHTML = conLosRelojes.join("");
+
+  /* Las tiras del panel de motor, cada una si la fuente la publica. Estaba
+     escrito como `if (fuente !== "openf1")` alrededor de las cuatro: sin motivo,
+     y sin forma de que una prueba lo leyera. */
+  const tiras = [
+    ["Combustible", cifra(t0f.combustibleKg, 1), 110, "kg"],
+    ["Temp. motor", cifra(t0f.tempMotor, 0), 140, "°C"],
+    ["Energía ERS", cifra(t0f.ersMJ, 1), 4, "MJ"],
+    ["Freno delantero", cifra(t0f.tempFrenoDel, 0), 1000, "°C"],
+  ].filter(t => laFuenteTieneLaMedida(t[0]))
+   .map(t => barraMedida(t[0], t[1], t[2], t[3], 10));
+  const arriba = tiras.slice(0, 1);
+  const abajo = tiras.slice(1);
   const izq = document.getElementById("barras-izq");
   const der = document.getElementById("barras-der");
   if (izq) izq.innerHTML = arriba.join("");

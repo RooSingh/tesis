@@ -3276,40 +3276,121 @@ function panelesEnLaTabla() {
   return filas;
 }
 
-prueba("el bus esconde los seis instrumentos que no puede llenar nunca", () => {
-  /* Eran dos. Los cuatro nuevos salieron de abrir la sesion del bus y mirarla:
-     el panel del vehiculo dibujaba un monoplaza de formula con las cuatro
-     esquinas en raya y un «sin daño» que **afirma** algo sobre un canal que no
-     existe; clima decia «sin clima»; cronometraje daba piloto, posicion,
-     vuelta, cronometro y diferencia al lider, los cinco vacios; avisos, «0/0». */
+prueba("el bus se queda solo con los instrumentos que llena", () => {
+  /* Eran dos y son siete. Los cinco nuevos salieron de abrir la sesion del bus
+     y mirarla: el panel del vehiculo dibujaba un monoplaza de formula con las
+     cuatro esquinas en raya y un «sin daño» que **afirma** algo sobre un canal
+     que no existe; clima decia «sin clima»; cronometraje daba piloto, posicion,
+     vuelta, cronometro y diferencia al lider, los cinco vacios; avisos, «0/0»;
+     y motor, «sin datos de motor». */
   const escondidos = panelesEscondidosPorFuente();
   assert.deepStrictEqual((escondidos.can || []).sort(),
-    ["avisos", "clima", "cronometraje", "puesta", "vehiculo", "vehiculos"]);
+    ["avisos", "clima", "cronometraje", "motor", "puesta", "vehiculo", "vehiculos"]);
 });
 
-prueba("EL BUS NO DECLARA AUSENTE EL MOTOR, QUE ES UNA CANDIDATA ABIERTA", () => {
-  /* Esta es la parte que cuesta, y por eso se comprueba.
-
-     El panel de motor esta tan vacio como los cuatro que salieron, y no es lo
-     mismo. `backend/matriz_fuentes.py` declara el regimen del motor ausente
-     porque «queda fuera del conjunto respaldado por la matriz de evidencia», y
-     la marcha porque «el campo declara estacionado con el vehiculo en
-     movimiento en 28 de 30 segmentos» ---medido sobre los treinta segmentos, y
-     anotado como `estado: "abierta"` en `can_decoder.MARCHA_NO_PUBLICADA`---.
-
-     Las dos son limites del **acceso**, no del objeto: el bus las lleva y este
-     trabajo todavia no las lee con respaldo suficiente. Esta tabla dice
-     «nunca», y decir «nunca» sobre una candidata abierta la da por cerrada. Es
-     la misma regla por la que clima y avisos salieron de la tabla de OpenF1.
-
-     `medidores` tampoco: la velocidad es la unica magnitud que las tres fuentes
-     publican, y ese panel la muestra. */
+prueba("MEDIDORES SE QUEDA: LA VELOCIDAD ES DE LAS TRES FUENTES", () => {
+  /* Es el unico panel de la cabina que el bus llena, y se llena con la unica
+     magnitud que las tres fuentes publican. Sacarlo dejaria la sesion del bus
+     sin ningun instrumento de lectura directa. */
   const escondidos = panelesEscondidosPorFuente();
-  ["motor", "medidores"].forEach(panel => {
-    assert.ok(!(escondidos.can || []).includes(panel),
-      "el bus declara «" + panel + "» como ausencia de la fuente, y no lo es: " +
-      "el regimen y la marcha estan anotados como candidatas abiertas");
+  Object.keys(PANELES_QUE_LA_FUENTE_NO_TIENE).forEach(f => {
+    assert.ok(!(escondidos[f] || []).includes("medidores"),
+      "la fuente " + f + " esconde los relojes, y la velocidad la publican las tres");
   });
+});
+
+prueba("EL MOTIVO DEL MOTOR DICE QUE ES DE HOY, Y CON QUE SE MIDIO", () => {
+  /* La marcha figura como candidata **abierta** en
+     `can_decoder.MARCHA_NO_PUBLICADA`: el campo existe en el bus y lo que falta
+     es identificar cual esta poblado en cada variante. Sacar el panel es una
+     decision de pantalla; dejar entender que el dato no existe seria una
+     afirmacion sobre la fuente, y seria falsa. El motivo carga la medicion que
+     la sostiene, de modo que el dia que se decodifique se sepa que linea cae. */
+  const motivo = PANELES_QUE_LA_FUENTE_NO_TIENE.can.motor;
+  assert.ok(/28 de\s+30 segmentos/.test(motivo.replace(/\s+/g, " ")),
+    "el motivo del motor no trae la medicion que lo sostiene");
+  assert.ok(/hoy/.test(motivo),
+    "el motivo del motor se lee como un «nunca» sobre una candidata abierta");
+});
+
+/* Lo que la fuente no sostiene una escala mas abajo: adentro de un panel. */
+const MEDIDAS_QUE_LA_FUENTE_NO_TIENE = new Function(
+  constante("MEDIDAS_QUE_LA_FUENTE_NO_TIENE") +
+  "\nreturn MEDIDAS_QUE_LA_FUENTE_NO_TIENE;")();
+
+prueba("el bus tampoco muestra el reloj de regimen ni la tira de marchas", () => {
+  /* Viven dentro de «Regimen y velocidad», que se queda porque la velocidad
+     esta. Un instrumento que no corresponde no deja de serlo por vivir dentro
+     de un panel que si corresponde. */
+  const sinMedida = Object.keys(MEDIDAS_QUE_LA_FUENTE_NO_TIENE.can || {});
+  ["Régimen", "Marcha"].forEach(m => assert.ok(sinMedida.includes(m),
+    "el bus sigue dibujando «" + m + "»"));
+  assert.ok(!sinMedida.includes("Velocidad"),
+    "se saco tambien la velocidad, que el bus si publica");
+  assert.ok(!sinMedida.includes("Máxima"),
+    "se saco la velocidad maxima, que sale de la velocidad que el bus publica");
+});
+
+prueba("cada medida sacada dice por que, y no con una cadena vacia", () => {
+  Object.keys(MEDIDAS_QUE_LA_FUENTE_NO_TIENE).forEach(f => {
+    const tabla = MEDIDAS_QUE_LA_FUENTE_NO_TIENE[f];
+    Object.keys(tabla).forEach(medida => {
+      assert.strictEqual(typeof tabla[medida], "string");
+      assert.ok(tabla[medida].trim().length > 20,
+        "la fuente " + f + " saca «" + medida + "» sin decir por que");
+    });
+  });
+});
+
+/* SOLO EL CODIGO, SIN LOS COMENTARIOS.
+   Una guarda que busca un texto en el archivo se rompe con el comentario que
+   explica por que ese texto no debe estar: la frase nombra el defecto y la
+   busqueda no distingue nombrarlo de cometerlo. Paso cinco veces en un dia
+   ---`window.prompt`, `t.id`, «tiene que aparecer», `instanceof TypeError` y
+   este---, y la primera vez que la evite fue quitando `//` a mano, que no
+   alcanza: el caso que falto era un bloque `/* *\/`.
+
+   Se quitan las dos formas. No es un analizador de JavaScript y no pretende
+   serlo ---una barra dentro de una cadena lo confundiria--- pero para preguntar
+   «¿esta escrita esta expresion?» es exactamente lo que hace falta. */
+function soloCodigo(js) {
+  return js.replace(/\/\*[\s\S]*?\*\//g, " ")
+           .split("\n").map(r => r.split("//")[0]).join("\n");
+}
+
+prueba("NINGUNA FUENTE SE DECIDE CON SU NOMBRE ESCRITO EN EL DIBUJO", () => {
+  /* Las cuatro tiras del panel de motor estaban envueltas en un `if` que
+     comparaba el nombre de la fuente: sin motivo, y sin forma de que una prueba
+     lo leyera. La tabla de arriba lo reemplaza. */
+  const cuerpo = fuenteApp.slice(fuenteApp.indexOf("function pintarMedidores("));
+  const hasta = cuerpo.indexOf("\n}");
+  assert.ok(!/fuente\s*[!=]==?\s*"(openf1|can|f1)"/.test(soloCodigo(cuerpo.slice(0, hasta))),
+    "el dibujo de los medidores vuelve a decidir con el nombre de la fuente");
+});
+
+prueba("la guarda de arriba mira codigo y no el comentario que la explica", () => {
+  /* Se ejerce el quitador, porque una guarda que se rompe con su propia
+     explicacion pasa a estar siempre roja y termina borrada. */
+  assert.strictEqual(
+    soloCodigo('/* no escribir fuente === "can" */\nconst a = 1;').trim(),
+    "const a = 1;");
+  assert.strictEqual(
+    soloCodigo('const b = 2; // fuente === "can"').trim(), "const b = 2;");
+  //: Y lo que si es codigo sigue estando: si lo quitara todo, no comprobaria nada.
+  assert.ok(/fuente === "can"/.test(soloCodigo('if (fuente === "can") { }')));
+});
+
+prueba("LA MAXIMA VIVE EN UN SOLO SITIO, Y NO EN EL PANEL DE MOTOR", () => {
+  /* Vivia en `barras-izq`, dentro de «Motor y energia». Sacar ese panel para el
+     bus se habria llevado puesta la mayor velocidad de la sesion, que el bus
+     mide. Una medida que vive en un sitio distinto segun quien mire son dos. */
+  const codigo = soloCodigo(fuenteApp);
+  const veces = (codigo.match(/barraMedida\("Máxima"/g) || []).length;
+  assert.strictEqual(veces, 1, "la velocidad maxima se dibuja en " + veces + " sitios");
+  /* Se comprueba la expresion escrita y no la cercania: renombrar la variable
+     que la recibe dejaria la guarda contenta con la maxima en cualquier lado. */
+  assert.ok(/conLosRelojes\.push\(barraMedida\("Máxima"/.test(codigo),
+    "la maxima volvio a armarse fuera del panel de los relojes");
 });
 
 prueba("el selector de piloto tiene donde vivir aunque salgan los dos paneles", () => {

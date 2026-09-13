@@ -304,23 +304,36 @@ class DashboardBrowserTests(unittest.TestCase):
         # Los motivos no se supusieron: salen de `backend/matriz_fuentes.py`,
         # que los declara por magnitud y medidos.
         for panel in ("puesta", "vehiculos", "vehiculo", "clima",
-                      "cronometraje", "avisos"):
+                      "cronometraje", "avisos", "motor"):
             seccion = re.search(rf'<section[^>]*data-panel="{panel}"[^>]*>', dom)
             self.assertIsNotNone(seccion, f"no esta la seccion de «{panel}»")
             self.assertIn('data-fuera="si"', seccion.group(0), panel)
 
-        # EL DE MOTOR SE QUEDA, Y ES LA PARTE QUE HAY QUE DEFENDER.
+        # NI UN INSTRUMENTO QUE EL BUS NO LLENE, Y ESO ALCANZA A LO QUE VA
+        # ADENTRO DE UN PANEL.
         #
-        # Esta tan vacio como los otros cuatro y **no es lo mismo**. La matriz
-        # declara el regimen del motor ausente porque «queda fuera del conjunto
-        # respaldado por la matriz de evidencia» y la marcha porque «el campo
-        # declara estacionado con el vehiculo en movimiento en 28 de 30
-        # segmentos», con estado `abierta` en `can_decoder.MARCHA_NO_PUBLICADA`.
-        # Las dos son limites del acceso, no del objeto: el bus las lleva y este
-        # trabajo todavia no las lee con respaldo suficiente. La tabla que saca
-        # paneles dice «nunca», y decir «nunca» sobre una candidata abierta la
-        # daria por cerrada.
-        for panel in ("motor", "medidores", "trazado", "aceleraciones"):
+        # Sacados los seis, quedaba el reloj de regimen marcando raya y la tira
+        # de ocho marchas vacia, los dos dentro de «Regimen y velocidad», que se
+        # queda porque la velocidad si esta. Un instrumento que no corresponde no
+        # deja de serlo por vivir dentro de un panel que si corresponde.
+        self.assertNotIn('<span class="rotulo">Régimen</span>', dom,
+                         "el reloj de régimen sigue en la vista del bus")
+        self.assertNotIn('<p class="eyebrow">Marcha</p>', dom,
+                         "la tira de marchas sigue en la vista del bus")
+        self.assertIn('<span class="rotulo">Velocidad</span>', dom,
+                      "se fue tambien el reloj de velocidad, que el bus si tiene")
+
+        # LA MAXIMA NO SE PIERDE CON EL PANEL DE MOTOR.
+        # Vivia dentro de «Motor y energia» ---en `barras-izq`--- y es la mayor
+        # velocidad de la sesion, que el bus mide. Sacar el panel se la habria
+        # llevado puesta. Pasa al panel de los relojes, que es donde ya se mira
+        # la velocidad, y pasa **para las tres fuentes**: una medida que vive en
+        # un sitio distinto segun quien mire es dos medidas.
+        self.assertIn('<p class="eyebrow">Máxima</p>', dom,
+                      "la velocidad maxima se perdio al sacar el panel de motor")
+
+        # Y lo que el bus si entrega no se saca.
+        for panel in ("medidores", "trazado", "aceleraciones"):
             seccion = re.search(rf'<section[^>]*data-panel="{panel}"[^>]*>', dom)
             self.assertIsNotNone(seccion, f"no esta la seccion de «{panel}»")
             self.assertNotIn("data-fuera", seccion.group(0), panel)
