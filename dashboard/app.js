@@ -826,9 +826,37 @@ function parrillaVigente() {
   const abierta = estado.abierta && estado.abierta.session_id;
   if (!abierta || PARRILLAS.sesion !== abierta) return null;
   const porClave = PARRILLAS.porClave || {};
+  /* CON LAS CAPTURAS UNIDAS NO HAY UNA CLAVE QUE BUSCAR. El alcance vale
+     «original», que abarca a todas, y en este indice solo estan `original-1`,
+     `original-2`… La busqueda exacta devolvia `null` y **nadie quedaba
+     nombrado**: el tablero pasaba a decir «Vehiculo 19» donde antes decia el
+     apellido. Se vio en pantalla sobre Barcelona-Catalunya. */
+  if (corrida.adquisicion === TODAS_LAS_CAPTURAS) return parrillaComun(porClave);
   if (corrida.adquisicion) return porClave[corrida.adquisicion] || null;
   const claves = Object.keys(porClave);
   return claves.length === 1 ? porClave[claves[0]] : null;
+}
+
+/* La parrilla que declaran **todas** las capturas, si declaran la misma.
+
+   `null` cuando no coinciden, y esa cautela es la que ya estaba escrita para el
+   caso de mas de una: con dos capturas que nombran gente distinta en el mismo
+   indice, tomar cualquiera seria inventar. Lo normal es que coincidan ---son
+   dos tramos de la misma sesion del juego--- y entonces nombrar es correcto.
+
+   Las reproducciones no votan: solo se unen capturas, asi que solo ellas
+   deciden el nombre. */
+function parrillaComun(porClave) {
+  const capturas = Object.keys(porClave || {})
+    .filter(k => k.indexOf(TODAS_LAS_CAPTURAS) === 0)
+    .map(k => porClave[k])
+    .filter(p => p && Array.isArray(p.vehiculos));
+  if (!capturas.length) return null;
+  const firma = p => p.vehiculos
+    .map(v => v.vehicle_id + "=" + (v.nombre || ""))
+    .sort().join("|");
+  const primera = firma(capturas[0]);
+  return capturas.every(p => firma(p) === primera) ? capturas[0] : null;
 }
 
 /* Cuantos vehiculos de este alcance tienen telemetria guardada. Es cobertura,

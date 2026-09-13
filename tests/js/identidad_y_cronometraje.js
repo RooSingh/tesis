@@ -178,6 +178,7 @@ const NOMBRES = [
   "reducirAAncho", "escalaDe", "dominioAmpliado",
   "pintarLeyendaTraza", "exportarCsv", "elegirCorrida",
   "alcanceElegidoEsValido", "adquisicionSeSolapa", "sonUnaSolaCarrera",
+  "parrillaComun",
   "faseDeLaDireccion",
   "olvidarLoDeLaCorrida", "nuevaSesionEnCurso", "aperturaVigente", "sigueVigente",
   "cambiaronLasSeries",
@@ -217,6 +218,7 @@ const NOMBRES = [
 
 const CONSTANTES = ["SENAL_DE", "SENAL_CAN", "SENAL_OPENF1",
                     "VECES_EL_PASO_HABITUAL", "SILENCIO_QUE_APAGA_MS",
+                    "TODAS_LAS_CAPTURAS",
                     "HUECO_DE_CAPTURA_MS",
                     "UNIDAD_QUE_MUESTRA_EL_TABLERO",
                     "DIVISOR_ENTRE_UNIDADES", "SIN_VEHICULO",
@@ -296,7 +298,7 @@ const {
   bandasDeVuelta, bandasParaElTramo, pintarZonas,
   pintarLeyendaTraza, exportarCsv,
   elegirCorrida, nuevaSesionEnCurso, fijarContextoDeCorrida, selloDeIdentidad,
-  sonUnaSolaCarrera,
+  sonUnaSolaCarrera, parrillaComun,
   _fijar,
   trazadoAPath, puntoDelBusEn, _indiceEnElRecorrido,
   hayCoordenadasMedidas, porQueNoHayCoordenadas, hayEjeDeDistancia,
@@ -1361,6 +1363,43 @@ prueba("en los bordes del hueco todavia hay medicion", () => {
 prueba("sin cortes declarados no se inventa un hueco", () => {
   assert.strictEqual(huecoQueContiene(null, 2000), null);
   assert.strictEqual(huecoQueContiene({ huecos: [] }, 2000), null);
+});
+
+prueba("con las capturas unidas los pilotos siguen teniendo nombre", () => {
+  /* EL DEFECTO QUE INTRODUJE AL UNIRLAS. Al unir se fija el alcance en
+     «original», y la parrilla se buscaba por clave exacta: existen
+     `original-1` y `original-2`, no `original`. Devolvia `null` y **nadie
+     quedaba nombrado**: el tablero paso a decir «Vehiculo 19» donde antes
+     decia el apellido.
+
+     Visto en pantalla sobre Barcelona-Catalunya, cinco vehiculos, todos sin
+     nombre. */
+  const uno = { disponible: true, vehiculos: [
+    { vehicle_id: "s:car:19", nombre: "NORRIS" },
+    { vehicle_id: "s:car:0", nombre: "HADJAR" }] };
+  const otro = { disponible: true, vehiculos: [
+    { vehicle_id: "s:car:19", nombre: "NORRIS" },
+    { vehicle_id: "s:car:0", nombre: "HADJAR" }] };
+  assert.deepStrictEqual(parrillaComun({ "original-1": uno, "original-2": otro }),
+                         uno);
+});
+
+prueba("si las dos capturas nombran distinto, no se elige una", () => {
+  /* Es la cautela que ya estaba escrita y que hay que conservar: con dos
+     capturas que declaran gente distinta en el mismo indice, tomar cualquiera
+     seria inventar. */
+  const uno = { disponible: true, vehiculos: [
+    { vehicle_id: "s:car:19", nombre: "NORRIS" }] };
+  const otro = { disponible: true, vehiculos: [
+    { vehicle_id: "s:car:19", nombre: "VERSTAPPEN" }] };
+  assert.strictEqual(parrillaComun({ "original-1": uno, "original-2": otro }), null);
+});
+
+prueba("una reproduccion no cuenta para la parrilla comun", () => {
+  /* Solo se unen capturas, asi que solo las capturas deciden el nombre. */
+  const cap = { disponible: true, vehiculos: [{ vehicle_id: "s:car:19", nombre: "NORRIS" }] };
+  const rep = { disponible: true, vehiculos: [{ vehicle_id: "s:car:19", nombre: "OTRO" }] };
+  assert.deepStrictEqual(parrillaComun({ "original-1": cap, "corrida-x": rep }), cap);
 });
 
 prueba("dos capturas de la misma carrera son una sola carrera", () => {
