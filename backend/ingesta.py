@@ -76,9 +76,9 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable
+from typing import Annotated, Any, Callable
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
 from backend import catalogo_corridas
@@ -86,6 +86,7 @@ from backend import config
 from backend import catalogo_sesiones
 from backend import db
 from backend import live_stream
+from backend import subida
 
 
 RAIZ = Path(__file__).resolve().parents[1]
@@ -994,6 +995,127 @@ def openf1_importar(peticion: PeticionOpenF1) -> dict:
     respuesta["session_key"] = peticion.session_key
     respuesta["paquete"] = str(paquete)
     return respuesta
+
+
+# --------------------------------------------------------------------------- #
+# Subida de un archivo desde la pantalla
+# --------------------------------------------------------------------------- #
+#
+# LA MITAD QUE FALTABA. Las dos rutas de importacion de arriba procesan lo que
+# **ya esta** en el disco del servidor: una pide una `session_key` y la otra unos
+# nombres de segmento. Para incorporar una sesion habia que copiar el archivo a
+# mano a la maquina y recien despues apretar el boton, de modo que el boton decia
+# «importar» y hacia «procesar lo que ya trajiste».
+#
+# Esto va del navegador al disco. Lo que decide que es, donde cae y si llego
+# entero vive en `backend/subida.py`, con su porque.
+
+
+@router.get("/importar/formatos")
+def importar_formatos() -> dict:
+    """Que se puede subir, para poder decirlo **antes** de pedir el archivo.
+
+    Sin esto el dialogo del navegador acepta cualquier cosa y el motivo del
+    rechazo llega despues de haber subido seiscientos megabytes por la red.
+    """
+
+    return subida.formatos()
+
+
+@router.post("/importar/archivo")
+async def importar_archivo(peticion: Request,
+                           nombre: Annotated[str, Query(
+                               description="Como se llama el archivo que se sube")],
+                           ) -> dict:
+    """Recibe un archivo, decide que es, lo verifica y recien entonces lo guarda.
+
+    EL CUERPO VIENE CRUDO Y NO COMO FORMULARIO. `UploadFile` de FastAPI exige la
+    dependencia `python-multipart`, que no esta en `requirements.txt`: agregarla
+    obliga a un `pip install` en cada despliegue y a reconstruir la imagen del
+    contenedor. El cuerpo de un `POST` alcanza, el navegador lo manda con
+    `fetch(url, {method: "POST", body: archivo})`, y **la barra de progreso sigue
+    funcionando** porque la progresion la da el objeto de peticion del navegador
+    y no el formato del cuerpo.
+
+    SE ESCRIBE EN UN AREA DE PASO Y SE MUEVE DESPUES. Un archivo que no se
+    reconoce no llega a `datasets/`: muere donde cayo. Guardarlo primero y
+    mirarlo despues deja basura con nombre de dato, y despues nadie sabe si ese
+    archivo es una captura o un intento fallido.
+
+    NO SE LEE ENTERO EN MEMORIA. Un paquete de carrera son cientos de megabytes;
+    se escribe a medida que llega.
+    """
+
+    subida.AREA_DE_PASO.mkdir(parents=True, exist_ok=True)
+    limpio = subida.nombre_seguro(nombre)
+    provisional = subida.AREA_DE_PASO / limpio
+    primeros = b""
+    recibidos = 0
+    try:
+        with provisional.open("wb") as destino:
+            async for trozo in peticion.stream():
+                if not trozo:
+                    continue
+                if len(primeros) < subida.BYTES_PARA_CLASIFICAR:
+                    primeros += trozo[: subida.BYTES_PARA_CLASIFICAR - len(primeros)]
+                destino.write(trozo)
+                recibidos += len(trozo)
+        if not recibidos:
+            raise HTTPException(status_code=422, detail={
+                "mensaje": "No llego ningun byte.",
+                "nombre": limpio})
+
+        # LOS METADATOS SE ACEPTAN POR SU COMPANIA Y NO POR SU CONTENIDO.
+        # Son JSON y cualquier JSON lo pareceria; la regla es mas fuerte: solo
+        # valen si la captura que describen ya esta subida.
+        if subida.es_acompanante(limpio):
+            captura = subida.donde_espera_su_captura(limpio)
+            if captura is None:
+                raise HTTPException(status_code=422, detail={
+                    "mensaje": ("Estos metadatos describen una captura que no "
+                                "esta subida. Suba primero la captura."),
+                    "describe_a": subida.raiz_del_acompanante(limpio)})
+            final = captura.with_name(captura.name + subida.SUFIJO_ACOMPANANTE)
+            final.parent.mkdir(parents=True, exist_ok=True)
+            provisional.replace(final)
+            acepta, motivo = subida.verificar(captura)
+            return {"guardado": str(final), "bytes": recibidos,
+                    "clase": "metadatos", "describe_a": str(captura),
+                    "verificacion": {"acepta": acepta, "motivo": motivo},
+                    "siguiente": ("la captura quedo verificada"
+                                  if acepta else
+                                  "la captura no coincide con lo que declara")}
+
+        clase = subida.clasificar(limpio, primeros)
+        if clase is None:
+            raise HTTPException(status_code=422, detail={
+                "mensaje": ("No se reconoce el contenido de este archivo. Se "
+                            "decide por lo que el archivo trae adentro y no por "
+                            "su nombre."),
+                "nombre": limpio,
+                "aceptados": [f["clase"] for f in subida.FORMATOS],
+                "consulte": "/importar/formatos"})
+
+        final = subida.destino_de(clase, limpio)
+        final.parent.mkdir(parents=True, exist_ok=True)
+        provisional.replace(final)
+    finally:
+        # Lo que no se acepto no se queda ocupando lugar con nombre de dato.
+        if provisional.exists():
+            provisional.unlink()
+
+    acepta, motivo = subida.verificar(final)
+    return {
+        "guardado": str(final),
+        "bytes": recibidos,
+        "clase": clase,
+        "fuente": subida._POR_CLASE[clase]["fuente"],
+        "verificacion": {"acepta": acepta, "motivo": motivo},
+        "siguiente": subida._POR_CLASE[clase].get("acompana") and (
+            "falta subir %s%s para poder verificarlo"
+            % (limpio, subida.SUFIJO_ACOMPANANTE)) or
+            "listo para procesar",
+    }
 
 
 # --------------------------------------------------------------------------- #
