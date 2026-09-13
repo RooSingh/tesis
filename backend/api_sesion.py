@@ -398,7 +398,16 @@ def listar_vueltas(
             , q AS (
                 SELECT vuelta, timestamp, distancia, velocidad, invalida,
                        timestamp - lag(timestamp)
-                           OVER (PARTITION BY vuelta ORDER BY timestamp) AS salto
+                           OVER (PARTITION BY vuelta ORDER BY timestamp) AS salto,
+                       -- CUANTO AVANZO EL COCHE A TRAVES DEL HUECO.
+                       --
+                       -- Es lo que separa «el coche estaba parado» de «se
+                       -- perdio telemetria de un coche que andaba», y la
+                       -- duracion no lo separa: un corte de red de dos minutos
+                       -- y dos minutos en el garaje duran lo mismo. Parado no
+                       -- avanza; dando vueltas avanza cientos de metros.
+                       distancia - lag(distancia)
+                           OVER (PARTITION BY vuelta ORDER BY timestamp) AS avance
                   FROM p
                  WHERE vuelta IS NOT NULL AND distancia IS NOT NULL)
             SELECT vuelta::int,
@@ -424,7 +433,8 @@ def listar_vueltas(
                    -- sobre la resolucion completa, que es la unica que los tiene.
                    jsonb_agg(jsonb_build_array(
                                  extract(epoch FROM (timestamp - salto)),
-                                 extract(epoch FROM timestamp))
+                                 extract(epoch FROM timestamp),
+                                 avance)
                              ORDER BY timestamp)
                        FILTER (WHERE salto >= interval '{hueco}')       AS huecos
               FROM q
@@ -541,8 +551,45 @@ def _huecos_legibles(crudos: Any) -> list[dict]:
             "desde_utc": datetime.fromtimestamp(a, tz=timezone.utc).isoformat(),
             "hasta_utc": datetime.fromtimestamp(b, tz=timezone.utc).isoformat(),
             "duracion_s": round(b - a, 3),
+            **_avance_del_hueco(par[2] if len(par) > 2 else None),
         })
     return salida
+
+
+def _avance_del_hueco(crudo: Any) -> dict:
+    """Cuanto avanzo el coche a traves del hueco, y si se movio.
+
+    SON DOS AFIRMACIONES Y NO UNA. `metros` es cuanto avanzo, cuando se puede
+    decir; `se_movio` es si avanzo, que a veces se sabe sin saber cuanto.
+
+    AL CRUZAR LA META LA DISTANCIA DE VUELTA VUELVE A CERO, de modo que la
+    resta da negativa. Leer eso como «avanzo menos seis mil metros» ---y por lo
+    tanto como que no se movio--- diria que el coche estaba quieto justo cuando
+    dio una vuelta entera. Se declara lo que se sabe, que se movio, sin inventar
+    cuanto.
+
+    SIN DISTANCIA NO SE AFIRMA NADA. `None` es «no se sabe» y no se puede leer
+    como «estaba quieto»: esa confusion es la que convierte una ignorancia en
+    una medicion. Las respuestas de antes de este campo traen pares y no ternas,
+    y caen aca por el mismo camino.
+    """
+
+    try:
+        avance = float(crudo)
+    except (TypeError, ValueError):
+        return {"metros": None, "se_movio": None}
+    if avance < 0:
+        return {"metros": None, "se_movio": True}
+    return {"metros": round(avance, 1), "se_movio": avance > METROS_QUE_SON_MOVERSE}
+
+
+#: Cuanto tiene que avanzar el coche para decir que se movio.
+#:
+#: La distancia de vuelta de un coche detenido no es exactamente constante ---la
+#: publica el juego con su propio ruido--- pero se mueve en centimetros. Diez
+#: metros esta muy por encima de eso y muy por debajo de cualquier cosa que un
+#: coche andando recorra en el hueco mas corto que llega a declararse.
+METROS_QUE_SON_MOVERSE = 10.0
 
 
 def _explicar_descensos(fuente: str, session_id: str, vehiculos: dict,

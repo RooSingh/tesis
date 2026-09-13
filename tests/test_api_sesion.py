@@ -2401,3 +2401,53 @@ class SenalesAusentesRecordadasTests(unittest.TestCase):
                                             "s%d" % i, ["air_temperature"])
         self.assertLessEqual(len(api_sesion._AUSENTES_CACHE),
                              api_sesion.AUSENTES_EN_CACHE)
+
+
+class UnHuecoDiceSiElCocheSeMovio(unittest.TestCase):
+    """Cuanto duro un hueco no dice si se perdio telemetria.
+
+    EL DEFECTO, VISTO ANTES DE QUE MORDIERA. El tablero clasificaba un hueco
+    **solo por su duracion**: menos de dos segundos eran «muestras que no
+    llegaron» y mas, «el coche detenido o el juego fuera de pista». Sobre la
+    captura de Barcelona esa lectura es correcta ---456 s con el coche parado---
+    y sobre un corte de red de dos minutos con el coche dando vueltas es
+    exactamente al reves.
+
+    Lo que los separa no es cuanto duro: es **si el coche avanzo**. Detenido no
+    avanza; dando vueltas avanza cientos de metros. El dato estaba en la base y
+    la respuesta no lo traia.
+    """
+
+    def test_el_hueco_declara_cuantos_metros_avanzo_el_coche(self):
+        crudos = [[1000.0, 1120.0, 3200.0]]
+        h = api_sesion._huecos_legibles(crudos)[0]
+        self.assertEqual(h["duracion_s"], 120.0)
+        self.assertEqual(h["metros"], 3200.0)
+
+    def test_un_coche_detenido_declara_cero(self):
+        h = api_sesion._huecos_legibles([[1000.0, 1456.0, 0.0]])[0]
+        self.assertEqual(h["metros"], 0.0)
+
+    def test_cruzar_la_meta_cuenta_como_movimiento_y_no_como_retroceso(self):
+        """La distancia de vuelta vuelve a cero al cruzar: la resta da negativa.
+
+        Leerlo como «avanzo menos cero metros» diria que el coche estaba quieto
+        justo cuando dio una vuelta entera. Se declara lo que se sabe ---que se
+        movio--- sin inventar cuanto.
+        """
+        h = api_sesion._huecos_legibles([[1000.0, 1120.0, -6800.0]])[0]
+        self.assertIsNone(h["metros"])
+        self.assertTrue(h["se_movio"])
+
+    def test_sin_distancia_no_se_afirma_nada(self):
+        """`None` es «no se sabe» y no se puede leer como «estaba quieto»."""
+        h = api_sesion._huecos_legibles([[1000.0, 1120.0, None]])[0]
+        self.assertIsNone(h["metros"])
+        self.assertIsNone(h["se_movio"])
+
+    def test_un_hueco_viejo_sin_la_tercera_cifra_no_rompe(self):
+        """Las respuestas guardadas de antes traen pares, no ternas."""
+        h = api_sesion._huecos_legibles([[1000.0, 1120.0]])[0]
+        self.assertEqual(h["duracion_s"], 120.0)
+        self.assertIsNone(h["metros"])
+

@@ -178,7 +178,7 @@ const NOMBRES = [
   "reducirAAncho", "escalaDe", "dominioAmpliado",
   "pintarLeyendaTraza", "exportarCsv", "elegirCorrida",
   "alcanceElegidoEsValido", "adquisicionSeSolapa", "sonUnaSolaCarrera",
-  "huecosEnLaLinea",
+  "huecosEnLaLinea", "comoSeLeeElHueco",
   "parrillaComun",
   "faseDeLaDireccion",
   "olvidarLoDeLaCorrida", "nuevaSesionEnCurso", "aperturaVigente", "sigueVigente",
@@ -299,7 +299,7 @@ const {
   bandasDeVuelta, bandasParaElTramo, pintarZonas,
   pintarLeyendaTraza, exportarCsv,
   elegirCorrida, nuevaSesionEnCurso, fijarContextoDeCorrida, selloDeIdentidad,
-  sonUnaSolaCarrera, parrillaComun, huecosEnLaLinea,
+  sonUnaSolaCarrera, parrillaComun, huecosEnLaLinea, comoSeLeeElHueco,
   _fijar,
   trazadoAPath, puntoDelBusEn, _indiceEnElRecorrido,
   hayCoordenadasMedidas, porQueNoHayCoordenadas, hayEjeDeDistancia,
@@ -1364,6 +1364,45 @@ prueba("en los bordes del hueco todavia hay medicion", () => {
 prueba("sin cortes declarados no se inventa un hueco", () => {
   assert.strictEqual(huecoQueContiene(null, 2000), null);
   assert.strictEqual(huecoQueContiene({ huecos: [] }, 2000), null);
+});
+
+prueba("un hueco largo con el coche andando SI es telemetria perdida", () => {
+  /* EL DEFECTO QUE ESTO CORRIGE. La regla decidia **solo por la duracion**:
+     `mayor < 2` era telemetria perdida y todo lo demas, «el coche detenido o
+     el juego fuera de pista». Sobre Barcelona esa lectura es correcta ---456 s
+     parado--- y sobre un corte de red de dos minutos con el coche dando vueltas
+     es exactamente al reves, que es la prueba que el usuario esta por hacer.
+
+     Lo que los separa es si el coche **avanzo**. */
+  const conCorte = [{ numero: 3, hueco_mayor_s: 120, huecos: [
+    { duracion_s: 120, metros: 3200, se_movio: true }] }];
+  assert.strictEqual(comoSeLeeElHueco(conCorte).esPerdida, true);
+  assert.ok(/3\.200 m/.test(comoSeLeeElHueco(conCorte).texto),
+            comoSeLeeElHueco(conCorte).texto);
+});
+
+prueba("un hueco largo con el coche parado no es un problema", () => {
+  const enBoxes = [{ numero: 3, hueco_mayor_s: 456, huecos: [
+    { duracion_s: 456, metros: 0, se_movio: false }] }];
+  assert.strictEqual(comoSeLeeElHueco(enBoxes).esPerdida, false);
+});
+
+prueba("un hueco corto sigue siendo muestras que no llegaron", () => {
+  /* Un coche a doscientos por hora recorre cinco metros en cien milisegundos:
+     por debajo del umbral de movimiento aunque estuviera andando. La duracion
+     corta sigue siendo evidencia por si sola. */
+  const corto = [{ numero: 2, hueco_mayor_s: 0.1, huecos: [
+    { duracion_s: 0.1, metros: 5.4, se_movio: false }] }];
+  assert.strictEqual(comoSeLeeElHueco(corto).esPerdida, true);
+});
+
+prueba("sin saber si se movio se dice que no se sabe", () => {
+  /* Una respuesta de antes de este campo. No se puede leer como «parado»: eso
+     convierte una ignorancia en una medicion. */
+  const viejo = [{ numero: 3, hueco_mayor_s: 120, huecos: [
+    { duracion_s: 120, metros: null, se_movio: null }] }];
+  const r = comoSeLeeElHueco(viejo);
+  assert.ok(/no se sabe|no declara/i.test(r.texto), r.texto);
 });
 
 prueba("el salto se ubica en la linea de tiempo que la reproduccion recorre", () => {

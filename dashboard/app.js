@@ -4042,6 +4042,52 @@ function _cruzaUnHueco(huecos, a, b) {
   return false;
 }
 
+/* QUE SIGNIFICA UN HUECO: SI SE PERDIO TELEMETRIA O EL COCHE ESTABA QUIETO.
+   ------------------------------------------------------------
+   LA REGLA ANTERIOR DECIDIA SOLO POR LA DURACION ---menos de dos segundos era
+   perdida y todo lo demas, coche detenido--- y sobre la captura de Barcelona
+   esa lectura es correcta: 456 s con el coche parado en el garaje. Sobre un
+   corte de red de dos minutos con el coche dando vueltas es **exactamente al
+   reves**, y llamaria «coche detenido» a la unica clase de hueco que importa.
+
+   LO QUE LOS SEPARA ES SI EL COCHE AVANZO. Parado no avanza; dando vueltas
+   avanza cientos de metros. El dato estaba en la base y la respuesta no lo
+   traia; ahora cada hueco declara `metros` y `se_movio`.
+
+   LA DURACION SIGUE SIENDO EVIDENCIA, pero solo por lo corto: un coche a
+   doscientos por hora recorre cinco metros en cien milisegundos, o sea por
+   debajo del umbral de movimiento aunque estuviera andando. Un hueco de
+   milisegundos son muestras que no llegaron, se mueva o no.
+
+   Y NO SABER NO ES SABER QUE NO. Una respuesta de antes de este campo no
+   declara nada, y eso se dice en vez de leerse como «estaba parado». */
+function comoSeLeeElHueco(rotas) {
+  const lista = rotas || [];
+  const todos = [];
+  lista.forEach(v => (v.huecos || []).forEach(h => todos.push(h)));
+  const mayor = Math.max.apply(null, lista.map(v => v.hueco_mayor_s || 0).concat([0]));
+
+  const movidos = todos.filter(h => h.se_movio === true);
+  if (movidos.length) {
+    const metros = movidos.map(h => h.metros).filter(m => m !== null && m !== undefined);
+    const cuanto = metros.length ? cifra(Math.max.apply(null, metros), 0) + " m" : "";
+    return { esPerdida: true, texto:
+      "Es telemetría perdida: el coche siguió andando" +
+      (cuanto ? " y recorrió " + cuanto : "") + " mientras no llegaba nada. " };
+  }
+  if (mayor > 0 && mayor < 2) {
+    return { esPerdida: true, texto: "Un hueco tan corto son muestras que no llegaron. " };
+  }
+  if (todos.length && todos.every(h => h.se_movio === false)) {
+    return { esPerdida: false, texto:
+      "El coche no avanzó durante el hueco: estaba detenido o el juego fuera de " +
+      "pista, no es telemetría perdida. " };
+  }
+  return { esPerdida: false, texto:
+    "No se sabe si el coche avanzó durante el hueco ---esta respuesta no lo " +
+    "declara---, así que no se puede decir si se perdió telemetría. " };
+}
+
 /* DONDE SALTA LA LINEA DE TIEMPO, PARA PODER MARCARLO.
    ------------------------------------------------------------
    LA REPRODUCCION YA SALTA EL HUECO Y NO LO DECIA. El transporte avanza sobre
@@ -11607,19 +11653,16 @@ function cargarDatosDeSesion(ruta, apertura, senal, s) {
          Ahora se dice cuanto duro el mayor, que es el dato que permite
          distinguirlo, y solo se pinta como problema cuando es corto. */
       const mayor = Math.max.apply(null, rotas.map(v => v.hueco_mayor_s || 0));
-      const esPerdida = mayor > 0 && mayor < 2;
+      const lectura = comoSeLeeElHueco(rotas);
       decirEstadoApi(
         rotas.length + (rotas.length === 1 ? " vuelta tiene" : " vueltas tienen") +
         " un salto entre muestras seguidas ---vuelta " +
         rotas.map(v => v.numero).join(", ") + ", el mayor de " +
         (mayor >= 1 ? cifra(mayor, 1) + " s" : Math.round(mayor * 1000) + " ms") + "---. " +
-        (esPerdida
-          ? "Un hueco tan corto son muestras que no llegaron. "
-          : "Un hueco de ese largo es el coche detenido o el juego fuera de pista, " +
-            "no telemetría perdida. ") +
+        lectura.texto +
         "La reproducción usa la duración de conducción continua; la diferencia " +
         "contra el tiempo total está declarada en la respuesta de la API.",
-        esPerdida);
+        lectura.esPerdida);
     }
     poblarVueltas();
     // Clima, vehiculo y puesta los aplica su propia consulta, arriba.
