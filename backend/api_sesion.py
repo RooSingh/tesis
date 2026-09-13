@@ -3342,10 +3342,33 @@ def _hubo_rodaje_desde(cursor, fuente: str, session_id: str,
     return bool(fila and fila[0])
 
 
+#: Que familia de sesion describe cada modo del catalogo de referencias.
+#:
+#: SIN ESTO, LA COMPARACION SE LEE COMO SI FUERA DEL MISMO TIPO DE SESION, y no
+#: lo es: todas las referencias que hay son **de carrera** y casi todas las
+#: sesiones capturadas son contrarreloj. Un alerón de carrera lleva mas carga
+#: que uno de vuelta rapida, de modo que la diferencia que el panel muestra
+#: incluye esa distancia y no solo la eleccion de quien condujo.
+FAMILIA_DEL_MODO = {"carrera": "carrera", "contrarreloj": "contrarreloj",
+                    "clasificacion": "clasificacion"}
+
+
 def _comparar_con_referencia(session_id: str, puesta: dict,
                              asentada: bool) -> tuple[dict | None, list[dict]]:
     procedencia = procedencia_sesiones.de(session_id) or {}
     referencia = catalogo_reglajes.referencia_de(procedencia.get("circuito"))
+    if referencia is not None:
+        # PARA QUE MODO VALE LA REFERENCIA, CONTRA EL DE ESTA SESION. Se dice
+        # siempre que no coinciden, tambien cuando la sesion no declara el suyo:
+        # no saberlo no autoriza a suponer que coinciden.
+        familia = procedencia.get("familia_de_sesion")
+        esperada = FAMILIA_DEL_MODO.get(referencia.get("modo"))
+        if esperada and familia != esperada:
+            referencia["otro_modo"] = (
+                "esta referencia es de %s y la sesion es %s: parte de la "
+                "diferencia es del tipo de sesion y no de la eleccion de quien "
+                "condujo" % (referencia.get("modo"),
+                             familia or "de tipo no declarado"))
     diferencias = []
     if referencia and asentada:
         for clave, esperado in referencia["valores"].items():

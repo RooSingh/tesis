@@ -12830,8 +12830,17 @@ function pintarPuestaAPunto() {
     bloqueReferencia.textContent = "";
     const referencia = d && (d.referencia_puesta || d.referencia);
     if (referencia) {
+      /* PARA QUE MODO VALE, CUANDO NO ES EL DE ESTA SESION. Todas las
+         referencias que hay son de carrera y casi todas las sesiones
+         capturadas son contrarreloj: sin decirlo, la diferencia se lee como si
+         fuera una elección de quien condujo, y parte de ella es del tipo de
+         sesión. La cita de la fuente viaja al lado, que es lo que permite ir a
+         comprobar el número. */
       bloqueReferencia.append(document.createTextNode(
-        "Referencia: " + referencia.fuente.titulo + ". " + referencia.alcance + " "));
+        "Referencia: " + referencia.fuente.titulo + ". " +
+        (referencia.otro_modo ? referencia.otro_modo + ". " : "") +
+        (referencia.cita ? "Dice: " + referencia.cita + " " : "") +
+        referencia.alcance + " "));
       try {
         const url = new URL(referencia.fuente.url);
         if (url.protocol === "https:" || url.protocol === "http:") {
