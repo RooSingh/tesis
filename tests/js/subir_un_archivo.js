@@ -68,7 +68,8 @@ function constante(nombre) {
   throw new Error("no cierra la constante " + nombre);
 }
 
-const CONSTANTES = ["EXTENSIONES_QUE_HAY_QUE_CONVERTIR", "SUFIJO_ACOMPANANTE"];
+const CONSTANTES = ["EXTENSIONES_QUE_HAY_QUE_CONVERTIR", "SUFIJO_ACOMPANANTE",
+                    "EXTENSION_DEL_ACOMPANANTE"];
 const NOMBRES = ["extensionDe", "esAcompanante", "ordenDeSubida",
                  "extensionesQueSeAceptan", "comoSeProcesa", "tamanoLegible"];
 
@@ -104,17 +105,33 @@ prueba("las extensiones salen de la respuesta y no de una lista escrita", () => 
   assert.ok(lista.indexOf(".zip") !== -1);
 });
 
-prueba("y los metadatos entran aunque el servidor no los liste como formato", () => {
-  /* No son una clase ---no tienen numero magico, son JSON--- pero se suben, y
-     un dialogo que no los ofrezca hace imposible completar el par. */
+prueba("EL METADATO SE OFRECE COMO `.json`, QUE ES SU EXTENSION DE VERDAD", () => {
+  /* `.meta.json` es una **convencion de nombre** y no una extension. El dialogo
+     del sistema resuelve cada termino de `accept` a un tipo conocido y ese no
+     lo es: en macOS los metadatos salian **en gris, imposibles de elegir**, de
+     modo que no habia forma de subir el par. Reportado el 2026-09-13 con una
+     captura del selector. */
   const lista = extensionesQueSeAceptan({ formatos: [{ extension: ".canraw" }] });
-  assert.ok(lista.indexOf(".meta.json") !== -1,
+  assert.ok(lista.indexOf(".json") !== -1,
     "el dialogo no deja elegir los metadatos: " + lista.join(","));
+  assert.strictEqual(lista.indexOf(".meta.json"), -1,
+    "volvio el termino que el selector no entiende");
+});
+
+prueba("y la convencion de nombre sigue siendo la que empareja el par", () => {
+  /* Son dos trabajos distintos: uno es el filtro del dialogo y el otro la regla
+     que decide que es un metadato y en que orden se sube. Mezclarlos fue el
+     defecto. */
+  assert.strictEqual(sacadas.SUFIJO_ACOMPANANTE, ".meta.json");
+  assert.strictEqual(sacadas.EXTENSION_DEL_ACOMPANANTE, ".json");
+  assert.strictEqual(esAcompanante("x.canraw.meta.json"), true);
+  assert.strictEqual(esAcompanante("cualquiera.json"), false,
+    "un json suelto dejo de distinguirse de un metadato");
 });
 
 prueba("sin respuesta no se inventa un filtro", () => {
-  assert.deepStrictEqual(extensionesQueSeAceptan(null), [".meta.json"]);
-  assert.deepStrictEqual(extensionesQueSeAceptan({}), [".meta.json"]);
+  assert.deepStrictEqual(extensionesQueSeAceptan(null), [".json"]);
+  assert.deepStrictEqual(extensionesQueSeAceptan({}), [".json"]);
 });
 
 /* -------- el orden del par -------- */

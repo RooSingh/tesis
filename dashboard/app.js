@@ -1741,12 +1741,30 @@ function pedirFormatosDeSubida() {
   });
 }
 
-/* Las extensiones que el dialogo ofrece: las que declara el servidor mas la de
-   los metadatos, que no es un formato propio pero se sube igual. */
+/* LA EXTENSION DEL METADATO ES `.json`, NO `.meta.json`.
+   ------------------------------------------------------------
+   `.meta.json` es una **convención de nombre** ---la que empareja un metadato
+   con su captura--- y no una extensión. El diálogo de archivos del sistema
+   resuelve cada término de `accept` a un tipo conocido, y `.meta.json` no lo
+   es: en macOS los metadatos aparecían **en gris, imposibles de elegir**, de
+   modo que no había forma de subir el par. Reportado el 2026-09-13 con una
+   captura de pantalla del selector.
+
+   Son dos trabajos distintos y por eso son dos valores distintos: `.json` es lo
+   que el diálogo entiende, y `SUFIJO_ACOMPANANTE` sigue siendo la regla que
+   decide qué es un metadato y en qué orden se sube. Mezclarlos fue el defecto.
+
+   Y ofrecer `.json` de más no afronta nada: el filtro es una **cortesía para
+   avisar antes**, no una validación. Quien elija otro `.json` recibe el mismo
+   rechazo del servidor, que es el que mira adentro. */
+const EXTENSION_DEL_ACOMPANANTE = ".json";
+
 function extensionesQueSeAceptan(formatos) {
   const lista = ((formatos || {}).formatos || []).map(f => f.extension)
     .filter(Boolean);
-  if (lista.indexOf(SUFIJO_ACOMPANANTE) === -1) lista.push(SUFIJO_ACOMPANANTE);
+  if (lista.indexOf(EXTENSION_DEL_ACOMPANANTE) === -1) {
+    lista.push(EXTENSION_DEL_ACOMPANANTE);
+  }
   return lista;
 }
 
