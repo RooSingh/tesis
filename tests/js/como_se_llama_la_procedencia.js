@@ -178,4 +178,64 @@ prueba("el modo sigue teniendo sus tres nombres, que son otra cosa", () => {
   assert.deepStrictEqual(Object.keys(etiquetas).sort(), ["can", "f1", "openf1"]);
 });
 
+/* ==================================================================
+   Y EL NOMBRE DE LA SESION, QUE ES EL ROTULO MAS GRANDE DE LA FILA
+   ------------------------------------------------------------------
+   La pastilla decia «CAN real» y se arreglo; pero el titulo de la fila decia
+   «Segmento del bus» y el subtitulo «Captura de transito», los dos derivados de
+   la misma clave corta y los dos falsos sobre datos generados: no hay segmento,
+   no hay bus y no hubo transito. Un rotulo chico corregido al lado de dos
+   grandes que siguen mintiendo no arregla nada.
+
+   LOS NOMBRES SALEN DE COMO SE LLAMA EL GENERADOR A SI MISMO: un «escenario
+   demostrativo» de sesenta segundos que, dice su propio codigo, «no representa
+   una vuelta fisica exacta».
+   ================================================================== */
+
+const nombrar = new Function(
+  [constante("CIRCUITOS"), constante("FUENTE_CORTA"),
+   constante("NOMBRE_POR_ORIGEN"), constante("TIPO_POR_ORIGEN"),
+   constante("FAMILIAS"),
+   extraer("nombreDeSesion"), extraer("tipoDeSesion"),
+   "return { nombreDeSesion, tipoDeSesion };"].join("\n"))();
+
+prueba("EL DEFECTO GRANDE: la sesion generada no es un segmento del bus", () => {
+  const nombre = nombrar.nombreDeSesion({ fuente: "can_simulated" });
+  assert.notStrictEqual(nombre, "Segmento del bus");
+  assert.ok(/gener/i.test(nombre), "no dice que esta generada: «" + nombre + "»");
+});
+
+prueba("ni lo que hizo fue capturar transito", () => {
+  const tipo = nombrar.tipoDeSesion({ fuente: "can_simulated" });
+  assert.notStrictEqual(tipo, "Captura de tránsito");
+  assert.ok(/escenario|maniobra|simulad/i.test(tipo), tipo);
+});
+
+prueba("y la captura real conserva sus dos nombres", () => {
+  assert.strictEqual(nombrar.nombreDeSesion({ fuente: "can_real_replay" }),
+                     "Segmento del bus");
+  assert.strictEqual(nombrar.tipoDeSesion({ fuente: "can_real_replay" }),
+                     "Captura de tránsito");
+});
+
+prueba("UNA FUENTE DESCONOCIDA NO SE LLAMA COMO EL BUS", () => {
+  /* Los dos tenian `FUENTE_CORTA[s.fuente] || "can"`, de modo que cualquier
+     fuente nueva entraba al tablero llamandose «Segmento del bus · Captura de
+     transito» sin que nadie lo hubiera decidido. */
+  assert.strictEqual(nombrar.nombreDeSesion({ fuente: "vaya_uno_a_saber" }),
+                     "Sesión sin procedencia declarada");
+  assert.strictEqual(nombrar.tipoDeSesion({ fuente: "vaya_uno_a_saber" }),
+                     "Sin declarar");
+});
+
+prueba("lo que la sesion declara de si misma sigue mandando", () => {
+  /* El circuito y el tipo declarados ganan sobre cualquier tabla: son lo que la
+     sesion dice de si misma, y las tablas son el respaldo para cuando calla. */
+  assert.strictEqual(
+    nombrar.nombreDeSesion({ fuente: "can_simulated", circuito: "monza" }),
+    nombrar.nombreDeSesion({ fuente: "f1_25_udp_simulation", circuito: "monza" }));
+  assert.strictEqual(
+    nombrar.tipoDeSesion({ fuente: "can_simulated", tipo: "Carrera" }), "Carrera");
+});
+
 console.log("ok " + hechas + " pruebas del rotulo de la procedencia");

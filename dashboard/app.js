@@ -11683,12 +11683,27 @@ const CIRCUITOS = {
 /* El nombre sale de la procedencia, que el capturador deriva del paquete de
    sesion. Sin ella, una clasificacion y una carrera se ven iguales: dos
    identificadores con muchas filas. */
+/* COMO SE LLAMA UNA SESION QUE NO DECLARA CIRCUITO, POR SU PROCEDENCIA.
+   No por la clave corta: `can_real_replay` y `can_simulated` comparten cajon de
+   comportamiento y no comparten nada de lo que estos dos nombres afirman. Sobre
+   la sesion generada, «Segmento del bus · Captura de transito» era falso tres
+   veces: no hay segmento, no hay bus y no hubo transito.
+
+   LOS NOMBRES DE LO GENERADO SALEN DE COMO SE LLAMA EL GENERADOR A SI MISMO: un
+   «escenario demostrativo» de sesenta segundos que, dice su propio codigo, «no
+   representa una vuelta fisica exacta». */
+const NOMBRE_POR_ORIGEN = {
+  can_real_replay: "Segmento del bus",
+  can_simulated: "Maniobra generada",
+};
+
 function nombreDeSesion(s) {
-  const corta = FUENTE_CORTA[s.fuente] || "can";
   const circuito = (s.procedencia && s.procedencia.circuito) || s.circuito;
   if (circuito) return CIRCUITOS[circuito] || circuito;
-  if (corta === "can") return "Segmento del bus";
-  if (corta === "openf1") return "Sesión OpenF1 " + String(s.session_id).split(":").pop();
+  if (NOMBRE_POR_ORIGEN[s.fuente]) return NOMBRE_POR_ORIGEN[s.fuente];
+  if (FUENTE_CORTA[s.fuente] === "openf1") {
+    return "Sesión OpenF1 " + String(s.session_id).split(":").pop();
+  }
   return "Sesión sin procedencia declarada";
 }
 
@@ -11699,13 +11714,20 @@ const FAMILIAS = {
   carrera: "Carrera", contrarreloj: "Contrarreloj", otro: "Otro",
 };
 
+/* Y que hizo, cuando la sesion no lo declara. Mismo criterio: lo que separa una
+   captura de transito de un escenario demostrativo no es el cajon en el que el
+   tablero los mete, es de donde salio cada uno. */
+const TIPO_POR_ORIGEN = {
+  can_real_replay: "Captura de tránsito",
+  can_simulated: "Escenario demostrativo",
+};
+
 function tipoDeSesion(s) {
   const p = s.procedencia;
   if (p && p.tipo_sesion_nombre) return p.tipo_sesion_nombre;
   if (s.tipo) return s.tipo;
-  const corta = FUENTE_CORTA[s.fuente] || "can";
-  if (corta === "openf1") return "Carrera";
-  if (corta === "can") return "Captura de tránsito";
+  if (TIPO_POR_ORIGEN[s.fuente]) return TIPO_POR_ORIGEN[s.fuente];
+  if (FUENTE_CORTA[s.fuente] === "openf1") return "Carrera";
   return "Sin declarar";
 }
 
