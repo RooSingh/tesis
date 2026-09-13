@@ -178,6 +178,7 @@ const NOMBRES = [
   "reducirAAncho", "escalaDe", "dominioAmpliado",
   "pintarLeyendaTraza", "exportarCsv", "elegirCorrida",
   "alcanceElegidoEsValido", "adquisicionSeSolapa", "sonUnaSolaCarrera",
+  "huecosEnLaLinea",
   "parrillaComun",
   "faseDeLaDireccion",
   "olvidarLoDeLaCorrida", "nuevaSesionEnCurso", "aperturaVigente", "sigueVigente",
@@ -298,7 +299,7 @@ const {
   bandasDeVuelta, bandasParaElTramo, pintarZonas,
   pintarLeyendaTraza, exportarCsv,
   elegirCorrida, nuevaSesionEnCurso, fijarContextoDeCorrida, selloDeIdentidad,
-  sonUnaSolaCarrera, parrillaComun,
+  sonUnaSolaCarrera, parrillaComun, huecosEnLaLinea,
   _fijar,
   trazadoAPath, puntoDelBusEn, _indiceEnElRecorrido,
   hayCoordenadasMedidas, porQueNoHayCoordenadas, hayEjeDeDistancia,
@@ -1363,6 +1364,52 @@ prueba("en los bordes del hueco todavia hay medicion", () => {
 prueba("sin cortes declarados no se inventa un hueco", () => {
   assert.strictEqual(huecoQueContiene(null, 2000), null);
   assert.strictEqual(huecoQueContiene({ huecos: [] }, 2000), null);
+});
+
+prueba("el salto se ubica en la linea de tiempo que la reproduccion recorre", () => {
+  /* EL CASO REAL, MEDIDO EN BARCELONA-CATALUNYA. La reproduccion usa la
+     **duracion de conduccion**, que excluye el hueco: por eso el cabezal nunca
+     cae adentro y no habia donde marcarlo. Lo que hay que marcar es el punto
+     donde la linea **salta**.
+
+       vuelta 1  267,715 s
+       vuelta 2   82,548 s
+       vuelta 3  119,785 s, con un hueco de 455,977 s
+                 empieza 02:43:50,259 · el hueco arranca 02:45:35,097
+
+     Antes del hueco se condujeron 104,838 s de la vuelta 3, asi que el salto
+     cae a los 350,263 + 104,838 = 455,101 s de los 470,048 totales: **96,8 %**
+     de la barra. Por eso el usuario no lo encontraba: quedan quince segundos
+     despues. */
+  const vueltas = [
+    { numero: 1, duracion_s: 267.715, desde_utc: "2026-09-11T02:37:59.895Z", huecos: [] },
+    { numero: 2, duracion_s: 82.548, desde_utc: "2026-09-11T02:42:27.610Z", huecos: [] },
+    { numero: 3, duracion_s: 119.785, desde_utc: "2026-09-11T02:43:50.259Z", huecos: [
+      { desde_utc: "2026-09-11T02:45:35.097Z", duracion_s: 455.977 }] },
+  ];
+  const h = huecosEnLaLinea(vueltas);
+  assert.strictEqual(h.length, 1);
+  assert.strictEqual(h[0].vuelta, 3);
+  assert.ok(Math.abs(h[0].fraccion - 0.968) < 0.002, String(h[0].fraccion));
+});
+
+prueba("dos huecos en la misma vuelta no se pisan", () => {
+  /* El segundo cae despues del primero **en tiempo de conduccion**, no en
+     tiempo de reloj: si no se resta el primero, el segundo se dibuja mas
+     adelante de donde la reproduccion lo va a saltar. */
+  const vueltas = [{ numero: 1, duracion_s: 20, desde_utc: "2026-09-11T00:00:00.000Z",
+    huecos: [{ desde_utc: "2026-09-11T00:00:10.000Z", duracion_s: 100 },
+             { desde_utc: "2026-09-11T00:01:55.000Z", duracion_s: 60 }] }];
+  const h = huecosEnLaLinea(vueltas);
+  assert.strictEqual(h.length, 2);
+  assert.ok(Math.abs(h[0].fraccion - 0.5) < 0.001, String(h[0].fraccion));
+  assert.ok(Math.abs(h[1].fraccion - 0.75) < 0.001, String(h[1].fraccion));
+});
+
+prueba("sin huecos no hay marcas que poner", () => {
+  assert.deepStrictEqual(huecosEnLaLinea(
+    [{ numero: 1, duracion_s: 60, desde_utc: "2026-09-11T00:00:00.000Z", huecos: [] }]), []);
+  assert.deepStrictEqual(huecosEnLaLinea([]), []);
 });
 
 prueba("con las capturas unidas los pilotos siguen teniendo nombre", () => {

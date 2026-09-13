@@ -4042,6 +4042,46 @@ function _cruzaUnHueco(huecos, a, b) {
   return false;
 }
 
+/* DONDE SALTA LA LINEA DE TIEMPO, PARA PODER MARCARLO.
+   ------------------------------------------------------------
+   LA REPRODUCCION YA SALTA EL HUECO Y NO LO DECIA. El transporte avanza sobre
+   la **duracion de conduccion** de cada vuelta, que excluye el hueco: por eso
+   el cabezal nunca cae adentro ---y por eso marcarlo «mientras se esta dentro»
+   no alcanzaba---. Lo que hay que senalar es el punto donde la linea salta.
+
+   Medido en Barcelona-Catalunya: vueltas de 267,7 + 82,5 + 119,8 s, con un
+   hueco de 456 s dentro de la tercera. Antes del hueco se condujeron 104,8 s de
+   esa vuelta, asi que el salto cae a los 455,1 s de los 470,0 totales: **el
+   96,8 % de la barra**. El usuario no lo encontraba porque quedan quince
+   segundos despues.
+
+   SE RESTA LO YA SALTADO DE LA MISMA VUELTA. Con dos huecos en una vuelta, el
+   segundo cae donde cae **en tiempo de conduccion**, no de reloj: sin restar el
+   primero, la marca se dibuja mas adelante de donde la reproduccion va a
+   saltar. */
+function huecosEnLaLinea(vueltas) {
+  const lista = vueltas || [];
+  const total = lista.reduce((suma, v) => suma + (v.duracion_s || 0), 0);
+  if (!(total > 0)) return [];
+  const salida = [];
+  let antes = 0;
+  lista.forEach(v => {
+    const inicio = Date.parse(v.desde_utc);
+    let saltado = 0;
+    (v.huecos || []).forEach(h => {
+      const a = Date.parse(h.desde_utc);
+      if (Number.isFinite(a) && Number.isFinite(inicio)) {
+        const conducidos = (a - inicio) / 1000 - saltado;
+        salida.push({ vuelta: v.numero, duracion_s: h.duracion_s,
+                      fraccion: (antes + conducidos) / total });
+      }
+      saltado += h.duracion_s || 0;
+    });
+    antes += v.duracion_s || 0;
+  });
+  return salida;
+}
+
 /* EN QUE HUECO ESTA EL CABEZAL, SI ES QUE ESTA EN UNO.
    ------------------------------------------------------------
    Dentro de un hueco los valores **no caen a cero**: `valorContinuoEn` devuelve
@@ -13396,8 +13436,21 @@ function pintarTransporte() {
   const marcas = document.getElementById("marcas-tiempo");
   if (!marcas) return;
   const n = vueltasDeLaSesion();
+  /* DONDE SALTA LA LINEA, marcado sobre la linea misma. La marca de vuelta
+     rota dice **cual** vuelta tiene el salto; esto dice **donde** ocurre, que
+     es lo que alguien busca cuando mueve el cabezal. */
+  const saltos = huecosEnLaLinea(estado.vueltas || []);
+  const marcasDeSalto = saltos.map(h => {
+    const cuanto = h.duracion_s < 90
+      ? cifra(h.duracion_s, 0) + " s"
+      : cifra(h.duracion_s / 60, 0) + " min";
+    return '<span class="marca-hueco" style="left:' +
+      (h.fraccion * 100).toFixed(2) + '%" title="Acá la reproducción salta ' +
+      cuanto + ': entre dos muestras seguidas de la vuelta ' + h.vuelta +
+      ' no hay telemetría."><i></i><small>' + cuanto + "</small></span>";
+  }).join("");
   // Las marcas solo cambian al cambiar de vuelta o de sesion.
-  const firmaMarcas = [fuente, n, t.vuelta].join("|");
+  const firmaMarcas = [fuente, n, t.vuelta, saltos.length].join("|");
   if (marcas.dataset.firma === firmaMarcas) return;
   marcas.dataset.firma = firmaMarcas;
   if (n > 1) {
@@ -13419,7 +13472,7 @@ function pintarTransporte() {
                 "de conducción continua." : "") + '">' +
         (rotula ? v : "·") + '</span>';
     }
-    marcas.innerHTML = html;
+    marcas.innerHTML = html + marcasDeSalto;
   } else if (fuente === "f1") {
     const puestas = [];
     marcas.innerHTML = (PISTA.curvas || []).filter(c => {
@@ -13427,9 +13480,11 @@ function pintarTransporte() {
       puestas.push(c.nombre); return true;
     }).map(c =>
       '<span style="left:' + ((c.metro / total) * 100).toFixed(1) + '%" title="' +
-      c.nombre + '">·</span>').join("");
+      c.nombre + '">·</span>').join("") + marcasDeSalto;
   } else {
-    marcas.innerHTML = "";
+    /* Aun sin vueltas ni curvas que marcar, un salto se marca: es la unica
+       cosa de esta linea que no depende de que la fuente sepa de vueltas. */
+    marcas.innerHTML = marcasDeSalto;
   }
 }
 

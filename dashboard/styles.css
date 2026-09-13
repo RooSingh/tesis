@@ -793,7 +793,24 @@
 
   /* La vuelta es lo primero que se lee: ubica todo lo demas. El metro y el
      reloj de sesion la acompañan en el renglon de abajo. */
-  .reloj { flex: 0 0 auto; text-align: right; font-family: var(--cifra); font-variant-numeric: tabular-nums; }
+  /* EL ANCHO NO PUEDE DEPENDER DE LOS DIGITOS. Sin un minimo, el texto pasa de
+     «33 m · 7:41.9 de 7:50.0» a «3.266 m · 6:50.0 de 7:50.0» y la barra de
+     reproduccion se encoge sola mientras uno la arrastra: el cursor se mueve
+     debajo del dedo por un cambio de tipografia, no por el dato. Se reserva el
+     ancho del texto mas largo y se alinea a la derecha, que es como se leen las
+     cifras. */
+  .reloj { flex: 0 0 auto; min-width: 27ch; text-align: right;
+    font-family: var(--cifra); font-variant-numeric: tabular-nums; }
+
+  /* ---------- donde la reproduccion salta ----------
+     La marca de vuelta rota dice **cual** vuelta tiene el salto; esta dice
+     **donde** ocurre. Color de alerta y no el de las vueltas: no es un hito del
+     recorrido, es tiempo que no esta. */
+  .marca-hueco { position: absolute; transform: translateX(-50%);
+    white-space: nowrap; color: var(--alerta); }
+  .marca-hueco i { display: block; width: 2px; height: 9px; margin: 0 auto 1px;
+    background: var(--alerta); border-radius: 1px; }
+  .marca-hueco small { font-size: .58rem; letter-spacing: .02em; }
   .reloj b { display: block; font-size: 1.05rem; letter-spacing: .01em; }
   .reloj span { font-size: .66rem; color: var(--texto-tenue); white-space: nowrap; }
 
