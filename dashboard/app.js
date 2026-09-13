@@ -695,12 +695,51 @@ const PANELES_QUE_LA_FUENTE_NO_TIENE = {
     puesta: "OpenF1 no publica la configuración del vehículo",
     aceleraciones: "OpenF1 no publica aceleraciones en ningún eje",
   },
+  /* LOS MOTIVOS DEL BUS SALEN DE `backend/matriz_fuentes.py`, QUE LOS MIDIO.
+     Esa matriz declara por magnitud fisica que publica cada fuente y, donde no
+     publica, el motivo ---distinguiendo lo que el vehiculo no tiene de lo que
+     la interfaz no expone---. Copiar aca una impresion de lo que se ve en
+     pantalla habria sido declarar «nunca» desde un panel vacio. */
   can: {
     puesta: "un bus vehicular de serie no publica la configuración del vehículo",
     vehiculos: "la captura del bus es de un solo vehículo: no hay con quién " +
                "comparar",
+    /* «Daño y desgaste» en la matriz: «un vehiculo de calle no publica desgaste
+       por rueda». Se nombra lo que el bus SI da por esquina y donde esta: sacar
+       un panel no puede dar a entender que la esquina no se mide. */
+    vehiculo: "un vehículo de calle no publica temperatura ni presión de " +
+              "neumático, ni desgaste, ni daño por parte; del bus sí llega la " +
+              "velocidad de cada rueda, y las cuatro tienen su propio gráfico",
+    /* El conjunto es anonimo por diseno: no trae fecha, ni sitio, ni estado del
+       pavimento. No es que el clima no viaje en la telemetria y llegue por
+       contexto ---eso es lo que pasa en el simulador---: aca no hay contexto. */
+    clima: "el conjunto es anónimo y no publica ni el clima ni el estado del " +
+           "pavimento: no hay dato ni contexto de sesión de donde sacarlos",
+    /* Dos carencias, y las dos estructurales. Sin eje de distancia no hay
+       vuelta que cronometrar ---lo dice `/vueltas`: «el bus publica velocidad
+       de rueda pero no odometro ni distancia de vuelta»--- y con un solo
+       vehiculo no hay posicion ni diferencia al lider. */
+    cronometraje: "sin odómetro ni distancia de vuelta no hay vueltas que " +
+                  "cronometrar, y con un solo vehículo no hay posición ni " +
+                  "diferencia al líder",
+    /* Lo contesta `/avisos` para esta fuente, y para esta es cierto: los tres
+       canales que levantan un aviso son de competicion o de daño. */
+    avisos: "no hay banderas, ni daño, ni tipo de superficie: un bus de serie " +
+            "no publica nada con lo que levantar un aviso",
   },
 };
+
+/* DONDE VIVE EL SELECTOR DE PILOTO, EN ORDEN DE PREFERENCIA.
+   Vivia en el encabezado de «Vehiculo» y se mudaba a «Cronometraje» cuando la
+   fuente no sostenia el primero. Al sacar los dos para el bus, se mudaba a un
+   panel que tampoco estaba: el unico mando para elegir de quien es la
+   telemetria desaparecia sin decir nada. Hoy el bus trae un solo vehiculo y el
+   selector se esconde solo ---`poblarPropio`---, de modo que el fallo quedaba
+   tapado por una coincidencia, que es la peor forma de no tenerlo.
+
+   «Regimen y velocidad» cierra la lista porque la velocidad del vehiculo es la
+   unica magnitud que las tres fuentes publican: ninguna puede sacar ese panel. */
+const HOSPEDAJES_DEL_SELECTOR = ["vehiculo", "cronometraje", "medidores"];
 
 /* El motivo por el que la fuente no sostiene ese panel, o cadena vacia si lo
    sostiene. Se devuelve el motivo y no un booleano: quien decide esconder algo
@@ -2520,9 +2559,9 @@ function sacarLosPanelesQueLaFuenteNoLlena() {
      sitio seria volver a decidirlo, y tarde o temprano en desacuerdo. */
   if (typeof document.querySelector === "function") {
     const selector = document.querySelector(".elige-propio");
-    const vehiculo = document.querySelector('section[data-panel="vehiculo"]');
-    const crono = document.querySelector('section[data-panel="cronometraje"]');
-    const panel = (vehiculo && vehiculo.dataset.fuera !== "si") ? vehiculo : crono;
+    const panel = HOSPEDAJES_DEL_SELECTOR
+      .map(id => document.querySelector('section[data-panel="' + id + '"]'))
+      .find(el => el && el.dataset.fuera !== "si");
     const cabecera = panel ? panel.querySelector("header") : null;
     if (selector && cabecera && selector.parentElement !== cabecera) {
       cabecera.appendChild(selector);

@@ -19,6 +19,23 @@ RAIZ = Path(__file__).resolve().parents[1]
 DASHBOARD = RAIZ / "dashboard"
 
 
+def seccion_que_contiene(dom: str, id_elemento: str) -> str:
+    """La etiqueta `<section>` mas cercana por encima de un elemento.
+
+    Se busca hacia atras porque el DOM volcado es texto: lo que interesa no es
+    el elemento sino **en que panel quedo**, y esa es la ultima `<section>`
+    abierta antes de el.
+    """
+
+    donde = dom.find('id="' + id_elemento + '"')
+    if donde == -1:
+        raise AssertionError(f"no esta el elemento «{id_elemento}» en el DOM")
+    aperturas = list(re.finditer(r"<section[^>]*>", dom[:donde]))
+    if not aperturas:
+        raise AssertionError(f"«{id_elemento}» no esta dentro de ninguna seccion")
+    return aperturas[-1].group(0)
+
+
 def chrome_disponible() -> Path | None:
     candidatos = [
         shutil.which("chrome"),
@@ -275,18 +292,47 @@ class DashboardBrowserTests(unittest.TestCase):
         self.assertIn('aria-label="Velocidad a lo largo del tiempo"', dom)
         self.assertNotIn("La vuelta 1 no se pudo traer", dom)
 
-        # Dos paneles que el bus no puede llenar nunca salen del tablero, y la
-        # marca la pone el guion.
-        for panel in ("puesta", "vehiculos"):
+        # LOS PANELES QUE EL BUS NO PUEDE LLENAR NUNCA SALEN DEL TABLERO.
+        #
+        # Eran dos y son seis. Los cuatro nuevos se agregaron mirando la sesion
+        # cargada de verdad: el panel del vehiculo mostraba un monoplaza de
+        # formula con sus cuatro esquinas vacias y un «sin daño» que es una
+        # **afirmacion** sobre un canal que no existe; el de clima decia «sin
+        # clima»; el de cronometraje daba piloto, posicion, vuelta, cronometro y
+        # diferencia al lider, todos en raya; y el de avisos, «0/0».
+        #
+        # Los motivos no se supusieron: salen de `backend/matriz_fuentes.py`,
+        # que los declara por magnitud y medidos.
+        for panel in ("puesta", "vehiculos", "vehiculo", "clima",
+                      "cronometraje", "avisos"):
             seccion = re.search(rf'<section[^>]*data-panel="{panel}"[^>]*>', dom)
             self.assertIsNotNone(seccion, f"no esta la seccion de «{panel}»")
             self.assertIn('data-fuera="si"', seccion.group(0), panel)
 
-        # Y lo que el bus si entrega no se saca: el trazado se reconstruye
-        # integrando velocidad y guiñada, y esta a la vista.
-        trazado = re.search(r'<section[^>]*data-panel="trazado"[^>]*>', dom)
-        self.assertIsNotNone(trazado)
-        self.assertNotIn("data-fuera", trazado.group(0))
+        # EL DE MOTOR SE QUEDA, Y ES LA PARTE QUE HAY QUE DEFENDER.
+        #
+        # Esta tan vacio como los otros cuatro y **no es lo mismo**. La matriz
+        # declara el regimen del motor ausente porque «queda fuera del conjunto
+        # respaldado por la matriz de evidencia» y la marcha porque «el campo
+        # declara estacionado con el vehiculo en movimiento en 28 de 30
+        # segmentos», con estado `abierta` en `can_decoder.MARCHA_NO_PUBLICADA`.
+        # Las dos son limites del acceso, no del objeto: el bus las lleva y este
+        # trabajo todavia no las lee con respaldo suficiente. La tabla que saca
+        # paneles dice «nunca», y decir «nunca» sobre una candidata abierta la
+        # daria por cerrada.
+        for panel in ("motor", "medidores", "trazado", "aceleraciones"):
+            seccion = re.search(rf'<section[^>]*data-panel="{panel}"[^>]*>', dom)
+            self.assertIsNotNone(seccion, f"no esta la seccion de «{panel}»")
+            self.assertNotIn("data-fuera", seccion.group(0), panel)
+
+        # EL SELECTOR DE PILOTO NO PUEDE QUEDAR DENTRO DE UN PANEL ESCONDIDO.
+        # Vive en el encabezado de «Vehiculo» y se muda a «Cronometraje» cuando
+        # aquel se va. Con los dos fuera se mudaria a un panel que tampoco esta,
+        # y el unico mando para elegir de quien es la telemetria desapareceria
+        # sin decir nada. Hoy el bus trae un solo vehiculo y el selector se
+        # esconde solo, de modo que el fallo estaria tapado por una coincidencia.
+        self.assertNotIn("data-fuera", seccion_que_contiene(dom, "sel-propio"),
+                         "el selector de piloto quedo dentro de un panel escondido")
 
         # SACAR UN PANEL NO PUEDE BORRAR EL HECHO, Y ESTO LO COMPRUEBA SOBRE EL
         # DOM DE VERDAD. La constancia se escribe desde la misma tabla que saca

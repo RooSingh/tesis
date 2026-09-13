@@ -3276,9 +3276,54 @@ function panelesEnLaTabla() {
   return filas;
 }
 
-prueba("el bus esconde puesta a punto y la comparacion entre vehiculos", () => {
+prueba("el bus esconde los seis instrumentos que no puede llenar nunca", () => {
+  /* Eran dos. Los cuatro nuevos salieron de abrir la sesion del bus y mirarla:
+     el panel del vehiculo dibujaba un monoplaza de formula con las cuatro
+     esquinas en raya y un «sin daño» que **afirma** algo sobre un canal que no
+     existe; clima decia «sin clima»; cronometraje daba piloto, posicion,
+     vuelta, cronometro y diferencia al lider, los cinco vacios; avisos, «0/0». */
   const escondidos = panelesEscondidosPorFuente();
-  assert.deepStrictEqual((escondidos.can || []).sort(), ["puesta", "vehiculos"]);
+  assert.deepStrictEqual((escondidos.can || []).sort(),
+    ["avisos", "clima", "cronometraje", "puesta", "vehiculo", "vehiculos"]);
+});
+
+prueba("EL BUS NO DECLARA AUSENTE EL MOTOR, QUE ES UNA CANDIDATA ABIERTA", () => {
+  /* Esta es la parte que cuesta, y por eso se comprueba.
+
+     El panel de motor esta tan vacio como los cuatro que salieron, y no es lo
+     mismo. `backend/matriz_fuentes.py` declara el regimen del motor ausente
+     porque «queda fuera del conjunto respaldado por la matriz de evidencia», y
+     la marcha porque «el campo declara estacionado con el vehiculo en
+     movimiento en 28 de 30 segmentos» ---medido sobre los treinta segmentos, y
+     anotado como `estado: "abierta"` en `can_decoder.MARCHA_NO_PUBLICADA`---.
+
+     Las dos son limites del **acceso**, no del objeto: el bus las lleva y este
+     trabajo todavia no las lee con respaldo suficiente. Esta tabla dice
+     «nunca», y decir «nunca» sobre una candidata abierta la da por cerrada. Es
+     la misma regla por la que clima y avisos salieron de la tabla de OpenF1.
+
+     `medidores` tampoco: la velocidad es la unica magnitud que las tres fuentes
+     publican, y ese panel la muestra. */
+  const escondidos = panelesEscondidosPorFuente();
+  ["motor", "medidores"].forEach(panel => {
+    assert.ok(!(escondidos.can || []).includes(panel),
+      "el bus declara «" + panel + "» como ausencia de la fuente, y no lo es: " +
+      "el regimen y la marcha estan anotados como candidatas abiertas");
+  });
+});
+
+prueba("el selector de piloto tiene donde vivir aunque salgan los dos paneles", () => {
+  /* Vivia en «Vehiculo» y se mudaba a «Cronometraje». Con los dos fuera ---que
+     es lo que pasa con el bus--- se mudaba a un panel que tampoco estaba. */
+  const hospedajes = new Function(
+    constante("HOSPEDAJES_DEL_SELECTOR") + "\nreturn HOSPEDAJES_DEL_SELECTOR;")();
+  const escondidos = panelesEscondidosPorFuente();
+  Object.keys(PANELES_QUE_LA_FUENTE_NO_TIENE).forEach(f => {
+    const fuera = new Set(escondidos[f] || []);
+    assert.ok(hospedajes.some(id => !fuera.has(id)),
+      "la fuente " + f + " esconde todos los paneles donde puede vivir el " +
+      "selector de piloto: el mando desaparece sin decir nada");
+  });
 });
 
 prueba("openf1 saca lo que no publica y se queda con lo que si", () => {
