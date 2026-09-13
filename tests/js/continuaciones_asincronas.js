@@ -294,6 +294,11 @@ const PIEZAS = [
   fn("duracionSesionS"),
   fn("iniciosDeVuelta"),
   fn("duracionDeVuelta"),
+  fn("comoSeLeeElHueco"),
+  fn("huecosQueSeAtraviesan"),
+  fn("_vueltaQueVeniaRodando"),
+  fn("duracionEnLaLinea"),
+  fn("_conLosCortesAdentro"),
   fn("hayVueltas"),
   /* El reloj, entero, para poder leerlo despues de cada continuacion. */
   constanteNumerica("HUECO_DE_CAPTURA_MS"),
@@ -369,6 +374,7 @@ function nuevoBanco(opciones) {
                              fijarCabezal: (f) => { cabezal = f; },
                              leerCabezal: () => cabezal,
                              cargarDatosDeSesion, relojDeVuelta, tiempoDePresentacion,
+                             duracionDeVuelta, duracionEnLaLinea,
                              leerVales: () => _vales.size,
                              hayEjeDeDistancia, porQueNoHayDistancia,
                              fijarFuente: (f) => { fuente = f; } };`;
@@ -900,13 +906,16 @@ prueba("las vueltas que llegan tarde reemplazan al reloj provisional", async (b)
   const definitivo = b.relojDeVuelta(1);
   assert.strictEqual(definitivo.aproximado, false,
     "se sigue usando el reloj provisional despues de llegar las vueltas");
-  assert.strictEqual(Math.round(definitivo.total), 199900,
-    "la duracion efectiva no es la que declara la API");
-  const enUtc = b.tiempoDePresentacion(1, 100000 / c.efectivo) - T0;
-  assert.strictEqual(Math.round(enUtc), 102050,
-    "a 100.000 ms de tiempo rodado el instante no es el de despues del corte");
-  assert.ok(!(enUtc > c.corte[0] + 1e-9 && enUtc < c.corte[1] - 1e-9),
-    "el instante cae dentro del corte: " + enUtc);
+  /* El reloj de la vuelta es el de pared ---lo rodado mas el corte, que la
+     reproduccion atraviesa---, y el tiempo rodado sigue siendo el que la API
+     declara. Ver `duracionEnLaLinea`. */
+  assert.strictEqual(Math.round(definitivo.total), 199900 + 2050,
+    "la vuelta no ocupa en la linea lo que duro de punta a punta");
+  assert.strictEqual(Math.round(b.duracionDeVuelta(1) * 1000), 199900,
+    "el tiempo rodado se contamino con el corte");
+  const enUtc = b.tiempoDePresentacion(1, 100000 / (c.efectivo + 2050)) - T0;
+  assert.strictEqual(Math.round(enUtc), 100000,
+    "la barra no corre a la par del reloj de la vuelta");
 });
 
 prueba("da lo mismo que las vueltas lleguen antes que las series", async (b) => {
@@ -923,8 +932,9 @@ prueba("da lo mismo que las vueltas lleguen antes que las series", async (b) => 
 
   const r = b.relojDeVuelta(1);
   assert.strictEqual(r.aproximado, false);
-  assert.strictEqual(Math.round(r.total), 199900);
-  assert.strictEqual(Math.round(b.tiempoDePresentacion(1, 100000 / c.efectivo) - T0), 102050,
+  assert.strictEqual(Math.round(r.total), 199900 + 2050);
+  assert.strictEqual(
+    Math.round(b.tiempoDePresentacion(1, 100000 / (c.efectivo + 2050)) - T0), 100000,
     "el orden de llegada cambia el instante");
 });
 

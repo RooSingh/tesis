@@ -135,8 +135,11 @@ const NOMBRES = [
   "unidadDeclaradaDe", "divisorDePresentacion", "estaEnLaUnidadQueSeMuestra",
   "divisorDeUnidad", "serieCrudaDeCanal", "_armarSerieDeCanal", "_enUnidad",
   "serieDeCanal", "claveVehiculoPropio", "duracionDeVuelta", "duracionSesionS",
+  "huecosQueSeAtraviesan", "_vueltaQueVeniaRodando", "duracionEnLaLinea",
+  "_conLosCortesAdentro",
   "vueltasDeLaSesion", "iniciosDeVuelta", "calcularInstante",
   "paresDePosicion", "posicionesAhora",
+  "huecoQueContiene", "huecoBajoElCabezal",
 ];
 const sacadas = new Function(
   constante("UNIDAD_QUE_MUESTRA_EL_TABLERO") + "\n" +
@@ -151,6 +154,8 @@ const {
   esCanalEscalonado, _antesDe, continuidadDeVuelta, tiempoEfectivoEntre,
   serieAcumuladaDeCanal, tramoAcumuladoDeVuelta, vueltasEnTramoAcumulado,
   trazaContinua, vueltaSiguienteDeclarada,
+  duracionDeVuelta, duracionEnLaLinea, huecosQueSeAtraviesan,
+  huecoBajoElCabezal,
 } = sacadas;
 
 /* `posicionesAhora` pregunta por el instante. Se lo damos: el de verdad, el que
@@ -369,11 +374,18 @@ function capturaConCorte(puntos) {
            efectivo: marcas[marcas.length - 1] - marcas[0] - 2050 };
 }
 
-prueba("el corte declarado vale igual a cualquier resolucion", () => {
-  /* ES EL CASO REPRODUCIDO. A 300 puntos los intervalos quedan de 700 ms, el
-     umbral heuristico sube a 2,8 s y los 2,05 s de corte dejan de contar: el
-     reloj reproduce una pausa que el backend excluyo. Con el corte declarado,
-     las dos resoluciones dan el mismo tiempo efectivo. */
+prueba("el reloj de la vuelta no depende de la resolucion", () => {
+  /* ES EL CASO REPRODUCIDO. A 300 puntos los intervalos quedan de 700 ms y el
+     umbral heuristico sube a 2,8 s: los 2,05 s de corte dejan de contar y el
+     reloj sale distinto que a resolucion completa. Con la vuelta declarando su
+     ventana y su corte, las dos resoluciones dan el mismo reloj.
+
+     Y ESE RELOJ ES EL DE PARED. Desde que la reproduccion **atraviesa** el
+     corte en vez de saltarlo, la vuelta ocupa en la linea de tiempo lo que
+     duro de punta a punta: el tiempo rodado mas el que se estuvo caido. El
+     tiempo rodado sigue siendo el que la API declara y es el que vale como
+     tiempo de vuelta; son dos cosas distintas y las calcula cada una su
+     dueño. Ver `duracionEnLaLinea`. */
   const relojes = [4000, 300].map(puntos => {
     reiniciar();
     const c = capturaConCorte(puntos);
@@ -385,13 +397,25 @@ prueba("el corte declarado vale igual a cualquier resolucion", () => {
                        desde_utc: iso(T0 + c.marcas[0]),
                        hasta_utc: iso(T0 + c.marcas[c.marcas.length - 1]) }]);
     const r = relojDeVuelta(1);
-    return { total: Math.round(r.total), exacto: !r.aproximado, esperado: c.efectivo };
+    return { total: Math.round(r.total), exacto: !r.aproximado,
+             esperado: c.efectivo + 2050, rodado: c.efectivo };
   });
   assert.strictEqual(relojes[0].total, relojes[1].total,
     "el reloj cambia con la resolucion: " + relojes[0].total + " contra " + relojes[1].total);
   assert.strictEqual(relojes[1].total, relojes[1].esperado,
-    "el tiempo efectivo no coincide con el que declara la API");
+    "la vuelta no ocupa en la linea lo que duro de punta a punta");
+  assert.strictEqual(relojes[1].total - relojes[1].rodado, 2050,
+    "lo que separa las dos cuentas es exactamente el corte");
   assert.ok(relojes[1].exacto, "un reloj con cortes declarados no es una suposicion");
+});
+
+prueba("y el tiempo rodado sigue siendo el que la API declara", () => {
+  /* La duracion medida no se toca: es el tiempo de vuelta, y lo que cambio es
+     como se reparte la barra. Con un solo numero para las dos cosas, o la
+     barra salta el corte o el tiempo de vuelta lo incluye. */
+  const c = conCorteDeclarado(300);
+  assert.strictEqual(Math.round(duracionDeVuelta(1) * 1000), c.efectivo);
+  assert.strictEqual(Math.round(duracionEnLaLinea(1) * 1000), c.efectivo + 2050);
 });
 
 /* Deja cargada la captura del fixture a la resolucion pedida, con la vuelta
@@ -409,53 +433,73 @@ function conCorteDeclarado(puntos) {
   return c;
 }
 
-prueba("el mismo tiempo efectivo da el mismo instante a cualquier resolucion", () => {
+prueba("la misma posicion de la barra da el mismo instante a cualquier resolucion", () => {
   /* EL DEFECTO QUE QUEDABA. El total ya coincidia entre resoluciones ---la
-     prueba de arriba lo comprueba--- pero eso no dice que el mismo tiempo
-     efectivo caiga en el mismo instante. El reloj guardaba solo las marcas
-     **submuestreadas** y `tiempoDePresentacion` interpolaba entre ellas: si el
-     submuestreo se llevo por delante las dos muestras que rodean el corte, esa
-     recta lo atraviesa.
-
-     Medido con este mismo fixture, preguntando por 100.000 ms de tiempo
-     rodado: a resolucion completa da 102.050 ms ---el instante justo despues
-     del corte---; a 300 puntos daba 101.892,3 ms, que cae **dentro** del
-     corte, donde no hay captura. */
+     prueba de arriba lo comprueba--- pero eso no dice que la misma posicion de
+     la barra caiga en el mismo instante. El reloj guardaba solo las marcas
+     **submuestreadas** e interpolaba entre ellas, de modo que el instante
+     dependia de cuantos puntos se hubieran pedido. Ahora sale de la ventana
+     que la vuelta declara, que no cambia al reducir. */
   const instantes = [4000, 300].map(puntos => {
     const c = conCorteDeclarado(puntos);
-    return tiempoDePresentacion(1, 100000 / c.efectivo) - T0;
+    return tiempoDePresentacion(1, 100000 / (c.efectivo + 2050)) - T0;
   });
   assert.strictEqual(Math.round(instantes[1] * 1000) / 1000,
                      Math.round(instantes[0] * 1000) / 1000,
     "el instante cambia con la resolucion: " + instantes[0] + " contra " + instantes[1]);
-  assert.strictEqual(Math.round(instantes[0]), 102050,
-    "el instante no es el que corresponde al tiempo rodado pedido");
+  assert.strictEqual(Math.round(instantes[0]), 100000,
+    "la barra ya no corre a la par del reloj de la vuelta");
 });
 
-prueba("ningun instante cae estrictamente dentro de un corte declarado", () => {
-  /* Recorriendo la vuelta entera a las dos resoluciones. El corte va de 99.950
-     a 102.000 ms: los dos extremos son instantes validos ---son las ultimas y
-     primeras muestras de cada tramo--- y todo lo de adentro, no. */
+prueba("EL CAMBIO: la reproduccion atraviesa el corte en vez de saltarlo", () => {
+  /* LO QUE HACIA. El corte no ocupaba tiempo de reproduccion, de modo que
+     ningun instante caia adentro: se pasaba de la ultima muestra de antes a la
+     primera de despues, de un cuadro al siguiente. Un corte de siete minutos
+     no ocupaba un pixel y no habia nada que marcar mas que el punto del salto.
+
+     LO QUE HACE. El corte se vive. Los valores se sostienen ---`valorContinuoEn`
+     ya devolvia el ultimo medido sobre un hueco--- y el tablero lo declara
+     mientras el cabezal esta adentro. Es lo que permite ver la desconexion
+     pasar en vez de que desaparezca.
+
+     Este fixture tiene 2,05 s de corte en 201,95 s de vuelta: el 1 % de la
+     barra, y por eso se recorre fino. */
   [4000, 300].forEach(puntos => {
     const c = conCorteDeclarado(puntos);
-    for (let i = 0; i <= 2000; i++) {
-      const ms = tiempoDePresentacion(1, i / 2000) - T0;
-      assert.ok(!(ms > c.corte[0] + 1e-9 && ms < c.corte[1] - 1e-9),
-        "a " + puntos + " puntos, el instante " + ms + " cae dentro del corte " +
-        c.corte[0] + "-" + c.corte[1]);
+    let adentro = 0;
+    for (let i = 0; i <= 20000; i++) {
+      const ms = tiempoDePresentacion(1, i / 20000) - T0;
+      if (ms > c.corte[0] && ms < c.corte[1]) adentro++;
     }
+    assert.ok(adentro > 0,
+      "a " + puntos + " puntos, la reproduccion sigue saltando el corte");
   });
 });
 
-prueba("antes, en el limite y despues del corte", () => {
+prueba("y lo recorre en orden, sin retroceder ni saltar", () => {
+  /* Lo que el salto garantizaba y no se puede perder: el cabezal avanza. Con
+     los tramos mal unidos ---dos entradas del acumulado para el mismo
+     instante--- el cabezal se clavaria en el borde del corte. */
   const c = conCorteDeclarado(300);
-  const enEfectivo = ms => tiempoDePresentacion(1, ms / c.efectivo) - T0;
-  /* El corte empieza a los 99.950 ms de reloj, que son 99.950 ms de tiempo
-     rodado porque hasta ahi no hubo cortes. */
-  assert.strictEqual(Math.round(enEfectivo(99949)), 99949, "antes del corte");
-  assert.strictEqual(Math.round(enEfectivo(99950)), 102000,
-    "al agotarse el tramo se sigue en el arranque del siguiente, no en el corte");
-  assert.strictEqual(Math.round(enEfectivo(99951)), 102001, "despues del corte");
+  let anterior = -Infinity;
+  for (let i = 0; i <= 2000; i++) {
+    const ms = tiempoDePresentacion(1, i / 2000) - T0;
+    assert.ok(ms >= anterior, "el instante retrocedio en " + ms);
+    anterior = ms;
+  }
+  void c;
+});
+
+prueba("antes, adentro y despues del corte", () => {
+  const c = conCorteDeclarado(300);
+  const total = c.efectivo + 2050;
+  const enLaLinea = ms => tiempoDePresentacion(1, ms / total) - T0;
+  /* El corte va de los 99.950 a los 102.000 ms de reloj de la vuelta, y la
+     barra corre a la par del reloj: el corte esta en la barra en su sitio. */
+  assert.strictEqual(Math.round(enLaLinea(99949)), 99949, "antes del corte");
+  assert.strictEqual(Math.round(enLaLinea(100975)), 100975,
+    "la mitad del corte no se reproduce");
+  assert.strictEqual(Math.round(enLaLinea(102001)), 102001, "despues del corte");
 });
 
 prueba("varios cortes, incluso dos dentro del mismo intervalo submuestreado", () => {
@@ -471,19 +515,23 @@ prueba("varios cortes, incluso dos dentro del mismo intervalo submuestreado", ()
                               { desde_utc: iso(T0 + 6000), hasta_utc: iso(T0 + 9000), duracion_s: 3 }],
                      desde_utc: iso(T0), hasta_utc: iso(T0 + 10000) }]);
   const r = relojDeVuelta(1);
-  assert.strictEqual(r.total, 5000);
+  /* Los diez segundos de pared: cinco rodados y cinco caidos, repartidos en
+     dos cortes. Los dos se atraviesan, y por eso el reloj los cuenta. */
+  assert.strictEqual(r.total, 10000);
   assert.strictEqual(r.aproximado, false);
-  const en = ms => tiempoDePresentacion(1, ms / 5000) - T0;
+  assert.strictEqual(duracionDeVuelta(1), 5, "el tiempo rodado cambio");
+  assert.strictEqual(duracionEnLaLinea(1), 10, "la linea no cuenta los dos cortes");
+  const en = ms => tiempoDePresentacion(1, ms / 10000) - T0;
   assert.strictEqual(en(0), 0);
   assert.strictEqual(en(1000), 1000);
-  assert.strictEqual(en(2000), 4000, "no siguio en el arranque del segundo tramo");
-  assert.strictEqual(en(3000), 5000);
-  assert.strictEqual(en(4000), 9000, "no siguio en el arranque del tercer tramo");
-  assert.strictEqual(en(5000), 10000);
-  for (let ms = 0; ms <= 5000; ms += 5) {
+  assert.strictEqual(en(3000), 3000, "la mitad del primer corte no se reproduce");
+  assert.strictEqual(en(7500), 7500, "la mitad del segundo tampoco");
+  assert.strictEqual(en(10000), 10000);
+  let anterior = -Infinity;
+  for (let ms = 0; ms <= 10000; ms += 5) {
     const t = en(ms);
-    assert.ok(!(t > 2000 && t < 4000) && !(t > 6000 && t < 9000),
-      "el instante " + t + " cae dentro de un corte");
+    assert.ok(t >= anterior, "el instante retrocedio en " + t);
+    anterior = t;
   }
 });
 
@@ -637,32 +685,35 @@ prueba("el DRS es discreto y el acelerador del bus tambien", () => {
 
 // ------------------------------------------------- el reloj y la politica de pausas
 
-prueba("el reloj de la vuelta acumula tiempo efectivo, no bruto", () => {
+prueba("un corte deducido se salta; uno declarado se atraviesa", () => {
   reiniciar();
-  /* Diez muestras cada 100 ms, cinco segundos de hueco, diez mas. Bruto:
-     6.800 ms. Efectivo: 1.800. Es la misma cuenta que hace la API para
-     `duracion_s`. */
+  /* Diez muestras cada 100 ms, cinco segundos de hueco, diez mas. De pared:
+     6.800 ms. Rodado: 1.800. */
   const marcas = [], dist = [], vel = [];
   for (let i = 0; i < 10; i++) { marcas.push(i * 100); dist.push(i * 5); vel.push(200); }
   for (let i = 0; i < 10; i++) { marcas.push(5900 + i * 100); dist.push(50 + i * 5); vel.push(250); }
   cargarVuelta(1, marcas, { distancia_m: dist, speed: vel });
-  /* Sin cortes declarados el reloj los deduce, y lo dice: `aproximado`. El
-     total sigue siendo el tiempo rodado, que es lo que esta prueba mira. */
+  /* SIN CORTES DECLARADOS NO HAY EXTREMOS MEDIDOS que atravesar: los dos
+     bordes son las marcas que el submuestreo dejo, y estirar la reproduccion
+     sobre ese intervalo seria reproducir tiempo inventado. Se salta, y el
+     reloj lo dice: `aproximado`. */
   const r = relojDeVuelta(1);
-  assert.strictEqual(r.total, 1800, "el reloj conto el hueco como tiempo rodado");
+  assert.strictEqual(r.total, 1800, "se atraveso un corte que nadie declaro");
   assert.strictEqual(r.aproximado, true,
     "un reloj apoyado en un umbral deducido no puede presentarse como medido");
 
-  /* Con la vuelta declarando donde se corto, el mismo reloj deja de ser una
-     suposicion y da lo mismo. */
+  /* CON LA VUELTA DECLARANDO DONDE SE CORTO, el corte tiene sus dos extremos
+     medidos y se vive: la vuelta ocupa en la linea los 6.800 ms de pared. */
   declararVueltas([{ numero: 1, duracion_s: 1.8, hueco_mayor_s: 5,
                      huecos: [{ desde_utc: iso(T0 + 900), hasta_utc: iso(T0 + 5900),
                                 duracion_s: 5 }],
                      desde_utc: iso(T0), hasta_utc: iso(T0 + 6800) }]);
   globalThis._selloSeries++;
   const rd = relojDeVuelta(1);
-  assert.strictEqual(rd.total, 1800);
+  assert.strictEqual(rd.total, 6800, "el corte declarado se sigue saltando");
   assert.strictEqual(rd.aproximado, false);
+  assert.strictEqual(duracionDeVuelta(1), 1.8, "el tiempo rodado se contamino");
+  assert.strictEqual(duracionEnLaLinea(1), 6.8);
 });
 
 prueba("el tiempo de presentacion nunca cae dentro de un hueco", () => {
@@ -1571,18 +1622,24 @@ prueba("el contexto se pregunta por el instante compartido", () => {
      que las dos cuentas dan instantes distintos. Es lo que hace que esta
      comprobacion signifique algo. */
   reiniciar();
-  /* La vuelta tiene un corte de 2 s en el medio: la cuenta vieja lo recorre
-     ---reparte la fraccion sobre el intervalo entero--- y el instante
-     compartido lo saltea. Sin un corte las dos cuentas coinciden y la
-     comprobacion no diria nada. */
+  /* LA VUELTA NO EMPIEZA EN SU PRIMERA MUESTRA. `/vueltas` saca sus extremos
+     del primer y el ultimo instante en que se publico ese numero de vuelta; la
+     serie empieza en su primera muestra con distancia, que en Spa cae 250 ms
+     mas tarde. La cuenta vieja arrancaba en la muestra y la buena, en la
+     ventana declarada: sin ese desfase las dos coinciden y la comprobacion no
+     diria nada.
+
+     El corte de 2 s se conserva porque es el caso realista, pero ya no es lo
+     que separa las dos cuentas: desde que la reproduccion lo atraviesa, las
+     dos reparten la fraccion sobre el intervalo entero. */
   const marcas = [], dist = [], vel = [];
   for (let i = 0; i < 10; i++) { marcas.push(i * 100); dist.push(i * 5); vel.push(200 + i); }
   for (let i = 0; i < 10; i++) { marcas.push(2900 + i * 100); dist.push(50 + i * 5); vel.push(210 + i); }
   cargarVuelta(1, marcas, { distancia_m: dist, speed: vel });
   declararVueltas([{ numero: 1, duracion_s: 1.8, hueco_mayor_s: 2,
-                     huecos: [{ desde_utc: iso(T0 + 900), hasta_utc: iso(T0 + 2900),
+                     huecos: [{ desde_utc: iso(T0 + 650), hasta_utc: iso(T0 + 2650),
                                 duracion_s: 2 }],
-                     desde_utc: iso(T0), hasta_utc: iso(T0 + 3800) }]);
+                     desde_utc: iso(T0 - 250), hasta_utc: iso(T0 + 3550) }]);
   cargarPosiciones(1, marcas, dist);
   globalThis.cabezal = 0.25;
   const t = calcularInstante();
@@ -1668,6 +1725,78 @@ prueba("en el simulador la aceleracion ya viene en g y no se toca", () => {
   assert.strictEqual(calcularInstante().gLat, 4,
     "la aceleracion del simulador se convirtio sin hacer falta");
   globalThis.estadoSesion = "cargado";
+});
+
+/* ------- lo que se ve mientras el cabezal atraviesa el corte ------- */
+
+prueba("DENTRO DEL CORTE SE SOSTIENE LO ULTIMO MEDIDO, Y SE DICE", () => {
+  /* Es la otra mitad de atravesarlo. `valorContinuoEn` ya devolvia el ultimo
+     valor sobre un hueco ---no se extrapola donde no se midio--- de modo que
+     295 km/h sostenidos y 295 km/h de ahora se ven **iguales**. Lo que hacia
+     falta era decirlo, y para eso hay que saber que el cabezal esta adentro. */
+  reiniciar();
+  const marcas = [], dist = [], vel = [];
+  for (let i = 0; i < 10; i++) { marcas.push(i * 100); dist.push(i * 5); vel.push(295); }
+  for (let i = 0; i < 10; i++) { marcas.push(5900 + i * 100); dist.push(50 + i * 5); vel.push(120); }
+  cargarVuelta(1, marcas, { distancia_m: dist, speed: vel });
+  declararVueltas([{ numero: 1, duracion_s: 1.8, hueco_mayor_s: 5,
+                     huecos: [{ desde_utc: iso(T0 + 900), hasta_utc: iso(T0 + 5900),
+                                duracion_s: 5 }],
+                     desde_utc: iso(T0), hasta_utc: iso(T0 + 6800) }]);
+
+  /* A la mitad de la barra el cabezal cae dentro del corte: 3.400 ms. */
+  globalThis.cabezal = 0.5;
+  const t = calcularInstante();
+  assert.strictEqual(Math.round(t.tUtcMs - T0), 3400,
+    "el cabezal no cayo dentro del corte");
+  assert.strictEqual(t.velocidad, 295,
+    "dentro del corte se invento un valor en vez de sostener el ultimo medido");
+  const hueco = huecoBajoElCabezal();
+  assert.ok(hueco, "el tablero no declara que lo que se ve es de antes del corte");
+  assert.strictEqual(hueco[0] - T0, 900);
+  assert.strictEqual(hueco[1] - T0, 5900);
+});
+
+prueba("y fuera del corte no se declara nada", () => {
+  /* Los bordes no estan adentro: el instante en que se corto y aquel en que
+     volvio son muestras medidas. */
+  globalThis.cabezal = 900 / 6800;
+  assert.strictEqual(huecoBajoElCabezal(), null, "el borde de entrada se declaro caido");
+  globalThis.cabezal = 5900 / 6800;
+  assert.strictEqual(huecoBajoElCabezal(), null, "el borde de salida se declaro caido");
+  globalThis.cabezal = 0;
+  assert.strictEqual(huecoBajoElCabezal(), null);
+});
+
+prueba("un corte entre dos vueltas se declara en la que lo atraviesa", () => {
+  /* EL CASO DE SPA. `continuidadDeVuelta` devuelve los cortes tal como la API
+     los cuelga ---en la vuelta que empieza despues--- y ahi la lista de la
+     vuelta que viene rodando sale vacia: los valores congelados se mostraban
+     sin una sola palabra que dijera que lo estaban. */
+  reiniciar();
+  cargarVuelta(1, [0, 500, 1000], { distancia_m: [0, 25, 50], speed: [200, 210, 220] });
+  cargarVuelta(2, [9000, 9500, 10000], { distancia_m: [0, 25, 50], speed: [100, 110, 120] });
+  declararVueltas([
+    { numero: 1, duracion_s: 1, hueco_mayor_s: 0.5, huecos: [],
+      desde_utc: iso(T0), hasta_utc: iso(T0 + 1000) },
+    { numero: 2, duracion_s: 1, hueco_mayor_s: 8,
+      huecos: [{ desde_utc: iso(T0 + 1000), hasta_utc: iso(T0 + 9000), duracion_s: 8 }],
+      desde_utc: iso(T0 + 9000), hasta_utc: iso(T0 + 10000) },
+  ]);
+  /* La linea dura 10 s: 1 de la vuelta 1, 9 de la 2 ---1 rodado y 8 caidos---.
+     A los 5 s el cabezal esta en el medio del corte, y lo vive la vuelta 1. */
+  assert.strictEqual(duracionEnLaLinea(1), 9, "la vuelta 1 no carga el corte");
+  assert.strictEqual(duracionEnLaLinea(2), 1);
+  globalThis.cabezal = 0.5;
+  const t = calcularInstante();
+  assert.strictEqual(t.vuelta, 1, "el cabezal salto a la vuelta de despues del corte");
+  assert.strictEqual(Math.round(t.tUtcMs - T0), 5000);
+  assert.strictEqual(t.velocidad, 220,
+    "no se sostuvo la ultima medida de antes del corte");
+  const hueco = huecoBajoElCabezal();
+  assert.ok(hueco, "el corte entre vueltas no se declara mientras se lo atraviesa");
+  assert.strictEqual(hueco[0] - T0, 1000);
+  assert.strictEqual(hueco[1] - T0, 9000);
 });
 
 if (process.exitCode) {

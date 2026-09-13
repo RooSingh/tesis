@@ -4088,47 +4088,49 @@ function comoSeLeeElHueco(rotas) {
     "declara---, así que no se puede decir si se perdió telemetría. " };
 }
 
-/* DONDE SALTA LA LINEA DE TIEMPO, PARA PODER MARCARLO.
+/* DONDE ESTA EL CORTE EN LA LINEA DE TIEMPO, DE PUNTA A PUNTA.
    ------------------------------------------------------------
-   LA REPRODUCCION YA SALTA EL HUECO Y NO LO DECIA. El transporte avanza sobre
-   la **duracion de conduccion** de cada vuelta, que excluye el hueco: por eso
-   el cabezal nunca cae adentro ---y por eso marcarlo «mientras se esta dentro»
-   no alcanzaba---. Lo que hay que senalar es el punto donde la linea salta.
+   YA NO ES UN PUNTO, PORQUE YA NO ES UN SALTO. Mientras la reproduccion
+   saltaba el hueco, lo unico que se podia marcar era el instante en que
+   saltaba: un hueco de siete minutos no ocupaba ancho porque no ocupaba
+   tiempo. Desde que se atraviesa ---ver `huecosQueSeAtraviesan`--- ocupa
+   exactamente lo que duro, y lo que hay que marcar es el tramo entero con sus
+   dos extremos: donde se cayo y donde volvio.
 
-   Medido en Barcelona-Catalunya: vueltas de 267,7 + 82,5 + 119,8 s, con un
-   hueco de 456 s dentro de la tercera. Antes del hueco se condujeron 104,8 s de
-   esa vuelta, asi que el salto cae a los 455,1 s de los 470,0 totales: **el
-   96,8 % de la barra**. El usuario no lo encontraba porque quedan quince
-   segundos despues.
+   SE MIDE SOBRE LA MISMA LINEA QUE SE DIBUJA. Las fracciones salen de
+   `duracionEnLaLinea`, que es la que arma la barra. Calcularlas con la
+   duracion rodada ---que es lo que se hacia--- ponia la marca en un sitio y el
+   cabezal en otro: dos respuestas a donde esta el corte.
 
-   SE RESTA LO YA SALTADO DE LA MISMA VUELTA. Con dos huecos en una vuelta, el
-   segundo cae donde cae **en tiempo de conduccion**, no de reloj: sin restar el
-   primero, la marca se dibuja mas adelante de donde la reproduccion va a
-   saltar. */
-function huecosEnLaLinea(vueltas) {
-  const lista = vueltas || [];
-  const total = lista.reduce((suma, v) => suma + (v.duracion_s || 0), 0);
+   MEDIDO EN LA CONTRARRELOJ DE SPA del 2026-09-13: cinco vueltas de 130,6 +
+   15,5 + 65,6 + 113,0 + 2,5 s rodados y un corte de 439,1 s entre la segunda y
+   la tercera. La linea dura 766,4 s ---que es exactamente el reloj de pared
+   entre la primera muestra y la ultima--- y el corte ocupa desde el 19,1 %
+   hasta el 76,4 % de la barra. */
+function huecosEnLaLinea() {
+  /* SIN PARAMETRO, A PROPOSITO. Recibia la lista de vueltas y ademas consulta
+     ---por `duracionEnLaLinea`--- la que vive en `estado`. Con las dos, una
+     llamada con otra lista dibujaria las marcas de una sesion sobre la barra de
+     otra. La lista de vueltas tiene un solo dueño. */
+  const lista = estado.vueltas || [];
+  const total = lista.reduce((suma, v) => suma + duracionEnLaLinea(v.numero), 0);
   if (!(total > 0)) return [];
   const salida = [];
   let antes = 0;
   lista.forEach(v => {
     const inicio = Date.parse(v.desde_utc);
-    let saltado = 0;
-    (v.huecos || []).forEach(h => {
-      const a = Date.parse(h.desde_utc);
-      if (Number.isFinite(a) && Number.isFinite(inicio)) {
-        /* UN HUECO ENTRE DOS VUELTAS EMPIEZA ANTES DE LA VUELTA QUE LO DECLARA.
-           La ultima muestra antes del corte pertenece a la vuelta anterior, asi
-           que la resta da negativa y la marca se iria al principio de la barra.
-           Acotada a cero, cae en el limite entre las dos vueltas, que es donde
-           el salto ocurre de verdad. */
-        const conducidos = Math.max(0, (a - inicio) / 1000 - saltado);
-        salida.push({ vuelta: v.numero, duracion_s: h.duracion_s,
-                      fraccion: (antes + conducidos) / total });
-      }
-      saltado += h.duracion_s || 0;
+    huecosQueSeAtraviesan(v.numero).forEach(h => {
+      if (!Number.isFinite(inicio)) return;
+      /* Dentro de la vuelta, el tiempo de linea y el de reloj son el mismo:
+         los cortes ya no se descuentan de ninguno de los dos. El borde de
+         abajo se acota por si un corte empezara justo en el limite. */
+      const desde = antes + Math.max(0, (h[0] - inicio) / 1000);
+      const duracion_s = (h[1] - h[0]) / 1000;
+      salida.push({ vuelta: v.numero, duracion_s: duracion_s,
+                    fraccion: desde / total,
+                    hasta: Math.min(1, (desde + duracion_s) / total) });
     });
-    antes += v.duracion_s || 0;
+    antes += duracionEnLaLinea(v.numero);
   });
   return salida;
 }
@@ -4231,8 +4233,13 @@ function huecoBajoElCabezal() {
   if (estadoSesion === "vivo") return null;
   const i = typeof instante === "function" ? instante() : null;
   if (!i || i.tUtcMs === null || i.tUtcMs === undefined) return null;
-  const cont = continuidadDeVuelta(i.vuelta, claveVehiculoPropio());
-  return huecoQueContiene(cont, i.tUtcMs);
+  /* LOS QUE ESTA VUELTA ATRAVIESA, NO LOS QUE DECLARA.
+     Se preguntaba a `continuidadDeVuelta`, que devuelve los cortes tal como la
+     API los cuelga: en la vuelta que empieza **despues** del corte. El cabezal
+     que atraviesa el hueco esta en la vuelta anterior ---la que venia
+     rodando--- de modo que ahi la lista salia vacia y los valores congelados se
+     mostraban sin una sola palabra que dijera que lo estaban. */
+  return huecoQueContiene({ huecos: huecosQueSeAtraviesan(i.vuelta) }, i.tUtcMs);
 }
 
 /* Que se escribe en el transporte mientras se escucha y no entra nada.
@@ -5253,6 +5260,24 @@ function _tramosDeMuestras(st, cont, ini, fin) {
   return tramos;
 }
 
+/* Une los tramos rodados con los cortes que hay que atravesar, en orden, y
+   pega los que se tocan. Dos que se tocan son un solo intervalo de reloj: si
+   quedaran separados, `tiempoDePresentacion` tendria dos entradas del acumulado
+   para el mismo instante y el cabezal se quedaria clavado en el borde. */
+function _conLosCortesAdentro(tramos, cortes) {
+  const todos = tramos.concat(cortes).slice().sort((a, b) => a[0] - b[0]);
+  const salida = [];
+  for (let i = 0; i < todos.length; i++) {
+    const ultimo = salida.length ? salida[salida.length - 1] : null;
+    if (ultimo && todos[i][0] <= ultimo[1]) {
+      ultimo[1] = Math.max(ultimo[1], todos[i][1]);
+    } else {
+      salida.push([todos[i][0], todos[i][1]]);
+    }
+  }
+  return salida;
+}
+
 function _armarRelojDeVuelta(vuelta) {
   const clave = claveVehiculoPropio();
   const st = serieTemporal(EJE_DISTANCIA, vuelta, clave);
@@ -5286,6 +5311,23 @@ function _armarRelojDeVuelta(vuelta) {
     tramos = _tramosDeMuestras(st, cont, ini, fin);
     exacto = false;
   }
+  /* LOS CORTES QUE ESTA VUELTA VIVE VUELVEN A ENTRAR EN SU RELOJ.
+     `_tramosContinuos` los quita, que es lo correcto para medir cuanto se
+     rodo. Para reproducir no: un corte es tiempo de la sesion y se atraviesa
+     con los valores sostenidos. Se los suma como tramos mas y se unen los que
+     quedan pegados, que son todos: un hueco es exactamente lo que hay entre
+     dos muestras seguidas. Ver `huecosQueSeAtraviesan`.
+
+     SOLO LOS DECLARADOS SE ATRAVIESAN. Un corte **deducido** ---el respaldo de
+     `_tramosDeMuestras`, para una API que no devuelve `huecos`--- no tiene
+     extremos medidos: son las dos marcas que el submuestreo dejo, y estirar la
+     reproduccion sobre ese intervalo seria reproducir tiempo inventado. Ahi se
+     sigue saltando, que es lo que se hacia. La API de este trabajo declara
+     `huecos` en cada vuelta, de modo que en el tablero rige siempre el camino
+     de arriba. */
+  const atravesados = huecosQueSeAtraviesan(vuelta);
+  if (atravesados.length) tramos = _conLosCortesAdentro(tramos, atravesados);
+
   /* Una vuelta que quedo entera dentro de un corte no tiene tiempo rodado, y
      eso no es un error: se la coloca en su arranque y no se mueve. */
   if (!tramos.length) tramos = [[ini, ini]];
@@ -5792,13 +5834,15 @@ function vueltasParaPrecargar(numero) {
   const indice = lista.findIndex(v => v.numero === numero);
   if (indice === -1 || indice + 1 >= lista.length) return [];
   const rapidez = Math.max(1, velocidadRep || 1);
-  const duracionActual = duracionDeVuelta(numero);
+  /* El plazo es el de la reproduccion, no el rodado: si la vuelta lleva un
+     corte de siete minutos adentro, la siguiente esta a siete minutos mas. */
+  const duracionActual = duracionEnLaLinea(numero);
   let hastaElInicio = duracionActual > 0 ? duracionActual / rapidez : Infinity;
   const resultado = [];
   for (let i = indice + 1; i < lista.length; i++) {
     if (resultado.length && hastaElInicio > HORIZONTE_PRECARGA_S) break;
     resultado.push(lista[i].numero);
-    const duracion = duracionDeVuelta(lista[i].numero);
+    const duracion = duracionEnLaLinea(lista[i].numero);
     hastaElInicio = duracion > 0 ? hastaElInicio + duracion / rapidez : Infinity;
   }
   return resultado;
@@ -13243,6 +13287,83 @@ function duracionDeVuelta(numero) {
   return (v && v.duracion_s) || 0;
 }
 
+/* ============================================================
+   UN HUECO SE ATRAVIESA, NO SE SALTA
+   ------------------------------------------------------------
+   LO QUE HACIA. La linea de tiempo se armaba con `duracion_s`, que es el
+   tiempo **rodado**: la API le descuenta los huecos. De modo que una
+   desconexion de siete minutos no ocupaba un solo pixel y la reproduccion
+   pasaba de la ultima muestra antes del corte a la primera de despues, de un
+   cuadro al siguiente.
+
+   POR QUE CAMBIA. Porque el corte es un hecho de la sesion y mirarlo pasar es
+   lo que permite entenderlo. Con los valores congelados ---que es lo que
+   `valorContinuoEn` ya hacia sobre un hueco--- lo que se ve durante esos siete
+   minutos es el ultimo estado medido, marcado como tal, y no el vacio.
+
+   A QUE VUELTA PERTENECE UN HUECO, PARA LA REPRODUCCION. No a la que lo
+   declara. `/vueltas` lo declara en la vuelta que empieza **despues** del
+   corte, porque es la que se encontro rota; pero el instante en que se corto
+   pertenece a la vuelta que venia rodando. Y eso decide algo concreto: los
+   valores que se sostienen durante el hueco son los ultimos medidos, y los
+   ultimos medidos estan en la serie de la vuelta anterior. Colgado de la
+   vuelta que lo declara, el cabezal caeria **antes** de su primera muestra y
+   lo que se sostendria seria el primer valor de despues del corte, que es un
+   valor del futuro.
+
+   MEDIDO SOBRE LA CONTRARRELOJ DE SPA del 2026-09-13: el hueco de 439,072 s va
+   de las 00:27:50,938 ---el `hasta_utc` de la vuelta 2--- a las 00:35:10,011
+   ---el `desde_utc` de la vuelta 3---. Cae entero entre las dos, y es la 2 la
+   que lo vive.
+   ============================================================ */
+function huecosQueSeAtraviesan(vuelta) {
+  const lista = estado.vueltas || [];
+  const salida = [];
+  for (let i = 0; i < lista.length; i++) {
+    const huecos = lista[i].huecos || [];
+    for (let j = 0; j < huecos.length; j++) {
+      const a = Date.parse(huecos[j].desde_utc);
+      const b = Date.parse(huecos[j].hasta_utc);
+      if (!(Number.isFinite(a) && Number.isFinite(b) && b > a)) continue;
+      if (_vueltaQueVeniaRodando(lista, a, lista[i].numero) === vuelta) {
+        salida.push([a, b]);
+      }
+    }
+  }
+  return salida.sort((x, y) => x[0] - y[0]);
+}
+
+/* Que vuelta estaba corriendo en ese instante. El borde cuenta como de la
+   vuelta que termina ahi: el `desde_utc` de un hueco **es** la ultima muestra
+   antes del corte, y esa muestra ya se midio.
+
+   Sin ninguna que lo contenga se lo deja donde estaba declarado, que es lo que
+   se hacia antes: no saber a quien pertenece no autoriza a tirarlo. */
+function _vueltaQueVeniaRodando(lista, instante, declarada) {
+  for (let i = 0; i < lista.length; i++) {
+    const a = Date.parse(lista[i].desde_utc);
+    const b = Date.parse(lista[i].hasta_utc);
+    if (Number.isFinite(a) && Number.isFinite(b) && instante >= a && instante <= b) {
+      return lista[i].numero;
+    }
+  }
+  return declarada;
+}
+
+/* Cuanto ocupa una vuelta en la linea de tiempo: lo que se rodo mas lo que se
+   estuvo caido dentro de ella.
+
+   DOS DURACIONES, DOS DUENOS. `duracionDeVuelta` es la medida ---el tiempo de
+   conduccion continua, que es lo que vale como tiempo de vuelta--- y esta es
+   la de reproduccion. Con un solo numero para las dos cosas, o la barra salta
+   el corte o el tiempo de vuelta lo incluye; ninguna de las dos es cierta. */
+function duracionEnLaLinea(numero) {
+  const huecos = huecosQueSeAtraviesan(numero);
+  let caido = 0;
+  for (let i = 0; i < huecos.length; i++) caido += (huecos[i][1] - huecos[i][0]) / 1000;
+  return duracionDeVuelta(numero) + caido;
+}
+
 /* En el bus no hay vueltas: hay un tramo de grabacion. Decirle «vuelta 1 de
    1» seria forzar el vocabulario del circuito sobre un dato de calle. */
 /* ============================================================
@@ -13270,7 +13391,7 @@ function duracionDeVuelta(numero) {
 function hayVueltas() { return estado.vueltas.some(v => !v.tramo_temporal); }
 
 function duracionSesionS() {
-  const suma = estado.vueltas.reduce((a, v) => a + (v.duracion_s || 0), 0);
+  const suma = estado.vueltas.reduce((a, v) => a + duracionEnLaLinea(v.numero), 0);
   if (suma > 0) return suma;
   const s = estado.abierta;
   return (s && s.duracion_s) || 60;
@@ -13285,7 +13406,7 @@ function iniciosDeVuelta() {
   let acumulado = 0;
   return estado.vueltas.map(v => {
     const en = acumulado / total;
-    acumulado += v.duracion_s || 0;
+    acumulado += duracionEnLaLinea(v.numero);
     return en;
   });
 }
@@ -13407,7 +13528,7 @@ function calcularInstante() {
 
   const total = duracionSesionS();
   const ini = inicios[indiceVuelta] || 0;
-  const parte = total > 0 ? duracionDeVuelta(vuelta) / total : 0;
+  const parte = total > 0 ? duracionEnLaLinea(vuelta) / total : 0;
   const dentro = parte > 0 ? Math.max(0, Math.min(1, (cabezal - ini) / parte)) : 0;
 
   /* LA CLAVE DEL VEHICULO VA SIEMPRE.
@@ -13614,9 +13735,14 @@ function pintarTransporte() {
      pero no distancia, `t.metro` lleva el reloj del tramo: imprimirlo con el
      rotulo «m» seria poner segundos bajo una unidad que nadie midio. */
   const reloj = relojDeSesion(t.segundos) + " de " + relojDeSesion(dur);
+  /* «GRABADOS» DEJA DE SER CIERTO EN CUANTO HAY UN CORTE. La linea de tiempo
+     mide ahora el reloj de la sesion ---lo rodado mas lo que se estuvo
+     caido--- y de eso solo una parte se grabo. En una sesion sin cortes las
+     dos cifras son la misma y la palabra sigue valiendo. */
+  const rodado = (estado.vueltas || []).reduce((a, v) => a + (v.duracion_s || 0), 0);
   document.getElementById("tr-total").textContent = hayEjeDeDistancia()
     ? textoDeVuelta(t.metro) + " · " + reloj
-    : reloj + " grabados";
+    : reloj + (dur - rodado > 1 ? " de sesión" : " grabados");
   document.getElementById("tr-cabezal").value = String(Math.round(cabezal * 10000));
 
   /* QUE SE MARCA SOBRE LA LINEA DE TIEMPO.
@@ -13626,18 +13752,23 @@ function pintarTransporte() {
   const marcas = document.getElementById("marcas-tiempo");
   if (!marcas) return;
   const n = vueltasDeLaSesion();
-  /* DONDE SALTA LA LINEA, marcado sobre la linea misma. La marca de vuelta
-     rota dice **cual** vuelta tiene el salto; esto dice **donde** ocurre, que
-     es lo que alguien busca cuando mueve el cabezal. */
-  const saltos = huecosEnLaLinea(estado.vueltas || []);
+  /* DONDE ESTUVO CAIDO, marcado de punta a punta sobre la linea misma. La
+     marca de vuelta rota dice **cual** vuelta tiene el corte; esto dice desde
+     donde hasta donde, que es lo que alguien busca cuando mueve el cabezal.
+     El rotulo va adentro de la banda cuando entra; si el corte es angosto, la
+     banda sola ya lo ubica y un texto encimado no se leeria. */
+  const saltos = huecosEnLaLinea();
   const marcasDeSalto = saltos.map(h => {
     const cuanto = h.duracion_s < 90
       ? cifra(h.duracion_s, 0) + " s"
       : cifra(h.duracion_s / 60, 0) + " min";
+    const ancho = Math.max(0, h.hasta - h.fraccion);
     return '<span class="marca-hueco" style="left:' +
-      (h.fraccion * 100).toFixed(2) + '%" title="Acá la reproducción salta ' +
-      cuanto + ': entre dos muestras seguidas de la vuelta ' + h.vuelta +
-      ' no hay telemetría."><i></i><small>' + cuanto + "</small></span>";
+      (h.fraccion * 100).toFixed(2) + "%;width:" + (ancho * 100).toFixed(2) +
+      '%" title="Acá el sistema dejó de recibir durante ' + cuanto +
+      ": la reproducción atraviesa el corte con los últimos valores medidos, " +
+      'que no describen ese momento."><i class="empieza"></i>' +
+      '<i class="termina"></i><small>' + cuanto + "</small></span>";
   }).join("");
   // Las marcas solo cambian al cambiar de vuelta o de sesion.
   const firmaMarcas = [fuente, n, t.vuelta, saltos.length].join("|");
@@ -13645,9 +13776,17 @@ function pintarTransporte() {
   marcas.dataset.firma = firmaMarcas;
   if (n > 1) {
     const cada = Math.ceil(n / 12);
+    /* DONDE EMPIEZA CADA VUELTA DE VERDAD, y no una raya cada 1/n.
+       El reparto en partes iguales ya mentia ---la vuelta de la parada en
+       boxes ocupa el doble que las otras--- y con un corte atravesado la
+       mentira se vuelve grosera: en la contrarreloj de Spa la vuelta 3 empieza
+       al 76 % de la barra y su raya se dibujaba al 40 %, justo al lado de la
+       banda que marca el corte. Dos afirmaciones sobre el mismo instante.
+       `iniciosDeVuelta` es la que usa el cabezal para ubicarse. */
+    const inicios = iniciosDeVuelta();
     let html = "";
     for (let v = 1; v <= n; v++) {
-      const x = ((v - 1) / n) * 100;
+      const x = (inicios[v - 1] !== undefined ? inicios[v - 1] : (v - 1) / n) * 100;
       const rotula = (v === 1) || (v % cada === 0);
       /* Una vuelta con un salto entre muestras no se rodo de corrido: hay
          tiempo que no esta. Se marca sobre la propia linea de tiempo, porque
@@ -13658,8 +13797,9 @@ function pintarTransporte() {
       html += '<span class="marca-vuelta' + (v === t.vuelta ? " actual" : "") +
         (rota ? " rota" : "") + '" style="left:' + x.toFixed(2) + '%" title="Vuelta ' + v +
         (rota ? ": tiene un salto de " + cifra(cuanto, 0) +
-                " minutos entre dos muestras seguidas. La duración que se usa es la " +
-                "de conducción continua." : "") + '">' +
+                " minutos entre dos muestras seguidas. El tiempo de vuelta que se " +
+                "usa es el de conducción continua; la barra, en cambio, atraviesa " +
+                "el corte." : "") + '">' +
         (rotula ? v : "·") + '</span>';
     }
     marcas.innerHTML = html + marcasDeSalto;

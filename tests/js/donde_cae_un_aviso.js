@@ -77,6 +77,9 @@ globalThis.PISTA = { largo_m: 4660.5 };
 
 const cuerpo = [
   extraer("duracionDeVuelta"),
+  extraer("huecosQueSeAtraviesan"),
+  extraer("_vueltaQueVeniaRodando"),
+  extraer("duracionEnLaLinea"),
   extraer("duracionSesionS"),
   extraer("iniciosDeVuelta"),
   extraer("numeroMedido"),

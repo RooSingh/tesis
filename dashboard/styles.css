@@ -802,15 +802,32 @@
   .reloj { flex: 0 0 auto; min-width: 27ch; text-align: right;
     font-family: var(--cifra); font-variant-numeric: tabular-nums; }
 
-  /* ---------- donde la reproduccion salta ----------
-     La marca de vuelta rota dice **cual** vuelta tiene el salto; esta dice
-     **donde** ocurre. Color de alerta y no el de las vueltas: no es un hito del
-     recorrido, es tiempo que no esta. */
-  .marca-hueco { position: absolute; transform: translateX(-50%);
-    white-space: nowrap; color: var(--alerta); }
-  .marca-hueco i { display: block; width: 2px; height: 9px; margin: 0 auto 1px;
+  /* ---------- donde el sistema estuvo caido ----------
+     La marca de vuelta rota dice **cual** vuelta tiene el corte; esta dice
+     desde donde hasta donde. Color de alerta y no el de las vueltas: no es un
+     hito del recorrido, es tiempo sin telemetria.
+
+     ES UNA BANDA Y NO UNA RAYA, porque el corte dura. Mientras la reproduccion
+     lo saltaba no ocupaba tiempo y lo unico marcable era el instante del
+     salto; desde que se atraviesa, ocupa en la barra exactamente lo que duro.
+     Las dos rayas de los extremos son lo que se busca al arrastrar el cabezal:
+     donde se cayo y donde volvio.
+
+     `translateX` ya no va: la banda empieza donde empieza el corte, y correrla
+     media marca a la izquierda la desalinearia de su propio extremo. */
+  .marcas-tiempo span.marca-hueco { position: absolute; height: 9px;
+    transform: none; white-space: nowrap; color: var(--alerta);
+    background: color-mix(in srgb, var(--alerta) 22%, transparent);
+    border-radius: 1px; }
+  .marca-hueco i { position: absolute; top: 0; width: 2px; height: 9px;
     background: var(--alerta); border-radius: 1px; }
-  .marca-hueco small { font-size: .58rem; letter-spacing: .02em; }
+  .marca-hueco i.empieza { left: 0; }
+  .marca-hueco i.termina { right: 0; }
+  /* El rotulo va dentro de la banda y se recorta con ella: en un corte angosto
+     el texto no entra, y dejarlo desbordar taparia las marcas de vuelta
+     vecinas con una cifra que no les corresponde. */
+  .marca-hueco small { display: block; overflow: hidden; text-align: center;
+    font-size: .58rem; letter-spacing: .02em; line-height: 9px; }
   .reloj b { display: block; font-size: 1.05rem; letter-spacing: .01em; }
   .reloj span { font-size: .66rem; color: var(--texto-tenue); white-space: nowrap; }
 

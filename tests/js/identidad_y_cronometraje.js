@@ -194,6 +194,8 @@ const NOMBRES = [
   "tiempoDePresentacion", "recortarConBordes",
   "serieDeCanal", "serieAcumuladaDeCanal", "tramoAcumuladoDeVuelta",
   "vueltasEnTramoAcumulado", "claveVehiculoPropio", "duracionDeVuelta", "duracionSesionS",
+  "huecosQueSeAtraviesan", "_vueltaQueVeniaRodando", "duracionEnLaLinea",
+  "_conLosCortesAdentro",
   "vueltasDeLaSesion", "iniciosDeVuelta", "calcularInstante",
   "vueltaEnFraccion", "trazadoAPath",
   "tramoDeLaVuelta",
@@ -1405,50 +1407,96 @@ prueba("sin saber si se movio se dice que no se sabe", () => {
   assert.ok(/no se sabe|no declara/i.test(r.texto), r.texto);
 });
 
-prueba("el salto se ubica en la linea de tiempo que la reproduccion recorre", () => {
-  /* EL CASO REAL, MEDIDO EN BARCELONA-CATALUNYA. La reproduccion usa la
-     **duracion de conduccion**, que excluye el hueco: por eso el cabezal nunca
-     cae adentro y no habia donde marcarlo. Lo que hay que marcar es el punto
-     donde la linea **salta**.
+/* Declara las vueltas de la sesion abierta. `huecosEnLaLinea` ya no las recibe
+   por parametro: las lee de `estado`, que es donde viven. */
+function conVueltas(vueltas) {
+  globalThis.estado.vueltas = vueltas;
+  return vueltas;
+}
 
-       vuelta 1  267,715 s
-       vuelta 2   82,548 s
-       vuelta 3  119,785 s, con un hueco de 455,977 s
-                 empieza 02:43:50,259 · el hueco arranca 02:45:35,097
+prueba("EL CORTE SE MARCA DE PUNTA A PUNTA, NO COMO UN PUNTO", () => {
+  /* EL CASO REAL, MEDIDO EN BARCELONA-CATALUNYA.
 
-     Antes del hueco se condujeron 104,838 s de la vuelta 3, asi que el salto
-     cae a los 350,263 + 104,838 = 455,101 s de los 470,048 totales: **96,8 %**
-     de la barra. Por eso el usuario no lo encontraba: quedan quince segundos
-     despues. */
-  const vueltas = [
-    { numero: 1, duracion_s: 267.715, desde_utc: "2026-09-11T02:37:59.895Z", huecos: [] },
-    { numero: 2, duracion_s: 82.548, desde_utc: "2026-09-11T02:42:27.610Z", huecos: [] },
-    { numero: 3, duracion_s: 119.785, desde_utc: "2026-09-11T02:43:50.259Z", huecos: [
-      { desde_utc: "2026-09-11T02:45:35.097Z", duracion_s: 455.977 }] },
-  ];
-  const h = huecosEnLaLinea(vueltas);
+       vuelta 1  267,715 s   02:37:59,895 - 02:42:27,610
+       vuelta 2   82,548 s   02:42:27,610 - 02:43:50,158
+       vuelta 3  119,785 s   02:43:50,259 - 02:45:50,044
+                 con un corte de 455,977 s que arranca a las 02:45:35,097
+
+     Mientras la reproduccion saltaba el corte, este no ocupaba tiempo y lo
+     unico marcable era el instante del salto: caia al 96,8 % de una barra de
+     470,0 s, con quince segundos despues, y era invisible.
+
+     Atravesandolo, la barra dura 926,0 s ---los 470,0 rodados mas los 456,0
+     caidos--- y el corte ocupa desde los 455,1 s hasta los 911,1: del 49,1 %
+     al 98,4 %. La mitad de la barra, que es lo que el corte fue. */
+  const h = huecosEnLaLinea(conVueltas([
+    { numero: 1, duracion_s: 267.715, desde_utc: "2026-09-11T02:37:59.895Z",
+      hasta_utc: "2026-09-11T02:42:27.610Z", huecos: [] },
+    { numero: 2, duracion_s: 82.548, desde_utc: "2026-09-11T02:42:27.610Z",
+      hasta_utc: "2026-09-11T02:43:50.158Z", huecos: [] },
+    { numero: 3, duracion_s: 119.785, desde_utc: "2026-09-11T02:43:50.259Z",
+      hasta_utc: "2026-09-11T02:45:50.044Z", huecos: [
+        { desde_utc: "2026-09-11T02:45:35.097Z",
+          hasta_utc: "2026-09-11T02:53:11.074Z", duracion_s: 455.977 }] },
+  ]));
   assert.strictEqual(h.length, 1);
   assert.strictEqual(h[0].vuelta, 3);
-  assert.ok(Math.abs(h[0].fraccion - 0.968) < 0.002, String(h[0].fraccion));
+  assert.ok(Math.abs(h[0].fraccion - 0.491) < 0.002, "empieza en " + h[0].fraccion);
+  assert.ok(Math.abs(h[0].hasta - 0.984) < 0.002, "termina en " + h[0].hasta);
+  assert.ok(h[0].hasta > h[0].fraccion, "la banda no tiene ancho");
 });
 
-prueba("dos huecos en la misma vuelta no se pisan", () => {
-  /* El segundo cae despues del primero **en tiempo de conduccion**, no en
-     tiempo de reloj: si no se resta el primero, el segundo se dibuja mas
-     adelante de donde la reproduccion lo va a saltar. */
-  const vueltas = [{ numero: 1, duracion_s: 20, desde_utc: "2026-09-11T00:00:00.000Z",
-    huecos: [{ desde_utc: "2026-09-11T00:00:10.000Z", duracion_s: 100 },
-             { desde_utc: "2026-09-11T00:01:55.000Z", duracion_s: 60 }] }];
-  const h = huecosEnLaLinea(vueltas);
+prueba("un corte entre dos vueltas lo vive la que venia rodando", () => {
+  /* LA CONTRARRELOJ DE SPA DEL 2026-09-13. `/vueltas` cuelga el corte de la
+     vuelta 3 ---es la que encontro rota--- pero va de las 00:27:50,938, que es
+     el `hasta_utc` de la vuelta 2, a las 00:35:10,011, que es su `desde_utc`:
+     cae entero entre las dos.
+
+     Quien lo vive es la 2, y eso decide algo concreto: los valores que se
+     sostienen durante el corte son los ultimos medidos, y estan en la serie de
+     la 2. Colgado de la 3, el cabezal caeria antes de su primera muestra y se
+     sostendria un valor del futuro. */
+  const h = huecosEnLaLinea(conVueltas([
+    { numero: 1, duracion_s: 130.646, desde_utc: "2026-09-13T00:25:24.793Z",
+      hasta_utc: "2026-09-13T00:27:35.440Z", huecos: [] },
+    { numero: 2, duracion_s: 15.499, desde_utc: "2026-09-13T00:27:35.490Z",
+      hasta_utc: "2026-09-13T00:27:50.938Z", huecos: [] },
+    { numero: 3, duracion_s: 65.598, desde_utc: "2026-09-13T00:35:10.011Z",
+      hasta_utc: "2026-09-13T00:36:15.609Z", huecos: [
+        { desde_utc: "2026-09-13T00:27:50.938Z",
+          hasta_utc: "2026-09-13T00:35:10.011Z", duracion_s: 439.072 }] },
+  ]));
+  assert.strictEqual(h.length, 1);
+  assert.strictEqual(h[0].vuelta, 2, "el corte quedo colgado de la vuelta que lo declara");
+  /* 130,646 + 15,499 = 146,145 s de los 651,815 de linea: el 22,4 %. */
+  assert.ok(Math.abs(h[0].fraccion - 0.2242) < 0.002, "empieza en " + h[0].fraccion);
+  assert.ok(Math.abs(h[0].hasta - 0.8979) < 0.002, "termina en " + h[0].hasta);
+});
+
+prueba("dos cortes en la misma vuelta no se pisan", () => {
+  /* Uno detras del otro, cada uno en su sitio de reloj. La vuelta dura 20 s
+     rodados y lleva 160 de corte: 180 de linea. */
+  const h = huecosEnLaLinea(conVueltas([
+    { numero: 1, duracion_s: 20, desde_utc: "2026-09-11T00:00:00.000Z",
+      hasta_utc: "2026-09-11T00:03:00.000Z",
+      huecos: [{ desde_utc: "2026-09-11T00:00:10.000Z",
+                 hasta_utc: "2026-09-11T00:01:50.000Z", duracion_s: 100 },
+               { desde_utc: "2026-09-11T00:01:55.000Z",
+                 hasta_utc: "2026-09-11T00:02:55.000Z", duracion_s: 60 }] },
+  ]));
   assert.strictEqual(h.length, 2);
-  assert.ok(Math.abs(h[0].fraccion - 0.5) < 0.001, String(h[0].fraccion));
-  assert.ok(Math.abs(h[1].fraccion - 0.75) < 0.001, String(h[1].fraccion));
+  assert.ok(Math.abs(h[0].fraccion - 10 / 180) < 0.001, String(h[0].fraccion));
+  assert.ok(Math.abs(h[0].hasta - 110 / 180) < 0.001, String(h[0].hasta));
+  assert.ok(Math.abs(h[1].fraccion - 115 / 180) < 0.001, String(h[1].fraccion));
+  assert.ok(Math.abs(h[1].hasta - 175 / 180) < 0.001, String(h[1].hasta));
+  assert.ok(h[0].hasta <= h[1].fraccion, "las dos bandas se superponen");
 });
 
 prueba("sin huecos no hay marcas que poner", () => {
-  assert.deepStrictEqual(huecosEnLaLinea(
-    [{ numero: 1, duracion_s: 60, desde_utc: "2026-09-11T00:00:00.000Z", huecos: [] }]), []);
-  assert.deepStrictEqual(huecosEnLaLinea([]), []);
+  assert.deepStrictEqual(huecosEnLaLinea(conVueltas(
+    [{ numero: 1, duracion_s: 60, desde_utc: "2026-09-11T00:00:00.000Z",
+       hasta_utc: "2026-09-11T00:01:00.000Z", huecos: [] }])), []);
+  assert.deepStrictEqual(huecosEnLaLinea(conVueltas([])), []);
 });
 
 prueba("con las capturas unidas los pilotos siguen teniendo nombre", () => {
