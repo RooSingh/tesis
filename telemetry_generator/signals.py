@@ -8,10 +8,27 @@ pruebas del sistema.
 
 from __future__ import annotations
 
+import math
+
 from telemetry_generator.state import TelemetryState
 
 
 RESISTENCIA_VELOCIDAD_CUADRATICA = 0.00003
+
+#: Ancho de via del vehiculo simulado, en metros. La separacion entre las
+#: ruedas de un lado y del otro.
+#:
+#: NO ES UN NUMERO ELEGIDO A OJO, y esa es toda la diferencia con los demas
+#: coeficientes de este archivo. La seccion 13.5 del informe lo **dedujo** del
+#: bus real, ajustando la diferencia entre ruedas contra la velocidad de
+#: guiñada sobre tres segmentos distintos: 1,564, 1,606 y 1,545 metros, con
+#: correlaciones de +0,970, +0,997 y +0,986. Este es el promedio de esos tres.
+#:
+#: Se declara aqui una sola vez porque de el salen las cuatro ruedas, y porque
+#: es lo que permite que el validador de `backend/recorrido.py` ---el mismo que
+#: el informe aplica al vehiculo real--- pueda volver a deducirlo de las series
+#: generadas y encontrar lo que corresponde a un vehiculo de ese porte.
+ANCHO_DE_VIA_M = 1.572
 
 
 DEMO_PHASES = (
@@ -162,13 +179,53 @@ def actualizar_estado_basico(estado: TelemetryState, paso_ms: int = 10) -> Telem
     estado.accel_y = estado.steer_angle * 0.08
 
     # --- 3. Velocidades de rueda ---------------------------------------
-    # Las velocidades de rueda siguen a la velocidad global, pero no son
-    # exactamente identicas. Se introducen pequenas diferencias para reflejar
-    # una telemetria mas util y menos artificialmente uniforme.
+    #
+    # LA DIFERENCIA ENTRE LADOS ES GEOMETRIA, NO UN ADORNO.
+    #
+    # Antes decia «se introducen pequeñas diferencias para reflejar una
+    # telemetria mas util y menos artificialmente uniforme», y hacia esto:
+    #
+    #     wheel_speed_fl = base - steer_angle * 0.02
+    #     wheel_speed_rl = base - accel_x * 0.05
+    #
+    # Las delanteras se separaban por el angulo de direccion con un coeficiente
+    # inventado, y las traseras por la **aceleracion longitudinal**, que no
+    # tiene ninguna relacion con la diferencia entre izquierda y derecha.
+    # Servian para que la serie no fuera plana.
+    #
+    # POR QUE NO ALCANZA CON QUE NO SEA PLANA. La seccion 13.5 del informe
+    # valida la señal de guiñada del bus real por una via independiente: en una
+    # curva las ruedas de afuera recorren mas que las de adentro, y esa
+    # diferencia dividida por la velocidad de giro **da el ancho de via del
+    # vehiculo**. Corrido ese mismo validador sobre la maniobra generada, el
+    # 2026-09-13 devolvia 0,93 m: un vehiculo imposible.
+    #
+    # El capitulo 8 permite que un coeficiente de este generador no este
+    # calibrado ---es una «simulacion controlada con ajuste cualitativo»--- y
+    # no permite que una señal **contradiga** a otra. Con la guiñada y las
+    # ruedas discrepando sobre el ancho del mismo vehiculo simulado, una de las
+    # dos estaba mal, y demostrar el metodo de la 13.5 sobre esta fuente no
+    # probaba nada.
+    #
+    # La relacion no hay que calibrarla porque es geometria pura:
+    #
+    #     diferencia entre lados [m/s] = velocidad de giro [rad/s] x ancho [m]
+    #
+    # El signo sigue el criterio del validador ---`derecha menos izquierda`---:
+    # con guiñada positiva las ruedas de la derecha son las de afuera.
+    giro_rad_s = math.radians(estado.yaw_rate)
+    diferencia_kmh = giro_rad_s * ANCHO_DE_VIA_M * 3.6
+    mitad = diferencia_kmh / 2.0
+
     base = estado.speed
-    estado.wheel_speed_fl = _limitar(base - (estado.steer_angle * 0.02), 0.0, 330.0)
-    estado.wheel_speed_fr = _limitar(base + (estado.steer_angle * 0.02), 0.0, 330.0)
-    estado.wheel_speed_rl = _limitar(base - (estado.accel_x * 0.05), 0.0, 330.0)
-    estado.wheel_speed_rr = _limitar(base + (estado.accel_x * 0.05), 0.0, 330.0)
+    # LOS DOS EJES SE SEPARAN IGUAL, que es lo que corresponde a un vehiculo con
+    # un solo ancho de via. Uno real tiene el trasero algo distinto del
+    # delantero, y meter esa diferencia aqui seria agregar un segundo parametro
+    # sin evidencia para sostenerlo: el validador promedia los dos ejes, de modo
+    # que no cambiaria lo que se comprueba y si lo que habria que justificar.
+    estado.wheel_speed_fl = _limitar(base - mitad, 0.0, 330.0)
+    estado.wheel_speed_fr = _limitar(base + mitad, 0.0, 330.0)
+    estado.wheel_speed_rl = _limitar(base - mitad, 0.0, 330.0)
+    estado.wheel_speed_rr = _limitar(base + mitad, 0.0, 330.0)
 
     return estado

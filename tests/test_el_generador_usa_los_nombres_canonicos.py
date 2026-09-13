@@ -47,6 +47,7 @@ if str(RAIZ) not in sys.path:
 
 from adapters import can_rav4  # noqa: E402
 from telemetry_generator import config as gen_config  # noqa: E402
+from tests.ayuda_estructural import solo_codigo  # noqa: E402
 from telemetry_generator import message_builder as mb  # noqa: E402
 from telemetry_generator.main import crear_estado_inicial  # noqa: E402
 from telemetry_generator.signals import (  # noqa: E402
@@ -55,44 +56,6 @@ from telemetry_generator.signals import (  # noqa: E402
 #: Las que en el bus real se llaman igual crudas que canonicas. Son las cinco
 #: que ya funcionaban, y sirven para comprobar que el cambio no las movio.
 YA_COINCIDIAN = {"speed", "steer_angle", "yaw_rate", "brake_pressed", "gas_pressed"}
-
-
-def _solo_codigo(ruta: Path) -> str:
-    """El modulo sin sus comentarios ni sus cadenas.
-
-    POR QUE HACE FALTA. La guarda de mas abajo pregunta «¿esta escrito a mano
-    el nombre canonico?». Sin esto, el **comentario que explica la guarda** la
-    hace fallar, porque el comentario nombra justamente lo que prohibe. Le paso
-    siete veces en un dia a este proyecto, en los dos lenguajes.
-
-    SE USA EL ANALIZADOR LEXICO DE PYTHON Y NO UNA EXPRESION REGULAR. La idea
-    es del arnes de JavaScript ---`_solo_codigo()` en `test_dashboard_frontend`
-    ---, que ahi tiene que aproximarse con expresiones regulares y lo declara:
-    «no es un analizador y no pretende serlo». En Python no hace falta
-    aproximar: `tokenize` es el mismo lexico que usa el interprete, de modo que
-    esta version no puede confundirse con una almohadilla dentro de una cadena.
-
-    SE QUITAN LOS COMENTARIOS Y **NO** LAS CADENAS, y eso no es un detalle. La
-    primera version quitaba las dos, y con eso la guarda dejo de mirar
-    precisamente lo que prohibe ---un nombre escrito a mano **es** una cadena---.
-    Pasaba en verde con el defecto puesto. Se descubrio mutando: se agrego
-    `CANONICO_A_MANO = "wheel_speed_front_left"` al modulo y la prueba siguio
-    pasando. Una guarda estructural que no se muto no esta comprobada.
-
-    Los docstrings tambien son cadenas y por eso sobreviven, que es correcto:
-    si alguien escribe el nombre canonico dentro de uno, sigue siendo un
-    segundo sitio donde figura.
-    """
-
-    import tokenize
-
-    partes = []
-    with ruta.open("rb") as f:
-        for token in tokenize.tokenize(f.readline):
-            if token.type == tokenize.COMMENT:
-                continue
-            partes.append(token.string)
-    return " ".join(partes)
 
 
 def un_mensaje(nombre: str) -> dict:
@@ -172,7 +135,7 @@ class LosNombresSonLosDelContrato(unittest.TestCase):
             "el generador no toma el mapa del adaptador: si lo copio, hay dos "
             "sitios donde se decide como se llama una rueda")
         self.assertNotIn(
-            "wheel_speed_front_left", _solo_codigo(ruta),
+            "wheel_speed_front_left", solo_codigo(ruta),
             "el nombre canonico esta escrito a mano aqui ademas de en el "
             "adaptador")
 
