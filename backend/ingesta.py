@@ -1112,10 +1112,28 @@ def captura_detener(trabajo_id: str | None = None) -> dict:
 
 
 class PeticionOpenF1(BaseModel):
-    """Una sesion OpenF1 a importar, identificada como la identifica el proveedor."""
+    """Una sesion OpenF1 a importar, identificada como la identifica el proveedor.
+
+    IMPORTAR ES TRAER LAS DOS MITADES, Y HASTA EL 2026-09-13 ERA UNA SOLA. El
+    contexto ---vueltas, paradas, clima--- quedaba en `racing_sessions` y la
+    telemetria de cada piloto no llegaba a `telemetry_messages`: la sesion
+    quedaba registrada y no se podia abrir. Lo noto quien la uso, subiendo el
+    paquete de Monaco desde el tablero.
+
+    `cargar_telemetria` viene encendida porque la subida manda `session_key` y
+    `descargar_telemetria` y nada mas: si hubiera que pedirla, el camino que la
+    persona recorre seguiria terminando en una sesion que no se puede abrir.
+    """
 
     session_key: int
+    #: Trae de la API los archivos que falten. Es larga por decision del
+    #: proveedor ---treinta consultas por minuto--- y por eso va apagada.
     descargar_telemetria: bool = False
+    #: Inserta en la base la telemetria que el paquete ya tiene.
+    cargar_telemetria: bool = True
+    #: Acota la carga. Una carrera son veinte pilotos y varios millones de
+    #: muestras; vacio es «los que el paquete traiga».
+    pilotos: list[int] = Field(default_factory=list)
 
 
 def _paquete_openf1(session_key: int) -> Path:
@@ -1169,6 +1187,33 @@ def openf1_importar(peticion: PeticionOpenF1) -> dict:
         # el guion de consola.
         resultado["importacion"] = json.loads(
             json.dumps(importacion, default=str, sort_keys=True))
+
+        # LA SEGUNDA MITAD: la telemetria, que es la que hace que la sesion se
+        # pueda abrir. Va despues del contexto y no antes: si el contexto no
+        # entra, la sesion no existe en `racing_sessions` y cargarle telemetria
+        # dejaria filas colgando de algo que no esta registrado.
+        if peticion.cargar_telemetria:
+            from backend import carga_openf1  # noqa: PLC0415
+
+            carga = carga_openf1.cargar_telemetria(paquete, peticion.pilotos)
+            # PUBLICAR NO ES GUARDAR, y entre la confirmacion de una escritura y
+            # el estado del destino cabe una perdida entera. Se pregunta que debe
+            # haber para esta corrida, no cuanto crecio la base: una recarga
+            # idempotente no es una perdida.
+            if carga["validados"]:
+                carga["conciliacion"] = carga_openf1.conciliar(
+                    carga["validados"], carga["corrida"])
+                if carga["conciliacion"]["faltan"]:
+                    raise RuntimeError(
+                        "La telemetria no concilia: faltan %s filas de las %s que "
+                        "esta corrida debia dejar. El contexto quedo importado."
+                        % (carga["conciliacion"]["faltan"], carga["validados"]))
+            resultado["telemetria"] = carga
+            # QUE SESION DEJO, PARA QUE EL CATALOGO SE ENTERE. Sin esto la
+            # sesion queda en la base y no figura en ninguna lista: es el mismo
+            # defecto que dejo 57.890 filas del bus sin catalogar.
+            if carga["insertados"]:
+                resultado["session_id"] = "openf1:session:%s" % peticion.session_key
         return resultado
 
     trabajo = trabajos.lanzar_funcion(

@@ -495,6 +495,93 @@ class ImportacionOpenF1Tests(PruebaDeIngesta):
         self.assertEqual(fallo.exception.status_code, 409)
 
 
+class ImportarOpenF1TraeLaTelemetriaTests(PruebaDeIngesta):
+    """Importar un paquete es traer lo que el paquete tiene, y son dos mitades.
+
+    HASTA EL 2026-09-13 ERA UNA SOLA. `/openf1/importar` registraba el contexto
+    ---vueltas, paradas, clima--- y la telemetria de cada piloto no tenia forma
+    de llegar a `telemetry_messages`. Medido sobre la Pi: tres sesiones OpenF1
+    registradas y una sola que se podia abrir, la que alguien habia cargado a
+    mano con un guion que publica por el intermediario.
+
+    QUIEN LO NOTO FUE QUIEN LO USO. El usuario subio el paquete de Monaco, el
+    tablero conto bien lo que entro, y despues la sesion no estaba en «Abrir
+    sesion guardada». La lista tenia razon: no habia telemetria.
+    """
+
+    def _peticion(self, **kw):
+        return ingesta.PeticionOpenF1(session_key=9979, **kw)
+
+    def test_la_carga_de_telemetria_viene_encendida(self) -> None:
+        """La subida manda `{session_key, descargar_telemetria}` y nada mas.
+
+        Si hubiera que pedirla, el camino que la persona recorre ---subir y
+        apretar--- seguiria terminando en una sesion que no se puede abrir.
+        """
+        self.assertTrue(self._peticion().cargar_telemetria)
+
+    def test_se_puede_acotar_por_piloto(self) -> None:
+        """Una carrera son veinte pilotos y varios millones de muestras."""
+        self.assertEqual(self._peticion(pilotos=[1, 16]).pilotos, [1, 16])
+        self.assertEqual(self._peticion().pilotos, [])
+
+    def test_EL_TRABAJO_DECLARA_LA_SESION_QUE_DEJA(self) -> None:
+        """Sin eso el catalogo no se entera y la sesion no aparece en la lista.
+
+        Es el mismo defecto que dejo 57.890 filas del bus sin catalogar el
+        2026-09-13: el refresco se dispara con lo que el trabajo deja en
+        `detalle`, y un trabajo que no declara su sesion no refresca nada.
+        """
+        import inspect
+        fuente = inspect.getsource(ingesta.openf1_importar)
+        self.assertIn('"session_id"', fuente,
+                      "el trabajo no declara la sesion que deja en la base")
+
+    def _correr_importacion(self, carga, conciliacion):
+        """Corre el trabajo con la carga y la conciliacion bajo control."""
+        from backend import carga_openf1
+        raiz = self.temporal / "openf1"
+        paquete = raiz / "2025" / "9979"
+        paquete.mkdir(parents=True, exist_ok=True)
+        with patch.object(ingesta, "PAQUETES_OPENF1", raiz), \
+             patch("backend.session_processor.import_validated_package",
+                   return_value={"status": "completed", "run": {"run_id": 1},
+                                 "counts": {"laps": 10}}), \
+             patch.object(carga_openf1, "cargar_telemetria", return_value=carga), \
+             patch.object(carga_openf1, "conciliar",
+                          return_value=conciliacion) as concilia:
+            respuesta = ingesta.openf1_importar(self._peticion())
+            return _esperar_trabajo(respuesta["trabajo"]), concilia
+
+    def test_LA_CARGA_SE_CONCILIA_CONTRA_LA_BASE(self) -> None:
+        """Publicar no es guardar: entre la confirmacion de una escritura y el
+        estado del destino cabe una perdida entera."""
+        carga = {"validados": 900, "insertados": 900, "corrida": "c", "motivo": ""}
+        terminado, concilia = self._correr_importacion(
+            carga, {"esperado": 900, "presente": 900, "faltan": 0, "sobran": 0})
+        concilia.assert_called_once_with(900, "c")
+        self.assertEqual(terminado["estado"], "terminado")
+
+    def test_UN_FALTANTE_HACE_FALLAR_EL_TRABAJO(self) -> None:
+        """Un trabajo que termina bien sobre una carga incompleta es peor que
+        uno que falla: el fallo se mira."""
+        carga = {"validados": 900, "insertados": 400, "corrida": "c", "motivo": ""}
+        terminado, _ = self._correr_importacion(
+            carga, {"esperado": 900, "presente": 400, "faltan": 500, "sobran": 0})
+        self.assertEqual(terminado["estado"], "fallido")
+        self.assertIn("500", terminado["error"])
+        self.assertIn("contexto quedo importado", terminado["error"],
+                      "no dice que la primera mitad si entro")
+
+    def test_sin_nada_que_cargar_no_se_concilia_ni_se_falla(self) -> None:
+        """Un paquete de solo contexto es una respuesta legitima."""
+        carga = {"validados": 0, "insertados": 0, "corrida": None,
+                 "motivo": "el paquete no trae telemetria"}
+        terminado, concilia = self._correr_importacion(carga, {})
+        concilia.assert_not_called()
+        self.assertEqual(terminado["estado"], "terminado")
+
+
 class ImportacionCanTests(PruebaDeIngesta):
     def test_extraer_lanza_el_guion_de_extraccion(self) -> None:
         self.parchear_directorios()
