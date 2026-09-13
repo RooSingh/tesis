@@ -232,3 +232,218 @@ def destino_de(clase: str, nombre: str) -> Path:
     if formato is None:
         raise ValueError("clase desconocida: %r" % clase)
     return formato["carpeta"] / nombre_seguro(nombre)
+
+
+def _declarado_en_el_metadato(ruta: Path) -> dict:
+    """Lo que la captura dice de si misma, o nada si no lo dice."""
+
+    meta = ruta.with_name(ruta.name + SUFIJO_ACOMPANANTE)
+    if not meta.is_file():
+        return {}
+    try:
+        d = json.loads(meta.read_text(encoding="utf-8"))
+    except (ValueError, OSError):
+        return {}
+    return d if isinstance(d, dict) else {}
+
+
+def como_se_procesa(clase: str, ruta: Path) -> dict:
+    """Que hay que pedir para que esto se procese. Lo decide el servidor.
+
+    POR QUE NO LO ARMA QUIEN SUBE. Sin esto, el navegador tiene que partir
+    `TOYOTA_RAV4_TSS2_sample_01.canraw` por un prefijo que conoce de memoria
+    para reconstruir `{segmentos: ["sample_01"], plataforma: "TOYOTA_RAV4_TSS2"}`.
+    Es un acuerdo entre dos lados escrito en uno solo, y se rompe el dia que una
+    plataforma lleve un guion bajo de mas.
+
+    Y NO HACE FALTA ADIVINAR NADA. El `.meta.json` de una captura del bus
+    **declara** su plataforma y su segmento; el de una del simulador declara su
+    procedencia. La derivacion sale del archivo y no del nombre, que es la misma
+    regla que gobierna la clasificacion.
+
+    Devuelve siempre un diccionario con `ruta`, `metodo`, `cuerpo` y `motivo`.
+    Cuando `ruta` es `None` hay un motivo escrito: **no saber como procesar algo
+    es una respuesta, y decirla vale mas que ofrecer un boton que falla.**
+    """
+
+    declarado = _declarado_en_el_metadato(ruta)
+
+    if clase == "can_crudo":
+        plataforma = declarado.get("plataforma")
+        segmento = declarado.get("segmento")
+        if not plataforma or not segmento:
+            return {"ruta": None, "metodo": None, "cuerpo": None,
+                    "motivo": ("la captura no declara plataforma y segmento en su "
+                               "`.meta.json`: sin eso no se puede decir que cargar, "
+                               "y partir el nombre seria adivinarlo")}
+        return {"ruta": "/can/importar", "metodo": "POST",
+                "cuerpo": {"segmentos": [segmento], "plataforma": plataforma,
+                           "etapa": "cargar"},
+                "motivo": "la plataforma y el segmento salen de lo que la captura declara"}
+
+    if clase == "f1_25_crudo":
+        return {"ruta": "/f1_25/republicar", "metodo": "POST",
+                "cuerpo": {"captura": ruta.name},
+                "motivo": "se reinyecta por el mismo camino que la telemetria en vivo"}
+
+    if clase == "paquete_openf1":
+        return {"ruta": None, "metodo": None, "cuerpo": None,
+                "motivo": ("hay que descomprimirlo para saber que sesion es: la "
+                           "`session_key` la declara el `session.json` de adentro")}
+
+    return {"ruta": None, "metodo": None, "cuerpo": None,
+            "motivo": "clase sin camino de procesamiento declarado"}
+
+
+#: Donde la ruta de importacion de OpenF1 busca los paquetes.
+PAQUETES_OPENF1 = RAIZ_DE_DATOS / "OpenF1" / "raw"
+
+
+def abrir_paquete(comprimido: Path) -> tuple[bool, dict]:
+    """Descomprime un paquete de sesion, mirandolo antes de desparramarlo.
+
+    DESCOMPRIMIR ES ACEPTAR CONTENIDO AJENO. Dos cosas que un comprimido puede
+    intentar y que aqui no se le permiten:
+
+    * **escribir fuera de su destino**, con entradas como `../../etc/passwd`. Es
+      viejo, conocido, y sigue funcionando en todo codigo que confie en el nombre
+      de la entrada. Se comprueban **todas** antes de extraer una sola, y basta
+      una para rechazar el paquete entero: un comprimido que intenta salirse no
+      es un paquete al que le sobra un archivo, es uno en el que no se confia.
+    * **no ser lo que dice.** Sin `session.json` no es un paquete de sesion, y
+      darse cuenta despues de haberlo desparramado deja un directorio con nombre
+      de sesion y sin sesion adentro.
+
+    Se abre en un area de paso, se mira, y recien entonces se mueve a donde
+    `/openf1/importar` lo busca ---`raw/<ano>/<session_key>/`--- de modo que esa
+    ruta sigue funcionando sin cambios.
+    """
+
+    import shutil
+    import tempfile
+    import zipfile
+
+    if not zipfile.is_zipfile(comprimido):
+        return False, {"motivo": "el archivo no es un comprimido que se pueda abrir"}
+
+    with zipfile.ZipFile(comprimido) as z:
+        # TODAS LAS ENTRADAS ANTES DE EXTRAER NINGUNA.
+        for entrada in z.namelist():
+            limpia = entrada.replace("\\", "/")
+            if limpia.startswith("/") or ".." in limpia.split("/"):
+                return False, {"motivo": ("una entrada del comprimido apunta fuera "
+                                          "de su destino: %r" % entrada)}
+        nombres = z.namelist()
+        sesiones = [n for n in nombres if n.replace("\\", "/").endswith("session.json")]
+        if not sesiones:
+            return False, {"motivo": ("el comprimido no trae `session.json`, que es "
+                                      "el unico archivo que un paquete de sesion "
+                                      "tiene que tener")}
+        try:
+            declarado = json.loads(z.read(sesiones[0]).decode("utf-8"))
+        except (ValueError, UnicodeDecodeError) as error:
+            return False, {"motivo": "`session.json` no se puede leer: %s" % error}
+        if not isinstance(declarado, dict):
+            return False, {"motivo": "`session.json` no contiene un objeto"}
+        clave = declarado.get("session_key")
+        if not isinstance(clave, int) or isinstance(clave, bool):
+            return False, {"motivo": ("`session_key` tiene que ser un entero y vale "
+                                      "%r" % (clave,))}
+        ano = declarado.get("year")
+        ano = str(ano) if isinstance(ano, int) else "sin_ano"
+
+        # LA RAIZ DEL COMPRIMIDO SE DESCARTA. Un paquete comprimido desde afuera
+        # trae un directorio de mas; uno comprimido desde adentro no. Se toma
+        # como raiz el directorio donde esta `session.json`, que es el unico
+        # punto de referencia que los dos casos comparten.
+        raiz_interna = sesiones[0].replace("\\", "/").rsplit("session.json", 1)[0]
+
+        AREA_DE_PASO.mkdir(parents=True, exist_ok=True)
+        provisional = Path(tempfile.mkdtemp(prefix="paquete_", dir=str(AREA_DE_PASO)))
+        try:
+            for entrada in nombres:
+                limpia = entrada.replace("\\", "/")
+                if limpia.endswith("/"):
+                    continue
+                if raiz_interna and not limpia.startswith(raiz_interna):
+                    continue
+                relativa = limpia[len(raiz_interna):]
+                if not relativa:
+                    continue
+                destino_archivo = provisional / nombre_seguro(relativa)
+                with z.open(entrada) as origen, destino_archivo.open("wb") as salida:
+                    shutil.copyfileobj(origen, salida)
+
+            destino = PAQUETES_OPENF1 / ano / str(clave)
+            # NO SE PISA UN PAQUETE QUE YA ESTA.
+            #
+            # El destino sale de la `session_key` que declara el comprimido, o
+            # sea de contenido que alguien subio. Borrar lo que haya ahi para
+            # hacerle lugar convierte una subida en una operacion destructiva
+            # gobernada por el archivo: subir un comprimido que diga `9947`
+            # bastaria para llevarse los 273 MB de Silverstone.
+            #
+            # Y no es teorico: **paso el 2026-09-12**. Una prueba de este mismo
+            # modulo uso la clave 9939 ---que era un paquete real--- y el
+            # `rmtree` que habia aqui se llevo los 60 MB del paquete de Spa. El
+            # contexto ya importado sobrevivio en la base; los JSON crudos hubo
+            # que volver a descargarlos.
+            if destino.exists():
+                return False, {"motivo": (
+                    "ya hay un paquete para la sesion %s del %s en %s. No se "
+                    "pisa: si hay que reemplazarlo, se borra a proposito y se "
+                    "vuelve a subir." % (clave, ano, destino))}
+            destino.parent.mkdir(parents=True, exist_ok=True)
+            shutil.move(str(provisional), str(destino))
+        finally:
+            if provisional.exists():
+                shutil.rmtree(provisional, ignore_errors=True)
+
+    archivos = sorted(p.name for p in destino.iterdir() if p.is_file())
+    return True, {
+        "session_key": clave,
+        "ano": ano,
+        "destino": str(destino),
+        "archivos": len(archivos),
+        "tiene": archivos[:30],
+        "motivo": "se abrio donde la ruta de importacion busca los paquetes",
+    }
+
+
+#: Donde espera lo que llego incompleto. No es una papelera: lo que hay aqui
+#: sirve para reintentar, y por eso no se borra.
+AREA_DESMENTIDA = AREA_DE_PASO / "desmentido"
+
+
+def apartar_lo_desmentido(captura: Path) -> str | None:
+    """Saca de `datasets/` una captura a la que su metadato desmiente.
+
+    POR QUE HACE FALTA, Y ES UNA CONSECUENCIA DEL ORDEN. El acompanante llega
+    **despues** de la captura, por obligacion: sin la captura no tiene donde ir.
+    De modo que la captura ya esta guardada cuando recien se la puede comparar
+    contra lo que declara. Si la comparacion falla, lo que queda en disco es un
+    archivo truncado con nombre de dato ---justo lo que el area de paso existe
+    para evitar---.
+
+    NI SE BORRA NI SE QUEDA. No se borra porque los bytes que llegaron sirven
+    para reintentar, y una subida de doscientos megabytes cortada al final no se
+    tira. No se queda porque en `datasets/` solo vive lo que se puede usar.
+    Vuelve al area de paso con su acompanante, y la respuesta dice donde esta.
+
+    Devuelve la ruta nueva, o `None` si no habia nada que apartar: **no
+    verificable no es desmentido**, y una captura sin metadatos se queda donde
+    esta.
+    """
+
+    meta = captura.with_name(captura.name + SUFIJO_ACOMPANANTE)
+    if not meta.is_file():
+        return None
+    acepta, _motivo = verificar(captura)
+    if acepta:
+        return None
+
+    AREA_DESMENTIDA.mkdir(parents=True, exist_ok=True)
+    destino = AREA_DESMENTIDA / captura.name
+    captura.replace(destino)
+    meta.replace(AREA_DESMENTIDA / meta.name)
+    return str(destino)

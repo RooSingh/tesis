@@ -132,6 +132,9 @@ FAMILIAS = {
     "openf1_importar": "importacion",
     "can_extraer": "importacion",
     "can_cargar": "importacion",
+    # La reinyeccion escribe en la base por el mismo camino que las otras dos:
+    # dos a la vez no terminan antes y comparten la tabla.
+    "f1_25_republicar": "importacion",
 }
 
 
@@ -1079,12 +1082,34 @@ async def importar_archivo(peticion: Request,
             final.parent.mkdir(parents=True, exist_ok=True)
             provisional.replace(final)
             acepta, motivo = subida.verificar(captura)
-            return {"guardado": str(final), "bytes": recibidos,
-                    "clase": "metadatos", "describe_a": str(captura),
-                    "verificacion": {"acepta": acepta, "motivo": motivo},
-                    "siguiente": ("la captura quedo verificada"
-                                  if acepta else
-                                  "la captura no coincide con lo que declara")}
+            respuesta = {"guardado": str(final), "bytes": recibidos,
+                         "clase": "metadatos", "describe_a": str(captura),
+                         "verificacion": {"acepta": acepta, "motivo": motivo}}
+            if not acepta:
+                # LO DESMENTIDO NO SE QUEDA CON NOMBRE DE DATO.
+                # El acompanante llega despues de la captura por obligacion, de
+                # modo que la captura ya estaba guardada cuando recien se la
+                # pudo comparar. Vuelve al area de paso con su metadato: los
+                # bytes sirven para reintentar y `datasets/` es solo para lo que
+                # se puede usar.
+                apartada = subida.apartar_lo_desmentido(captura)
+                respuesta["apartado_en"] = apartada
+                respuesta["procesar"] = {
+                    "ruta": None, "metodo": None, "cuerpo": None,
+                    "motivo": ("la captura no coincide con lo que declara y se "
+                               "aparto: hay que volver a subirla")}
+                respuesta["siguiente"] = ("la captura no coincide con lo que "
+                                          "declara y salio de datasets/")
+                return respuesta
+            # EL PLAN VA EN LA RESPUESTA DEL ACOMPANANTE, que es la ultima.
+            # El par se sube en orden obligado ---captura y despues metadato---
+            # de modo que este es el momento en que esta completo. Ponerlo solo
+            # en la primera obligaria a quien sube a recordarla.
+            respuesta["procesar"] = subida.como_se_procesa(
+                subida.clasificar(captura.name, captura.read_bytes()[:subida.BYTES_PARA_CLASIFICAR])
+                or "", captura)
+            respuesta["siguiente"] = "la captura quedo verificada"
+            return respuesta
 
         clase = subida.clasificar(limpio, primeros)
         if clase is None:
@@ -1105,17 +1130,93 @@ async def importar_archivo(peticion: Request,
             provisional.unlink()
 
     acepta, motivo = subida.verificar(final)
-    return {
+    respuesta = {
         "guardado": str(final),
         "bytes": recibidos,
         "clase": clase,
         "fuente": subida._POR_CLASE[clase]["fuente"],
         "verificacion": {"acepta": acepta, "motivo": motivo},
+        # QUE PEDIR DESPUES LO DICE EL SERVIDOR, NO QUIEN SUBE.
+        # Sin esto, el navegador tiene que partir el nombre del archivo por una
+        # convencion que conoce de memoria para reconstruir lo que el metadato
+        # ya declara. Cuando `ruta` es `None` hay un motivo escrito.
+        "procesar": subida.como_se_procesa(clase, final),
         "siguiente": subida._POR_CLASE[clase].get("acompana") and (
             "falta subir %s%s para poder verificarlo"
             % (limpio, subida.SUFIJO_ACOMPANANTE)) or
             "listo para procesar",
     }
+    if clase == "paquete_openf1":
+        # UN COMPRIMIDO NO ES UN PAQUETE HASTA QUE SE ABRE Y SE MIRA.
+        abierto, detalle = subida.abrir_paquete(final)
+        respuesta["paquete"] = detalle
+        if abierto:
+            final.unlink(missing_ok=True)   # el comprimido ya no hace falta
+            respuesta["guardado"] = detalle["destino"]
+            respuesta["procesar"] = {
+                "ruta": "/openf1/importar", "metodo": "POST",
+                "cuerpo": {"session_key": detalle["session_key"],
+                           "descargar_telemetria": False},
+                "motivo": "la `session_key` la declara el `session.json` de adentro"}
+            respuesta["siguiente"] = "listo para procesar"
+        else:
+            final.unlink(missing_ok=True)
+            raise HTTPException(status_code=422, detail={
+                "mensaje": detalle["motivo"], "nombre": limpio})
+    return respuesta
+
+
+class PeticionRepublicar(BaseModel):
+    """Que captura del simulador reinyectar, y a que ritmo."""
+
+    captura: str
+    por_segundo: float = 2000.0
+
+
+@router.post("/f1_25/republicar")
+def f1_25_republicar(peticion: PeticionRepublicar) -> dict:
+    """Reinyecta una captura cruda del simulador por el camino de siempre.
+
+    POR QUE NO EXISTIA. Las dos rutas de importacion cubren la fuente deportiva
+    y el bus del vehiculo; la del simulador se corria a mano con
+    `scripts/republicar_captura.py`, porque hasta ahora las capturas del
+    simulador **nacian** en la maquina que las graba. Con la subida por pantalla
+    dejan de nacer ahi, y una captura que se puede subir y no se puede procesar
+    deja el boton a mitad de camino.
+
+    EL RITMO SE ACOTA, y no es un detalle de comodidad. Sin limite, el piso de
+    perdida del transporte es un tercio **y varia entre corridas**: medido el
+    2026-09-11, 100.490 y 271.982 mensajes perdidos de 404.972 con la misma
+    captura y el mismo equipo. Con el ritmo acotado el piso baja a 15.189 sobre
+    404.972 y deja de moverse, que es lo que vuelve atribuible cualquier
+    diferencia posterior.
+    """
+
+    ruta = subida.destino_de("f1_25_crudo", peticion.captura)
+    if not ruta.is_file():
+        raise HTTPException(status_code=404, detail={
+            "mensaje": "No esta esa captura entre las subidas.",
+            "buscada": ruta.name,
+            "donde": str(ruta.parent)})
+
+    apartada = subida.apartar_lo_desmentido(ruta)
+    if apartada is not None:
+        raise HTTPException(status_code=422, detail={
+            "mensaje": ("La captura no coincide con lo que su metadato declara. "
+                        "No se reinyecta un archivo del que ya se sabe que llego "
+                        "incompleto."),
+            "apartado_en": apartada})
+
+    comando = [sys.executable, str(RAIZ / "scripts" / "republicar_captura.py"),
+               str(ruta), "--por-broker",
+               "--por-segundo", str(peticion.por_segundo)]
+    trabajo = trabajos.lanzar_proceso(
+        "f1_25_republicar",
+        f"reinyeccion de {ruta.name}", comando)
+    respuesta = trabajo.a_dict()
+    respuesta["captura"] = str(ruta)
+    respuesta["por_segundo"] = peticion.por_segundo
+    return respuesta
 
 
 # --------------------------------------------------------------------------- #

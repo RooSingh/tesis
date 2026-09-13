@@ -200,3 +200,275 @@ class LosMetadatosNoSonUnaCapturaTests(unittest.TestCase):
     def test_tampoco_escapa_del_destino(self) -> None:
         self.assertIsNone(
             subida.donde_espera_su_captura("../../x.canraw.meta.json"))
+
+
+class ElServidorDiceQueHayQuePedirDespuesTests(unittest.TestCase):
+    """Quien sube no tiene que reconstruir lo que el servidor ya sabe.
+
+    EL ACUERDO QUE ESTO EVITA. Sin esto, el navegador tiene que partir
+    `TOYOTA_RAV4_TSS2_sample_01.canraw` por un prefijo que conoce de memoria para
+    armar `{segmentos: ["sample_01"], plataforma: "TOYOTA_RAV4_TSS2"}`. Es un
+    acuerdo tacito entre dos lados, escrito en uno solo, que se rompe el dia que
+    una plataforma lleve un guion bajo de mas.
+
+    Y NO HACE FALTA ADIVINAR: el propio `.meta.json` **declara** `plataforma` y
+    `segmento`. La derivacion sale del archivo, no del nombre.
+    """
+
+    def test_una_captura_del_bus_dice_como_se_carga(self) -> None:
+        import tempfile
+        with tempfile.TemporaryDirectory() as t:
+            ruta = Path(t) / "TOYOTA_RAV4_TSS2_sample_01.canraw"
+            ruta.write_bytes(b"CANRAWCP" + b"\x00" * 8)
+            ruta.with_name(ruta.name + ".meta.json").write_text(json.dumps(
+                {"plataforma": "TOYOTA_RAV4_TSS2", "segmento": "sample_01"}))
+            p = subida.como_se_procesa("can_crudo", ruta)
+            self.assertIsNotNone(p, "no dice como procesarla")
+            self.assertEqual(p["ruta"], "/can/importar")
+            self.assertEqual(p["metodo"], "POST")
+            self.assertEqual(p["cuerpo"]["segmentos"], ["sample_01"])
+            self.assertEqual(p["cuerpo"]["plataforma"], "TOYOTA_RAV4_TSS2")
+            self.assertEqual(p["cuerpo"]["etapa"], "cargar")
+
+    def test_lo_saca_del_metadato_y_no_de_partir_el_nombre(self) -> None:
+        """Un nombre que no sigue la convencion se resuelve igual."""
+
+        import tempfile
+        with tempfile.TemporaryDirectory() as t:
+            ruta = Path(t) / "cualquier_cosa.canraw"
+            ruta.write_bytes(b"CANRAWCP" + b"\x00" * 8)
+            ruta.with_name(ruta.name + ".meta.json").write_text(json.dumps(
+                {"plataforma": "OTRA_PLATAFORMA", "segmento": "tramo_9"}))
+            p = subida.como_se_procesa("can_crudo", ruta)
+            self.assertEqual(p["cuerpo"]["segmentos"], ["tramo_9"])
+            self.assertEqual(p["cuerpo"]["plataforma"], "OTRA_PLATAFORMA")
+
+    def test_sin_metadato_no_se_inventa_como_procesarla(self) -> None:
+        """Es la misma regla que el resto: no verificable no es verificado."""
+
+        import tempfile
+        with tempfile.TemporaryDirectory() as t:
+            ruta = Path(t) / "TOYOTA_RAV4_TSS2_sample_01.canraw"
+            ruta.write_bytes(b"CANRAWCP" + b"\x00" * 8)
+            p = subida.como_se_procesa("can_crudo", ruta)
+            self.assertIsNone(p["ruta"] if p else None,
+                              "adivino como procesar sin que el archivo lo declare")
+            self.assertIn("declara", p["motivo"])
+
+    def test_una_captura_del_simulador_dice_su_ruta(self) -> None:
+        import tempfile
+        with tempfile.TemporaryDirectory() as t:
+            ruta = Path(t) / "20260912_1854_shanghai_carrera.f1raw"
+            ruta.write_bytes(b"F1RAWCAP" + b"\x00" * 8)
+            p = subida.como_se_procesa("f1_25_crudo", ruta)
+            self.assertEqual(p["ruta"], "/f1_25/republicar")
+            self.assertEqual(p["cuerpo"]["captura"], ruta.name)
+
+    def test_un_paquete_comprimido_todavia_no_dice_nada(self) -> None:
+        """Hasta descomprimirlo no se sabe que sesion es: se dice, no se inventa."""
+
+        import tempfile
+        with tempfile.TemporaryDirectory() as t:
+            ruta = Path(t) / "9939.zip"
+            ruta.write_bytes(b"PK\x03\x04")
+            p = subida.como_se_procesa("paquete_openf1", ruta)
+            self.assertIsNone(p["ruta"])
+            self.assertTrue(p["motivo"].strip())
+
+
+class UnPaqueteComprimidoSeAbreYSeMiraTests(unittest.TestCase):
+    """Descomprimir es aceptar contenido ajeno: hay que mirarlo antes.
+
+    DOS COSAS QUE UN `.zip` PUEDE HACER Y NO SE LE PERMITE:
+
+    * **escribir fuera de su destino**, con entradas como `../../etc/passwd`.
+      Es viejo y conocido, y sigue funcionando en todo codigo que confie en el
+      nombre de la entrada.
+    * **no ser lo que dice**: un comprimido sin `session.json` no es un paquete
+      de sesion, y darse cuenta despues de haberlo desparramado en `datasets/`
+      deja un directorio con nombre de sesion y sin sesion adentro.
+    """
+
+    def _zip(self, carpeta: Path, entradas: dict) -> Path:
+        import zipfile
+        ruta = carpeta / "paquete.zip"
+        with zipfile.ZipFile(ruta, "w") as z:
+            for nombre, contenido in entradas.items():
+                z.writestr(nombre, contenido)
+        return ruta
+
+    def test_un_paquete_valido_se_abre_donde_la_ruta_de_importacion_lo_busca(self) -> None:
+        import tempfile
+        with tempfile.TemporaryDirectory() as t:
+            z = self._zip(Path(t), {
+                "999999/session.json": json.dumps({"session_key": 999999, "year": 1999}),
+                "999999/drivers.json": "[]"})
+            ok, detalle = subida.abrir_paquete(z)
+            destino = Path(detalle.get("destino", ""))
+            try:
+                self.assertTrue(ok, detalle.get("motivo"))
+                self.assertEqual(detalle["session_key"], 999999)
+                self.assertTrue((destino / "session.json").is_file())
+                self.assertIn("1999", str(destino))
+                self.assertIn("999999", str(destino))
+            finally:
+                # UNA PRUEBA QUE ESCRIBE EN EL ARBOL LO DEJA COMO LO ENCONTRO.
+                # Sin esto, la corrida siguiente encuentra el paquete puesto y
+                # falla con «ya hay un paquete», que es la conducta correcta
+                # contestando a un estado que dejo la prueba anterior. Le paso
+                # a la otra sesion en el arbol compartido.
+                import shutil as _sh
+                if destino.parent.name == "1999":
+                    _sh.rmtree(destino.parent, ignore_errors=True)
+
+    def test_sin_session_json_no_es_un_paquete_y_no_se_desparrama(self) -> None:
+        import tempfile
+        with tempfile.TemporaryDirectory() as t:
+            z = self._zip(Path(t), {"999999/drivers.json": "[]"})
+            ok, detalle = subida.abrir_paquete(z)
+            self.assertFalse(ok)
+            self.assertIn("session.json", detalle["motivo"])
+
+    def test_una_session_key_que_no_es_entera_se_rechaza(self) -> None:
+        import tempfile
+        with tempfile.TemporaryDirectory() as t:
+            z = self._zip(Path(t), {
+                "x/session.json": json.dumps({"session_key": "novecientos"})})
+            ok, detalle = subida.abrir_paquete(z)
+            self.assertFalse(ok)
+            self.assertIn("entero", detalle["motivo"])
+
+    def test_una_entrada_que_intenta_salirse_se_rechaza_entera(self) -> None:
+        import tempfile
+        with tempfile.TemporaryDirectory() as t:
+            z = self._zip(Path(t), {
+                "999999/session.json": json.dumps({"session_key": 999999, "year": 1999}),
+                "../../escapado.json": "{}"})
+            ok, detalle = subida.abrir_paquete(z)
+            self.assertFalse(ok)
+            self.assertIn("fuera", detalle["motivo"].lower())
+
+    def test_lo_que_no_es_un_comprimido_se_dice_y_no_se_abre(self) -> None:
+        import tempfile
+        with tempfile.TemporaryDirectory() as t:
+            ruta = Path(t) / "mentira.zip"
+            ruta.write_bytes(b"no soy un zip")
+            ok, detalle = subida.abrir_paquete(ruta)
+            self.assertFalse(ok)
+            self.assertTrue(detalle["motivo"].strip())
+
+
+class UnPaqueteNoPisaOtroTests(unittest.TestCase):
+    """El destino sale de contenido subido: no puede ser destructivo.
+
+    EL DEFECTO QUE ESTO CUIDA, Y OCURRIO. `abrir_paquete` hacia `rmtree` sobre el
+    destino para hacerle lugar al comprimido. El destino sale de la `session_key`
+    que **declara el propio archivo**, de modo que subir un comprimido que dijera
+    `9947` bastaba para llevarse los 273 MB de Silverstone.
+
+    El 2026-09-12 se llevo los 60 MB del paquete de Spa: una prueba de este mismo
+    archivo uso la clave `9939`, que era real. El contexto ya importado
+    sobrevivio en la base; los JSON crudos hubo que volver a descargarlos.
+
+    De ahi la regla: **una subida agrega, no reemplaza.** Reemplazar es una
+    decision de quien opera, y se toma borrando a proposito.
+    """
+
+    def test_no_se_pisa_un_paquete_que_ya_esta(self) -> None:
+        import tempfile, zipfile
+        with tempfile.TemporaryDirectory() as t:
+            destino = subida.PAQUETES_OPENF1 / "1998" / "999998"
+            destino.mkdir(parents=True, exist_ok=True)
+            testigo = destino / "no_me_borres.json"
+            testigo.write_text('{"soy": "el paquete que ya estaba"}')
+            try:
+                z = Path(t) / "p.zip"
+                with zipfile.ZipFile(z, "w") as f:
+                    f.writestr("999998/session.json",
+                               json.dumps({"session_key": 999998, "year": 1998}))
+                ok, detalle = subida.abrir_paquete(z)
+                self.assertFalse(ok, "piso un paquete que ya estaba")
+                self.assertIn("ya hay un paquete", detalle["motivo"])
+                self.assertTrue(testigo.is_file(), "se llevo el archivo que estaba")
+                self.assertIn("el paquete que ya estaba", testigo.read_text())
+            finally:
+                import shutil as _sh
+                _sh.rmtree(destino.parent, ignore_errors=True)
+
+    def test_el_modulo_no_vuelve_a_tener_un_borrado_del_destino(self) -> None:
+        """Guarda estructural: `rmtree` sobre el destino no puede reaparecer."""
+
+        fuente = (Path(__file__).resolve().parents[1] / "backend" / "subida.py"
+                  ).read_text(encoding="utf-8")
+        sin_comentarios = "\n".join(
+            r.split("#", 1)[0] for r in fuente.splitlines())
+        self.assertNotIn("shutil.rmtree(destino)", sin_comentarios,
+                         "volvio el borrado del destino, que ya se llevo un "
+                         "paquete real una vez")
+
+
+class UnaCapturaDesmentidaNoSeQuedaConNombreDeDatoTests(unittest.TestCase):
+    """Si el metadato desmiente a la captura, la captura sale de `datasets/`.
+
+    EL DEFECTO. El acompanante llega **despues** de la captura, por obligacion:
+    sin la captura no tiene donde ir. De modo que la captura ya esta en
+    `datasets/` cuando recien se la puede comparar contra lo que declara. Si la
+    comparacion falla, lo que queda en disco es **un archivo truncado con nombre
+    de dato**, que es exactamente lo que el area de paso existe para evitar.
+
+    Y no es un caso raro: una subida cortada a la mitad ---una red domestica y un
+    paquete de doscientos megabytes--- produce justo eso.
+
+    LA REGLA. Lo que no paso la verificacion **no se borra y no se queda**: vuelve
+    al area de paso, con su acompanante, y la respuesta dice donde esta. No se
+    borra porque los bytes que llegaron sirven para reintentar; no se queda
+    porque en `datasets/` solo vive lo que se puede usar.
+    """
+
+    def _par(self, carpeta: Path, cuerpo: bytes, declara: dict) -> Path:
+        ruta = carpeta / "x.canraw"
+        ruta.write_bytes(cuerpo)
+        (carpeta / "x.canraw.meta.json").write_text(json.dumps(declara))
+        return ruta
+
+    def test_lo_desmentido_sale_de_datasets_y_conserva_los_bytes(self) -> None:
+        import hashlib as _h, tempfile
+        with tempfile.TemporaryDirectory() as t:
+            destino = Path(t) / "capturas"
+            destino.mkdir()
+            entero = b"CANRAWCP" + b"\x00" * 500
+            ruta = self._par(destino, entero[:120], {
+                "bytes": len(entero), "sha256": _h.sha256(entero).hexdigest()})
+            movido = subida.apartar_lo_desmentido(ruta)
+            self.assertIsNotNone(movido, "no lo aparto")
+            self.assertFalse(ruta.is_file(), "la captura desmentida se quedo")
+            self.assertFalse(ruta.with_name(ruta.name + ".meta.json").is_file(),
+                             "el acompanante se quedo solo, describiendo a nadie")
+            self.assertTrue(Path(movido).is_file(), "se perdieron los bytes")
+            self.assertEqual(Path(movido).stat().st_size, 120,
+                             "no conservo lo que habia llegado")
+            import shutil as _sh
+            _sh.rmtree(Path(movido).parent, ignore_errors=True)
+
+    def test_lo_verificado_no_se_toca(self) -> None:
+        import hashlib as _h, tempfile
+        with tempfile.TemporaryDirectory() as t:
+            destino = Path(t) / "capturas"
+            destino.mkdir()
+            entero = b"CANRAWCP" + b"\x00" * 500
+            ruta = self._par(destino, entero, {
+                "bytes": len(entero), "sha256": _h.sha256(entero).hexdigest()})
+            self.assertIsNone(subida.apartar_lo_desmentido(ruta))
+            self.assertTrue(ruta.is_file(), "aparto una captura que estaba bien")
+
+    def test_lo_que_no_declara_nada_tampoco_se_toca(self) -> None:
+        """No verificable no es desmentido."""
+
+        import tempfile
+        with tempfile.TemporaryDirectory() as t:
+            destino = Path(t) / "capturas"
+            destino.mkdir()
+            ruta = destino / "x.canraw"
+            ruta.write_bytes(b"CANRAWCP" + b"\x00" * 8)
+            self.assertIsNone(subida.apartar_lo_desmentido(ruta))
+            self.assertTrue(ruta.is_file())
