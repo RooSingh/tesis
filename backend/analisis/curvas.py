@@ -305,7 +305,25 @@ def derivar(
         if len(vueltas_presentes) < minimo_vueltas:
             continue
         tramos = [t for _, _, t in grupo]
-        pico = max(tramos, key=lambda t: abs(t["pico"]))["pico"]
+        # EL PICO ES LA MEDIANA DE LAS VUELTAS, NO EL MAYOR DE TODAS.
+        #
+        # Es la misma regla que los bordes usan tres lineas mas abajo, y por la
+        # misma razon: el maximo es el estadistico que una sola muestra mala
+        # puede decidir entera.
+        #
+        # Y hay muestras malas. Medido el 2026-09-13 sobre las 390.139 muestras
+        # de aceleracion guardadas: la mediana del modulo es 0,542 g y el
+        # percentil 99 es 3,807 g, pero **49 muestras pasan de 6 g** y el maximo
+        # cae exactamente en 32,768 ---el tope de un entero de 16 bits---. No
+        # son un error de decodificacion: son golpes. Un impacto contra un muro
+        # produce esa aceleracion de verdad, y **no es un apice de curva**.
+        #
+        # Con el maximo, la curva 6 de Spielberg publicaba `18,503 g` sobre
+        # treinta y tres vueltas. Con la mediana publica 4,227. El apice, los
+        # bordes y el recuento de vueltas **no se mueven**: lo unico que estaba
+        # mal era la cifra que se mostraba.
+        picos = sorted((t["pico"] for t in tramos), key=abs)
+        pico = picos[len(picos) // 2]
         curvas.append(Curva(
             numero=0,
             apice_m=sum(t["apice"] for t in tramos) / len(tramos),

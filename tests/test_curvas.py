@@ -229,6 +229,52 @@ class SobreLasCapturasReales(unittest.TestCase):
                 self.assertLessEqual(anterior.hasta_m, siguiente.desde_m)
 
 
+class ElPicoNoLoDecideUnGolpe(unittest.TestCase):
+    """UN IMPACTO NO ES UN APICE DE CURVA.
+
+    Medido el 2026-09-13 sobre las 390.139 muestras de aceleracion guardadas:
+    la mediana del modulo es 0,542 g y el percentil 99 es 3,807 g, pero
+    **49 muestras pasan de 6 g** y el maximo cae exactamente en 32,768, el tope
+    de un entero de 16 bits. No son un error de decodificacion: son golpes.
+
+    Con el maximo, la curva 6 de Spielberg publicaba `18,503 g` sobre treinta y
+    tres vueltas. Es la misma razon por la que los bordes ya se tomaban como
+    mediana y no como envolvente.
+    """
+
+    @staticmethod
+    def _vuelta(lateral):
+        """Una vuelta con una sola curva, con el pico que se le diga."""
+        puntos = [(float(m), 0.0) for m in range(0, 200, 5)]
+        puntos += [(float(m), lateral) for m in range(200, 260, 5)]
+        puntos += [(float(m), 0.0) for m in range(260, 600, 5)]
+        return puntos
+
+    def test_una_vuelta_con_un_golpe_no_arrastra_el_pico(self) -> None:
+        vueltas = [self._vuelta(4.2) for _ in range(9)] + [self._vuelta(18.5)]
+        catalogo = mod.derivar(vueltas, circuito="prueba")
+        self.assertEqual(len(catalogo.curvas), 1)
+        self.assertAlmostEqual(catalogo.curvas[0].pico_g, 4.2, places=3,
+                               msg="un solo golpe decidio el pico de la curva")
+
+    def test_y_el_apice_y_los_bordes_no_se_mueven(self) -> None:
+        """Lo unico que el golpe corrompia era la cifra publicada."""
+
+        limpias = [self._vuelta(4.2) for _ in range(10)]
+        con_golpe = [self._vuelta(4.2) for _ in range(9)] + [self._vuelta(18.5)]
+        a = mod.derivar(limpias, circuito="prueba").curvas[0]
+        b = mod.derivar(con_golpe, circuito="prueba").curvas[0]
+        self.assertAlmostEqual(a.apice_m, b.apice_m, places=6)
+        self.assertAlmostEqual(a.desde_m, b.desde_m, places=6)
+        self.assertAlmostEqual(a.hasta_m, b.hasta_m, places=6)
+
+    def test_el_signo_se_conserva(self) -> None:
+        """Hacia que lado gira no se pierde al tomar la mediana."""
+
+        vueltas = [self._vuelta(-3.5) for _ in range(10)]
+        self.assertLess(mod.derivar(vueltas, circuito="prueba").curvas[0].pico_g, 0)
+
+
 if __name__ == "__main__":
     unittest.main()
 
