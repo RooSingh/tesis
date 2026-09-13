@@ -672,20 +672,19 @@
              negativa, que es la que los datos sostienen: si el reglaje no
              cambio, la diferencia de tiempo no es del reglaje. -->
         <div class="reglajes-circuito" id="reglajes-circuito"></div>
-        <p class="nota" id="referencia-puesta"></p>
-        <!-- LOS VEINTITRES VALORES, PLEGADOS.
-             Ocupaban el panel entero y no informan solos: un «alerón delantero
-             3» no dice nada sin contra qué compararlo, y sólo un circuito de los
-             catorce tiene referencia externa. Lo que informa es lo de arriba
-             ---si el reglaje se llevó a la pista, y en qué se aparta de las
-             otras sesiones de este circuito---.
+        <!-- LOS VEINTITRES VALORES NO SE DIBUJAN.
+             Ocupaban el panel entero y no contestaban nada: un «alerón delantero
+             3» no dice nada sin contra qué compararlo, y de los catorce
+             circuitos con reglaje capturado uno solo tiene referencia externa.
+             Lo que contesta una pregunta es la comparación de arriba.
 
-             No se borran: son la medición, y son lo único que permite verificar
-             la comparación que está encima. Se apartan de la vista. -->
-        <details class="ajustes-crudos" id="ajustes-crudos">
-          <summary id="ver-ajustes">Ver los ajustes</summary>
-          <dl class="lista-canales" id="lista-puesta"></dl>
-        </details>
+             La medición no se pierde: sigue viajando entera en
+             `/sesiones/{id}/puesta-a-punto`. Lo que se dejó de hacer es
+             volcarla en la pantalla. Y lo único que esa lista sí decía ---el
+             valor de la referencia externa al lado del aplicado--- baja a esta
+             línea, porque era información y no relleno. -->
+        <p class="nota" id="referencia-puesta"></p>
+        <p class="nota" id="contra-referencia"></p>
       </div>
       <div class="capa-ausente">
         <strong>Sin puesta a punto</strong>

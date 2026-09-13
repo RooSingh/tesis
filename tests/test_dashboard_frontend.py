@@ -49,39 +49,40 @@ class DashboardFrontendTests(unittest.TestCase):
         self.assertIn('"/importar/archivo?nombre=" +', codigo)
         self.assertIn("xhr.upload.onprogress", codigo)
 
-    def test_los_valores_del_reglaje_no_ocupan_el_panel(self) -> None:
-        """VEINTITRES NUMEROS SIN CONTRA QUE COMPARARLOS NO INFORMAN.
+    def test_el_panel_de_reglaje_no_vuelca_los_veintitres_valores(self) -> None:
+        """VEINTITRES NUMEROS SIN CONTRA QUE COMPARARLOS NO CONTESTAN NADA.
 
         Un «aleron delantero 3» no dice nada solo, y de los catorce circuitos
-        con reglaje capturado **uno** tiene referencia externa. Lo que informa es
-        la comparacion contra las otras sesiones de la misma pista.
+        con reglaje capturado **uno** tiene referencia externa. Ocupaban el panel
+        entero y lo que si contesta una pregunta ---la comparacion contra las
+        otras sesiones de la misma pista--- quedaba abajo.
 
-        No se borran, y eso tambien se comprueba: son la medicion, y son lo
-        unico con que se puede verificar la comparacion que va encima. Se
-        pliegan.
+        LA MEDICION NO SE PIERDE Y ESO TAMBIEN SE COMPRUEBA: sigue viajando
+        entera por la API, que es donde se la puede pedir para verificar la
+        comparacion. Lo que se dejo de hacer es volcarla en la pantalla.
         """
         indice = INDICE.read_text(encoding="utf-8")
-        self.assertIn('id="lista-puesta"', indice,
-                      "los valores medidos desaparecieron del panel")
-        # El `<dl>` vive dentro del plegado, y el plegado no arranca abierto.
-        plegado = indice[indice.index('<details class="ajustes-crudos"'):]
-        plegado = plegado[:plegado.index("</details>")]
-        self.assertIn('id="lista-puesta"', plegado,
-                      "los valores quedaron fuera del plegado, a la vista")
-        self.assertNotIn(" open", plegado.split(">")[0],
-                         "el plegado arranca abierto: vuelve a ocupar el panel")
-        # Y la comparacion va antes que ellos, porque es lo que se lee primero.
-        self.assertLess(indice.index('id="reglajes-circuito"'),
-                        indice.index('id="lista-puesta"'),
-                        "los valores crudos siguen yendo antes que la lectura")
+        self.assertNotIn('id="lista-puesta"', indice,
+                         "los valores volvieron a ocupar el panel")
+        self.assertIn('id="reglajes-circuito"', indice,
+                      "se fue tambien la comparacion, que es lo que contesta")
+        # La API los sigue publicando: sin eso no habria con que verificar nada.
+        api = (RAIZ / "backend" / "api_sesion.py").read_text(encoding="utf-8")
+        self.assertIn('"campos": campos', api,
+                      "la API dejo de publicar la medicion del reglaje")
 
-    def test_el_resumen_del_plegado_cuenta_los_campos_que_hay(self) -> None:
-        """Prometer «23» y abrir con diecinueve es peor que no prometer nada.
+    def test_lo_unico_que_esa_lista_decia_se_conserva(self) -> None:
+        """Cada valor llevaba al lado el de la referencia externa.
 
-        Una captura anterior al paquete normalizado trae menos campos.
+        Eso era informacion y no relleno ---el numero solo no dice nada, el
+        numero contra otro si--- y baja a una linea en vez de irse con la lista.
         """
+        indice = INDICE.read_text(encoding="utf-8")
+        self.assertIn('id="contra-referencia"', indice)
         codigo = APP.read_text(encoding="utf-8")
-        self.assertIn('"Ver los " + campos.length + " ajustes medidos"', codigo)
+        self.assertIn('"Contra la referencia: "', codigo)
+        self.assertIn("diferencias.filter(x => x.diferencia)", codigo,
+                      "escribe la linea aunque no haya diferencia que declarar")
 
     def test_el_tablero_no_arma_el_pedido_de_importacion_por_su_cuenta(self) -> None:
         """EL PLAN DE PROCESAMIENTO LO DECLARA EL SERVIDOR.

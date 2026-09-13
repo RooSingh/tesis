@@ -12762,8 +12762,6 @@ function pintarReglajesDelCircuito() {
 }
 
 function pintarPuestaAPunto() {
-  const cont = document.getElementById("lista-puesta");
-  if (!cont) return;
   const d = estado.puesta;
   const campos = (d && d.campos) || [];
   const diferencias = (d && (d.diferencias_puesta || d.diferencias)) || [];
@@ -12782,19 +12780,20 @@ function pintarPuestaAPunto() {
     motivoDeLaPuesta(d) ||
     "Esta fuente no publica configuración del vehículo.";
 
-  const porClave = new Map(diferencias.map(x => [x.clave, x]));
-  cont.innerHTML = campos.map(c => {
-    const rot = ROTULO_PUESTA[c.clave] || c.clave;
-    const valor = c.decodificado
-      ? cifra(c.valor, c.clave === "sesgo_de_freno_pct" ? 0 : 0) + " " + (c.unidad || "")
-      : '<span class="codigo-crudo">' + cifra(c.valor, 0) + '</span>';
-    const comparada = porClave.get(c.clave);
-    const referencia = comparada
-      ? '<small class="valor-referencia">ref. ' + cifra(comparada.referencia, 0) + '</small>' : '';
-    return '<div title="Canal: ' + c.canal + '"><dt>' + rot + '</dt><dd>' +
-      valor + referencia + '</dd></div>';
-  }).join("");
+  /* LOS VEINTITRES VALORES YA NO SE DIBUJAN.
+     Ocupaban el panel entero y no contestaban nada: un «alerón delantero 3» no
+     dice nada sin contra qué compararlo, y de los catorce circuitos con reglaje
+     capturado **uno** tiene referencia externa. Lo que contesta una pregunta es
+     la comparación contra las otras sesiones de esta misma pista, que es lo que
+     ocupa el panel ahora.
 
+     LA MEDICIÓN NO SE PIERDE: sigue viajando entera en `/puesta-a-punto` y en
+     `/contexto`, que es donde se la puede pedir para verificar lo de arriba.
+     Lo que se dejó de hacer es volcarla en la pantalla.
+
+     Y LA ÚNICA COSA QUE ESA LISTA SÍ DECÍA SE CONSERVA. Cada valor llevaba al
+     lado el de la referencia externa cuando había alguna; eso era información y
+     no relleno, así que baja a una línea de texto en vez de irse con la lista. */
   const sinDecodificar = (d && d.sin_decodificar) || [];
   const nota = document.getElementById("nota-puesta");
   if (nota) {
@@ -12837,22 +12836,19 @@ function pintarPuestaAPunto() {
     ? campos.length + " ajustes · " + ((d.puesta_asentada || d.asentada) ? "asentada" : "observada")
     : "—";
 
-  /* LOS VEINTITRES VALORES SE PLIEGAN, Y SE DICE CUANTOS SON.
-     Ocupaban el panel entero sin informar: un «alerón delantero 3» no dice nada
-     sin contra qué compararlo, y de los catorce circuitos con reglaje capturado
-     sólo uno tiene referencia externa. Lo que informa es la comparación contra
-     las otras sesiones de la misma pista, que ahora va arriba.
-
-     El resumen lleva la cuenta real y no un «23» escrito: una captura vieja
-     puede traer menos campos, y prometer veintitrés para abrir y encontrar
-     diecinueve es peor que no prometer nada. */
-  const plegado = document.getElementById("ajustes-crudos");
-  if (plegado) plegado.hidden = !campos.length;
-  const resumen = document.getElementById("ver-ajustes");
-  if (resumen) {
-    resumen.textContent = campos.length === 1
-      ? "Ver el ajuste medido"
-      : "Ver los " + campos.length + " ajustes medidos";
+  /* EN QUE SE APARTA DE LA REFERENCIA EXTERNA, cuando hay alguna.
+     Iba pegado a cada valor de la lista ---«3 nivel · ref. 3»--- y era lo unico
+     que esa lista aportaba: el numero solo no dice nada, el numero contra otro
+     si. Se conserva en una linea. Sin diferencias no se escribe nada: que
+     coincida con la referencia es lo normal y no hace falta decirlo. */
+  const contra = document.getElementById("contra-referencia");
+  if (contra) {
+    const apartes = diferencias.filter(x => x.diferencia);
+    contra.textContent = apartes.length
+      ? "Contra la referencia: " + apartes.map(x =>
+          (ROTULO_PUESTA[x.clave] || x.clave) + " " + cifra(x.aplicado, 0) +
+          " en vez de " + cifra(x.referencia, 0)).join(", ") + "."
+      : "";
   }
   pintarReglajesDelCircuito();
 }

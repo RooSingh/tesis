@@ -2398,15 +2398,6 @@
   .pasos-subida .paso[data-estado="pendiente"] { border-left-color: var(--alerta); }
   .pasos-subida .paso[data-estado="en-curso"] { border-left-color: var(--acento); }
 
-  /* Los valores medidos, apartados de la vista y no borrados: son la medicion,
-     y son lo unico con que se puede verificar la comparacion que va encima. */
-  .ajustes-crudos { margin-top: 10px; }
-  .ajustes-crudos > summary { cursor: pointer; font-size: .74rem; color: var(--texto-tenue);
-    padding: 4px 0; list-style: revert; }
-  .ajustes-crudos > summary:hover { color: var(--texto); }
-  .ajustes-crudos > summary:focus-visible { outline: 2px solid var(--acento); outline-offset: 2px; }
-  .ajustes-crudos[open] > summary { margin-bottom: 6px; }
-
   /* ---------- los reglajes que se corrieron en este circuito ----------
      La lectura va primero y en el cuerpo del texto: es lo unico que afirma
      algo. La tabla esta abajo para poder verificarla, no para leerla antes. */
@@ -2528,21 +2519,12 @@
   #tr-ventana button { padding: 7px 10px; font-size: .76rem; }
   .marca-auto.propio { stroke: var(--superficie); stroke-width: 1.5; }
 
-  /* Un codigo sin decodificar no se muestra como si fuera una cantidad: va en
-     gris y con la tipografia de cifra, para que se lea como lo que es. */
-  .codigo-crudo {
-    color: var(--texto-tenue); font-family: var(--cifra);
-    padding: 1px 7px; border: 1px dashed var(--linea-fuerte); border-radius: 6px;
-  }
-  #lista-puesta { grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: 24px; }
-  #lista-puesta div { padding-bottom: 7px; }
-  #lista-puesta dd { display: flex; align-items: baseline; gap: 8px; }
-  .valor-referencia { color: var(--acento); font-size: .62rem; font-weight: 600; white-space: nowrap; }
+  /* SE FUERON CON LA LISTA DE VEINTITRES VALORES: `.codigo-crudo` pintaba un
+     codigo sin decodificar, `#lista-puesta` repartia la lista en dos columnas y
+     `.valor-referencia` ponia el valor de la referencia al lado de cada uno.
+     Ese ultimo dato no se perdio: es la linea `#contra-referencia`. */
   #nota-puesta { margin-top: 10px; }
   #referencia-puesta a { color: var(--acento); font-weight: 700; }
-  @media (max-width: 720px) {
-    #lista-puesta { grid-template-columns: minmax(0, 1fr); }
-  }
 
   /* Una vuelta que no se rodo de corrido se marca en la linea de tiempo: el
      salto es del dato, no de la reproduccion, y quien mira tiene que poder
