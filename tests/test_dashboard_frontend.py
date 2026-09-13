@@ -52,10 +52,13 @@ class DashboardFrontendTests(unittest.TestCase):
         dos caminos para importar significan que uno de los dos deja de
         probarse.
         """
-        codigo = APP.read_text(encoding="utf-8")
-        # La llamada y no el nombre: los comentarios que explican por que ya no
-        # esta lo nombran, y un guardian que se rompe con su propia explicacion
-        # obliga a borrar la explicacion.
+        # SOLO EL CODIGO, SIN LOS COMENTARIOS. Un guardian que se rompe con su
+        # propia explicacion obliga a borrar la explicacion. Ya se cuidaba con
+        # `window.prompt(` ---la llamada y no el nombre--- pero `descargar_
+        # telemetria` no tiene parentesis con que distinguirlo, y el 2026-09-13
+        # un comentario que explica que la importacion de contexto se pide **sin**
+        # telemetria puso la guarda en rojo. Septima vez en el dia.
+        codigo = _solo_codigo(APP.read_text(encoding="utf-8"))
         self.assertNotIn("window.prompt(", codigo,
                          "importar sigue pidiendo un identificador escrito")
         self.assertNotIn("descargar_telemetria", codigo)

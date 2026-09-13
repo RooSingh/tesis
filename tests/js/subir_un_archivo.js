@@ -558,6 +558,72 @@ prueba("un trabajo que no declara sesion no permite afirmar nada", () => {
   assert.strictEqual(comoQuedoElCatalogo([], false, []), "sin declarar");
 });
 
+/* ==================================================================
+   UNA IMPORTACION DE CONTEXTO NO DEJA UNA SESION EN LA LISTA
+   ------------------------------------------------------------------
+   REPORTADO POR EL USUARIO EL 2026-09-13. Subio el paquete real de Spa. La
+   importacion salio bien en 5 s ---`racing_sessions` quedo con 9939, y con ella
+   20 pilotos, 879 vueltas, 60 tandas y 223 muestras de clima--- y el tablero
+   dijo:
+
+       «El procesamiento termino bien, pero el catalogo no cambio. El dato
+        puede estar cargado y faltar catalogarlo.»
+
+   NO HABIA NADA QUE CATALOGAR. «Abrir sesion guardada» sale de
+   `sesiones_catalogo`, que lista sesiones con filas en `telemetry_messages`;
+   una importacion de **contexto** registra en `racing_sessions` y no trae
+   telemetria ---el tablero la pide con `descargar_telemetria: false`---. El
+   catalogo no cambio porque esta importacion no lo toca.
+
+   ES LA MISMA FAMILIA QUE LAS OTRAS DOS DE HOY Y CON UNA VUELTA MAS: no es
+   confundir el movimiento con el estado, es **preguntar por el sitio
+   equivocado**. La respuesta correcta no era «si o no» sino «que dejo», y el
+   trabajo ya lo declara: `detalle.importacion.counts`.
+   ================================================================== */
+
+const loQueImporto = new Function(
+  [constante("LO_QUE_SE_CUENTA_DE_UNA_IMPORTACION"),
+   extraer("cifra"), extraer("loQueImporto"),
+   "return loQueImporto;"].join("\n"))();
+
+//: Lo que declaro el trabajo real, tal cual.
+const LO_DE_SPA = { detalle: { session_key: 9939, importacion: { counts: {
+  drivers: 20, laps: 879, stints: 60, pit: 26, weather: 223,
+  race_control: 117, sessions: 1, intervals: 23307 } } } };
+
+prueba("EL DEFECTO: lo que importo se dice, en vez de preguntar por otra lista", () => {
+  const dice = loQueImporto(LO_DE_SPA);
+  assert.ok(/20 pilotos/.test(dice), dice);
+  assert.ok(/879 vueltas/.test(dice), dice);
+  assert.ok(!/cat.logo/i.test(dice), "sigue hablando del catalogo: " + dice);
+});
+
+prueba("y los numeros salen como se escriben aca", () => {
+  assert.ok(/23\.307/.test(loQueImporto(LO_DE_SPA)),
+    "veintitres mil trescientos siete se escribe con punto");
+});
+
+prueba("un trabajo que no importo contexto no declara nada", () => {
+  assert.strictEqual(loQueImporto({ detalle: { sesiones: ["can:segmento:x"] } }), "");
+  assert.strictEqual(loQueImporto({ detalle: {} }), "");
+  assert.strictEqual(loQueImporto(null), "");
+});
+
+prueba("un conteo en cero no se anuncia como si hubiera entrado algo", () => {
+  const vacio = { detalle: { importacion: { counts: { drivers: 0, laps: 0 } } } };
+  assert.strictEqual(loQueImporto(vacio), "");
+});
+
+prueba("EL DESENLACE LO DECIDE LO QUE EL TRABAJO DECLARA", () => {
+  /* Si el trabajo dice que importo, se cuenta eso; si dice que sesiones toco,
+     se mira la lista. Preguntarle a la lista por una importacion de contexto
+     es preguntarle a un sitio que esa importacion no escribe. */
+  const i = fuenteApp.indexOf("function subirLoElegido(");
+  const cuerpo = fuenteApp.slice(i, fuenteApp.indexOf("\n}", i));
+  assert.ok(/loQueImporto\(/.test(cuerpo),
+    "el desenlace no mira lo que el trabajo importo");
+});
+
 prueba("los tres desenlaces tienen su texto, y ninguno promete", () => {
   const i = fuenteApp.indexOf("function subirLoElegido(");
   const cuerpo = fuenteApp.slice(i, fuenteApp.indexOf("\n}", i));

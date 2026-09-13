@@ -2317,6 +2317,16 @@ function subirLoElegido(archivos) {
            mirado; el 2026-09-13 un segmento del bus entro con sus 57.890 filas
            y la sesion no quedo catalogada. Quien leyo el cartel la fue a buscar
            y no estaba. */
+        /* UNA IMPORTACION DE CONTEXTO SE CUENTA POR LO QUE DEJO, y no se le
+           pregunta a una lista que no escribe. */
+        const importado = loQueImporto(t);
+        if (importado) {
+          _quitarUltimoPaso();
+          anotarPasoDeSubida("Listo: se importó el contexto de la sesión · " +
+                             importado + ".", "hecho");
+          refrescarCatalogo(2);
+          return;
+        }
         const suyas = sesionesDelTrabajo(t);
         const estabanAntes = suyas.length &&
           suyas.every(id => SESIONES.some(x => x.session_id === id));
@@ -12573,6 +12583,40 @@ function sesionesDelTrabajo(t) {
   const d = (t && t.detalle) || {};
   const una = d.session_id || d.sesion || d.run_id;
   return (d.sesiones || (una ? [una] : [])).filter(Boolean);
+}
+
+/* QUE DEJO UNA IMPORTACION DE CONTEXTO, QUE NO ES UNA SESION EN LA LISTA.
+   ---------------------------------------------------------------------
+   El 2026-09-13 se subio el paquete real de Spa. La importacion salio bien en
+   cinco segundos ---`racing_sessions` quedo con la sesion, y con ella veinte
+   pilotos, 879 vueltas, sesenta tandas y 223 muestras de clima--- y el tablero
+   contesto «el catalogo no cambio, puede faltar catalogarlo».
+
+   NO HABIA NADA QUE CATALOGAR. «Abrir sesion guardada» sale de
+   `sesiones_catalogo`, que lista sesiones con filas en `telemetry_messages`;
+   una importacion de **contexto** registra en `racing_sessions` y no trae
+   telemetria ---se pide con `descargar_telemetria: false`---. El catalogo no
+   cambio porque esta importacion no lo toca.
+
+   ES LA TERCERA VUELTA DE LA MISMA FAMILIA EN EL DIA, y esta es la peor: las
+   otras dos confundian el movimiento con el estado; esta le preguntaba **al
+   sitio equivocado**. La respuesta correcta no era «si o no» sino «que dejo», y
+   el trabajo ya lo declara. */
+const LO_QUE_SE_CUENTA_DE_UNA_IMPORTACION = [
+  ["drivers", "pilotos"], ["laps", "vueltas"], ["stints", "tandas"],
+  ["pit", "paradas"], ["race_control", "avisos de carrera"],
+  ["weather", "muestras de clima"], ["intervals", "intervalos"],
+];
+
+function loQueImporto(t) {
+  const cuentas = ((t && t.detalle && t.detalle.importacion) || {}).counts;
+  if (!cuentas) return "";
+  /* Los conjuntos vacios no se nombran: «0 paradas» en una carrera sin paradas
+     se lee como una carencia y es un dato legitimo. */
+  return LO_QUE_SE_CUENTA_DE_UNA_IMPORTACION
+    .filter(([clave]) => cuentas[clave])
+    .map(([clave, como]) => cifra(cuentas[clave], 0) + " " + como)
+    .join(" · ");
 }
 
 /* COMO QUEDO EL CATALOGO, Y «NO CAMBIO» NO ES «NO ESTA».
