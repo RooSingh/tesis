@@ -323,10 +323,40 @@ services:
       - "8080"
     ports:
       - "${BIND_ANFITRION:-127.0.0.1}:${API_PUERTO_ANFITRION:-8080}:8080"
+      # EL PUERTO DEL JUEGO TAMBIEN SE PUBLICA AQUI, Y NO ES UNA DUPLICACION.
+      #
+      # `POST /captura/iniciar` no le habla a otro servicio: lanza
+      # `scripts/capturar_f1_25.py` como **proceso hijo del servicio web**
+      # (`backend/ingesta.py:359`, `subprocess.Popen`). Un hijo vive en el
+      # espacio de red de su padre, de modo que el zocalo UDP que abre es el de
+      # **este** contenedor. Sin esta publicacion, el boton de capturar del
+      # tablero arranca un proceso que escucha un puerto al que el juego nunca
+      # llega, y el trabajo queda declarado «en curso» sin recibir un paquete.
+      #
+      # EL SERVICIO `capturador` DE ABAJO NO SE VUELVE REDUNDANTE: es la
+      # manera de capturar sin tablero, desde la linea de ordenes. Lo que si
+      # pasa es que **no pueden estar los dos arriba a la vez**, porque
+      # pelearian por el 20777. Por eso viven en perfiles distintos y ninguno
+      # los junta.
+      - "${BIND_CAPTURA:-0.0.0.0}:20777:20777/udp"
     volumes:
-      # De solo lectura: el servicio web lee capturas para declarar procedencia
-      # y no tiene por que poder cambiarlas.
-      - ../datasets:/app/datasets:ro
+      # DE ESCRITURA, Y ANTES DECIA LO CONTRARIO.
+      #
+      # Estaba montado `:ro` con el argumento de que «el servicio web lee
+      # capturas para declarar procedencia y no tiene por que poder
+      # cambiarlas». Eso era cierto cuando se escribio y dejo de serlo el
+      # 2026-09-12: hoy el servicio web escribe aqui en tres caminos, y con
+      # `:ro` los tres fallan con `Read-only file system`.
+      #
+      #   1. La subida de archivos ---`backend/subida.py`--- escribe el area de
+      #      paso `datasets/.subiendo`, deja lo verificado en
+      #      `datasets/{can,f1_25}/capturas` o `datasets/OpenF1/subidos`, y
+      #      aparta lo desmentido en `datasets/.subiendo/desmentido`.
+      #   2. El capturador lanzado desde el tablero graba el `.f1raw` y su
+      #      metadato en `datasets/f1_25/capturas`.
+      #   3. La etapa `extraer` de CAN escribe los `.canraw` en
+      #      `datasets/can/capturas`.
+      - ../datasets:/app/datasets
       - ../logs:/app/logs
 
   consumidor:
