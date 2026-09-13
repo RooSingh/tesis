@@ -142,8 +142,8 @@ MVP_SIGNALS = [
         "period_ms": 20,
         "source_type": "can_simulated",
         "required": True,
-        "can_id": 705,
-        "notes": "Posición continua de acelerador. Cuando se escribió este catálogo no tenía un ID CAN validado en la muestra RAV4; el análisis posterior lo situó en el ID 705 con 45.465 pares temporales y una correlación de Pearson de 0,821 contra el indicador de accionamiento (tabla A.1). Se sostiene como intensidad relativa y no como magnitud física: falta calibrarlo contra una referencia externa.",
+        "can_id": 865,
+        "notes": "Posición continua de acelerador. Cuando se escribió este catálogo no tenía un ID CAN validado en la muestra RAV4; el análisis posterior evaluó cuatro candidatos y adoptó el ID 865, el único que responde en las dos variantes de la plataforma: 55.904 pares temporales, varía en 26 de 30 segmentos y correlación de Pearson de 0,829 contra el indicador de accionamiento (tabla A.1). Se sostiene como intensidad relativa y no como magnitud física: falta calibrarlo contra una referencia externa.",
     },
     {
         "signal_name": "gas_pressed",

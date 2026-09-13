@@ -245,19 +245,21 @@ class LoQueDeclaraElCatalogo(unittest.TestCase):
                             "%s declara %.0f Hz y A.1 dice %d-%d Hz" % (n, hz, lo, hi))
 
     def test_el_acelerador_declara_el_identificador_que_el_analisis_encontro(self) -> None:
-        """El generador decia «no posee un ID CAN validado». A.1 dice ID 705.
+        """El generador decia «no posee un ID CAN validado». A.1 dice ID 865.
 
         Cuando se escribio el generador era cierto. Despues el analisis del
-        capitulo 7 encontro el 705 con 45.465 pares temporales y correlacion de
-        Pearson 0,821, y nadie volvio a pasar por aqui. Un catalogo que dice
+        capitulo 7 evaluo cuatro candidatos y adopto el 865, el unico que
+        responde en las dos variantes de la plataforma: 55.904 pares
+        temporales, varia en 26 de 30 segmentos y correlacion de Pearson 0,829.
+        El 705, que A.1 declaraba antes, varia en 9 de 30. Un catalogo que dice
         «no hay evidencia» sobre algo que ya tiene evidencia no es prudente:
         esta desactualizado, que es distinto.
         """
 
         self.assertEqual(
-            self._por_nombre("gas_pedal")["can_id"], 705,
-            "el acelerador sigue sin declarar el ID 705 que la tabla A.1 "
-            "sostiene con 45.465 pares temporales")
+            self._por_nombre("gas_pedal")["can_id"], 865,
+            "el acelerador no declara el ID 865 que la tabla A.1 "
+            "sostiene con 55.904 pares temporales")
 
 
 if __name__ == "__main__":

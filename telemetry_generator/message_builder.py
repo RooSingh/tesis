@@ -53,9 +53,9 @@ CAMPOS_DEL_ESTADO = {
     "brake_pressed": {"state_field": "brake_pressed", "can_id": 550},
     # El adaptador del bus real no publica el acelerador continuo, de modo que
     # no esta en su mapa y conserva su nombre. La tabla A.1 lo sostiene con el
-    # ID 705 y la seccion 7.3 lo pone entre las «muy recomendadas»: traducirlo
+    # ID 865 y la seccion 7.3 lo pone entre las «muy recomendadas»: traducirlo
     # a la fuerza seria inventar un canonico que nadie declaro.
-    "gas_pedal": {"state_field": "gas_pedal", "unit": "%", "can_id": 705},
+    "gas_pedal": {"state_field": "gas_pedal", "unit": "%", "can_id": 865},
     "gas_pressed": {"state_field": "gas_pressed", "can_id": 466},
 }
 

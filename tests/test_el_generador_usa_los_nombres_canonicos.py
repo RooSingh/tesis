@@ -144,7 +144,7 @@ class LosNombresSonLosDelContrato(unittest.TestCase):
     def test_lo_que_el_bus_no_publica_conserva_su_nombre(self) -> None:
         """`gas_pedal` no esta en el mapa porque el adaptador no lo emite.
 
-        La tabla A.1 lo sostiene con el ID 705 y la seccion 7.3 lo pone entre
+        La tabla A.1 lo sostiene con el ID 865 y la seccion 7.3 lo pone entre
         las «muy recomendadas», de modo que el nombre correcto es el que ya
         tenia. Traducirlo a la fuerza seria inventar un canonico que nadie
         declaro.
