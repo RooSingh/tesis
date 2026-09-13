@@ -312,6 +312,23 @@ def _final_del_registro(ruta: str | None,
 
     if not ruta:
         return []
+    # SE ATRAPA TODO, Y ES UNO DE LOS POCOS SITIOS DONDE ESO ES LO CORRECTO.
+    #
+    # La primera version atrapaba `(OSError, ValueError)`, que es lo que se me
+    # ocurrio que podia fallar al leer un archivo. Esa lista es una prediccion,
+    # y el docstring de arriba promete algo mas fuerte: que no levanta nunca.
+    # Cuando la prediccion y la promesa no coinciden, gana la excepcion que no
+    # estaba en la lista.
+    #
+    # Y LA CONSECUENCIA NO ES PERDER EL REGISTRO. A esta funcion la llama el
+    # hilo que vigila al proceso hijo, **antes** de escribir el estado del
+    # trabajo. Una excepcion que escape mata ese hilo y deja el trabajo «en
+    # curso» para siempre, sin proceso detras y sin forma de cerrarlo: peor que
+    # el problema que esta funcion vino a resolver.
+    #
+    # El alcance es minimo ---leer un archivo de texto--- y no hay ningun
+    # efecto que revertir, de modo que no hay nada que un filtro mas fino
+    # pudiera proteger.
     try:
         archivo = Path(ruta)
         peso = archivo.stat().st_size
@@ -325,12 +342,12 @@ def _final_del_registro(ruta: str | None,
                 crudo = crudo[corte + 1:] if corte != -1 else crudo
             else:
                 crudo = f.read()
-    except (OSError, ValueError):
+        texto = crudo.decode("utf-8", errors="replace")
+        utiles = [renglon.rstrip() for renglon in texto.splitlines()
+                  if renglon.strip()]
+        return utiles[-lineas:]
+    except Exception:  # noqa: BLE001 - ver el comentario de arriba
         return []
-
-    texto = crudo.decode("utf-8", errors="replace")
-    utiles = [renglon.rstrip() for renglon in texto.splitlines() if renglon.strip()]
-    return utiles[-lineas:]
 
 
 def _por_que_fallo(codigo: int, final: list[str]) -> str:
@@ -528,16 +545,31 @@ class RegistroDeTrabajos:
                 pass
             trabajo.marcar_fin()
             trabajo.detalle = {**trabajo.detalle, "codigo_salida": codigo}
-            # SE LEE UNA VEZ, AL TERMINAR, y no en cada serializacion: el
-            # registro de una captura de dos horas se consulta muchas veces y
-            # se escribe una sola. Se lee despues de cerrar el descriptor para
-            # que lo ultimo que el hijo escribio ya este en disco.
-            trabajo.final_del_registro = _final_del_registro(trabajo.bitacora)
-            if trabajo.estado == "en_curso":
-                trabajo.estado = "terminado" if codigo == 0 else "fallido"
-                if codigo != 0:
-                    trabajo.error = _por_que_fallo(codigo, trabajo.final_del_registro)
-            self._poner_al_dia_el_catalogo(trabajo)
+            # CERRAR EL TRABAJO ES LO UNICO QUE ESTE HILO NO PUEDE DEJAR DE
+            # HACER, y por eso va en un `finally`.
+            #
+            # Enriquecer el desenlace con el registro es deseable; cerrarlo es
+            # obligatorio. Si lo deseable se cuelga de lo obligatorio, un fallo
+            # al leer un archivo de texto deja el trabajo «en curso» para
+            # siempre, sin proceso detras y sin forma de cerrarlo desde ningun
+            # lado. `_final_del_registro()` ya promete no levantar; esto es la
+            # segunda linea, para que la promesa de otra funcion no sea lo
+            # unico que sostiene la unica salida de este hilo.
+            try:
+                # SE LEE UNA VEZ, AL TERMINAR, y no en cada serializacion: el
+                # registro de una captura de dos horas se consulta muchas veces
+                # y se escribe una sola. Se lee despues de cerrar el descriptor
+                # para que lo ultimo que el hijo escribio ya este en disco.
+                trabajo.final_del_registro = _final_del_registro(trabajo.bitacora)
+            except Exception:  # noqa: BLE001 - ver el comentario de arriba
+                trabajo.final_del_registro = []
+            finally:
+                if trabajo.estado == "en_curso":
+                    trabajo.estado = "terminado" if codigo == 0 else "fallido"
+                    if codigo != 0:
+                        trabajo.error = _por_que_fallo(
+                            codigo, trabajo.final_del_registro)
+                self._poner_al_dia_el_catalogo(trabajo)
 
         threading.Thread(target=_vigilar, name=f"vigia-{tipo}", daemon=True).start()
         return trabajo

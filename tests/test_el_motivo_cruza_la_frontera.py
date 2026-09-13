@@ -178,6 +178,40 @@ class ElFinalDelRegistroViaja(unittest.TestCase):
         self.assertEqual(cuerpo["estado"], "terminado")
         self.assertIsNone(cuerpo["error"])
 
+    def test_leer_el_registro_no_puede_matar_al_vigia(self) -> None:
+        """El docstring promete «no levanta nunca». La promesa se comprueba.
+
+        Lo escribi atrapando `(OSError, ValueError)`, que es lo que se me
+        ocurrio que podia fallar al leer un archivo. Es la misma forma del
+        defecto que tesis-48 encontro en el `app.js` ---un `catch` que solo
+        mira `TypeError` y se come todo lo demas---: la lista de lo previsto
+        nunca es la lista de lo que pasa.
+
+        Y aqui la consecuencia es concreta y fea: `_final_del_registro()` la
+        llama el hilo que vigila al proceso, **antes** de escribir el estado.
+        Si levanta, el hilo muere y el trabajo queda «en curso» para siempre,
+        sin proceso detras y sin forma de cerrarlo. Es peor que no leer el
+        registro, que era el problema que esta funcion vino a resolver.
+        """
+
+        class RotaDeOtraForma(Exception):
+            pass
+
+        with patch.object(ingesta.Path, "stat", side_effect=RotaDeOtraForma("boom")):
+            devuelto = ingesta._final_del_registro("/lo/que/sea.log")
+        self.assertEqual(devuelto, [],
+                         "la lectura del registro dejo escapar una excepcion: "
+                         "el vigia muere y el trabajo no se cierra nunca")
+
+    def test_un_trabajo_se_cierra_aunque_su_registro_sea_ilegible(self) -> None:
+        """La misma promesa, pero mirada desde donde importa."""
+
+        with patch.object(ingesta, "_final_del_registro",
+                          side_effect=RuntimeError("ilegible")):
+            cuerpo = self._correr(FINAL_DE_VERDAD)
+        self.assertIn(cuerpo["estado"], {"fallido", "terminado"},
+                      "el trabajo quedo sin cerrar porque fallo leer su registro")
+
     def test_la_ruta_sigue_estando_para_quien_pueda_abrirla(self) -> None:
         """Esto agrega; no saca. Quien tenga la maquina sigue teniendo el archivo."""
 
