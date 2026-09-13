@@ -153,10 +153,20 @@ class ElRitmoEsElDeclarado(unittest.TestCase):
         """Y esa frecuencia es la de la tabla A.1, no una elegida aqui."""
 
         import json
+        from adapters import can_rav4
         self._correr(ciclos=1000, paso_ms=10)          # diez segundos
+
+        # Se cuenta por el nombre que el generador conoce, no por el que
+        # publica: desde que toma el mapa del adaptador, `wheel_speed_fl` sale
+        # como `wheel_speed_front_left`. Las bandas de A.1 estan escritas con
+        # los nombres del analisis del bus, que son los primeros, y esta
+        # prueba tiene que poder leerse contra la tabla del informe.
+        crudo_de = {canonico: crudo
+                    for crudo, (canonico, _u) in can_rav4.SENALES.items()}
         cuenta: dict = {}
         for _tema, carga, _qos in self.cliente.publicados:
-            n = json.loads(carga)["signal_name"]
+            publicado = json.loads(carga)["signal_name"]
+            n = crudo_de.get(publicado, publicado)
             cuenta[n] = cuenta.get(n, 0) + 1
 
         for s in gen_config.MVP_SIGNALS:
