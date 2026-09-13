@@ -331,6 +331,15 @@ def telemetry_by_session(session_id: str, limit: int = 100) -> list[dict]:
     return obtener_mensajes_por_sesion(session_id, limit)
 
 
+#: Las fuentes cuyo bus **no** transmite coordenadas, y para las que por lo
+#: tanto la forma del recorrido hay que derivarla. Son las dos de bus
+#: vehicular: la grabacion real y la maniobra del generador, que simula ese
+#: mismo bus. La seccion 13.5 del informe lo explica para la primera y vale
+#: igual para la segunda, porque el generador no inventa una posicion que el
+#: bus que imita tampoco tendria.
+FUENTES_SIN_POSICION = frozenset({can_rav4.SOURCE_TYPE, "can_simulated"})
+
+
 @app.get("/can/recorrido/{session_id}")
 def can_recorrido(session_id: str, limite: int = 80000) -> dict:
     """Recorrido reconstruido de un segmento de bus vehicular.
@@ -346,6 +355,28 @@ def can_recorrido(session_id: str, limite: int = 80000) -> dict:
     que la senal sobre la que se integra esta bien decodificada.
     """
 
+    # LA FUENTE SALE DE LA SESION Y NO DE UNA CONSTANTE.
+    #
+    # Estaba escrito `can_rav4.SOURCE_TYPE`, que es `can_real_replay`. De modo
+    # que una sesion del generador ---`can_simulated`, que emite exactamente
+    # las seis señales que esto necesita--- contestaba «no tiene velocidad y
+    # guinada juntas» teniendo las dos. Medido el 2026-09-13: el segmento real
+    # devolvia 2.999 puntos y la maniobra generada, 404.
+    fuente = api_sesion._fuente_de(session_id)
+
+    # LAS OTRAS DOS NO ENTRAN, y no es una omision. F1 25 y OpenF1 **publican
+    # posicion medida**; integrar la suya seria reemplazar una medicion por una
+    # derivacion, que es al reves de lo que corresponde. Se las rechaza
+    # diciendo por que y a donde ir, en vez de devolverles un recorrido peor
+    # que el que ya tienen.
+    if fuente not in FUENTES_SIN_POSICION:
+        raise HTTPException(
+            status_code=422,
+            detail=(f"La fuente {fuente} publica posicion medida: su recorrido "
+                    f"sale de /sesiones/{session_id}/trazado. Esta ruta "
+                    f"reconstruye por integracion, que es una derivacion, y "
+                    f"usarla aqui seria cambiar una medicion por un calculo."))
+
     # El tope cuenta filas, no muestras: seis senales de un segmento de un minuto
     # suman unas veintiseis mil. Un tope de veinte mil truncaba el recorrido a un
     # tercio sin avisar, que es de las peores formas de equivocarse porque el
@@ -353,7 +384,7 @@ def can_recorrido(session_id: str, limite: int = 80000) -> dict:
     series = db.obtener_series_de_senales(
         session_id,
         ("speed", "yaw_rate") + recorrido.RUEDAS,
-        can_rav4.SOURCE_TYPE,
+        fuente,
         limite)
     if not series.get("speed") or not series.get("yaw_rate"):
         raise HTTPException(
@@ -375,7 +406,10 @@ def can_recorrido(session_id: str, limite: int = 80000) -> dict:
     # ninguna otra serie. Se declara el origen, con su naturaleza: quien quiera
     # atar el recorrido a una senal suma, y quien quiera saber de donde salio
     # ese instante lo tiene escrito al lado.
-    origen = catalogo_sesiones.rango_de(session_id, can_rav4.SOURCE_TYPE)
+    # La fuente, tambien aqui. Estaba escrita a mano por segunda vez dentro de
+    # la misma funcion, de modo que una maniobra generada que superara la
+    # consulta de arriba habria quedado igual sin origen temporal.
+    origen = catalogo_sesiones.rango_de(session_id, fuente)
     return {
         "session_id": session_id,
         # CADA PUNTO LLEVA SU INSTANTE.
