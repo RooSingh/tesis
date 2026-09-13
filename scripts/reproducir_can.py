@@ -242,12 +242,37 @@ def emitir_por_broker(ruta: Path, inicio_utc: str, limite_s: float,
     return publicados
 
 
-def conciliar(esperado: int, espera_maxima_s: float = 180.0) -> dict:
-    """Compara lo que la base tiene contra lo que la operacion debia dejar.
+def conciliar(esperado: int, corridas: list[str],
+              espera_maxima_s: float = 180.0) -> dict:
+    """Compara lo que la base tiene contra lo que **estos segmentos** deben dejar.
 
     Corre siempre. Publicar no es guardar, y entre la confirmacion de una
-    escritura y el estado del destino cabe una perdida entera.
+    escritura y el estado del destino cabe una perdida entera: asi se delato una
+    vez la perdida del 63 % de una carga.
+
+    LA PREGUNTA CORRECTA NO ES CUANTO CRECIO LA BASE. Lo era, y el 2026-09-13
+    quedo demostrado que no sirve: alguien volvio a subir un segmento que ya
+    estaba, el indice unico de identidad de reproduccion suprimio las 57.890
+    repeticiones ---que es exactamente lo que tiene que hacer--- y esta funcion
+    informo «NO CONCILIA: faltan 57.890 filas» sobre una base perfecta. La cuenta
+    era «lo que habia antes mas lo que valide», que supone que cada mensaje
+    validado es una fila nueva; eso es cierto la primera vez y solo la primera.
+
+    Se pregunta por las corridas de esta carga ---`replay_run_id`, que es la
+    identidad del segmento mas la del adaptador--- y no por toda la fuente, que
+    mezclaba esta carga con todo lo cargado antes. La respuesta no depende de
+    cuantas veces se cargo lo mismo.
+
+    LO QUE SOBRA SE DECLARA APARTE. Mas filas de las que estos segmentos deben
+    dejar no es «faltan menos de cero»: significa que la misma medicion entro con
+    dos numeraciones distintas, y es un problema real que una resta esconderia.
     """
+
+    if not corridas:
+        raise ValueError(
+            "No hay corridas con que conciliar. Sin saber que se cargo no hay "
+            "contra que comparar, y devolver «conciliado» seria afirmar algo "
+            "que no se miro.")
 
     anterior = -1
     estable_desde = None
@@ -255,8 +280,9 @@ def conciliar(esperado: int, espera_maxima_s: float = 180.0) -> dict:
     while True:
         with db.obtener_conexion() as conexion, conexion.cursor() as cursor:
             cursor.execute(
-                "select count(*) from telemetry_messages where source_type = %s",
-                (can_rav4.SOURCE_TYPE,))
+                "select count(*) from telemetry_messages "
+                "where replay_run_id = any(%s)",
+                (list(corridas),))
             presente = cursor.fetchone()[0]
         if presente == anterior:
             if estable_desde is None:
@@ -270,7 +296,8 @@ def conciliar(esperado: int, espera_maxima_s: float = 180.0) -> dict:
             break
         time.sleep(3)
     return {"esperado": esperado, "presente": presente,
-            "faltan": esperado - presente}
+            "faltan": max(0, esperado - presente),
+            "sobran": max(0, presente - esperado)}
 
 
 def main() -> None:
@@ -350,17 +377,18 @@ def main() -> None:
               f"que esta corrida repone\n")
 
     print(f"Carga de {len(rutas)} segmentos por el camino de validacion\n")
-    with db.obtener_conexion() as conexion, conexion.cursor() as cursor:
-        cursor.execute("select count(*) from telemetry_messages where source_type = %s",
-                       (can_rav4.SOURCE_TYPE,))
-        antes = cursor.fetchone()[0]
+    # Aqui se contaba la fuente entera para restarla despues. Ya no hace falta:
+    # la conciliacion pregunta por las corridas de esta carga, no por cuanto
+    # crecio el total.
 
     totales: Counter = Counter()
+    corridas: list[str] = []
     seq = 0
     arranque = time.perf_counter()
     for ruta in rutas:
         meta = leer_metadatos(ruta)
         run_id = identidad_de_corrida(meta)
+        corridas.append(run_id)
         resultado = cargar(ruta, inicio_del_segmento(meta, args.inicio),
                            run_id, seq)
         seq = resultado["seq_final"]
@@ -376,12 +404,23 @@ def main() -> None:
           f"({totales['insertados'] / transcurrido:,.0f} por segundo)")
 
     print("\nConciliando contra la base...")
-    r = conciliar(antes + totales["validados"])
+    r = conciliar(totales["validados"], corridas)
     print(f"  esperado : {r['esperado']:,}")
     print(f"  presente : {r['presente']:,}")
-    if r["faltan"] == 0:
-        print("\nCONCILIADO: la base tiene exactamente lo que la carga debia dejar.")
+    if not r["faltan"] and not r["sobran"]:
+        ya_estaba = totales["validados"] - totales["insertados"]
+        print("\nCONCILIADO: la base tiene exactamente lo que estos segmentos "
+              "deben dejar.")
+        if ya_estaba:
+            # No es una advertencia: es la respuesta a «por que no crecio».
+            print(f"  {ya_estaba:,} de esas filas ya estaban: la carga se repitio "
+                  f"y la identidad de reproduccion suprimio las repeticiones.")
         return
+    if r["sobran"]:
+        print(f"\nNO CONCILIA: sobran {r['sobran']:,} filas. La misma medicion "
+              "entro con dos numeraciones distintas: revisar si algun segmento "
+              "se cargo solo despues de haberse cargado junto a otro.")
+        raise SystemExit(1)
     print(f"\nNO CONCILIA: faltan {r['faltan']:,} filas.")
     raise SystemExit(1)
 
