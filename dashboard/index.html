@@ -109,6 +109,11 @@
          etapa se esta mirando y sirve para cambiarla sin recargar. -->
     <button class="boton secundario" id="btn-corrida" type="button" hidden></button>
     <button class="boton secundario" id="btn-comparar" type="button">Comparar pilotos</button>
+    <!-- SUBIR NO DEPENDE DE LA FUENTE ELEGIDA. El servidor reconoce el archivo
+         por su contenido, de modo que atar la subida al selector obligaria a
+         elegir bien antes de saber que es. Ademas es el unico camino para una
+         captura del simulador, cuyo boton dice «empezar a escuchar». -->
+    <button class="boton secundario" id="btn-subir" type="button">Subir archivo</button>
     <button class="boton peligro" id="btn-limpiar" type="button">Limpiar sesión</button>
     <!-- ORDENAR EL TABLERO. Entra en un modo aparte en vez de dejar arrastrar
          siempre: un panel que se mueve cuando uno queria hacer clic en el es
@@ -914,6 +919,42 @@
   <div class="panel-comparacion">
     <div class="tabla-sesiones" id="tabla-corridas"></div>
     <p class="nota" id="nota-corridas"></p>
+  </div>
+</div>
+
+<!-- ================= SUBIR UN ARCHIVO =================
+     Los botones de importar no subian nada: pedian un identificador y el
+     servidor procesaba lo que ya estaba en su disco. De modo que incorporar una
+     sesion exigia copiarla a mano a la maquina. Esta es la mitad que faltaba, y
+     la del navegador.
+
+     QUE SE ACEPTA LO DICE EL SERVIDOR, no esta lista. Se pide a
+     `/importar/formatos` y se arma con eso el filtro del dialogo: el motivo de
+     un rechazo tiene que llegar **antes** y no despues de subir 273 MB, que es
+     lo que mide el paquete de OpenF1 mas grande que hay. -->
+<div class="velo-comparacion" id="velo-subida" role="dialog" aria-modal="true"
+     aria-label="Subir un archivo" data-abierto="no">
+  <div class="cab-comparacion">
+    <h3>Subir un archivo<small id="sub-subida"></small></h3>
+    <button class="boton secundario" id="btn-cerrar-subida" type="button">Cerrar</button>
+  </div>
+  <div class="panel-comparacion">
+    <div class="formatos-subida" id="formatos-subida"></div>
+    <div class="elegir-archivo">
+      <label class="boton" for="archivo-subida">Elegir archivo…</label>
+      <input type="file" id="archivo-subida" multiple hidden>
+      <span class="nota" id="elegido-subida">Ningún archivo elegido todavía.</span>
+    </div>
+    <!-- LA BARRA HACE FALTA DE VERDAD. Una que no avanza y una que no existe se
+         ven igual, y el paquete mas grande son cientos de megabytes. La
+         progresion la da `xhr.upload.onprogress`; `fetch` no la tiene, y esa es
+         la unica razon por la que esto no usa `fetch`. -->
+    <div class="progreso-subida" id="progreso-subida" hidden>
+      <div class="barra-subida"><i id="barra-subida"></i></div>
+      <p class="nota" id="detalle-subida"></p>
+    </div>
+    <div class="pasos-subida" id="pasos-subida"></div>
+    <p class="nota" id="nota-subida"></p>
   </div>
 </div>
 

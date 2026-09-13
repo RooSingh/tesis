@@ -24,9 +24,33 @@ class DashboardFrontendTests(unittest.TestCase):
 
     def test_los_contratos_de_escritura_coinciden_con_fastapi(self) -> None:
         codigo = APP.read_text(encoding="utf-8")
-        self.assertIn('cuerpo: { session_key: sessionKey, descargar_telemetria: false }', codigo)
-        self.assertIn('cuerpo: { segmentos: segmentos, plataforma: "TOYOTA_RAV4_TSS2", etapa: "cargar" }', codigo)
+        self.assertIn(
+            'cuerpo: { segmentos: [segmento], plataforma: plataforma, etapa: "cargar" }',
+            codigo)
         self.assertIn('"?confirmar=true"', codigo)
+
+    def test_importar_ya_no_compone_un_pedido_de_openf1_a_mano(self) -> None:
+        """IMPORTAR DEJO DE SER «PROCESAR LO QUE YA TRAJISTE».
+
+        El boton pedia una `session_key` por `window.prompt` y el servidor
+        buscaba el paquete **ya presente en su disco**: quien no lo hubiera
+        copiado a mano recibia un 404 sobre una sesion que nunca existio. Ahora
+        el archivo entra por la subida, que es el unico sitio donde entra, y el
+        servidor decide que es y donde se guarda.
+
+        Se comprueba que la composicion vieja no sobreviva al lado de la nueva:
+        dos caminos para importar significan que uno de los dos deja de
+        probarse.
+        """
+        codigo = APP.read_text(encoding="utf-8")
+        # La llamada y no el nombre: los comentarios que explican por que ya no
+        # esta lo nombran, y un guardian que se rompe con su propia explicacion
+        # obliga a borrar la explicacion.
+        self.assertNotIn("window.prompt(", codigo,
+                         "importar sigue pidiendo un identificador escrito")
+        self.assertNotIn("descargar_telemetria", codigo)
+        self.assertIn('"/importar/archivo?nombre=" +', codigo)
+        self.assertIn("xhr.upload.onprogress", codigo)
         self.assertIn("d.capturas_cerradas", codigo)
         self.assertIn("d.borradas", codigo)
         self.assertNotIn("d.sesiones_cerradas", codigo)

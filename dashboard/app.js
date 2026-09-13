@@ -1558,24 +1558,17 @@ function accionDeLaFuente() {
           hecho: d => "Capturador escuchando" + (d.puerto ? " en el puerto " + d.puerto : "") +
                       (d.trabajo ? " · trabajo " + d.trabajo : "") };
   }
-  if (fuente === "openf1") {
-    const sugerida = estado.abierta && FUENTE_CORTA[estado.abierta.fuente] === "openf1"
-      ? String(estado.abierta.session_id).split(":").pop() : "";
-    const escrita = window.prompt("Session key de OpenF1", sugerida);
-    if (escrita === null) return null;
-    const sessionKey = Number(escrita);
-    if (!Number.isInteger(sessionKey)) throw new Error("La session key de OpenF1 debe ser un número entero.");
-    return { ruta: "/openf1/importar", metodo: "POST",
-             cuerpo: { session_key: sessionKey, descargar_telemetria: false },
-             hecho: d => "Importación en curso" + (d.trabajo ? " · trabajo " + d.trabajo : "") };
-  }
-  const escritos = window.prompt("Segmentos CAN separados por coma", "");
-  if (escritos === null) return null;
-  const segmentos = escritos.split(",").map(s => s.trim()).filter(Boolean);
-  if (!segmentos.length) throw new Error("Hay que indicar al menos un segmento CAN.");
-  return { ruta: "/can/importar", metodo: "POST",
-           cuerpo: { segmentos: segmentos, plataforma: "TOYOTA_RAV4_TSS2", etapa: "cargar" },
-           hecho: d => "Importación en curso" + (d.trabajo ? " · trabajo " + d.trabajo : "") };
+  /* IMPORTAR ES SUBIR UN ARCHIVO, Y ANTES NO LO ERA.
+     Estas dos ramas pedian un identificador por `window.prompt` ---una
+     `session_key`, unos nombres de segmento--- y el servidor procesaba lo que
+     **ya estaba en su disco**. Quien no hubiera copiado el archivo a la maquina
+     por su cuenta recibia un 404 que hablaba de una sesion que nunca existio.
+
+     Ahora abren el dialogo de subida, que es el unico sitio donde el archivo
+     entra. No devuelven accion: lo que sigue lo maneja el dialogo, que tiene que
+     seguir un trabajo y refrescar el catalogo, y eso no cabe en un `hecho`. */
+  abrirSubida();
+  return null;
 }
 
 document.getElementById("btn-accion").addEventListener("click", () => {
@@ -1667,6 +1660,459 @@ document.getElementById("btn-limpiar").addEventListener("click", () => {
   });
 });
 document.getElementById("btn-comparar").addEventListener("click", abrirComparacion);
+
+/* ============================================================
+   SUBIR UN ARCHIVO
+   ------------------------------------------------------------
+   LO QUE HABIA. Los botones de importar **no subian nada**: pedian una
+   `session_key` o unos nombres de segmento por `window.prompt` y el servidor
+   procesaba lo que **ya estaba en su disco**. De modo que incorporar una sesion
+   exigia copiarla a mano a la maquina ---`scp`, o moviendo el archivo--- y
+   recien entonces el boton servia para disparar el procesamiento. El boton
+   decia «importar» y hacia «procesar lo que ya trajiste».
+
+   Con la aplicacion en contenedor eso empeora: el directorio sigue existiendo
+   pero ya no es evidente cual es, y el dia que el volumen se monte distinto el
+   flujo deja de funcionar sin que nada en la pantalla lo explique.
+
+   QUE SE ACEPTA LO DICE EL SERVIDOR. `/importar/formatos` devuelve las clases
+   con su extension y su explicacion, y con eso se arma el filtro del dialogo.
+   Escribir la lista aca seria tener el mismo dato en dos sitios, y el dia que
+   el servidor acepte uno mas el tablero no lo ofreceria.
+
+   Y SE RECONOCE POR EL CONTENIDO, NO POR EL NOMBRE ---asi lo declara el propio
+   contrato---. El filtro del dialogo es una **cortesia para avisar antes**, no
+   una validacion: quien renombre un archivo va a pasar el filtro y lo va a
+   rechazar el servidor, que es el que mira adentro.
+   ============================================================ */
+
+//: Lo que contesto `/importar/formatos`, o `null` si todavia no se pregunto.
+let FORMATOS_DE_SUBIDA = null;
+
+/* El registro de openpilot **no se acepta, y hay que decir por que**.
+
+   Quien tenga un segmento original de commaCarSegments va a intentar subirlo:
+   es el archivo que tiene. El servidor lo rechaza bien ---no lleva el numero
+   magico--- pero con un motivo que no dice que hacer. Leer un `rlog.zst` exige
+   1,8 GB de openpilot mas `opendbc`, y por eso la conversion no vive en el
+   servidor sino en un guion que se corre antes. */
+const EXTENSIONES_QUE_HAY_QUE_CONVERTIR = {
+  ".zst": "Es un registro de openpilot sin convertir. Leerlo exige openpilot y " +
+          "`opendbc` —1,8 GB— y por eso no se hace en el servidor: se convierte " +
+          "antes, con `scripts/extraer_can.py`, y lo que se sube es el `.canraw` " +
+          "que sale de ahí, junto con su `.meta.json`.",
+  ".bz2": "Es un registro de openpilot sin convertir. Se convierte antes con " +
+          "`scripts/extraer_can.py` y se sube el `.canraw` que sale de ahí.",
+};
+
+/* Que extension tiene este nombre, en minusculas y con el punto. */
+function extensionDe(nombre) {
+  const limpio = String(nombre || "");
+  const punto = limpio.lastIndexOf(".");
+  return punto <= 0 ? "" : limpio.slice(punto).toLowerCase();
+}
+
+/* El sufijo de los metadatos, el mismo que declara el servidor. */
+const SUFIJO_ACOMPANANTE = ".meta.json";
+
+function esAcompanante(nombre) {
+  return String(nombre || "").toLowerCase().endsWith(SUFIJO_ACOMPANANTE);
+}
+
+/* EN QUE ORDEN SE SUBEN VARIOS ARCHIVOS.
+   Los metadatos se aceptan **solo si la captura que describen ya esta**: un
+   `.meta.json` suelto no es nada y el servidor lo rechaza. De modo que el orden
+   no es una preferencia: subir el par al reves falla siempre. */
+function ordenDeSubida(archivos) {
+  const lista = Array.prototype.slice.call(archivos || []);
+  return lista.sort((a, b) => (esAcompanante(a.name) ? 1 : 0) -
+                              (esAcompanante(b.name) ? 1 : 0));
+}
+
+/* Pide los formatos una vez y los deja dibujados. */
+function pedirFormatosDeSubida() {
+  if (FORMATOS_DE_SUBIDA) return Promise.resolve(FORMATOS_DE_SUBIDA);
+  return pedir("/importar/formatos").then(d => {
+    FORMATOS_DE_SUBIDA = d || { formatos: [] };
+    return FORMATOS_DE_SUBIDA;
+  });
+}
+
+/* Las extensiones que el dialogo ofrece: las que declara el servidor mas la de
+   los metadatos, que no es un formato propio pero se sube igual. */
+function extensionesQueSeAceptan(formatos) {
+  const lista = ((formatos || {}).formatos || []).map(f => f.extension)
+    .filter(Boolean);
+  if (lista.indexOf(SUFIJO_ACOMPANANTE) === -1) lista.push(SUFIJO_ACOMPANANTE);
+  return lista;
+}
+
+function pintarFormatosDeSubida(formatos) {
+  const caja = document.getElementById("formatos-subida");
+  if (!caja) return;
+  const filas = ((formatos || {}).formatos || []).map(f => (
+    '<div class="formato"><b>' + textoSeguro(f.extension || "") + "</b>" +
+    '<span class="eyebrow">' + textoSeguro(ETIQUETA_FUENTE[FUENTE_CORTA[f.fuente]] || f.fuente) +
+    "</span><p>" + textoSeguro(f.que_es || "") + "</p>" +
+    (f.acompana
+      ? '<p class="nota">Se sube junto con su <b>' + textoSeguro(f.acompana) +
+        "</b>: sin él la subida se acepta pero no se puede verificar.</p>"
+      : "") +
+    "</div>"
+  )).join("");
+  caja.innerHTML = filas || '<p class="nota">El servidor no declara formatos.</p>';
+  const nota = document.getElementById("nota-subida");
+  if (nota && formatos && formatos.criterio) {
+    /* El criterio lo redacta el servidor y empieza en verbo: anteponerle un
+       sujeto lo convertia en «El servidor se reconoce por el contenido». */
+    const c = formatos.criterio;
+    nota.textContent = c.charAt(0).toUpperCase() + c.slice(1) + ".";
+  }
+}
+
+function abrirSubida() {
+  const velo = document.getElementById("velo-subida");
+  if (!velo) return;
+  velo.dataset.abierto = "si";
+  const sub = document.getElementById("sub-subida");
+  if (sub) sub.textContent = " · el servidor decide qué es y dónde se guarda";
+  _reiniciarPasosDeSubida();
+  pedirFormatosDeSubida()
+    .then(f => {
+      pintarFormatosDeSubida(f);
+      const entrada = document.getElementById("archivo-subida");
+      if (entrada) entrada.accept = extensionesQueSeAceptan(f).join(",");
+    })
+    .catch(e => {
+      /* Sin la lista no se sabe que se acepta, y ofrecer «cualquier cosa» haria
+         que el motivo del rechazo llegara despues de subir. Se dice y no se
+         abre el dialogo de archivos con un filtro inventado. */
+      const nota = document.getElementById("nota-subida");
+      if (nota) {
+        nota.textContent = "No se pudo preguntar qué formatos acepta el servidor: " +
+                           e.message + ". Se puede intentar igual; el servidor decide.";
+      }
+    });
+}
+
+function cerrarSubida() {
+  const velo = document.getElementById("velo-subida");
+  if (velo) velo.dataset.abierto = "no";
+}
+
+/* Los pasos que se van cumpliendo, escritos a medida que pasan. Un proceso de
+   varios minutos que no dice en cual va se ve igual que uno colgado. */
+let _pasosDeSubida = [];
+
+function _reiniciarPasosDeSubida() {
+  _pasosDeSubida = [];
+  _pintarPasosDeSubida();
+  const progreso = document.getElementById("progreso-subida");
+  if (progreso) progreso.hidden = true;
+  const elegido = document.getElementById("elegido-subida");
+  if (elegido) elegido.textContent = "Ningún archivo elegido todavía.";
+}
+
+function anotarPasoDeSubida(texto, estado) {
+  _pasosDeSubida.push({ texto: texto, estado: estado || "" });
+  _pintarPasosDeSubida();
+}
+
+function _pintarPasosDeSubida() {
+  const caja = document.getElementById("pasos-subida");
+  if (!caja) return;
+  caja.innerHTML = _pasosDeSubida.map(p =>
+    '<p class="paso" data-estado="' + textoSeguro(p.estado) + '">' +
+    textoSeguro(p.texto) + "</p>").join("");
+}
+
+function _mostrarProgresoDeSubida(fraccion, texto) {
+  const caja = document.getElementById("progreso-subida");
+  const barra = document.getElementById("barra-subida");
+  const detalle = document.getElementById("detalle-subida");
+  if (caja) caja.hidden = false;
+  if (barra) barra.style.width = Math.round(Math.max(0, Math.min(1, fraccion)) * 100) + "%";
+  if (detalle) detalle.textContent = texto;
+}
+
+/* Cuantos bytes, escritos como se leen. */
+function tamanoLegible(bytes) {
+  const n = Number(bytes) || 0;
+  if (n < 1024) return n + " B";
+  if (n < 1024 * 1024) return cifra(n / 1024, 1) + " kB";
+  if (n < 1024 * 1024 * 1024) return cifra(n / (1024 * 1024), 1) + " MB";
+  return cifra(n / (1024 * 1024 * 1024), 2) + " GB";
+}
+
+/* SUBE UN ARCHIVO, Y ES LO UNICO DE ESTE TABLERO QUE NO USA `fetch`.
+   La razon es una sola y no es de estilo: `fetch` no informa la progresion de
+   subida y `xhr.upload.onprogress` si. El paquete de OpenF1 mas grande que hay
+   son 273,4 MB, y una barra que no avanza y una que no existe se ven igual.
+
+   EL CUERPO VA CRUDO Y NO COMO FORMULARIO. `UploadFile` de FastAPI exige
+   `python-multipart`, que no esta en `requirements.txt`: agregarla obliga a un
+   `pip install` en cada despliegue y a reconstruir la imagen del contenedor. El
+   servidor lee el cuerpo a medida que llega, que es lo que hace falta para un
+   archivo que no entra en memoria. */
+function subirUnArchivo(archivo, alProgresar) {
+  return new Promise((resolver, rechazar) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", API + "/importar/archivo?nombre=" +
+                     encodeURIComponent(archivo.name));
+    xhr.setRequestHeader("Accept", "application/json");
+    xhr.upload.onprogress = e => {
+      /* `lengthComputable` en falso significa que el navegador no sabe cuanto
+         falta. Dibujar una barra igual seria inventar una fraccion: se informa
+         lo que si se sabe, que son los bytes que ya salieron. */
+      if (typeof alProgresar === "function") {
+        alProgresar(e.lengthComputable ? e.loaded / e.total : null, e.loaded);
+      }
+    };
+    xhr.onload = () => {
+      let d = null;
+      try { d = JSON.parse(xhr.responseText); } catch (e) { d = null; }
+      if (xhr.status >= 200 && xhr.status < 300) { resolver(d); return; }
+      /* El servidor escribe motivos para leerse ---«llegaron 5.000 bytes de los
+         102.408 que el archivo declara: faltan 97.408»---: taparlos con «error
+         de red» seria tirar justamente lo que hace falta. */
+      const detalle = (d && d.detail) || null;
+      const mensaje = (detalle && (detalle.mensaje || detalle)) ||
+                      (xhr.status + " " + xhr.statusText);
+      const error = new Error(typeof mensaje === "string" ? mensaje : JSON.stringify(mensaje));
+      error.estado = xhr.status;
+      error.detalle = detalle;
+      rechazar(error);
+    };
+    xhr.onerror = () => rechazar(new Error(
+      "Se cortó la conexión durante la subida. Lo que llegó no se guarda: el " +
+      "servidor descarta lo incompleto en vez de dejarlo con nombre de dato."));
+    xhr.onabort = () => rechazar(new Error("Subida cancelada."));
+    xhr.send(archivo);
+  });
+}
+
+/* QUE HACER CON LO QUE SE SUBIO.
+
+   LA DECISION ES DEL SERVIDOR CUANDO EL SERVIDOR LA DECLARA. Si la respuesta
+   trae `procesar` ---con su ruta, su metodo y su cuerpo--- se dispara eso y el
+   tablero no interpreta nada.
+
+   MIENTRAS TANTO, Y DECLARADO. La respuesta de hoy dice `clase` y poco mas, asi
+   que para el bus vehicular hay que reconstruir que segmento es a partir del
+   nombre del archivo, que se compone `<plataforma>_<segmento>.canraw`. Eso es
+   el mismo dato en dos sitios y se rompe solo el dia que cambie la convencion;
+   por eso la suposicion **se escribe en pantalla** en vez de quedar escondida
+   en el codigo, y se prefiere siempre lo que el servidor declare. */
+const PLATAFORMAS_CAN = ["TOYOTA_RAV4_TSS2"];
+
+function comoSeProcesa(respuesta) {
+  if (respuesta && respuesta.procesar && respuesta.procesar.ruta) {
+    return { ...respuesta.procesar, declaradoPorElServidor: true };
+  }
+  const clase = respuesta && respuesta.clase;
+  if (clase === "can_crudo") {
+    const nombre = String(respuesta.guardado || "").split("/").pop();
+    const raiz = nombre.slice(0, nombre.length - ".canraw".length);
+    const plataforma = PLATAFORMAS_CAN.find(p => raiz.indexOf(p + "_") === 0);
+    if (!plataforma) {
+      return { porQueNo: "el nombre del archivo no dice de qué plataforma es el " +
+                         "bus, y sin eso no se puede pedir la carga" };
+    }
+    const segmento = raiz.slice(plataforma.length + 1);
+    return {
+      ruta: "/can/importar", metodo: "POST",
+      cuerpo: { segmentos: [segmento], plataforma: plataforma, etapa: "cargar" },
+      supuesto: "se carga como segmento «" + segmento + "» de la plataforma " +
+                plataforma + ", derivado del nombre del archivo",
+    };
+  }
+  if (clase === "f1_25_crudo") {
+    return { porQueNo: "la API todavía no expone una ruta que republique una " +
+                       "captura del simulador: lo hace `scripts/republicar_captura.py`, " +
+                       "que se corre en el servidor. La captura quedó guardada " +
+                       "donde el servidor la espera." };
+  }
+  if (clase === "paquete_openf1") {
+    return { porQueNo: "el paquete quedó guardado, pero el servidor todavía no " +
+                       "lo descomprime: la importación de OpenF1 pide una sesión " +
+                       "ya desplegada en disco." };
+  }
+  return { porQueNo: "no hay un procesamiento declarado para esta clase." };
+}
+
+/* SIGUE EL TRABAJO EN VEZ DE DISPARARLO Y OLVIDARLO.
+   Un trabajo que se lanza y del que nadie vuelve a preguntar deja al tablero
+   afirmando que todo salio bien sin haberlo comprobado. Se pregunta hasta que
+   deje de estar en curso, con un techo: si el servidor se reinicia los trabajos
+   se pierden ---viven en su memoria a proposito--- y preguntar para siempre por
+   uno que ya no existe seria un sondeo eterno. */
+const ESPERAS_DE_TRABAJO = 600;
+
+function seguirTrabajo(identificador, alCambiar, quedan) {
+  const restantes = quedan === undefined ? ESPERAS_DE_TRABAJO : quedan;
+  return pedir("/trabajos/" + encodeURIComponent(identificador))
+    .then(t => {
+      if (typeof alCambiar === "function") alCambiar(t);
+      if (!t || t.estado !== "en_curso") return t;
+      if (restantes <= 1) {
+        return Object.assign({}, t, {
+          estado: "sin_respuesta",
+          error: "el trabajo sigue en curso y se dejó de preguntar",
+        });
+      }
+      return new Promise(r => setTimeout(r, 2000))
+        .then(() => seguirTrabajo(identificador, alCambiar, restantes - 1));
+    });
+}
+
+/* El flujo entero, de elegir el archivo a que la sesion se pueda abrir. */
+function subirLoElegido(archivos) {
+  const lista = ordenDeSubida(archivos);
+  if (!lista.length) return;
+  _pasosDeSubida = [];
+  _pintarPasosDeSubida();
+
+  /* El aviso que tiene que llegar **antes** de subir nada. */
+  const aConvertir = lista.find(a => EXTENSIONES_QUE_HAY_QUE_CONVERTIR[extensionDe(a.name)]);
+  if (aConvertir) {
+    anotarPasoDeSubida(aConvertir.name + " — " +
+      EXTENSIONES_QUE_HAY_QUE_CONVERTIR[extensionDe(aConvertir.name)], "rechazado");
+    return;
+  }
+
+  let cadena = Promise.resolve(null);
+  let ultima = null;
+  /* UNA VERIFICACION QUE NO PASA NO ES UN FALLO DE RED: el servidor contesta
+     200 y lo dice en el cuerpo. Sin anotarlo, la cadena seguia hasta el plan de
+     procesamiento y el ultimo renglon afirmaba que la captura estaba «guardada
+     y verificada» tres renglones debajo de «llegaron 108 bytes de los 99.999
+     que el archivo declara». Se vio probandolo contra la API viva el
+     2026-09-13. */
+  let huboRechazo = false;
+  lista.forEach(archivo => {
+    cadena = cadena.then(() => {
+      _mostrarProgresoDeSubida(0, "Subiendo " + archivo.name +
+                                  " · " + tamanoLegible(archivo.size));
+      return subirUnArchivo(archivo, (fraccion, subidos) => {
+        _mostrarProgresoDeSubida(
+          fraccion === null ? 0 : fraccion,
+          fraccion === null
+            ? "Subiendo " + archivo.name + " · " + tamanoLegible(subidos) +
+              " enviados (el navegador no declara el total)"
+            : "Subiendo " + archivo.name + " · " + tamanoLegible(subidos) +
+              " de " + tamanoLegible(archivo.size) +
+              " · " + Math.round(fraccion * 100) + " %");
+      }).then(respuesta => {
+        /* LO QUE SE PROCESA ES LA CAPTURA, NO SU METADATO.
+           Se guardaba la ultima respuesta, y la ultima es siempre la del
+           `.meta.json` ---va segundo por obligacion---, cuya clase es
+           `metadatos`. El plan salia «no hay un procesamiento declarado para
+           esta clase» sobre un par que estaba entero y verificado. */
+        if (respuesta && respuesta.clase && respuesta.clase !== "metadatos") {
+          ultima = respuesta;
+        }
+        _mostrarProgresoDeSubida(1, archivo.name + " · " +
+                                 tamanoLegible(respuesta.bytes) + " recibidos");
+        const v = respuesta.verificacion || {};
+        /* LA VERIFICACION SE MUESTRA SIEMPRE, tambien cuando acepta. Una subida
+           truncada tiene exactamente el aspecto de una completa hasta que
+           alguien compara, y el servidor ya comparo: esconder el resultado
+           tiraria la unica prueba que hay. */
+        if (v.acepta === false) huboRechazo = true;
+        anotarPasoDeSubida(
+          archivo.name + " — " + (v.motivo || "guardado"),
+          v.acepta === false ? "rechazado" : "hecho");
+        return respuesta;
+      });
+    }).catch(error => {
+      anotarPasoDeSubida(archivo.name + " — " + error.message, "rechazado");
+      const d = error.detalle;
+      if (d && d.aceptados) {
+        anotarPasoDeSubida("Se aceptan: " + d.aceptados.join(", ") +
+                           " · consulte " + (d.consulte || "/importar/formatos"), "");
+      }
+      throw error;
+    });
+  });
+
+  cadena
+    .then(() => {
+      if (!ultima) return null;
+      if (huboRechazo) {
+        anotarPasoDeSubida(
+          "No se procesa: lo que llegó no coincide con lo que el archivo " +
+          "declara. Volvé a subirlo; una subida truncada tiene el mismo " +
+          "aspecto que una completa hasta que alguien compara.", "rechazado");
+        return null;
+      }
+      const plan = comoSeProcesa(ultima);
+      if (plan.porQueNo) {
+        anotarPasoDeSubida("No se procesa todavía: " + plan.porQueNo, "pendiente");
+        return null;
+      }
+      if (plan.supuesto) anotarPasoDeSubida("Se procesa: " + plan.supuesto, "");
+      anotarPasoDeSubida("Procesando…", "en-curso");
+      return mandar(plan.ruta, plan.metodo || "POST", plan.cuerpo)
+        .then(t => {
+          if (!t || !t.id) {
+            anotarPasoDeSubida("El servidor aceptó el pedido y no devolvió un " +
+                               "trabajo que seguir.", "pendiente");
+            return null;
+          }
+          return seguirTrabajo(t.id, estado_ => {
+            if (estado_ && estado_.estado === "en_curso") {
+              _pasosDeSubida[_pasosDeSubida.length - 1] = {
+                texto: "Procesando… (" + (estado_.descripcion || t.id) + ")",
+                estado: "en-curso",
+              };
+              _pintarPasosDeSubida();
+            }
+          });
+        })
+        .then(t => {
+          if (!t) return null;
+          _pasosDeSubida.pop();
+          anotarPasoDeSubida(
+            t.estado === "terminado" ? "Procesado." :
+            "El procesamiento terminó como «" + t.estado + "»" +
+            (t.error ? ": " + t.error : ""),
+            t.estado === "terminado" ? "hecho" : "rechazado");
+          return t;
+        });
+    })
+    .then(t => {
+      /* UNA SESION QUE NO ENTRA AL CATALOGO EXISTE EN LA BASE Y NO SE PUEDE
+         ABRIR. Paso el 2026-09-12 con dos sesiones, que resultaron ser las
+         unicas dos que tenian reglaje. El catalogo se recuenta por detras y
+         tarda: se vuelve a pedir hasta que deje de cambiar, con techo. */
+      if (t && t.estado === "terminado") {
+        anotarPasoDeSubida("Actualizando el catálogo…", "en-curso");
+        refrescarCatalogo(6);
+        setTimeout(() => {
+          _pasosDeSubida.pop();
+          anotarPasoDeSubida("Listo: la sesión tiene que aparecer en «Abrir " +
+                             "sesión guardada».", "hecho");
+        }, 4000);
+      }
+    })
+    .catch(() => { /* cada paso ya se anoto con su motivo */ });
+}
+
+document.getElementById("btn-subir").addEventListener("click", abrirSubida);
+document.getElementById("btn-cerrar-subida").addEventListener("click", cerrarSubida);
+document.getElementById("archivo-subida").addEventListener("change", e => {
+  const archivos = ordenDeSubida(e.target.files);
+  const elegido = document.getElementById("elegido-subida");
+  if (elegido) {
+    elegido.textContent = archivos.length
+      ? archivos.map(a => a.name + " · " + tamanoLegible(a.size)).join("  ·  ")
+      : "Ningún archivo elegido todavía.";
+  }
+  subirLoElegido(archivos);
+  /* Se limpia para que elegir **el mismo archivo** vuelva a disparar el cambio:
+     sin esto, reintentar una subida que fallo exige elegir otro y volver. */
+  e.target.value = "";
+});
 
 /* El encabezado nombra la sesion que se esta mirando. Antes decia siempre lo
    mismo ---el nombre de la maqueta--- y el circuito quedaba en un renglon

@@ -2370,6 +2370,34 @@
   .cab-comparacion h3 { margin: 0; margin-right: auto; font-family: var(--titulo); font-size: 1.25rem; letter-spacing: .03em; text-transform: uppercase; }
   .cab-comparacion h3 small { display: block; font-family: var(--cuerpo); font-size: .74rem; font-weight: 400; letter-spacing: 0; text-transform: none; color: var(--texto-tenue); }
   .panel-comparacion { flex: 1; overflow: auto; padding: 14px 20px 20px; }
+  /* ---------- subir un archivo ----------
+     Tres bloques y un orden que es el del acto: que se acepta, elegir, y que
+     fue pasando. La barra esta en el medio a proposito: es lo unico que se
+     mira mientras se espera. */
+  .formatos-subida { display: grid; gap: 10px; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); margin-bottom: 16px; }
+  .formatos-subida .formato { padding: 12px 14px; border: 1px solid var(--linea); border-radius: 10px; background: var(--superficie-2); }
+  .formatos-subida .formato b { font-family: var(--cifra); font-size: 1rem; }
+  .formatos-subida .formato .eyebrow { display: block; margin: 2px 0 6px; }
+  .formatos-subida .formato p { margin: 0; font-size: .8rem; line-height: 1.45; }
+  .formatos-subida .formato p.nota { margin-top: 6px; }
+  .elegir-archivo { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; margin-bottom: 14px; }
+  .elegir-archivo label.boton { cursor: pointer; }
+  /* LA BARRA ES LA MITAD DEL PUNTO. Una que no avanza y una que no existe se
+     ven igual, asi que el ancho tiene que venir de `upload.onprogress` y no de
+     una animacion: una animacion se mueve tambien cuando la subida se colgo. */
+  .progreso-subida { margin-bottom: 14px; }
+  .barra-subida { height: 8px; border-radius: 4px; background: var(--superficie-2); border: 1px solid var(--linea); overflow: hidden; }
+  .barra-subida i { display: block; height: 100%; width: 0; background: var(--acento); transition: width 120ms linear; }
+  .progreso-subida .nota { margin-top: 6px; font-variant-numeric: tabular-nums; }
+  .pasos-subida { display: grid; gap: 6px; }
+  .pasos-subida .paso { margin: 0; padding: 8px 12px; border-radius: 8px; border-left: 3px solid var(--linea); background: var(--superficie-2); font-size: .82rem; line-height: 1.45; }
+  .pasos-subida .paso[data-estado="hecho"] { border-left-color: var(--ok); }
+  .pasos-subida .paso[data-estado="rechazado"] { border-left-color: var(--critico); }
+  /* Pendiente no es un fallo: es lo que el sistema todavia no sabe hacer, y
+     decirlo en el color del error confundiria un limite con una rotura. */
+  .pasos-subida .paso[data-estado="pendiente"] { border-left-color: var(--alerta); }
+  .pasos-subida .paso[data-estado="en-curso"] { border-left-color: var(--acento); }
+
   .lienzo-comparacion { width: 100%; display: block; cursor: crosshair; }
   .pilotos-comparacion { display: flex; flex-wrap: wrap; gap: 10px; padding: 12px 20px; border-top: 1px solid var(--linea); background: var(--superficie); }
   .tarjeta-piloto { display: flex; align-items: center; gap: 10px; padding: 8px 14px; border: 1px solid var(--linea); border-left: 4px solid; border-radius: 10px; background: var(--superficie-2); }
