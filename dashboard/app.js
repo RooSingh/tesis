@@ -2324,6 +2324,19 @@ function subirLoElegido(archivos) {
           _quitarUltimoPaso();
           anotarPasoDeSubida("Listo: se importó el contexto de la sesión · " +
                              importado + ".", "hecho");
+          /* CONTAR LO QUE ENTRO NO ALCANZA: HAY QUE DECIR QUE FALTA.
+             El contexto es una mitad. «Abrir sesión guardada» sale de las
+             sesiones con filas de telemetría, y una importación de contexto no
+             trae ninguna: quien leyó los pilotos y las vueltas se va a la lista
+             y no encuentra la sesión. Pasó el 2026-09-13.
+
+             LA FRASE HABLA DE QUE **ES** UN CONTEXTO, no de si hoy existe un
+             camino para traer la telemetría. Atarla a lo segundo la volvería
+             falsa el día que ese camino exista, y nadie vendría a cambiarla. */
+          anotarPasoDeSubida(
+            "El contexto es una mitad: son las vueltas, las paradas y el clima " +
+            "de la carrera. La telemetría de cada piloto entra aparte, y hasta " +
+            "que entre, la sesión no aparece en «Abrir sesión guardada».", "");
           refrescarCatalogo(2);
           return;
         }

@@ -82,6 +82,19 @@ const sacadas = new Function(
 const { extensionDe, esAcompanante, ordenDeSubida, extensionesQueSeAceptan,
         comoSeProcesa, tamanoLegible } = sacadas;
 
+/* SOLO EL CODIGO, SIN LOS COMENTARIOS.
+   Una guarda que busca un texto en el archivo se rompe ---o peor, **pasa**---
+   con el comentario que la explica. Aca ocurrio lo segundo: la guarda que exige
+   que el mensaje nombre la telemetria pasaba por la palabra escrita en el
+   comentario de al lado, de modo que borrar el mensaje no la ponia en rojo. Es
+   la octava vez en el dia que una guarda tropieza con su propia explicacion, y
+   la primera en que el tropiezo la vuelve complaciente en vez de quejosa: esa es
+   la version peligrosa. */
+function soloCodigo(js) {
+  return js.replace(/\/\*[\s\S]*?\*\//g, " ")
+           .split("\n").map(r => r.split("//")[0]).join("\n");
+}
+
 let hechas = 0;
 //: Las que devuelven una promesa se esperan; las demas siguen siendo directas.
 const pendientes = [];
@@ -612,6 +625,39 @@ prueba("un trabajo que no importo contexto no declara nada", () => {
 prueba("un conteo en cero no se anuncia como si hubiera entrado algo", () => {
   const vacio = { detalle: { importacion: { counts: { drivers: 0, laps: 0 } } } };
   assert.strictEqual(loQueImporto(vacio), "");
+});
+
+prueba("CONTAR LO QUE ENTRO NO ALCANZA: HAY QUE DECIR QUE FALTA", () => {
+  /* REPORTADO POR EL USUARIO EL 2026-09-13, y con razon. El mensaje contaba
+     bien ---20 pilotos, 1.425 vueltas, 59 tandas--- y despues fue a «Abrir
+     sesion guardada» y la sesion no estaba.
+
+     LA LISTA TIENE RAZON. Sale de `sesiones_catalogo`, que lista sesiones con
+     filas en `telemetry_messages`, y una importacion de **contexto** no trae
+     telemetria. Medido: `racing_sessions` tiene las tres sesiones OpenF1 y
+     `telemetry_messages` solo la que se cargo por otro camino.
+
+     PERO UN MENSAJE QUE SOLO CUENTA LO QUE ENTRO DEJA A ALGUIEN BUSCANDO ALGO
+     QUE NO VA A APARECER. Es la misma regla que el servidor ya aplica cuando no
+     sabe como procesar algo: «no saber es una respuesta, y decirla vale mas que
+     ofrecer un boton que falla». Aca el equivalente es decir que el contexto es
+     una mitad. */
+  const i = fuenteApp.indexOf("function subirLoElegido(");
+  const cuerpo = soloCodigo(fuenteApp.slice(i, fuenteApp.indexOf("\n}", i)));
+  assert.ok(/telemetr/i.test(cuerpo),
+    "el desenlace de una importacion no dice que la telemetria es otra cosa");
+  assert.ok(/Abrir sesi/.test(cuerpo),
+    "no nombra la lista donde la persona la va a ir a buscar");
+});
+
+prueba("y lo que se dice del contexto no depende de que haya una ruta hoy", () => {
+  /* La frase habla de **que es** una importacion de contexto, no de si existe
+     un camino para la telemetria. Atarla a lo segundo la volveria falsa el dia
+     que ese camino exista, y nadie se acordaria de venir a cambiarla. */
+  const i = fuenteApp.indexOf("function subirLoElegido(");
+  const cuerpo = soloCodigo(fuenteApp.slice(i, fuenteApp.indexOf("\n}", i)));
+  assert.ok(!/no hay ruta/i.test(cuerpo),
+    "el mensaje afirma que no existe un camino, que es un estado y no un hecho");
 });
 
 prueba("EL DESENLACE LO DECIDE LO QUE EL TRABAJO DECLARA", () => {
