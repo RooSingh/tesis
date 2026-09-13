@@ -395,6 +395,109 @@ class UnPaqueteNoPisaOtroTests(unittest.TestCase):
                 import shutil as _sh
                 _sh.rmtree(destino.parent, ignore_errors=True)
 
+    def test_UN_RESTO_DE_UNA_IMPORTACION_FALLIDA_NO_BLOQUEA_EL_REINTENTO(self) -> None:
+        """Que el destino este ocupado no siempre significa que haya un paquete.
+
+        EL CALLEJON, VISTO EL 2026-09-13. Una subida abrio el paquete, la
+        importacion fallo ---al `session.json` le faltaban campos--- y los
+        archivos quedaron ocupando el destino. Arreglar el comprimido y volver a
+        subirlo daba 422: la guarda no distingue «hay un paquete de verdad» de
+        «quedo lo que dejo una importacion que no llego».
+
+        La distincion no se adivina: `abrir_paquete` deja una marca al abrir y
+        **la importacion la borra cuando termina bien**. Un paquete descargado
+        nunca la tuvo, de modo que sigue sin poder pisarse.
+        """
+        import shutil, tempfile, zipfile
+        with tempfile.TemporaryDirectory() as t:
+            destino = subida.PAQUETES_OPENF1 / "1998" / "999997"
+            destino.mkdir(parents=True, exist_ok=True)
+            (destino / "session.json").write_text('{"session_key": 999997}')
+            (destino / subida.SIN_IMPORTAR).write_text("")
+            try:
+                z = Path(t) / "p.zip"
+                with zipfile.ZipFile(z, "w") as f:
+                    f.writestr("999997/session.json",
+                               json.dumps({"session_key": 999997, "year": 1998,
+                                           "meeting_key": 1}))
+                ok, detalle = subida.abrir_paquete(z)
+                self.assertTrue(ok, "no dejo reintentar: %s" % detalle.get("motivo"))
+                self.assertIn("meeting_key",
+                              (destino / "session.json").read_text(),
+                              "no reemplazo el resto viejo")
+            finally:
+                shutil.rmtree(destino.parent, ignore_errors=True)
+
+    def test_lo_que_se_abre_queda_marcado_hasta_que_alguien_lo_importe(self) -> None:
+        """Sin la marca, el reintento de arriba no puede distinguir nada."""
+        import shutil, tempfile, zipfile
+        with tempfile.TemporaryDirectory() as t:
+            destino = subida.PAQUETES_OPENF1 / "1998" / "999996"
+            try:
+                z = Path(t) / "p.zip"
+                with zipfile.ZipFile(z, "w") as f:
+                    f.writestr("999996/session.json",
+                               json.dumps({"session_key": 999996, "year": 1998}))
+                ok, _ = subida.abrir_paquete(z)
+                self.assertTrue(ok)
+                self.assertTrue((destino / subida.SIN_IMPORTAR).is_file(),
+                                "un paquete recien subido no queda marcado")
+            finally:
+                shutil.rmtree(destino.parent, ignore_errors=True)
+
+    def test_UN_PAQUETE_IMPORTADO_SIGUE_SIN_PODER_PISARSE(self) -> None:
+        """La guarda que salvo los 273 MB de Silverstone no se afloja.
+
+        Sin marca ---porque se descargo, o porque su importacion salio bien y la
+        borro--- el destino es intocable.
+        """
+        import shutil, tempfile, zipfile
+        with tempfile.TemporaryDirectory() as t:
+            destino = subida.PAQUETES_OPENF1 / "1998" / "999995"
+            destino.mkdir(parents=True, exist_ok=True)
+            testigo = destino / "no_me_borres.json"
+            testigo.write_text('{"soy": "el paquete que ya se importo"}')
+            try:
+                z = Path(t) / "p.zip"
+                with zipfile.ZipFile(z, "w") as f:
+                    f.writestr("999995/session.json",
+                               json.dumps({"session_key": 999995, "year": 1998}))
+                ok, detalle = subida.abrir_paquete(z)
+                self.assertFalse(ok, "piso un paquete ya importado")
+                self.assertIn("ya hay un paquete", detalle["motivo"])
+                self.assertIn("el paquete que ya se importo", testigo.read_text())
+            finally:
+                shutil.rmtree(destino.parent, ignore_errors=True)
+
+    def test_la_importacion_borra_la_marca_cuando_termina_bien(self) -> None:
+        """Estructural: si nadie la borra, el paquete queda pisable para siempre.
+
+        Se comprueban las dos puntas ---quien llama y que hace el llamado--- y
+        no que la palabra aparezca en algun lado: mover el borrado a un ayudante
+        dejaria contenta a una busqueda por nombre sin que nadie borre nada.
+        """
+        import inspect
+        from backend import session_processor
+        llama = inspect.getsource(session_processor.import_validated_package)
+        self.assertIn("_levantar_la_marca_de_sin_importar(package_path)", llama,
+                      "la importacion no levanta la marca al terminar bien")
+        #: Y solo despues de que la corrida quedo registrada: levantarla antes
+        #: dejaria el paquete pisable durante la propia importacion.
+        despues = llama.split("actualizar_ejecucion_procesamiento(run[\"run_id\"], status, counts)")[1]
+        self.assertIn("_levantar_la_marca_de_sin_importar", despues.split("return")[0])
+
+        borra = inspect.getsource(
+            session_processor._levantar_la_marca_de_sin_importar)
+        self.assertIn("SIN_IMPORTAR).unlink", borra,
+                      "el ayudante no borra la marca")
+
+    def test_no_poder_borrar_la_marca_no_deshace_una_importacion(self) -> None:
+        """El dato ya quedo registrado: un archivo que no se deja borrar no lo anula."""
+        from unittest.mock import patch
+        from backend import session_processor
+        with patch("pathlib.Path.unlink", side_effect=OSError("solo lectura")):
+            session_processor._levantar_la_marca_de_sin_importar("/lo/que/sea")
+
     def test_el_modulo_no_vuelve_a_tener_un_borrado_del_destino(self) -> None:
         """Guarda estructural: `rmtree` sobre el destino no puede reaparecer."""
 

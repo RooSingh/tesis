@@ -162,6 +162,26 @@ def register_package_validation(
     return {"status": "validated", "run": run, "inventory": inventory}
 
 
+def _levantar_la_marca_de_sin_importar(package_path: str | Path) -> None:
+    """Un paquete importado deja de ser un resto reemplazable.
+
+    La marca la deja `subida.abrir_paquete` y la levanta esto, que es el unico
+    sitio que sabe que la importacion llego. Mientras este, una subida nueva de
+    la misma sesion puede reemplazarlo; una vez que no esta, la guarda del
+    destino lo protege como a cualquier paquete descargado.
+
+    No rompe la importacion: el dato ya quedo registrado, y no poder borrar un
+    archivo de marca no lo deshace.
+    """
+
+    from backend.subida import SIN_IMPORTAR  # noqa: PLC0415 - evita un ciclo
+
+    try:
+        (Path(package_path) / SIN_IMPORTAR).unlink(missing_ok=True)
+    except OSError:
+        pass
+
+
 def import_validated_package(package_path: str | Path) -> dict[str, Any]:
     """Importa contexto disponible de una corrida validada y conserva su estado."""
 
@@ -186,6 +206,7 @@ def import_validated_package(package_path: str | Path) -> dict[str, Any]:
             )
         status = "partial" if missing or validation["inventory"]["warnings"] else "completed"
         actualizar_ejecucion_procesamiento(run["run_id"], status, counts)
+        _levantar_la_marca_de_sin_importar(package_path)
         return {"status": status, "run": run, "counts": counts, "missing": missing}
     except Exception as error:
         actualizar_ejecucion_procesamiento(run["run_id"], "failed", {}, str(error))

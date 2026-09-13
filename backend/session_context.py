@@ -71,10 +71,43 @@ def _numeric_or_text(value: Any) -> tuple[float | None, str | None]:
     return (float(value), None) if isinstance(value, (int, float)) else (None, value)
 
 
+class PaqueteSinSesion(Exception):
+    """Un paquete cuyo `session.json` no alcanza para registrar la sesion.
+
+    Es una excepcion propia y no un `KeyError` porque **su mensaje esta escrito
+    para que lo lea una persona**. El 2026-09-13 una subida termino mostrando
+    «KeyError: 'meeting_key'» en pantalla: el nombre interno de una excepcion de
+    Python, que no dice que archivo mirar, ni que hay tres campos obligatorios,
+    ni por que lo son.
+    """
+
+
+#: LO QUE LA TABLA EXIGE, Y SALE DE LA TABLA. `racing_sessions` declara estos
+#: tres `NOT NULL` ---ver `database/001_openf1_replay_metadata.sql`--- y por eso
+#: se leen con indexado directo mientras todos los demas campos usan `.get()`:
+#: el codigo espeja el esquema a proposito.
+#:
+#: NO ES LA MISMA LISTA QUE `CAMPOS_DE_UNA_SESION` de
+#: `scripts/descargar_paquete_openf1.py`, y no tiene por que serlo: aquella
+#: pregunta si el archivo **describe** una sesion; esta, si la tabla la puede
+#: **aceptar**. Dos preguntas distintas con dos respuestas medidas cada una en
+#: su sitio.
+CAMPOS_QUE_LA_TABLA_EXIGE = ("meeting_key", "session_name", "session_type")
+
+
 def import_available_context(package_path: str | Path, session: dict, datasets: dict[str, list[dict]]) -> dict[str, int]:
     """Inserta o actualiza contexto disponible sin requerir una sesion fija."""
 
     path = Path(package_path)
+    faltan = [campo for campo in CAMPOS_QUE_LA_TABLA_EXIGE
+              if session.get(campo) is None]
+    if faltan:
+        raise PaqueteSinSesion(
+            "El `session.json` de %s no declara %s. La tabla de sesiones no "
+            "acepta un nulo en esos campos: son los que identifican la sesion, "
+            "y sin ellos no hay nada que registrar."
+            % (path, ", ".join("`%s`" % c for c in faltan)))
+
     session_key = session["session_key"]
     retrieved_at = datetime.now(timezone.utc).isoformat()
     counts = {"sessions": 1, **{name: len(rows) for name, rows in datasets.items()}}

@@ -298,6 +298,20 @@ def como_se_procesa(clase: str, ruta: Path) -> dict:
 #: Donde la ruta de importacion de OpenF1 busca los paquetes.
 PAQUETES_OPENF1 = RAIZ_DE_DATOS / "OpenF1" / "raw"
 
+#: MARCA QUE DISTINGUE UN PAQUETE DE UN RESTO.
+#:
+#: `abrir_paquete` no pisa un destino ocupado, y esa guarda salvo los 273 MB de
+#: Silverstone. Pero no distinguia «hay un paquete de verdad» de «quedo lo que
+#: dejo una importacion que no llego»: el 2026-09-13 una importacion fallo por
+#: campos faltantes en el `session.json`, los archivos quedaron ocupando el
+#: destino, y arreglar el comprimido y volver a subirlo daba 422. Un callejon.
+#:
+#: La distincion no se adivina: se escribe. Un paquete subido queda marcado
+#: hasta que **alguien logra importarlo**, y ese alguien borra la marca
+#: ---`session_processor.import_validated_package`---. Un paquete descargado
+#: nunca la tuvo, de modo que sigue siendo intocable.
+SIN_IMPORTAR = ".subido_sin_importar"
+
 
 def abrir_paquete(comprimido: Path) -> tuple[bool, dict]:
     """Descomprime un paquete de sesion, mirandolo antes de desparramarlo.
@@ -388,13 +402,20 @@ def abrir_paquete(comprimido: Path) -> tuple[bool, dict]:
             # `rmtree` que habia aqui se llevo los 60 MB del paquete de Spa. El
             # contexto ya importado sobrevivio en la base; los JSON crudos hubo
             # que volver a descargarlos.
-            if destino.exists():
+            # Un resto de una subida que nunca llego a importarse no es un
+            # paquete: se reemplaza. Lo que no se pisa es lo que alguien
+            # descargo o logro importar, que es lo que la guarda protege.
+            resto = destino.exists() and (destino / SIN_IMPORTAR).exists()
+            if destino.exists() and not resto:
                 return False, {"motivo": (
                     "ya hay un paquete para la sesion %s del %s en %s. No se "
                     "pisa: si hay que reemplazarlo, se borra a proposito y se "
                     "vuelve a subir." % (clave, ano, destino))}
+            if resto:
+                shutil.rmtree(destino, ignore_errors=True)
             destino.parent.mkdir(parents=True, exist_ok=True)
             shutil.move(str(provisional), str(destino))
+            (destino / SIN_IMPORTAR).write_text("", encoding="utf-8")
         finally:
             if provisional.exists():
                 shutil.rmtree(provisional, ignore_errors=True)
