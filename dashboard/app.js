@@ -1834,6 +1834,17 @@ function _reiniciarPasosDeSubida() {
   if (elegido) elegido.textContent = "Ningún archivo elegido todavía.";
 }
 
+/* Saca el ultimo paso anotado, para reemplazarlo por su desenlace.
+
+   SE HACE EN UN SOLO SITIO PORQUE OLVIDARLO NO SE NOTA: el paso viejo se queda
+   en pantalla junto al nuevo y los dos se contradicen. Paso de verdad ---«
+   Procesando…» debajo de «el servidor no devolvió un trabajo que seguir»--- y
+   desde afuera se lee como que el trabajo sigue corriendo. */
+function _quitarUltimoPaso() {
+  _pasosDeSubida.pop();
+  _pintarPasosDeSubida();
+}
+
 function anotarPasoDeSubida(texto, estado) {
   _pasosDeSubida.push({ texto: texto, estado: estado || "" });
   _pintarPasosDeSubida();
@@ -1842,8 +1853,15 @@ function anotarPasoDeSubida(texto, estado) {
 function _pintarPasosDeSubida() {
   const caja = document.getElementById("pasos-subida");
   if (!caja) return;
+  /* EL PASO EN CURSO LLEVA UN GIRO, Y SOLO ESE.
+     Un texto quieto que dice «Procesando…» no distingue un trabajo que avanza
+     de uno colgado: son la misma pantalla. El giro lo dice sin leer, y se apaga
+     solo cuando el paso deja de estar en curso porque **el estado del paso es
+     el que lo enciende**, no un temporizador aparte que haya que acordarse de
+     parar. Quien pidio menos movimiento no recibe ninguno: la hoja lo apaga. */
   caja.innerHTML = _pasosDeSubida.map(p =>
     '<p class="paso" data-estado="' + textoSeguro(p.estado) + '">' +
+    (p.estado === "en-curso" ? '<i class="girando" aria-hidden="true"></i>' : "") +
     textoSeguro(p.texto) + "</p>").join("");
 }
 
@@ -2021,8 +2039,17 @@ function subirLoElegido(archivos) {
            alguien compara, y el servidor ya comparo: esconder el resultado
            tiraria la unica prueba que hay. */
         if (v.acepta === false) huboRechazo = true;
+        /* LA VERIFICACION DEL ACOMPANANTE ES SOBRE LA CAPTURA, NO SOBRE EL.
+           El servidor compara la captura cuando recibe su metadato, de modo que
+           rotular el resultado con el nombre del metadato decia cosas como
+           «x.canraw.meta.json — llegaron 200.000 bytes de los 4.769.640»: ese
+           archivo pesa un kilobyte y llego entero. `describe_a` dice de quien
+           habla; se muestra su nombre, no su ruta. */
+        const deQuien = respuesta.describe_a
+          ? String(respuesta.describe_a).split("/").pop()
+          : archivo.name;
         anotarPasoDeSubida(
-          archivo.name + " — " + (v.motivo || "guardado"),
+          deQuien + " — " + (v.motivo || "guardado"),
           v.acepta === false ? "rechazado" : "hecho");
         return respuesta;
       });
@@ -2056,15 +2083,29 @@ function subirLoElegido(archivos) {
       anotarPasoDeSubida("Procesando…", "en-curso");
       return mandar(plan.ruta, plan.metodo || "POST", plan.cuerpo)
         .then(t => {
-          if (!t || !t.id) {
+          /* EL IDENTIFICADOR DEL TRABAJO SE LLAMA `trabajo`, NO `id`.
+             Se leia `t.id`, que no existe: **todos** los procesamientos
+             informaban «el servidor aceptó el pedido y no devolvió un trabajo
+             que seguir» y ninguno se seguia nunca. Y el trabajo corria igual,
+             de modo que el tablero perdia su resultado ---incluido el fallo---
+             sin que nadie se enterara.
+
+             Se vio el 2026-09-13 reinyectando una captura de Shanghai: el
+             trabajo corrio 123 s y termino en `fallido` porque esa sesion ya
+             estaba en la base y el guion se nego a duplicarla. La negativa es
+             correcta; lo que estaba mal era que no llegara a la pantalla. */
+          const cual = t && t.trabajo;
+          if (!cual) {
+            _quitarUltimoPaso();
             anotarPasoDeSubida("El servidor aceptó el pedido y no devolvió un " +
                                "trabajo que seguir.", "pendiente");
             return null;
           }
-          return seguirTrabajo(t.id, estado_ => {
-            if (estado_ && estado_.estado === "en_curso") {
+          return seguirTrabajo(cual, enCurso => {
+            if (enCurso && enCurso.estado === "en_curso") {
               _pasosDeSubida[_pasosDeSubida.length - 1] = {
-                texto: "Procesando… (" + (estado_.descripcion || t.id) + ")",
+                texto: "Procesando… " + (enCurso.descripcion || cual) +
+                       " · " + Math.round(enCurso.duracion_s || 0) + " s",
                 estado: "en-curso",
               };
               _pintarPasosDeSubida();
@@ -2073,11 +2114,15 @@ function subirLoElegido(archivos) {
         })
         .then(t => {
           if (!t) return null;
-          _pasosDeSubida.pop();
+          _quitarUltimoPaso();
+          /* EL MOTIVO DEL FALLO ES LO QUE HAY QUE MOSTRAR. Un «terminó como
+             fallido» sin el motivo obliga a ir a buscarlo al servidor, que es
+             justo lo que esta pantalla existe para evitar. */
           anotarPasoDeSubida(
-            t.estado === "terminado" ? "Procesado." :
-            "El procesamiento terminó como «" + t.estado + "»" +
-            (t.error ? ": " + t.error : ""),
+            t.estado === "terminado"
+              ? "Procesado en " + Math.round(t.duracion_s || 0) + " s."
+              : "El procesamiento terminó como «" + t.estado + "»" +
+                (t.error ? ": " + t.error : ""),
             t.estado === "terminado" ? "hecho" : "rechazado");
           return t;
         });

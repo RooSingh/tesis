@@ -318,6 +318,65 @@ prueba("el procesamiento se sigue hasta que deja de estar en curso", () => {
     "pierden al reiniciarlo");
 });
 
+prueba("EL TRABAJO SE SIGUE POR `trabajo`, QUE ES COMO SE LLAMA", () => {
+  /* Se leia `t.id`, que no existe. **Todos** los procesamientos informaban «el
+     servidor aceptó el pedido y no devolvió un trabajo que seguir» y ninguno se
+     seguia nunca, mientras el trabajo corria igual: el tablero perdia su
+     resultado, incluido el fallo.
+
+     Se vio el 2026-09-13 reinyectando una captura de Shanghai. El trabajo
+     corrio 123 s y termino en `fallido` porque esa sesion ya estaba en la base
+     y el guion se nego a duplicarla ---la negativa es correcta--- y nada de eso
+     llego a la pantalla. */
+  const i = fuenteApp.indexOf("function subirLoElegido(");
+  const cuerpo = fuenteApp.slice(i, fuenteApp.indexOf("\n}", i));
+  assert.ok(/const cual = t && t\.trabajo;/.test(cuerpo),
+    "volvio a leerse un campo que la respuesta no trae");
+  /* La expresion y no el nombre: el comentario que explica por que se fue lo
+     nombra, y un guardian que se rompe con su propia explicacion obliga a
+     borrar la explicacion. */
+  assert.ok(!/!t\.id/.test(cuerpo), "quedo la lectura del nombre inventado");
+  assert.ok(!/seguirTrabajo\(t\.id/.test(cuerpo));
+});
+
+prueba("NINGUN PASO SE QUEDA CONTRADICIENDO AL SIGUIENTE", () => {
+  /* «Procesando…» quedaba en pantalla debajo de «el servidor no devolvió un
+     trabajo que seguir»: desde afuera se lee como que el trabajo sigue
+     corriendo, y se ve igual que uno colgado. Cada desenlace reemplaza al paso
+     en curso en vez de agregarse. */
+  const i = fuenteApp.indexOf("function subirLoElegido(");
+  const cuerpo = fuenteApp.slice(i, fuenteApp.indexOf("\n}", i));
+  const enCurso = (cuerpo.match(/anotarPasoDeSubida\("Procesando…"/g) || []).length;
+  const quitados = (cuerpo.match(/_quitarUltimoPaso\(\)/g) || []).length;
+  assert.strictEqual(enCurso, 1, "hay mas de un paso en curso que anotar");
+  assert.ok(quitados >= 2,
+    "algun desenlace se agrega sin sacar el «Procesando…» de arriba");
+});
+
+prueba("y el paso en curso lleva un giro que se apaga solo", () => {
+  /* Un texto quieto no distingue un trabajo que avanza de uno colgado. El giro
+     lo enciende **el estado del paso**, no un temporizador aparte que haya que
+     acordarse de parar. */
+  const i = fuenteApp.indexOf("function _pintarPasosDeSubida(");
+  const cuerpo = fuenteApp.slice(i, fuenteApp.indexOf("\n}", i));
+  assert.ok(/p\.estado === "en-curso" \? '<i class="girando"/.test(cuerpo),
+    "el paso en curso no se distingue de los demas");
+  const css = fs.readFileSync(
+    path.join(__dirname, "..", "..", "dashboard", "styles.css"), "utf8");
+  assert.ok(/prefers-reduced-motion[\s\S]*?\.girando \{ animation: none/.test(css),
+    "quien pidio menos movimiento igual recibe el giro");
+});
+
+prueba("la verificacion se rotula con la captura, no con su metadato", () => {
+  /* El servidor compara la captura cuando recibe su metadato. Rotularlo con el
+     nombre del metadato decia «x.canraw.meta.json — llegaron 200.000 bytes de
+     los 4.769.640»: ese archivo pesa un kilobyte y llego entero. */
+  const i = fuenteApp.indexOf("function subirLoElegido(");
+  const cuerpo = fuenteApp.slice(i, fuenteApp.indexOf("\n}", i));
+  assert.ok(/respuesta\.describe_a/.test(cuerpo),
+    "la verificacion vuelve a rotularse con el archivo equivocado");
+});
+
 prueba("y al terminar se refresca el catalogo", () => {
   /* Una sesion que no entra al catalogo existe en la base y **no se puede
      abrir**: paso el 2026-09-12 con dos sesiones. */

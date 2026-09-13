@@ -2397,6 +2397,21 @@
      decirlo en el color del error confundiria un limite con una rotura. */
   .pasos-subida .paso[data-estado="pendiente"] { border-left-color: var(--alerta); }
   .pasos-subida .paso[data-estado="en-curso"] { border-left-color: var(--acento); }
+  /* El giro del paso en curso. Doce pixeles y un borde: alcanza para decir
+     «esto sigue vivo» sin competir con el texto que esta al lado. */
+  .pasos-subida .girando {
+    display: inline-block; width: 11px; height: 11px; margin-right: 8px;
+    vertical-align: -1px; border-radius: 50%;
+    border: 2px solid color-mix(in srgb, var(--acento) 30%, transparent);
+    border-top-color: var(--acento);
+    animation: gira-subida .7s linear infinite;
+  }
+  @keyframes gira-subida { to { transform: rotate(360deg); } }
+  /* Quien pidio menos movimiento no recibe ninguno: el punto se queda quieto y
+     el color sigue diciendo que ese paso es el que esta corriendo. */
+  @media (prefers-reduced-motion: reduce) {
+    .pasos-subida .girando { animation: none; }
+  }
 
   /* ---------- los reglajes que se corrieron en este circuito ----------
      La lectura va primero y en el cuerpo del texto: es lo unico que afirma
