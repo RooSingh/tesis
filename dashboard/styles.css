@@ -2398,6 +2398,23 @@
   .pasos-subida .paso[data-estado="pendiente"] { border-left-color: var(--alerta); }
   .pasos-subida .paso[data-estado="en-curso"] { border-left-color: var(--acento); }
 
+  /* ---------- los reglajes que se corrieron en este circuito ----------
+     La lectura va primero y en el cuerpo del texto: es lo unico que afirma
+     algo. La tabla esta abajo para poder verificarla, no para leerla antes. */
+  .reglajes-circuito { margin-top: 10px; }
+  .reglajes-circuito .lectura { margin: 0 0 8px; font-size: .82rem; line-height: 1.45; }
+  table.tabla-reglajes { width: 100%; border-collapse: collapse; font-size: .76rem; }
+  table.tabla-reglajes th { text-align: left; font-weight: 600; color: var(--texto-tenue);
+    border-bottom: 1px solid var(--linea); padding: 4px 6px 4px 0; }
+  table.tabla-reglajes td { padding: 4px 6px 4px 0; border-bottom: 1px solid var(--linea); vertical-align: top; }
+  table.tabla-reglajes td.cifra { font-family: var(--cifra); font-variant-numeric: tabular-nums; white-space: nowrap; }
+  table.tabla-reglajes .esta { color: var(--acento); font-weight: 600; }
+  /* «Mismo reglaje» no es una advertencia: es el resultado, y el que permite
+     descartar al reglaje como explicacion. Va en el color de lo que esta bien. */
+  table.tabla-reglajes .igual { color: var(--ok); }
+  table.tabla-reglajes small { color: var(--texto-tenue); }
+  .reglajes-circuito .nota { margin-top: 8px; }
+
   .lienzo-comparacion { width: 100%; display: block; cursor: crosshair; }
   .pilotos-comparacion { display: flex; flex-wrap: wrap; gap: 10px; padding: 12px 20px; border-top: 1px solid var(--linea); background: var(--superficie); }
   .tarjeta-piloto { display: flex; align-items: center; gap: 10px; padding: 8px 14px; border: 1px solid var(--linea); border-left: 4px solid; border-radius: 10px; background: var(--superficie-2); }

@@ -118,9 +118,13 @@ class LasRutasQueElTableroPideExistenTests(unittest.TestCase):
     """
 
     @staticmethod
-    def _rutas_del_tablero() -> set[str]:
-        fuente = (RAIZ / "dashboard" / "app.js").read_text(encoding="utf-8")
-        return set(re.findall(r'ruta:\s*"([^"]+)"', fuente))
+    def _rutas_en(texto: str) -> set[str]:
+        return set(re.findall(r'ruta:\s*"([^"]+)"', texto))
+
+    @classmethod
+    def _rutas_del_tablero(cls) -> set[str]:
+        return cls._rutas_en(
+            (RAIZ / "dashboard" / "app.js").read_text(encoding="utf-8"))
 
     @staticmethod
     def _rutas_montadas() -> set[str]:
@@ -137,13 +141,25 @@ class LasRutasQueElTableroPideExistenTests(unittest.TestCase):
 
         return set(app.openapi()["paths"])
 
-    def test_el_tablero_declara_al_menos_las_rutas_de_accion(self) -> None:
-        """Si el patron deja de encontrar rutas, la prueba pasaria vacia."""
+    def test_el_patron_sigue_sabiendo_encontrar_una_ruta(self) -> None:
+        """Si el patron deja de encontrar rutas, la prueba de abajo pasa vacia.
 
-        self.assertGreaterEqual(
-            len(self._rutas_del_tablero()), 4,
-            "no se encontraron las rutas de accion en app.js: la prueba "
-            "estaria pasando sin comprobar nada")
+        SE COMPRUEBA CONTRA UNA MUESTRA Y NO CONTANDO LAS DEL TABLERO. Antes
+        exigia cuatro, y esa cifra envejece **cuando el codigo mejora**: el
+        2026-09-13 bajo a tres porque la importacion de OpenF1 dejo de componer
+        su ruta a mano ---ahora la declara el servidor en la respuesta de la
+        subida---, que es exactamente lo que se queria. Un guardian que se pone
+        rojo por una mejora ensena a bajarle el numero, y bajarselo solo mueve
+        la fecha del proximo rojo.
+
+        Lo que hay que proteger es **el extractor**, no cuantas rutas queden
+        escritas: que queden cero seria una noticia buena, no una rotura.
+        """
+
+        muestra = 'const a = { ruta: "/una/ruta", metodo: "POST" };'
+        self.assertEqual(self._rutas_en(muestra), {"/una/ruta"},
+                         "el patron dejo de reconocer una ruta escrita")
+        self.assertEqual(self._rutas_en("sin rutas aca"), set())
 
     def test_cada_ruta_que_el_tablero_llama_esta_montada(self) -> None:
         montadas = self._rutas_montadas()

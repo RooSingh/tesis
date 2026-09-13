@@ -68,8 +68,7 @@ function constante(nombre) {
   throw new Error("no cierra la constante " + nombre);
 }
 
-const CONSTANTES = ["EXTENSIONES_QUE_HAY_QUE_CONVERTIR", "SUFIJO_ACOMPANANTE",
-                    "PLATAFORMAS_CAN"];
+const CONSTANTES = ["EXTENSIONES_QUE_HAY_QUE_CONVERTIR", "SUFIJO_ACOMPANANTE"];
 const NOMBRES = ["extensionDe", "esAcompanante", "ordenDeSubida",
                  "extensionesQueSeAceptan", "comoSeProcesa", "tamanoLegible"];
 
@@ -172,59 +171,54 @@ prueba("la extension se lee como la lee el filtro, en minusculas", () => {
 
 /* -------- que se hace con lo subido -------- */
 
-prueba("un bus vehicular se carga, y el supuesto se declara", () => {
-  /* El nombre se compone `<plataforma>_<segmento>.canraw`, y mientras el
-     servidor no diga que pedir hay que reconstruirlo de ahi. Eso es el mismo
-     dato en dos sitios: por eso la suposicion se escribe en pantalla. */
+prueba("EL PLAN LO DECLARA EL SERVIDOR Y NO SE PARTE NINGUN NOMBRE", () => {
+  /* Antes se reconstruia `{segmentos, plataforma}` partiendo
+     `TOYOTA_RAV4_TSS2_sample_01.canraw` por un prefijo escrito en este archivo:
+     un acuerdo entre dos lados guardado en uno solo. Ahora sale del
+     `.meta.json`, que declara la plataforma y el segmento. */
   const plan = comoSeProcesa({
-    clase: "can_crudo",
-    guardado: "/srv/datasets/can/capturas/TOYOTA_RAV4_TSS2_2023-07-27--13-01-19--5.canraw",
+    clase: "metadatos",
+    procesar: { ruta: "/can/importar", metodo: "POST",
+                cuerpo: { segmentos: ["tramo_9"], plataforma: "OTRA_PLATAFORMA",
+                          etapa: "cargar" },
+                motivo: "la plataforma y el segmento salen de lo que la captura declara" },
   });
   assert.strictEqual(plan.ruta, "/can/importar");
   assert.deepStrictEqual(plan.cuerpo, {
-    segmentos: ["2023-07-27--13-01-19--5"],
-    plataforma: "TOYOTA_RAV4_TSS2",
-    etapa: "cargar",
+    segmentos: ["tramo_9"], plataforma: "OTRA_PLATAFORMA", etapa: "cargar" });
+  assert.ok(/salen de lo que la captura declara/.test(plan.motivo));
+});
+
+prueba("una plataforma con guion bajo de mas ya no rompe nada", () => {
+  /* Es el caso que hacia inevitable el cambio: partir por prefijo no puede
+     saber donde termina `OTRA_PLATAFORMA_RARA` y empieza el segmento. */
+  const plan = comoSeProcesa({
+    procesar: { ruta: "/can/importar", cuerpo: { segmentos: ["a_b_c"] } },
   });
-  assert.ok(/derivado del nombre/.test(plan.supuesto || ""),
-    "la suposicion no se declara: " + plan.supuesto);
+  assert.deepStrictEqual(plan.cuerpo.segmentos, ["a_b_c"]);
+  assert.strictEqual(plan.metodo, "POST", "el metodo por omision dejo de ser POST");
 });
 
-prueba("y si el nombre no dice la plataforma, no se adivina una", () => {
-  const plan = comoSeProcesa({ clase: "can_crudo",
-                               guardado: "/srv/datasets/can/capturas/cualquiera.canraw" });
-  assert.ok(plan.porQueNo, "se invento una plataforma");
-  assert.ok(!plan.ruta, "se disparo una carga con datos inventados");
+prueba("y cuando el servidor dice que no hay como, se muestra su motivo", () => {
+  /* El paquete comprimido hasta que se lo descomprima, por ejemplo. El motivo
+     es del servidor: escribir uno propio seria adivinar por que. */
+  const plan = comoSeProcesa({
+    clase: "paquete_openf1",
+    procesar: { ruta: null, motivo: "hay que descomprimirlo para saber que sesion es" },
+  });
+  assert.ok(!plan.ruta);
+  assert.ok(/descomprimirlo/.test(plan.porQueNo), plan.porQueNo);
 });
 
-prueba("LO QUE EL SERVIDOR DECLARE GANA SOBRE CUALQUIER DERIVACION", () => {
-  /* Es la salida prevista: en cuanto la respuesta traiga `procesar`, el tablero
-     deja de partir nombres. Si esta rama no existiera, el acuerdo implicito
-     sobreviviria al arreglo. */
+prueba("NO SE INVENTA UN RESPALDO CUANDO EL SERVIDOR NO DECLARA NADA", () => {
+  /* Derivar «por las dudas» seria devolver el acuerdo implicito que se acaba de
+     sacar, y encima escondido tras un `if`. */
   const plan = comoSeProcesa({
     clase: "can_crudo",
-    guardado: "/srv/datasets/can/capturas/TOYOTA_RAV4_TSS2_abc.canraw",
-    procesar: { ruta: "/otra/ruta", metodo: "POST", cuerpo: { lo: "que diga" } },
+    guardado: "/srv/datasets/can/capturas/TOYOTA_RAV4_TSS2_sample_01.canraw",
   });
-  assert.strictEqual(plan.ruta, "/otra/ruta");
-  assert.deepStrictEqual(plan.cuerpo, { lo: "que diga" });
-  assert.strictEqual(plan.declaradoPorElServidor, true);
-  assert.ok(!plan.supuesto, "se declaro un supuesto sobre algo que no se supuso");
-});
-
-prueba("una captura del simulador se declara pendiente, no terminada", () => {
-  /* No hay ruta en la API que republique un `.f1raw`: lo hace un guion. Decir
-     «listo» sobre eso seria afirmar que la sesion quedo disponible. */
-  const plan = comoSeProcesa({ clase: "f1_25_crudo", guardado: "/x/y.f1raw" });
-  assert.ok(plan.porQueNo, "se dio por procesada una captura que nadie procesa");
-  assert.ok(/republicar_captura/.test(plan.porQueNo),
-    "no dice que es lo que falta: " + plan.porQueNo);
-});
-
-prueba("y un paquete comprimido tampoco se da por importado", () => {
-  const plan = comoSeProcesa({ clase: "paquete_openf1", guardado: "/x/y.zip" });
-  assert.ok(plan.porQueNo);
-  assert.ok(/descomprime/.test(plan.porQueNo), plan.porQueNo);
+  assert.ok(!plan.ruta, "volvio a derivar el plan del nombre del archivo");
+  assert.ok(/no declaró/.test(plan.porQueNo), plan.porQueNo);
 });
 
 prueba("EL METADATO NO ES LO QUE SE PROCESA, Y SE VIO PROBANDOLO", () => {
@@ -236,14 +230,15 @@ prueba("EL METADATO NO ES LO QUE SE PROCESA, Y SE VIO PROBANDOLO", () => {
      viva el 2026-09-13. */
   const i = fuenteApp.indexOf("function subirLoElegido(");
   const cuerpo = fuenteApp.slice(i, fuenteApp.indexOf("\n}", i));
-  assert.ok(/clase !== "metadatos"/.test(cuerpo),
-    "se vuelve a procesar la respuesta del metadato en vez de la de la captura");
-  assert.strictEqual(comoSeProcesa({ clase: "metadatos" }).porQueNo !== undefined, true,
-    "un metadato no puede declarar un procesamiento propio");
+  assert.ok(/respuesta\.procesar\) ultima = respuesta/.test(cuerpo),
+    "no se conserva la respuesta que trae el plan de procesamiento");
+  assert.ok(comoSeProcesa({ clase: "metadatos" }).porQueNo,
+    "un metadato sin plan declarado no puede procesarse solo");
 });
 
-prueba("una clase que nadie declara no dispara nada", () => {
+prueba("una respuesta sin plan no dispara nada", () => {
   assert.ok(comoSeProcesa({}).porQueNo);
+  assert.ok(comoSeProcesa(null).porQueNo);
   assert.ok(comoSeProcesa({ clase: "inventada" }).porQueNo);
 });
 
@@ -261,12 +256,12 @@ prueba("UNA VERIFICACION QUE NO PASA CORTA EL FLUJO", () => {
     "se sigue al plan de procesamiento con una verificacion que no paso");
 });
 
-prueba("y ningun texto afirma una verificacion que no ocurrio", () => {
+prueba("y ningun texto propio afirma una verificacion que no ocurrio", () => {
   /* «Guardada y verificada» era cierto para el caso feliz y falso para el otro,
-     y se escribia igual en los dos. */
-  const plan = comoSeProcesa({ clase: "f1_25_crudo", guardado: "/x/y.f1raw" });
-  assert.ok(!/verificada/.test(plan.porQueNo),
-    "el texto afirma que quedo verificada sin haberlo comprobado: " + plan.porQueNo);
+     y se escribia igual en los dos. Hoy los motivos los redacta el servidor: lo
+     que queda de este lado no puede afirmar una verificacion. */
+  assert.ok(!/verificad/.test(comoSeProcesa({}).porQueNo));
+  assert.ok(!/verificad/.test(comoSeProcesa({ procesar: { ruta: null } }).porQueNo));
 });
 
 /* -------- la barra, y por que no es `fetch` -------- */

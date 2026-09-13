@@ -234,6 +234,9 @@ const estado = {
   vehiculoMotivo: "",
   puesta: null,        // de /sesiones/{id}/puesta-a-punto
   puestaMotivo: "",    // por que no hay reglaje, dicho por la API
+  //: Los reglajes de las otras sesiones de este circuito, de
+  //: `/sesiones/{id}/reglajes-del-circuito`. Se pide una vez por sesion.
+  reglajesDelCircuito: null,
   avisos: [],          // de /sesiones/{id}/avisos, derivados de la telemetria
   controlDeCarrera: [],     // de /racing/.../race-control, declarados por la fuente
   controlDeCarreraCrudo: [],
@@ -1891,53 +1894,33 @@ function subirUnArchivo(archivo, alProgresar) {
   });
 }
 
-/* QUE HACER CON LO QUE SE SUBIO.
+/* QUE HACER CON LO QUE SE SUBIO, Y LO DECIDE EL SERVIDOR.
 
-   LA DECISION ES DEL SERVIDOR CUANDO EL SERVIDOR LA DECLARA. Si la respuesta
-   trae `procesar` ---con su ruta, su metodo y su cuerpo--- se dispara eso y el
-   tablero no interpreta nada.
+   ANTES SE PARTIA EL NOMBRE. Para el bus vehicular habia que reconstruir
+   `{segmentos: ["sample_01"], plataforma: "TOYOTA_RAV4_TSS2"}` partiendo
+   `TOYOTA_RAV4_TSS2_sample_01.canraw` por un prefijo que este archivo conocia
+   de memoria: un acuerdo entre dos lados escrito en uno solo, que se rompe el
+   dia que una plataforma lleve un guion bajo de mas.
 
-   MIENTRAS TANTO, Y DECLARADO. La respuesta de hoy dice `clase` y poco mas, asi
-   que para el bus vehicular hay que reconstruir que segmento es a partir del
-   nombre del archivo, que se compone `<plataforma>_<segmento>.canraw`. Eso es
-   el mismo dato en dos sitios y se rompe solo el dia que cambie la convencion;
-   por eso la suposicion **se escribe en pantalla** en vez de quedar escondida
-   en el codigo, y se prefiere siempre lo que el servidor declare. */
-const PLATAFORMAS_CAN = ["TOYOTA_RAV4_TSS2"];
+   Ahora la respuesta trae `procesar` con su ruta, su metodo y su cuerpo, y sale
+   del `.meta.json`, **que declara la plataforma y el segmento**. Cuando `ruta`
+   viene nula hay un motivo escrito, y ese motivo se muestra tal cual: no saber
+   como procesar algo es una respuesta, y decirla vale mas que un boton que
+   falla.
 
+   NO SE INVENTA UN RESPALDO. Un servidor que no declare `procesar` es uno mas
+   viejo que este tablero; derivar «por las dudas» seria devolver el acuerdo
+   implicito que se acaba de sacar. */
 function comoSeProcesa(respuesta) {
-  if (respuesta && respuesta.procesar && respuesta.procesar.ruta) {
-    return { ...respuesta.procesar, declaradoPorElServidor: true };
+  const plan = respuesta && respuesta.procesar;
+  if (!plan) {
+    return { porQueNo: "el servidor no declaró cómo procesar este archivo." };
   }
-  const clase = respuesta && respuesta.clase;
-  if (clase === "can_crudo") {
-    const nombre = String(respuesta.guardado || "").split("/").pop();
-    const raiz = nombre.slice(0, nombre.length - ".canraw".length);
-    const plataforma = PLATAFORMAS_CAN.find(p => raiz.indexOf(p + "_") === 0);
-    if (!plataforma) {
-      return { porQueNo: "el nombre del archivo no dice de qué plataforma es el " +
-                         "bus, y sin eso no se puede pedir la carga" };
-    }
-    const segmento = raiz.slice(plataforma.length + 1);
-    return {
-      ruta: "/can/importar", metodo: "POST",
-      cuerpo: { segmentos: [segmento], plataforma: plataforma, etapa: "cargar" },
-      supuesto: "se carga como segmento «" + segmento + "» de la plataforma " +
-                plataforma + ", derivado del nombre del archivo",
-    };
+  if (!plan.ruta) {
+    return { porQueNo: plan.motivo || "no hay un procesamiento declarado." };
   }
-  if (clase === "f1_25_crudo") {
-    return { porQueNo: "la API todavía no expone una ruta que republique una " +
-                       "captura del simulador: lo hace `scripts/republicar_captura.py`, " +
-                       "que se corre en el servidor. La captura quedó guardada " +
-                       "donde el servidor la espera." };
-  }
-  if (clase === "paquete_openf1") {
-    return { porQueNo: "el paquete quedó guardado, pero el servidor todavía no " +
-                       "lo descomprime: la importación de OpenF1 pide una sesión " +
-                       "ya desplegada en disco." };
-  }
-  return { porQueNo: "no hay un procesamiento declarado para esta clase." };
+  return { ruta: plan.ruta, metodo: plan.metodo || "POST", cuerpo: plan.cuerpo,
+           motivo: plan.motivo };
 }
 
 /* SIGUE EL TRABAJO EN VEZ DE DISPARARLO Y OLVIDARLO.
@@ -2003,14 +1986,15 @@ function subirLoElegido(archivos) {
               " de " + tamanoLegible(archivo.size) +
               " · " + Math.round(fraccion * 100) + " %");
       }).then(respuesta => {
-        /* LO QUE SE PROCESA ES LA CAPTURA, NO SU METADATO.
-           Se guardaba la ultima respuesta, y la ultima es siempre la del
-           `.meta.json` ---va segundo por obligacion---, cuya clase es
-           `metadatos`. El plan salia «no hay un procesamiento declarado para
-           esta clase» sobre un par que estaba entero y verificado. */
-        if (respuesta && respuesta.clase && respuesta.clase !== "metadatos") {
-          ultima = respuesta;
-        }
+        /* EL PLAN VIENE EN LA RESPUESTA QUE LO TRAIGA, Y ES LA ULTIMA.
+           Se guardaba «la ultima respuesta» a secas y despues «la ultima que no
+           fuera metadatos»; ninguna de las dos es la regla. El servidor pone
+           `procesar` en la respuesta del acompanante ---que es donde ya sabe
+           todo lo que el par declara--- de modo que lo que hay que conservar es
+           la ultima que lo traiga, y el resto solo para poder decir que se
+           subio. */
+        if (respuesta && respuesta.procesar) ultima = respuesta;
+        else if (respuesta && !ultima) ultima = respuesta;
         _mostrarProgresoDeSubida(1, archivo.name + " · " +
                                  tamanoLegible(respuesta.bytes) + " recibidos");
         const v = respuesta.verificacion || {};
@@ -2050,7 +2034,7 @@ function subirLoElegido(archivos) {
         anotarPasoDeSubida("No se procesa todavía: " + plan.porQueNo, "pendiente");
         return null;
       }
-      if (plan.supuesto) anotarPasoDeSubida("Se procesa: " + plan.supuesto, "");
+      if (plan.motivo) anotarPasoDeSubida("Se procesa: " + plan.motivo + ".", "");
       anotarPasoDeSubida("Procesando…", "en-curso");
       return mandar(plan.ruta, plan.metodo || "POST", plan.cuerpo)
         .then(t => {
@@ -9554,6 +9538,9 @@ function limpiarContextoDeSesion() {
   estado.controlDeCarrera = []; estado.controlDeCarreraCrudo = [];
   estado.vehiculo = null; estado.vehiculoMotivo = "";
   estado.puesta = null; estado.puestaMotivo = "";
+  /* Los reglajes son **de un circuito**: dejarlos puestos al abrir otra sesion
+     compararia el reglaje nuevo contra las sesiones de la pista anterior. */
+  estado.reglajesDelCircuito = null; _reglajesDe = "";
   estado.avisos = []; estado.avisosMotivo = "";
   estado.avisosFallo = "";
 }
@@ -11469,6 +11456,7 @@ function olvidarLoDeLaCorrida() {
   estado.contextoCarrera = null; estado.climaDeCarrera = null;
   estado.controlDeCarrera = []; estado.controlDeCarreraCrudo = [];
   estado.puesta = null; estado.avisos = []; estado.avisosFallo = "";
+  estado.reglajesDelCircuito = null; _reglajesDe = "";
   estado.disponibles = new Set();
   estado.vehiculoClave = null;
   estado.climaMotivo = ""; estado.vehiculoMotivo = ""; estado.avisosMotivo = "";
@@ -12425,6 +12413,7 @@ function refrescarContexto() {
         aplicarDisponibilidad();
         _firmaClima = ""; _firmaEsquinas = ""; _firmaPuesta = "";
         pintarClima(); pintarEsquinas(); pintarPuestaAPunto();
+        asegurarReglajesDelCircuito();
       })
       .catch(e => {
         // Si fallo, la clave se limpia para que el proximo intento vuelva a
@@ -12678,6 +12667,100 @@ function motivoDeLaPuesta(ctx) {
   return ctx.puesta_motivo || ctx.motivo_ausencia || "";
 }
 
+/* ============================================================
+   LOS REGLAJES QUE SE CORRIERON EN ESTE CIRCUITO
+   ------------------------------------------------------------
+   NO ES UN RECOMENDADOR, Y ESO SE MIDIO ANTES DE ESCRIBIRLO. Sobre las catorce
+   sesiones con reglaje de la base, los tres circuitos con mas de una declaran
+   **los mismos veintitres ejes**: lo unico que cambia es el combustible, que lo
+   impone el modo de juego. Un panel que recomendara sobre eso estaria siempre
+   diciendo «usaste el mismo».
+
+   Lo que si se puede afirmar, y es lo que este bloque escribe primero, es la
+   lectura negativa: **si el reglaje no cambio, la diferencia de tiempo no es
+   del reglaje**. Descartar una hipotesis entera vale mas que una recomendacion
+   inventada.
+
+   SE PIDE UNA VEZ POR SESION Y NO CON EL CABEZAL. La comparacion recorre las
+   otras sesiones del circuito: es cara y no cambia al mover el cabezal, de modo
+   que colgarla del contexto ---que se vuelve a pedir todo el tiempo--- seria
+   pagarla en cada cuadro.
+   ============================================================ */
+let _reglajesDe = "";
+
+function asegurarReglajesDelCircuito() {
+  const sesion = estado.abierta && estado.abierta.session_id;
+  if (!sesion || _reglajesDe === sesion) return;
+  _reglajesDe = sesion;
+  const apertura = aperturaVigente();
+  pedir("/sesiones/" + encodeURIComponent(sesion) + "/reglajes-del-circuito",
+        /* Sin vale de carga: es un bloque secundario y no tiene que dejar el
+           panel marcado como «cargando» mientras se resuelve. */
+        { senal: senalDeSesion() })
+    .then(d => {
+      if (!sigueVigente(apertura)) return;
+      estado.reglajesDelCircuito = d || null;
+      _firmaPuesta = "";
+      pintarPuestaAPunto();
+    })
+    .catch(e => {
+      /* Que no se sepa no se dibuja como que no hay: se limpia la clave para
+         que el proximo intento vuelva a pedirlo. */
+      _reglajesDe = "";
+      if (!fueAnulada(e) && e instanceof TypeError) console.error(e);
+    });
+}
+
+/* Un tiempo de vuelta, escrito como se lee. `null` es que no hubo una vuelta
+   valida, que pasa de verdad: varias contrarrelojes de la base no cierran
+   ninguna. Escribir un cero ahi seria un tiempo que nadie corrio. */
+function tiempoDeVueltaLegible(segundos) {
+  if (segundos === null || segundos === undefined || !Number.isFinite(segundos)) {
+    return "—";
+  }
+  const m = Math.floor(segundos / 60);
+  const r = segundos - m * 60;
+  return m + ":" + r.toFixed(3).padStart(6, "0");
+}
+
+function pintarReglajesDelCircuito() {
+  const caja = document.getElementById("reglajes-circuito");
+  if (!caja) return;
+  const d = estado.reglajesDelCircuito;
+  const sesiones = (d && d.sesiones) || [];
+  if (!d || sesiones.length < 2) {
+    /* Con una sola no hay comparacion, y decirlo es mejor que un bloque vacio:
+       la ausencia tiene un motivo y el motivo es del dato, no de la pantalla. */
+    caja.innerHTML = d && d.lectura
+      ? '<p class="nota">' + textoSeguro(d.lectura) + "</p>" : "";
+    return;
+  }
+  const filas = sesiones.map(s => {
+    const ejes = (s.difiere_en || []).filter(x => !x.lo_impone_el_modo);
+    const impuestos = (s.difiere_en || []).filter(x => x.lo_impone_el_modo);
+    const que = s.session_id === d.referencia
+      ? '<span class="esta">esta sesión</span>'
+      : (ejes.length
+          ? ejes.map(x => textoSeguro((ROTULO_PUESTA[x.clave] || x.clave)) +
+                          " " + x.referencia + "→" + x.aplicado).join(", ")
+          : '<span class="igual">mismo reglaje</span>');
+    const nota = impuestos.length
+      ? ' <small>(' + impuestos.map(x =>
+          textoSeguro(ROTULO_PUESTA[x.clave] || x.clave) + " " + x.aplicado +
+          ", lo impone el modo").join("; ") + ")</small>"
+      : "";
+    return "<tr><td>" + textoSeguro(s.tipo_sesion || "—") + "</td>" +
+      '<td class="cifra">' + tiempoDeVueltaLegible(s.mejor_vuelta_s) + "</td>" +
+      "<td>" + que + nota + "</td></tr>";
+  }).join("");
+  caja.innerHTML =
+    '<p class="lectura">' + textoSeguro(d.lectura || "") + "</p>" +
+    '<table class="tabla-reglajes"><thead><tr><th>Sesión</th>' +
+    "<th>Mejor vuelta</th><th>Reglaje</th></tr></thead><tbody>" +
+    filas + "</tbody></table>" +
+    '<p class="nota">' + textoSeguro(d.no_autoriza || "") + ".</p>";
+}
+
 function pintarPuestaAPunto() {
   const cont = document.getElementById("lista-puesta");
   if (!cont) return;
@@ -12753,6 +12836,7 @@ function pintarPuestaAPunto() {
   if (cab) cab.textContent = campos.length
     ? campos.length + " ajustes · " + ((d.puesta_asentada || d.asentada) ? "asentada" : "observada")
     : "—";
+  pintarReglajesDelCircuito();
 }
 
 /* Cada aviso trae vuelta y metro; para colocarlo en la linea de tiempo hace

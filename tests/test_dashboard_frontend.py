@@ -24,9 +24,6 @@ class DashboardFrontendTests(unittest.TestCase):
 
     def test_los_contratos_de_escritura_coinciden_con_fastapi(self) -> None:
         codigo = APP.read_text(encoding="utf-8")
-        self.assertIn(
-            'cuerpo: { segmentos: [segmento], plataforma: plataforma, etapa: "cargar" }',
-            codigo)
         self.assertIn('"?confirmar=true"', codigo)
 
     def test_importar_ya_no_compone_un_pedido_de_openf1_a_mano(self) -> None:
@@ -51,6 +48,28 @@ class DashboardFrontendTests(unittest.TestCase):
         self.assertNotIn("descargar_telemetria", codigo)
         self.assertIn('"/importar/archivo?nombre=" +', codigo)
         self.assertIn("xhr.upload.onprogress", codigo)
+
+    def test_el_tablero_no_arma_el_pedido_de_importacion_por_su_cuenta(self) -> None:
+        """EL PLAN DE PROCESAMIENTO LO DECLARA EL SERVIDOR.
+
+        Para el bus vehicular el tablero reconstruia
+        `{segmentos, plataforma, etapa}` partiendo
+        `TOYOTA_RAV4_TSS2_sample_01.canraw` por un prefijo que tenia escrito:
+        un acuerdo entre dos lados guardado en uno solo, que se rompe el dia que
+        una plataforma lleve un guion bajo de mas. Ahora la respuesta de la
+        subida trae `procesar` con su ruta, su metodo y su cuerpo, derivados del
+        `.meta.json`, **que los declara**.
+
+        Se comprueba que la derivacion no vuelva como respaldo silencioso: un
+        `if` que deriva «por las dudas» devuelve el acuerdo implicito y lo
+        esconde.
+        """
+        codigo = APP.read_text(encoding="utf-8")
+        self.assertNotIn("PLATAFORMAS_CAN", codigo,
+                         "el tablero volvio a conocer las plataformas del bus")
+        self.assertNotIn('etapa: "cargar"', codigo,
+                         "el tablero volvio a componer el cuerpo de la carga")
+        self.assertIn("respuesta.procesar", codigo)
         self.assertIn("d.capturas_cerradas", codigo)
         self.assertIn("d.borradas", codigo)
         self.assertNotIn("d.sesiones_cerradas", codigo)

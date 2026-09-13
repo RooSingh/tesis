@@ -37,6 +37,7 @@ from adapters import f1_25 as adaptador_f1_25
 from backend import (anotador_vivo, catalogo_curvas, catalogo_reglajes,
                      catalogo_sesiones, db, f1_udp, matriz_fuentes,
                      procedencia_sesiones)
+from backend.analisis import reglajes
 
 router = APIRouter()
 
@@ -3118,23 +3119,43 @@ def _ultimos_valores(cursor, fuente: str, session_id: str, senales: list[str],
     # Con alcance elegido no sirve el catalogo ---sus extremos son los de la
     # sesion entera y no los de esa adquisicion--- pero entonces la consulta va
     # acotada por tiempo, que es la dimension de particion, y es barata.
-    if ventana_alcance or _cf:
-        condicion_ventana = ""
-        parametros_extremos: list[Any] = [fuente, session_id, senales] + _cfp
-        if ventana_alcance:
-            condicion_ventana = " AND timestamp BETWEEN %s AND %s"
-            parametros_extremos.extend(ventana_alcance)
-        cursor.execute("""
-            SELECT min(timestamp), max(timestamp) FROM telemetry_messages
-             WHERE source_type = %s AND session_id = %s
-               AND signal_name = ANY(%s)""" + _cf + condicion_ventana,
-            tuple(parametros_extremos))
-        fila = cursor.fetchone()
-        piso = _iso(fila[0]) if fila else None
-        fin = _iso(fila[1]) if fila else None
-    else:
-        piso, fin = catalogo_sesiones.extremos_de(session_id, fuente, cursor)
-    tope = hasta_utc if hasta_utc is not None else fin
+    # Y SE LEEN CUANDO HACEN FALTA, QUE NO ES SIEMPRE.
+    #
+    # Se leian al entrar. Pero con un instante pedido el tope ya lo da ese
+    # instante, y el piso solo se usa si la primera ventana **no encuentra**
+    # algo: cuando encuentra todo ---el caso normal--- los extremos se pagaban
+    # para nada.
+    #
+    # No es un ahorro teorico. Una sesion que no esta en `sesiones_catalogo`
+    # cae en el `min/max` sobre la tabla grande, que recorre su particion
+    # entera. Medido el 2026-09-13 sobre `f1_25:session:10998240251769839758`
+    # ---393.128 filas, sin catalogar---: **9,3 s en cada llamada**, contra
+    # 0,02 s de las consultas que de verdad buscan los valores. Todos los
+    # paneles que acompanan a la reproduccion pasan por aca con un instante.
+    _extremos: list = []
+
+    def _piso_y_fin() -> tuple[str | None, str | None]:
+        if _extremos:
+            return _extremos[0]
+        if ventana_alcance or _cf:
+            condicion_ventana = ""
+            parametros_extremos: list[Any] = [fuente, session_id, senales] + _cfp
+            if ventana_alcance:
+                condicion_ventana = " AND timestamp BETWEEN %s AND %s"
+                parametros_extremos.extend(ventana_alcance)
+            cursor.execute("""
+                SELECT min(timestamp), max(timestamp) FROM telemetry_messages
+                 WHERE source_type = %s AND session_id = %s
+                   AND signal_name = ANY(%s)""" + _cf + condicion_ventana,
+                tuple(parametros_extremos))
+            fila = cursor.fetchone()
+            par = (_iso(fila[0]) if fila else None, _iso(fila[1]) if fila else None)
+        else:
+            par = catalogo_sesiones.extremos_de(session_id, fuente, cursor)
+        _extremos.append(par)
+        return par
+
+    tope = hasta_utc if hasta_utc is not None else _piso_y_fin()[1]
 
     if tope is not None:
         _consultar(senales, _restar(tope, VENTANA_DE_CONTEXTO_S))
@@ -3151,8 +3172,10 @@ def _ultimos_valores(cursor, fuente: str, session_id: str, senales: list[str],
     # encima del corte de 30 s del navegador, de modo que se anulaba siempre y
     # esa sesion no terminaba de abrirse nunca.
     faltantes = [x for x in senales if x not in salida]
-    if faltantes and piso is not None:
-        _consultar_ventana(faltantes, piso, _sumar(piso, VENTANA_DE_CONTEXTO_S))
+    if faltantes:
+        piso = _piso_y_fin()[0]
+        if piso is not None:
+            _consultar_ventana(faltantes, piso, _sumar(piso, VENTANA_DE_CONTEXTO_S))
 
     # TERCER INTENTO: sin acotar, solo para lo que siga faltando. Es caro y por
     # eso es el ultimo, pero tiene que estar: sin el, una senal publicada a
@@ -3276,13 +3299,30 @@ def _armar_puesta_a_punto(valores: dict[str, dict]) -> tuple[dict, list, str | N
     return datos, campos, instante, completa
 
 
-def _hay_rodaje_despues(cursor, fuente: str, session_id: str,
-                        vehiculo: str | None, desde: str,
-                        hasta: str | None = None,
-                        ventana: tuple[str, str] | None = None,
-                        limites_fase: tuple[int | None, int | None] = (None, None),
-                        ) -> bool:
-    """Confirma que el reglaje observado llego a una vuelta conducida."""
+def _hubo_rodaje_desde(cursor, fuente: str, session_id: str,
+                       vehiculo: str | None, desde: str,
+                       hasta: str | None = None,
+                       ventana: tuple[str, str] | None = None,
+                       limites_fase: tuple[int | None, int | None] = (None, None),
+                       ) -> bool:
+    """Confirma que el reglaje observado estuvo vigente con el coche en marcha.
+
+    DESDE Y NO DESPUES, Y NO ES UNA SUTILEZA. Preguntaba por una muestra
+    **estrictamente posterior** al paquete de reglaje, y eso convierte el
+    criterio en una cuestion de suerte: el paquete de reglaje y la muestra de
+    velocidad que lo acompana llegan en el mismo instante muchas veces, porque
+    el juego los publica juntos.
+
+    Medido el 2026-09-13 sobre las sesiones con reglaje de la base: en
+    `16227589096132074312` el ultimo paquete de reglaje cae **exactamente** en
+    el mismo instante que la ultima muestra con velocidad positiva ---y daba
+    «no asentada»---, y en `10998240251769839758` cae 50 ms antes ---y daba
+    «asentada»---. Dos sesiones equivalentes con respuestas opuestas por
+    cincuenta milisegundos.
+
+    Una muestra que comparte instante con el paquete **se midio con ese
+    reglaje puesto**: entra.
+    """
 
     cv, pv = _acotar_al_vehiculo(vehiculo)
     cf, pf = _clausula_de_tramo(*limites_fase)
@@ -3294,7 +3334,7 @@ def _hay_rodaje_despues(cursor, fuente: str, session_id: str,
             SELECT 1 FROM telemetry_messages
              WHERE source_type = %s AND session_id = %s
                AND signal_name = 'speed' AND value_numeric > 0""" + cv + cf + condicion_ventana + """
-               AND timestamp > %s
+               AND timestamp >= %s
                AND (%s::timestamptz IS NULL OR timestamp <= %s)
              LIMIT 1)
     """, tuple(parametros))
@@ -3318,27 +3358,103 @@ def _comparar_con_referencia(session_id: str, puesta: dict,
     return referencia, diferencias
 
 
+def _instante_de_rodaje(cursor, fuente: str, session_id: str,
+                        vehiculo: str | None, hasta: str | None = None) -> str | None:
+    """Cuando fue la ultima vez que el coche estuvo en marcha, o `None`.
+
+    Es lo que permite preguntar por el reglaje **que se llevo a la pista** en
+    vez de por el ultimo que se publico. No son lo mismo: el juego sigue
+    emitiendo el paquete de reglaje mientras la sesion esta abierta en el menu,
+    de modo que el ultimo paquete de una sesion que termino en el menu describe
+    lo que alguien estaba tocando **despues** de dejar de conducir.
+
+    Medido el 2026-09-13 en `12239226036560891185`: la ultima muestra rodando es
+    de las 23:50:21 y el reglaje se siguio publicando hasta las 00:01:32, once
+    minutos mas tarde.
+    """
+
+    cv, pv = _acotar_al_vehiculo(vehiculo)
+    cursor.execute("""
+        SELECT max(timestamp) FROM telemetry_messages
+         WHERE source_type = %s AND session_id = %s
+           AND signal_name = 'speed' AND value_numeric > 0""" + cv + """
+           AND (%s::timestamptz IS NULL OR timestamp <= %s)
+    """, tuple([fuente, session_id] + pv + [hasta, hasta]))
+    fila = cursor.fetchone()
+    # `_iso` y no `.isoformat()`: el controlador devuelve `datetime` y un banco
+    # de pruebas puede devolver la marca ya escrita. Atarlo a un solo origen es
+    # lo que hizo fallar a esta funcion la primera vez que se la probo.
+    return _iso(fila[0]) if fila else None
+
+
+@router.get("/sesiones/{session_id}/reglajes-del-circuito")
+def reglajes_del_circuito(session_id: str) -> dict[str, Any]:
+    """Con que reglaje se corrio cada vez en este circuito, y que cambio.
+
+    NO ES UN RECOMENDADOR, Y ESO SE MIDIO ANTES DE ESCRIBIRLO. Sobre las catorce
+    sesiones con reglaje de la base, los tres circuitos con mas de una declaran
+    **los mismos veintitres ejes**: lo unico que cambia es el combustible, que lo
+    impone el modo. Recomendar sobre eso habria sido un panel que siempre dice
+    «usaste el mismo». Lo que si se puede afirmar, y sirve, es justamente eso:
+    si el reglaje no cambio, la diferencia de tiempo no es del reglaje.
+
+    LA LECTURA DEL PAQUETE NO SE DUPLICA. El modulo de analisis recibe con que
+    leerlo ---la lista de canales, el acotado al vehiculo propio y el criterio de
+    «asentada» viven aca--- en vez de volver a escribirlo del otro lado.
+    """
+
+    fuente = _fuente_de(session_id)
+    if fuente != reglajes.FUENTE:
+        return dict(reglajes.Comparacion(
+            session_id=session_id, circuito=None,
+            motivo="solo la simulacion declara el paquete de reglaje",
+        ).como_dict())
+
+    def vehiculo_de(sesion: str) -> str | None:
+        with db.obtener_conexion() as conexion, conexion.cursor() as cursor:
+            return _vehiculo_propio(cursor, fuente, sesion)
+
+    def valores_de(sesion: str, vehiculo: str | None) -> tuple[dict, bool]:
+        with db.obtener_conexion() as conexion, conexion.cursor() as cursor:
+            rodaje = _instante_de_rodaje(cursor, fuente, sesion, vehiculo)
+            crudos = _ultimos_valores(cursor, fuente, sesion,
+                                      list(CANALES_PUESTA_A_PUNTO.values()),
+                                      rodaje, vehiculo=vehiculo)
+        datos, _campos, _instante, completa = _armar_puesta_a_punto(crudos)
+        return datos, bool(completa and rodaje is not None)
+
+    return reglajes.comparar(session_id, valores_de, vehiculo_de).como_dict()
+
+
 @router.get("/sesiones/{session_id}/puesta-a-punto")
 def puesta_a_punto(
         session_id: str,
         hasta: Annotated[str | None, Query(
             description="Instante ISO-8601: la configuracion vigente hasta ahi")] = None,
         ) -> dict[str, Any]:
-    """Reglaje observado y confirmacion de que luego se condujo con el.
+    """El reglaje con el que se condujo, y si se puede afirmar que se condujo.
 
-    El menu publica valores intermedios. Por eso observar un paquete no alcanza:
-    se lo llama `asentado` solamente si sus veintitres señales pertenecen al
-        mismo instante y existe una muestra posterior con el vehiculo en marcha.
+    SE PREGUNTA POR EL INSTANTE DE RODAJE Y NO POR EL FINAL DE LA SESION. El
+    juego sigue publicando el paquete de reglaje con la sesion abierta en el
+    menu: el ultimo que llega puede ser lo que alguien estaba tocando despues de
+    guardar el auto. Este panel describe **lo que se llevo a la pista**, asi que
+    lee el paquete vigente en la ultima muestra con el coche en marcha.
+
+    Y ESO ES LO QUE HACE QUE `asentada` SIGNIFIQUE ALGO SIN SER UNA TAUTOLOGIA:
+    es falsa cuando el paquete no esta completo y cuando no se condujo nada, que
+    son los dos casos en que no se puede afirmar que ese reglaje corriera.
     """
     fuente = _fuente_de(session_id)
     with db.obtener_conexion() as conexion, conexion.cursor() as cursor:
         propio = _vehiculo_propio(cursor, fuente, session_id)
+        rodaje = _instante_de_rodaje(cursor, fuente, session_id, propio, hasta)
+        # Sin rodaje se muestra igual lo ultimo observado ---es lo que hay--- y
+        # `asentada` queda en falso, que es lo que corresponde decir.
         valores = _ultimos_valores(cursor, fuente, session_id,
-                                   list(CANALES_PUESTA_A_PUNTO.values()), hasta,
-                                   vehiculo=propio)
+                                   list(CANALES_PUESTA_A_PUNTO.values()),
+                                   rodaje or hasta, vehiculo=propio)
         datos, campos, instante, completa = _armar_puesta_a_punto(valores)
-        asentada = bool(completa and _hay_rodaje_despues(
-            cursor, fuente, session_id, propio, instante, hasta))
+        asentada = bool(completa and rodaje is not None)
     referencia, diferencias = _comparar_con_referencia(
         session_id, datos, asentada)
     return {
@@ -3349,10 +3465,14 @@ def puesta_a_punto(
         "completa": completa,
         "asentada": asentada,
         "instante_observado": instante,
+        # Contra que instante se leyo, que es lo que distingue este panel del
+        # que mostraba el ultimo paquete de la sesion.
+        "vigente_en": rodaje,
         "referencia": referencia,
         "diferencias": diferencias,
-        "criterio": ("paquete completo observado antes de una muestra posterior "
-                     "con velocidad positiva: configuracion llevada a la pista"),
+        "criterio": ("paquete completo vigente en la ultima muestra con el "
+                     "vehiculo en marcha: configuracion llevada a la pista, y "
+                     "no la que quedo en el menu al terminar"),
         "sin_decodificar": [],
         "motivo_ausencia": None if datos else _motivo_sin_puesta(fuente),
     }
@@ -3450,7 +3570,7 @@ def contexto(
                                         limites_fase=_lf)
             valores = {**valores, **del_otro}
         puesta, campos, instante_puesta, completa = _armar_puesta_a_punto(valores)
-        asentada = bool(completa and _hay_rodaje_despues(
+        asentada = bool(completa and _hubo_rodaje_desde(
             cursor, fuente, session_id, propio, instante_puesta, hasta,
             ventana=_cv, limites_fase=_lf))
 

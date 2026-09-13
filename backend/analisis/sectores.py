@@ -168,15 +168,29 @@ CONSULTA = """
 select timestamp, vehicle_id, signal_name, value_numeric, value_boolean
   from telemetry_messages
  where source_type = %s and session_id = %s
-   and signal_name = any(%s)
+   and signal_name = any(%s){acotado}
  order by vehicle_id, timestamp, signal_name
 """
 
 
-def _leer(cursor, fuente: str, session_id: str) -> list[tuple]:
-    cursor.execute(CONSULTA, (fuente, session_id,
-                              [SENAL_VUELTA, SENAL_SECTOR,
-                               SENAL_CRONOMETRO, SENAL_INVALIDA]))
+def _leer(cursor, fuente: str, session_id: str,
+          vehiculos: tuple[str, ...] | None = None) -> list[tuple]:
+    """Las cuatro señales que arman los sectores, de quien se pida.
+
+    EL ACOTADO VA EN LA CONSULTA Y NO DESPUES. Estaba en el bucle: se traian
+    las filas de los veintidos coches y se descartaban en Python las de los
+    veintiuno que nadie habia pedido. Para pintar el panel de un solo vehiculo
+    eso es leer veinte veces lo que hace falta, y se nota: la comparacion de
+    reglajes de Spielberg ---tres sesiones, una de ellas una carrera--- tardaba
+    16,4 s, casi toda en filas que se tiraban.
+    """
+
+    condicion = " and vehicle_id = any(%s)" if vehiculos else ""
+    parametros = [fuente, session_id,
+                  [SENAL_VUELTA, SENAL_SECTOR, SENAL_CRONOMETRO, SENAL_INVALIDA]]
+    if vehiculos:
+        parametros.append(list(vehiculos))
+    cursor.execute(CONSULTA.format(acotado=condicion), tuple(parametros))
     return cursor.fetchall()
 
 
@@ -225,7 +239,7 @@ def extraer(fuente: str, session_id: str,
     """Los tiempos por sector de cada vehiculo de la sesion."""
 
     with db.obtener_conexion() as conexion, conexion.cursor() as cursor:
-        filas = _leer(cursor, fuente, session_id)
+        filas = _leer(cursor, fuente, session_id, vehiculos)
 
     contraste = Contraste(session_id=session_id, fuente=fuente)
     if not filas:
@@ -271,9 +285,6 @@ def extraer(fuente: str, session_id: str,
                 v["muestras"].append((inst["sector"], ms))
 
     for marca, vehiculo, nombre, numerico, booleano in filas:
-        if vehiculos and vehiculo not in vehiculos:
-            continue
-
         if marca != marca_actual or vehiculo != vehiculo_actual:
             cerrar(instante)
             if vehiculo == vehiculo_actual and marca_actual is not None:

@@ -1914,18 +1914,55 @@ class PuestaAPuntoDeclarada(unittest.TestCase):
         self.assertIsNone(instante)
         self.assertFalse(completa)
 
-    def test_el_reglaje_se_asienta_con_rodaje_posterior(self):
+    def test_el_reglaje_se_asienta_con_rodaje_desde_su_instante(self):
+        """DESDE Y NO DESPUES, y no es una sutileza.
+
+        Preguntaba por una muestra **estrictamente posterior** al paquete de
+        reglaje, y el juego publica los dos en el mismo instante muchas veces.
+        Medido el 2026-09-13 sobre las catorce sesiones con reglaje de la base:
+        **diez** declaraban «no asentada» con el paquete completo, por
+        milisegundos. Una muestra que comparte instante con el paquete se midio
+        con ese reglaje puesto.
+        """
         cursor = MagicMock()
         cursor.fetchone.return_value = (True,)
-        self.assertTrue(api_sesion._hay_rodaje_despues(
+        self.assertTrue(api_sesion._hubo_rodaje_desde(
             cursor, "f1_25_udp_simulation", "f1_25:session:1",
             "f1_25:session:1:car:0", "2026-09-10T12:00:00+00:00"))
         consulta, parametros = cursor.execute.call_args[0]
         self.assertIn("signal_name = 'speed'", consulta)
         self.assertIn("value_numeric > 0", consulta)
-        self.assertIn("timestamp > %s", consulta)
+        self.assertIn("timestamp >= %s", consulta)
+        self.assertNotIn("timestamp > %s", consulta)
         self.assertIn("vehicle_id = %s", consulta)
         self.assertEqual(consulta.count("%s"), len(parametros))
+
+    def test_el_reglaje_que_se_muestra_es_el_que_estaba_puesto_al_rodar(self):
+        """EL ULTIMO PAQUETE DE LA SESION PUEDE SER DEL MENU.
+
+        El juego sigue publicando el reglaje con la sesion abierta despues de
+        dejar de conducir. Medido en `12239226036560891185`: la ultima muestra
+        rodando es de las 23:50:21 y el reglaje se siguio publicando hasta las
+        00:01:32, once minutos mas tarde. Este panel describe lo que se llevo a
+        la pista, asi que lee el paquete vigente en la ultima muestra en marcha.
+        """
+        cursor = MagicMock()
+        cursor.fetchone.return_value = ("2026-09-10T12:00:00+00:00",)
+        instante = api_sesion._instante_de_rodaje(
+            cursor, "f1_25_udp_simulation", "f1_25:session:1",
+            "f1_25:session:1:car:0")
+        consulta, parametros = cursor.execute.call_args[0]
+        self.assertIn("max(timestamp)", consulta)
+        self.assertIn("signal_name = 'speed'", consulta)
+        self.assertIn("value_numeric > 0", consulta)
+        self.assertEqual(consulta.count("%s"), len(parametros))
+        self.assertEqual(instante, "2026-09-10T12:00:00+00:00")
+
+        # Sin una sola muestra en marcha no hay instante que devolver, y eso es
+        # lo que deja `asentada` en falso sin que el criterio sea una tautologia.
+        cursor.fetchone.return_value = (None,)
+        self.assertIsNone(api_sesion._instante_de_rodaje(
+            cursor, "f1_25_udp_simulation", "f1_25:session:1", None))
 
     def test_la_referencia_solo_se_compara_con_un_reglaje_asentado(self):
         puesta = {"aleron_delantero": 4, "aleron_trasero": 1}
@@ -1952,7 +1989,7 @@ class PuestaAPuntoDeclarada(unittest.TestCase):
              patch.object(api_sesion, "_vehiculo_propio", return_value="car:0"), \
              patch.object(api_sesion, "_ventana_de_alcance", return_value=None), \
              patch.object(api_sesion, "_limites_de_fase", return_value=(None, None)), \
-             patch.object(api_sesion, "_hay_rodaje_despues", return_value=True), \
+             patch.object(api_sesion, "_hubo_rodaje_desde", return_value=True), \
              patch.object(api_sesion.procedencia_sesiones, "de",
                           return_value={"circuito": "spa"}):
             respuesta = api_sesion.contexto("f1_25:session:1")

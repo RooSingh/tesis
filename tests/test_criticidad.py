@@ -152,7 +152,18 @@ class FundamentoTest(unittest.TestCase):
         bib = (Path(__file__).resolve().parents[1] / "informe" / "tesis"
                / "bibliografia.bib").read_text(encoding="utf-8")
         claves = set(re.findall(r"@\w+\{([^,\s]+)\s*,", bib))
-        self.assertGreater(len(claves), 100, "no se leyo la bibliografia")
+        # EL GUARDIAN NO CUENTA ENTRADAS, PRUEBA EL PATRON.
+        #
+        # Exigia mas de cien y se puso rojo el 2026-09-13 con 53, porque la
+        # bibliografia se podo a proposito (`f491dff`). Un guardian que se
+        # rompe cuando el trabajo se hace ensena a bajarle el numero, y bajarlo
+        # solo mueve la fecha del proximo rojo. Lo que hay que proteger es que
+        # el patron siga sabiendo leer una clave: si deja de hacerlo, el bucle
+        # de abajo no comprueba nada.
+        muestra = "@article{una_clave_2025,\n  title = {X},\n}"
+        self.assertEqual(set(re.findall(r"@\w+\{([^,\s]+)\s*,", muestra)),
+                         {"una_clave_2025"}, "el patron dejo de leer una clave")
+        self.assertTrue(claves, "no se leyo la bibliografia")
         for c in cr.CRITERIOS:
             if c.cita:
                 self.assertIn(c.cita, claves,
