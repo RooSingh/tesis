@@ -4235,6 +4235,45 @@ function huecoBajoElCabezal() {
   return huecoQueContiene(cont, i.tUtcMs);
 }
 
+/* Que se escribe en el transporte mientras se escucha y no entra nada.
+
+   ESPERAR Y HABER PERDIDO EL FLUJO NO SON LA MISMA COSA. Las dos dejan el
+   tablero sin muestras nuevas, y el texto las decia igual: «sin telemetria
+   todavia · en cuanto el juego emita, el tablero se llena solo». Eso es cierto
+   antes de la primera muestra y **falso** despues de un corte: ahi ya llego
+   telemetria, lo que hay en pantalla es de antes del corte, y nada se va a
+   llenar solo si el capturador se cayo.
+
+   MEDIDO EL 2026-09-12. Se le corto la corriente a la Pi con la sesion
+   corriendo. Dos minutos despues el boton seguia ofreciendo «Detener escucha»
+   y el transporte seguia diciendo «sin telemetria todavia», con los
+   instrumentos congelados en 295 km/h. Tres afirmaciones en pantalla y ninguna
+   describia lo que pasaba.
+
+   `vivo.ultimaLlegada` es lo que distingue las dos: nulo es «nunca llego una».
+   El «hace cuanto» ya lo cuenta `comoSeVeElFlujo`, de modo que aca solo se
+   dice lo que aquel no dice ---que la escucha sigue abierta y que hay que
+   volver a encenderla---, y se dice **una vez**, no dos veces con dos cifras
+   que se pueden desfasar. */
+function loQueDiceLaEspera() {
+  /* Y si el difusor dice que **el** esta caido, eso manda sobre las dos: no es
+     que el juego no emita ni que el flujo se haya cortado en el camino, es que
+     del otro lado no hay quien reparta. Lo declara `/live/status`. */
+  const d = estado.vivo || {};
+  const caido = d.conectado === false
+    ? " · difusor desconectado" + (d.motivo ? ": " + d.motivo : "")
+    : "";
+  const nunca = typeof vivo === "undefined" || !vivo.ultimaLlegada;
+  if (nunca) {
+    return "sin telemetría todavía · en cuanto el juego emita, el tablero se " +
+           "llena solo" + caido;
+  }
+  const f = comoSeVeElFlujo(edadDelFlujo());
+  if (!f.estado) return "recibiendo…";
+  return "el flujo se cortó: lo que se ve es lo último que llegó · si el " +
+         "capturador se cayó, detené la escucha y volvé a empezarla" + caido;
+}
+
 function marcarFrescuraDelFlujo() {
   const hueco = huecoBajoElCabezal();
   if (hueco) {
@@ -4246,6 +4285,21 @@ function marcarFrescuraDelFlujo() {
   }
   const f = comoSeVeElFlujo(edadDelFlujo());
   return _ponerFrescura(f.estado, f.texto);
+}
+
+/* EL LATIDO QUE CORRE CUANDO NO LLEGA NADA.
+
+   La marca de frescura ya se refrescaba sola, pero la linea del transporte se
+   escribe al pintar, y **pintar lo dispara una muestra**. Esperando sin
+   muestras no se pintaba nunca: el texto se quedaba con lo que decia en el
+   momento del ultimo dibujo y no se enteraba de que el flujo se habia cortado.
+   Es el mismo argumento que justifica el reloj de un segundo, aplicado a la
+   otra cosa que hay que poder decir sin datos nuevos. */
+function latidoDeFrescura() {
+  marcarFrescuraDelFlujo();
+  if (estadoSesion !== "escuchando") return;
+  const detalle = document.getElementById("detalle-vivo");
+  if (detalle) detalle.textContent = loQueDiceLaEspera();
 }
 
 /* Un solo sitio que escribe la marca. Con dos ---uno para el vivo y otro para
@@ -8775,6 +8829,20 @@ const FUENTE_CORTA = {
   can_real_replay: "can",
   can_simulated: "can",
 };
+
+/* El camino de vuelta, derivado de la misma tabla y no escrito otra vez. Hace
+   falta cuando todavia no hay sesion abierta que declare su `source_type` y sin
+   embargo hay que preguntar por ella: escuchando, por ejemplo.
+
+   `can` tiene dos nombres largos y por eso no se invierte sola: la primera que
+   figura es la que vale, y es la que el tablero usa para preguntar. */
+function fuenteLargaDe(corta) {
+  const claves = Object.keys(FUENTE_CORTA);
+  for (let i = 0; i < claves.length; i++) {
+    if (FUENTE_CORTA[claves[i]] === corta) return claves[i];
+  }
+  return null;
+}
 
 /* El vivo se mantiene separado del historico: una muestra que acaba de llegar
    no se hace pasar por una fila ya consultada a la base. */
@@ -13506,7 +13574,7 @@ function pintarTransporte() {
     if (v.conectado === false) partes.push("difusor desconectado" + (v.motivo ? ": " + v.motivo : ""));
     document.getElementById("detalle-vivo").textContent =
       estadoSesion === "escuchando"
-        ? "sin telemetría todavía · en cuanto el juego emita, el tablero se llena solo"
+        ? loQueDiceLaEspera()
         : (partes.length ? partes.join(" · ") : "esperando al difusor…");
     return;
   }
@@ -14732,13 +14800,22 @@ function vigilarEnVivo() {
      latido late cada quince: es lo que el sistema puede, y fingir tres no lo
      hace mas rapido. */
   const mirar = () => {
-    if (!estado.abierta) { _relojVivo = null; return; }
+    /* ESCUCHAR TAMBIEN ES ESTAR EN VIVO, Y AHI NO HAY SESION ABIERTA.
+       `prepararEscucha` deja `estado.abierta` en nulo a proposito ---todavia
+       no hay nada abierto--- y este latido se apagaba justo entonces: durante
+       toda la espera nadie preguntaba por el difusor, que es el unico que
+       puede decir que se cayo. Se vio el 2026-09-12, con la Pi sin corriente y
+       el tablero sin una sola consulta en dos minutos. */
+    const escuchando = estadoSesion === "escuchando" || estadoSesion === "vivo";
+    if (!estado.abierta && !escuchando) { _relojVivo = null; return; }
     const otraVez = () => {
       if (document.hidden) { _relojVivo = null; return; }
       _relojVivo = setTimeout(mirar, 3000);
     };
+    const cual = estado.abierta ? estado.abierta.fuente : fuenteLargaDe(fuente);
     Promise.all([
-      pedir("/sesion/activa?fuente=" + encodeURIComponent(estado.abierta.fuente)).catch(() => null),
+      cual ? pedir("/sesion/activa?fuente=" + encodeURIComponent(cual)).catch(() => null)
+           : Promise.resolve(null),
       pedir("/live/status").catch(() => null),
     ]).then(([activa, vivo]) => {
       estado.activa = activa;
@@ -14770,7 +14847,8 @@ document.addEventListener("visibilitychange", () => {
     if (_capasPedidas.estructura || _capasPedidas.valores || _capasPedidas.trazas) {
       pedirPintado([]);
     }
-    if (estado.abierta && !_relojVivo) vigilarEnVivo();
+    const enVivo = estadoSesion === "escuchando" || estadoSesion === "vivo";
+    if ((estado.abierta || enVivo) && !_relojVivo) vigilarEnVivo();
   }
 });
 
@@ -14875,7 +14953,7 @@ function arrancar() {
      tiene el defecto obvio: **cuando no llegan datos, no corre**, que es
      exactamente el caso que hay que detectar. Un segundo alcanza porque lo que
      se informa son segundos. */
-  setInterval(marcarFrescuraDelFlujo, 1000);
+  setInterval(latidoDeFrescura, 1000);
   vigilarEnVivo();
   conectarFlujoEnVivo();
 }
