@@ -12749,9 +12749,21 @@ function pintarReglajesDelCircuito() {
           textoSeguro(ROTULO_PUESTA[x.clave] || x.clave) + " " + x.aplicado +
           ", lo impone el modo").join("; ") + ")</small>"
       : "";
+    /* POR QUE NO HAY TIEMPO, CUANDO NO LO HAY. Una raya sola no distingue «no
+       hay datos» de «se invalidaron las seis vueltas», y la segunda es la única
+       cosa útil que esa fila tiene para decir: habla de cómo se condujo, no de
+       la captura. */
+    const tiempo = s.mejor_vuelta_s !== null && s.mejor_vuelta_s !== undefined
+      ? tiempoDeVueltaLegible(s.mejor_vuelta_s)
+      : '<span class="sin-tiempo" title="' +
+        textoSeguro(s.sin_tiempo_porque || "") + '">—</span>';
+    const porque = (s.mejor_vuelta_s === null || s.mejor_vuelta_s === undefined) &&
+                   s.sin_tiempo_porque
+      ? '<br><small class="sin-tiempo">' + textoSeguro(s.sin_tiempo_porque) + "</small>"
+      : "";
     return "<tr><td>" + textoSeguro(s.tipo_sesion || "—") + "</td>" +
-      '<td class="cifra">' + tiempoDeVueltaLegible(s.mejor_vuelta_s) + "</td>" +
-      "<td>" + que + nota + "</td></tr>";
+      '<td class="cifra">' + tiempo + "</td>" +
+      "<td>" + que + nota + porque + "</td></tr>";
   }).join("");
   caja.innerHTML =
     '<p class="lectura">' + textoSeguro(d.lectura || "") + "</p>" +

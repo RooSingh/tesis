@@ -2413,6 +2413,9 @@
      descartar al reglaje como explicacion. Va en el color de lo que esta bien. */
   table.tabla-reglajes .igual { color: var(--ok); }
   table.tabla-reglajes small { color: var(--texto-tenue); }
+  /* Una ausencia explicada no es un error: es lo que esa sesion tiene para
+     decir. Va en el gris de lo secundario y no en el de alerta. */
+  table.tabla-reglajes .sin-tiempo { color: var(--texto-tenue); }
   .reglajes-circuito .nota { margin-top: 8px; }
 
   .lienzo-comparacion { width: 100%; display: block; cursor: crosshair; }

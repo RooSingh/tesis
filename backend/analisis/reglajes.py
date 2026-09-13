@@ -79,6 +79,10 @@ class ReglajeDeUnaSesion:
     #: La mejor vuelta valida medida con el cronometro del juego, o `None`.
     mejor_vuelta_s: float | None = None
     vueltas_validas: int = 0
+    #: Y POR QUE NO HAY TIEMPO, CUANDO NO LO HAY. Una raya sola no distingue
+    #: «no hay datos» de «invalidaste las seis vueltas», y la segunda es la
+    #: unica cosa util que esa fila tiene para decir.
+    sin_tiempo_porque: str | None = None
     #: En que se aparta de la sesion de referencia, eje por eje.
     difiere_en: list = field(default_factory=list)
     #: Cuantos ejes de reglaje difieren, sin contar la carga del modo.
@@ -95,6 +99,7 @@ class ReglajeDeUnaSesion:
             "asentada": self.asentada,
             "mejor_vuelta_s": self.mejor_vuelta_s,
             "vueltas_validas": self.vueltas_validas,
+            "sin_tiempo_porque": self.sin_tiempo_porque,
             "difiere_en": self.difiere_en,
             "cuantos_difieren": self.cuantos_difieren,
         }
@@ -144,7 +149,33 @@ def sesiones_con_reglaje() -> list[str]:
         return sorted(f[0] for f in cursor.fetchall())
 
 
-def _mejor_vuelta(session_id: str, vehiculo: str | None) -> tuple[float | None, int]:
+def _porque_no_hay_tiempo(piloto) -> str | None:
+    """Por que esta sesion no aporta una vuelta que comparar.
+
+    Son tres cosas distintas y la diferencia importa. Que **todas** se hayan
+    invalidado dice algo de como se condujo; que ninguna se haya corrido entera
+    dice donde empezo y donde se corto la captura; que no haya vueltas dice que
+    no hay nada. Una raya sola las cuenta como la misma.
+    """
+
+    if piloto is None or not piloto.vueltas_vistas:
+        return "esta sesión no declara vueltas"
+    if piloto.vueltas:
+        return None
+    partes = []
+    if piloto.invalidadas:
+        partes.append("%d invalidada%s por el juego"
+                      % (piloto.invalidadas, "s" if piloto.invalidadas > 1 else ""))
+    if piloto.incompletas:
+        # La vuelta de salida de una contrarreloj arranca dentro del tercer
+        # sector, y la ultima de cualquier captura se corta sin cerrar.
+        partes.append("%d sin correrse entera" % piloto.incompletas)
+    return ("de %d vuelta%s: %s"
+            % (piloto.vueltas_vistas, "s" if piloto.vueltas_vistas > 1 else "",
+               " y ".join(partes) if partes else "ninguna cronometrable"))
+
+
+def _mejor_vuelta(session_id: str, vehiculo: str | None):
     """La mejor vuelta valida y cuantas hubo, con el cronometro del juego.
 
     NO SE USA `duracion_s` DE `/vueltas`. Aquella es tiempo de conduccion
@@ -163,8 +194,9 @@ def _mejor_vuelta(session_id: str, vehiculo: str | None) -> tuple[float | None, 
     piloto = contraste.piloto(vehiculo) if vehiculo else (
         contraste.pilotos[0] if contraste.pilotos else None)
     if piloto is None:
-        return None, 0
-    return piloto.mejor_vuelta_s, len(piloto.vueltas)
+        return None, 0, "esta sesión no declara vueltas"
+    return (piloto.mejor_vuelta_s, len(piloto.vueltas),
+            _porque_no_hay_tiempo(piloto))
 
 
 def _diferencias(referencia: dict, otro: dict) -> list[dict]:
@@ -246,7 +278,7 @@ def comparar(session_id: str, valores_de, vehiculo_de) -> Comparacion:
         proc = procedencia_sesiones.de(sesion) or {}
         vehiculo = vehiculo_de(sesion)
         valores, asentada = valores_de(sesion, vehiculo)
-        mejor, cuantas = _mejor_vuelta(sesion, vehiculo)
+        mejor, cuantas, porque = _mejor_vuelta(sesion, vehiculo)
         comparacion.sesiones.append(ReglajeDeUnaSesion(
             session_id=sesion,
             tipo_sesion=proc.get("tipo_sesion_nombre"),
@@ -257,6 +289,7 @@ def comparar(session_id: str, valores_de, vehiculo_de) -> Comparacion:
             asentada=asentada,
             mejor_vuelta_s=mejor,
             vueltas_validas=cuantas,
+            sin_tiempo_porque=porque,
         ))
 
     referencia = comparacion.sesiones[0]

@@ -104,6 +104,18 @@ class Piloto:
     vueltas: list[VueltaConSectores] = field(default_factory=list)
     mejor_por_sector: dict[int, MejorSector] = field(default_factory=dict)
     mejor_vuelta_s: float | None = None
+    #: CUANTAS VUELTAS SE VIERON Y POR QUE NO ENTRARON LAS QUE NO ENTRARON.
+    #:
+    #: Sin esto, una sesion sin ninguna vuelta cronometrada se ve exactamente
+    #: igual que una sesion sin datos: una raya. Y son cosas distintas, y la
+    #: diferencia es lo unico util que se puede decir de esa sesion. Medido el
+    #: 2026-09-13: en la contrarreloj de Spielberg las **seis** vueltas estan
+    #: invalidadas por el juego, y en la de Imola ninguna de las dos se corrio
+    #: entera. La primera afirma algo sobre como se condujo; la segunda, sobre
+    #: donde se corto la captura.
+    vueltas_vistas: int = 0
+    invalidadas: int = 0
+    incompletas: int = 0
     #: La suma de los mejores sectores propios. No se corrio nunca.
     vuelta_ideal_s: float | None = None
     #: Cuanto se gana repitiendo lo ya hecho, sin mejorar nada.
@@ -122,6 +134,9 @@ class Piloto:
             "mejor_por_sector": {str(k): v.como_dict()
                                  for k, v in sorted(self.mejor_por_sector.items())},
             "mejor_vuelta_s": self.mejor_vuelta_s,
+            "vueltas_vistas": self.vueltas_vistas,
+            "invalidadas": self.invalidadas,
+            "incompletas": self.incompletas,
             "vuelta_ideal_s": self.vuelta_ideal_s,
             "sobre_la_mesa_s": self.sobre_la_mesa_s,
         }
@@ -211,7 +226,24 @@ def _sectores_de(muestras: list[tuple[int, float]],
     SE AVANZA Y NO SE VUELVE. El indice mas alto visto es el sector en el que se
     esta; uno mas bajo se descarta. Es lo que hace que un rebote no parta la
     vuelta, y ademas es cierto: nadie recorre el sector 1 despues del 2.
+
+    Y LA VUELTA TIENE QUE EMPEZAR EN LA LINEA. Una que empieza a mitad de
+    circuito no recorrio sus primeros sectores, y sus tiempos no existen. Pasa
+    de verdad: en contrarreloj el juego coloca el coche para una vuelta lanzada,
+    de modo que la vuelta 1 arranca dentro del **tercer** sector. Medido el
+    2026-09-13 en Imola: la primera muestra de la vuelta 1 ya trae el indice 2.
+
+    Sin esta comprobacion, el arranque contaba como un cruce: en Imola el
+    cronometro valia 0,0 ahi y la vuelta se caia por `0 < s1`, o sea **por
+    suerte**. Con el cronometro corriendo ---que es lo normal--- se habria
+    publicado un sector 1 de doce segundos para una vuelta que nunca lo
+    recorrio. Un tiempo inventado es peor que uno ausente.
     """
+
+    if not muestras:
+        return None
+    if muestras[0][0] != 0:
+        return None
 
     cruces: dict[int, float] = {}
     mas_alto = 0
@@ -310,12 +342,20 @@ def extraer(fuente: str, session_id: str,
     por_vehiculo: dict[str, Piloto] = {}
     for vehiculo, numero in orden:
         v = acumulado[(vehiculo, numero)]
+        # EL PILOTO EXISTE AUNQUE NINGUNA VUELTA ENTRE, y eso es la mitad del
+        # punto: una sesion donde todas se invalidaron tiene algo que decir, y
+        # devolver una lista vacia lo hace indistinguible de no tener datos.
+        piloto = por_vehiculo.setdefault(vehiculo, Piloto(vehiculo=vehiculo))
+        piloto.vueltas_vistas += 1
         if v["invalida"]:
+            piloto.invalidadas += 1
             continue
         sectores = _sectores_de(v["muestras"], v["duracion_ms"])
         if sectores is None:
+            # No se corrio entera: o arranco a mitad de circuito, o la captura
+            # se corto antes de cerrarla.
+            piloto.incompletas += 1
             continue
-        piloto = por_vehiculo.setdefault(vehiculo, Piloto(vehiculo=vehiculo))
         piloto.vueltas.append(VueltaConSectores(
             vehiculo=vehiculo, numero=numero, sectores=sectores,
             duracion_s=round(v["duracion_ms"] / 1000.0, 3)))
@@ -328,7 +368,8 @@ def extraer(fuente: str, session_id: str,
                     piloto.mejor_por_sector[sector] = MejorSector(
                         sector=sector, vehiculo=piloto.vehiculo,
                         vuelta=vuelta.numero, duracion_s=duracion)
-        piloto.mejor_vuelta_s = min(v.duracion_s for v in piloto.vueltas)
+        if piloto.vueltas:
+            piloto.mejor_vuelta_s = min(v.duracion_s for v in piloto.vueltas)
         if len(piloto.mejor_por_sector) == SECTORES:
             piloto.vuelta_ideal_s = round(
                 sum(m.duracion_s for m in piloto.mejor_por_sector.values()), 3)

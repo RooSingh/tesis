@@ -47,7 +47,10 @@ class ComparacionDeReglajes(unittest.TestCase):
             return sesion + ":car:0"
 
         def mejor(sesion, vehiculo):
-            return (mejores or {}).get(sesion, (None, 0))
+            m = (mejores or {}).get(sesion, (None, 0))
+            # `_mejor_vuelta` devuelve ademas por que no hay tiempo, cuando no
+            # lo hay. Las pruebas que no lo miran lo dejan en `None`.
+            return m if len(m) == 3 else (m[0], m[1], None)
 
         with patch.object(reglajes, "sesiones_con_reglaje", return_value=todas), \
              patch.object(reglajes.procedencia_sesiones, "de",
@@ -177,6 +180,27 @@ class ComparacionDeReglajes(unittest.TestCase):
         self.assertIsNone(r["sesiones"][0]["mejor_vuelta_s"])
         self.assertEqual(r["sesiones"][0]["vueltas_validas"], 0)
 
+    def test_y_dice_por_que_no_lo_hay(self) -> None:
+        """UNA RAYA SOLA NO DISTINGUE «NO HAY DATOS» DE «LAS INVALIDASTE TODAS».
+
+        Y la segunda es la unica cosa util que esa fila tiene para decir: habla
+        de como se condujo, no de la captura. Medido el 2026-09-13: en la
+        contrarreloj de Spielberg las seis vueltas estan invalidadas.
+        """
+        r = self._comparar("s1", [], {
+            "circuitos": {"s1": "spielberg"}, "reglajes": {"s1": dict(BASE)},
+        }, mejores={"s1": (None, 0, "de 6 vueltas: 6 invalidadas por el juego")})
+        self.assertEqual(r["sesiones"][0]["sin_tiempo_porque"],
+                         "de 6 vueltas: 6 invalidadas por el juego")
+
+    def test_y_con_tiempo_no_dice_nada(self) -> None:
+        """Explicar una ausencia que no ocurrio es ruido."""
+
+        r = self._comparar("s1", [], {
+            "circuitos": {"s1": "shanghai"}, "reglajes": {"s1": dict(BASE)},
+        }, mejores={"s1": (99.863, 2, None)})
+        self.assertIsNone(r["sesiones"][0]["sin_tiempo_porque"])
+
     def test_si_no_se_puede_afirmar_que_corrio_se_dice(self) -> None:
         """`asentada` viaja por sesion: una tabla de reglajes que no se sabe si
         llegaron a la pista es una tabla de intenciones."""
@@ -187,6 +211,51 @@ class ComparacionDeReglajes(unittest.TestCase):
         }, asentadas={"s2": False})
         self.assertTrue(r["sesiones"][0]["asentada"])
         self.assertFalse(r["sesiones"][1]["asentada"])
+
+
+class PorQueNoHayTiempo(unittest.TestCase):
+    """Los tres casos, tal como aparecen en la base el 2026-09-13."""
+
+    def _piloto(self, vistas, validas=0, invalidadas=0, incompletas=0):
+        from backend.analisis.sectores import Piloto, VueltaConSectores
+        p = Piloto(vehiculo="car:0")
+        p.vueltas_vistas = vistas
+        p.invalidadas = invalidadas
+        p.incompletas = incompletas
+        p.vueltas = [VueltaConSectores(vehiculo="car:0", numero=i + 1)
+                     for i in range(validas)]
+        return p
+
+    def test_todas_invalidadas_habla_de_como_se_condujo(self) -> None:
+        """La contrarreloj de Spielberg: seis vueltas, las seis invalidadas."""
+
+        texto = reglajes._porque_no_hay_tiempo(self._piloto(6, invalidadas=6))
+        self.assertIn("6 vueltas", texto)
+        self.assertIn("invalidadas por el juego", texto)
+
+    def test_ninguna_entera_habla_de_la_captura(self) -> None:
+        """La contrarreloj de Imola: la 1 arranca en el tercer sector ---el juego
+        coloca el coche para una vuelta lanzada--- y la 2 se corta sin cerrar."""
+
+        texto = reglajes._porque_no_hay_tiempo(self._piloto(2, incompletas=2))
+        self.assertIn("2 sin correrse entera", texto)
+        self.assertNotIn("invalidada", texto)
+
+    def test_las_dos_cosas_a_la_vez_se_dicen_las_dos(self) -> None:
+        texto = reglajes._porque_no_hay_tiempo(
+            self._piloto(3, invalidadas=1, incompletas=2))
+        self.assertIn("1 invalidada por el juego", texto)
+        self.assertIn("2 sin correrse entera", texto)
+
+    def test_sin_vueltas_es_otra_cosa_y_se_dice_distinto(self) -> None:
+        self.assertIn("no declara vueltas",
+                      reglajes._porque_no_hay_tiempo(self._piloto(0)))
+        self.assertIn("no declara vueltas",
+                      reglajes._porque_no_hay_tiempo(None))
+
+    def test_con_una_vuelta_buena_no_hay_nada_que_explicar(self) -> None:
+        self.assertIsNone(
+            reglajes._porque_no_hay_tiempo(self._piloto(5, validas=2, invalidadas=3)))
 
 
 class LecturaDeLaTabla(unittest.TestCase):
