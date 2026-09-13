@@ -498,16 +498,70 @@ class UnPaqueteNoPisaOtroTests(unittest.TestCase):
         with patch("pathlib.Path.unlink", side_effect=OSError("solo lectura")):
             session_processor._levantar_la_marca_de_sin_importar("/lo/que/sea")
 
-    def test_el_modulo_no_vuelve_a_tener_un_borrado_del_destino(self) -> None:
-        """Guarda estructural: `rmtree` sobre el destino no puede reaparecer."""
+    def test_ningun_borrado_del_destino_ocurre_sin_mirar_la_marca_antes(self) -> None:
+        """Guarda estructural, reformulada. La anterior mordia de casualidad.
 
-        fuente = (Path(__file__).resolve().parents[1] / "backend" / "subida.py"
-                  ).read_text(encoding="utf-8")
-        sin_comentarios = "\n".join(
-            r.split("#", 1)[0] for r in fuente.splitlines())
-        self.assertNotIn("shutil.rmtree(destino)", sin_comentarios,
-                         "volvio el borrado del destino, que ya se llevo un "
-                         "paquete real una vez")
+        DECIA: que la cadena `shutil.rmtree(destino)` no aparezca nunca. Eso
+        era cierto cuando se escribio, porque entonces **ningun** borrado del
+        destino era legitimo. Dejo de serlo: desde `1ba5cbe` hay uno correcto,
+        el que reemplaza el resto de una subida que nunca llego a importarse, y
+        se escribe `shutil.rmtree(destino, ignore_errors=True)`.
+
+        La guarda vieja seguia pasando, pero **por una coincidencia de
+        escritura**: buscaba la forma exacta del defecto de ayer y la forma
+        legitima de hoy lleva un argumento mas. Comprobado ---volviendo a meter
+        el `rmtree(destino)` pelado, fallaba--- pero eso no la salva: una guarda
+        que acierta porque dos textos difieren, y no porque un invariante se
+        sostenga, da una tranquilidad que no corresponde.
+
+        LO QUE SIGUE SIENDO CIERTO ES MAS CHICO Y MAS FUERTE, y es la
+        formulacion que propuso la otra sesion: **ningun borrado del destino
+        puede ocurrir sin haber comprobado la marca antes**. Eso si es un
+        invariante, y se puede expresar sobre el arbol sintactico en lugar de
+        sobre el texto.
+
+        EL DEFECTO QUE SIGUE CUIDANDO es el del 2026-09-12: un `rmtree` del
+        destino que se llevo los 60 MB del paquete de Spa porque una prueba uso
+        una clave real. Lo que cambia es que ahora tambien atrapa la version
+        sutil ---borrar primero y mirar despues---, que la anterior dejaba
+        pasar.
+        """
+
+        import ast
+
+        ruta = Path(__file__).resolve().parents[1] / "backend" / "subida.py"
+        arbol = ast.parse(ruta.read_text(encoding="utf-8"))
+
+        def borra_el_destino(nodo) -> bool:
+            if not isinstance(nodo, ast.Call) or not nodo.args:
+                return False
+            que = nodo.func
+            nombre = que.attr if isinstance(que, ast.Attribute) else getattr(
+                que, "id", "")
+            if nombre not in {"rmtree", "unlink", "remove"}:
+                return False
+            primero = nodo.args[0]
+            return isinstance(primero, ast.Name) and primero.id == "destino"
+
+        borrados = []
+        for funcion in ast.walk(arbol):
+            if not isinstance(funcion, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            # Donde se consulta la marca dentro de esta funcion.
+            marcas = [n.lineno for n in ast.walk(funcion)
+                      if isinstance(n, ast.Name) and n.id == "SIN_IMPORTAR"]
+            for nodo in ast.walk(funcion):
+                if borra_el_destino(nodo):
+                    antes = [m for m in marcas if m < nodo.lineno]
+                    if not antes:
+                        borrados.append((funcion.name, nodo.lineno))
+
+        self.assertEqual(
+            borrados, [],
+            "hay un borrado del destino que no consulto la marca antes: %s.\n"
+            "Es el defecto que el 2026-09-12 se llevo los 60 MB del paquete de "
+            "Spa. Solo se reemplaza lo que una importacion dejo sin terminar."
+            % ", ".join("%s(), linea %d" % b for b in borrados))
 
 
 class UnaCapturaDesmentidaNoSeQuedaConNombreDeDatoTests(unittest.TestCase):
