@@ -171,12 +171,41 @@ def actualizar_estado_basico(estado: TelemetryState, paso_ms: int = 10) -> Telem
     estado.speed = max(0.0, estado.speed + estado.accel_x * paso_s * 3.6)
 
     # --- 2. Dinamica lateral y rotacional -------------------------------
-    # El angulo de direccion alimenta una primera aproximacion de yaw y
-    # aceleracion lateral. No es un modelo de vehiculo completo; es una
-    # relacion simple para mantener coherencia entre senales. Los factores
-    # 0.35 y 0.08 son parametros simulados, no valores fisicos calibrados.
+    #
+    # LA GUIÑADA SALE DEL VOLANTE Y LA LATERAL SALE DEL GIRO, y esa asimetria
+    # es el arreglo.
+    #
+    # Antes las dos salian del volante:
+    #
+    #     estado.yaw_rate = estado.steer_angle * 0.35
+    #     estado.accel_y  = estado.steer_angle * 0.08
+    #
+    # Proporcionales al mismo numero, de modo que su cociente era **una
+    # constante**. Y la fisica dice otra cosa: en un giro plano la aceleracion
+    # lateral es el producto de la velocidad por la velocidad de giro, de modo
+    # que `accel_y / yaw_rate` **es la velocidad** y tiene que variar con ella.
+    #
+    # Medido: el cociente equivalia a un vehiculo circulando a **47,1 km/h
+    # fijos** mientras la maniobra va de 100 a 231 km/h.
+    #
+    # POR QUE NO ALCANZA CON LLAMARLO «PARAMETRO SIMULADO», que es lo que decia
+    # el comentario anterior. Que el generador sea una «simulacion controlada
+    # con ajuste cualitativo» permite que el 0,35 no este calibrado ---y sigue
+    # sin estarlo, a proposito---. Lo que no permite es que una señal
+    # **contradiga** a otra del mismo vehiculo. Y el capitulo 7 usa justamente
+    # esta relacion para confirmar la escala del acelerometro de la captura
+    # real: «en un giro plano la aceleracion lateral es el producto de la
+    # velocidad por la velocidad de giro». Con las dos proporcionales entre si,
+    # esa comprobacion no se podia demostrar sobre la fuente simulada.
+    #
+    # Es el mismo caso que tenian las ruedas: ver el ancho de via mas abajo.
+    #
+    # EL 0,35 SE CONSERVA. La guiñada en funcion del volante si es un parametro
+    # cualitativo legitimo: depende de la geometria de direccion y del reglaje,
+    # y no hay aqui un modelo que la derive. Lo que cambia es de donde sale la
+    # lateral.
     estado.yaw_rate = estado.steer_angle * 0.35
-    estado.accel_y = estado.steer_angle * 0.08
+    estado.accel_y = (estado.speed / 3.6) * math.radians(estado.yaw_rate)
 
     # --- 3. Velocidades de rueda ---------------------------------------
     #
