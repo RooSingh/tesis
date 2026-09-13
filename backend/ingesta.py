@@ -81,6 +81,7 @@ from typing import Annotated, Any, Callable
 from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
+from adapters import can_rav4
 from backend import catalogo_corridas
 from backend import config
 from backend import catalogo_sesiones
@@ -185,6 +186,9 @@ class Trabajo:
     comienzo_utc: str = field(default_factory=_ahora_utc)
     comienzo_monotono: float = field(default_factory=time.monotonic)
     fin_utc: str | None = None
+    #: El reloj monotonico al terminar. Es lo que **congela** la duracion. Se
+    #: escribe solo en `marcar_fin()`; ver el comentario de ese metodo.
+    fin_monotono: float | None = None
     detalle: dict[str, Any] = field(default_factory=dict)
     error: str | None = None
     bitacora: str | None = None
@@ -201,6 +205,33 @@ class Trabajo:
     def en_curso(self) -> bool:
         return self.estado == "en_curso"
 
+    def marcar_fin(self) -> None:
+        """Cierra el trabajo: la hora de pared **y** el reloj que lo mide.
+
+        EL UNICO SITIO QUE ESCRIBE `fin_utc`, y no por prolijidad. Hay cinco
+        finales distintos ---termina una funcion, no arranca el proceso,
+        termina el proceso, se pide detener sin proceso, se detiene--- y cada
+        uno tiene que congelar la duracion. Escribir el par a mano en los cinco
+        anda hoy y falla el dia que alguien agregue el sexto: la cifra vuelve a
+        crecer sola, en silencio, sin que ninguna prueba de conducta se queje,
+        porque el trabajo que ese sexto final cierre todavia no existe.
+        `tests/test_un_trabajo_terminado_no_sigue_durando.py` tiene una prueba
+        estructural que falla si vuelve a aparecer una asignacion suelta.
+
+        SE MARCA UNA SOLA VEZ. Detener un trabajo que ya termino no puede
+        alargarle la duracion hacia atras.
+
+        SE GUARDA EL RELOJ MONOTONICO Y NO LA RESTA DE LAS HORAS DE PARED. La
+        hora de pared la puede mover el sistema ---un ajuste de reloj, un
+        cambio de horario--- y entonces una importacion de veinte segundos
+        informaria una hora, o un numero negativo.
+        """
+
+        if self.fin_utc is not None:
+            return
+        self.fin_utc = _ahora_utc()
+        self.fin_monotono = time.monotonic()
+
     def a_dict(self) -> dict[str, Any]:
         """Vista serializable. El proceso no viaja: viaja lo que se sabe de el."""
 
@@ -212,7 +243,15 @@ class Trabajo:
             "estado": self.estado,
             "comienzo_utc": self.comienzo_utc,
             "fin_utc": self.fin_utc,
-            "duracion_s": round(time.monotonic() - self.comienzo_monotono, 1),
+            # CUANTO DURO, NO CUANTO HACE QUE EMPEZO. Mientras corre son la
+            # misma cifra; al terminar dejan de serlo, y antes del 2026-09-13
+            # esta seguia creciendo: el tablero mostro «Procesado en 17 s» y un
+            # rato despues la misma consulta decia 101,8 s del mismo trabajo.
+            # Una medicion que crece sola cuando nadie la mira no es una
+            # medicion, y esta es de las que terminan en el informe.
+            "duracion_s": round(
+                (self.fin_monotono if self.fin_monotono is not None
+                 else time.monotonic()) - self.comienzo_monotono, 1),
             "detalle": self.detalle,
             "error": self.error,
             "bitacora": self.bitacora,
@@ -381,10 +420,15 @@ class RegistroDeTrabajos:
         if trabajo.estado != "terminado":
             return
         detalle = trabajo.detalle or {}
-        sesion = (detalle.get("session_id") or detalle.get("sesion")
-                  or detalle.get("run_id"))
+        # Un trabajo que corre **dentro** del servidor devuelve lo que toco; uno
+        # que corre como proceso aparte no devuelve nada, y por eso lo declara al
+        # lanzarse. Las dos formas terminan aca.
+        una = (detalle.get("session_id") or detalle.get("sesion")
+               or detalle.get("run_id"))
+        sesiones = list(detalle.get("sesiones") or ([una] if una else []))
         try:
-            catalogo_sesiones.refrescar_en_segundo_plano(sesion)
+            for sesion in sesiones:
+                catalogo_sesiones.refrescar_en_segundo_plano(sesion)
             if trabajo.familia == "importacion":
                 catalogo_corridas.pedir_reconstruccion()
         except Exception:  # noqa: BLE001 - el refresco nunca rompe la ingesta
@@ -422,19 +466,29 @@ class RegistroDeTrabajos:
                 trabajo.estado = "fallido"
                 trabajo.error = f"{type(error).__name__}: {error}"
             finally:
-                trabajo.fin_utc = _ahora_utc()
+                trabajo.marcar_fin()
                 self._poner_al_dia_el_catalogo(trabajo)
 
         threading.Thread(target=_correr, name=f"ingesta-{tipo}", daemon=True).start()
         return trabajo
 
     def lanzar_proceso(self, tipo: str, descripcion: str,
-                       comando: list[str]) -> Trabajo:
-        """Lanza un guion como proceso aparte y vigila su salida."""
+                       comando: list[str],
+                       sesiones: list[str] | None = None) -> Trabajo:
+        """Lanza un guion como proceso aparte y vigila su salida.
+
+        `sesiones` son las que el guion va a dejar en la base. Se declaran **al
+        lanzar** y no al terminar porque el proceso no le devuelve nada a quien
+        lo lanzo: su unico canal de vuelta es el codigo de salida. Sin esta
+        declaracion el catalogo no se entera de una carga que termino bien, y la
+        sesion queda en la base sin figurar en ninguna lista.
+        """
 
         self._exigir_familia_libre(tipo)
         trabajo = self._registrar(Trabajo(uuid.uuid4().hex[:12], tipo, descripcion))
         trabajo.detalle = {"comando": comando}
+        if sesiones:
+            trabajo.detalle["sesiones"] = list(sesiones)
 
         salida = None
         try:
@@ -461,7 +515,7 @@ class RegistroDeTrabajos:
                 salida.close()
             trabajo.estado = "fallido"
             trabajo.error = f"{type(error).__name__}: {error}"
-            trabajo.fin_utc = _ahora_utc()
+            trabajo.marcar_fin()
             return trabajo
 
         trabajo.proceso = proceso
@@ -472,7 +526,7 @@ class RegistroDeTrabajos:
                 salida.close()
             except OSError:
                 pass
-            trabajo.fin_utc = _ahora_utc()
+            trabajo.marcar_fin()
             trabajo.detalle = {**trabajo.detalle, "codigo_salida": codigo}
             # SE LEE UNA VEZ, AL TERMINAR, y no en cada serializacion: el
             # registro de una captura de dos horas se consulta muchas veces y
@@ -506,7 +560,7 @@ class RegistroDeTrabajos:
         proceso = trabajo.proceso
         if proceso is None:
             trabajo.estado = "detenido"
-            trabajo.fin_utc = _ahora_utc()
+            trabajo.marcar_fin()
             return "sin_proceso"
         if proceso.poll() is not None:
             return "ya_habia_terminado"
@@ -532,7 +586,7 @@ class RegistroDeTrabajos:
                 forma = "forzado"
 
         trabajo.estado = "detenido"
-        trabajo.fin_utc = _ahora_utc()
+        trabajo.marcar_fin()
         return forma
 
     def reiniciar(self) -> None:
@@ -1376,8 +1430,13 @@ def can_importar(peticion: PeticionCan) -> dict:
                    "--segmentos", *peticion.segmentos]
         tipo = "can_cargar"
 
+    # Solo la carga: la extraccion escribe en disco y no toca la base, de modo
+    # que declararle sesiones haria recontar el catalogo por nada.
+    sesiones = ([can_rav4.identidad_de_sesion(s) for s in peticion.segmentos]
+                if peticion.etapa == "cargar" else None)
     trabajo = trabajos.lanzar_proceso(
-        tipo, f"{peticion.etapa} CAN: {', '.join(peticion.segmentos)}", comando)
+        tipo, f"{peticion.etapa} CAN: {', '.join(peticion.segmentos)}", comando,
+        sesiones=sesiones)
     if trabajo.estado == "fallido":
         raise HTTPException(status_code=500, detail=trabajo.error)
     respuesta = trabajo.a_dict()
