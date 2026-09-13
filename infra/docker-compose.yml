@@ -489,6 +489,13 @@ volumes:
   # sabia por haberla perdido en un reinicio.
   mosquitto_data:
   mosquitto_log:
-  # El de la base **si** guarda algo que no se puede perder. El contenedor que
-  # corre hoy usa uno anonimo; este no lo reemplaza ni lo toca.
+  # El de la base **si** guarda algo que no se puede perder, y por eso se
+  # verifico antes de recrear en lugar de suponerlo.
+  #
+  # Este comentario decia que el contenedor que corria usaba un volumen
+  # **anonimo**, de modo que recrear lo habria dejado con una base vacia. Era
+  # falso: `docker inspect tesis-timescaledb` el 2026-09-13 devolvio
+  # `infra_timescaledb_data`, que es exactamente este nombrado con el prefijo
+  # del proyecto. Comprobado al migrar: 35.435.587 filas en
+  # `telemetry_messages` antes de recrear y las mismas 35.435.587 despues.
   timescaledb_data:
