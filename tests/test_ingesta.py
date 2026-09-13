@@ -531,6 +531,49 @@ class ImportacionCanTests(PruebaDeIngesta):
         self.assertEqual(fallo.exception.status_code, 409)
         self.assertEqual(fallo.exception.detail["faltantes"], ["sample_99"])
 
+    def test_una_carga_declara_la_sesion_que_va_a_dejar_en_la_base(self) -> None:
+        """EL DEFECTO QUE ESTO CIERRA, medido el 2026-09-13 sobre la Pi.
+
+        Una carga CAN disparada desde el tablero termino bien, dejo 57.890
+        filas de `can:segmento:sample_01` en la base, **y la sesion no aparecio
+        en ninguna lista**: el catalogo nunca se entero. La causa es que el
+        refresco se dispara con lo que el trabajo deja en `detalle`, y un
+        trabajo lanzado como proceso aparte solo deja ahi el comando y el codigo
+        de salida. El guion sabe que sesion toco; el servidor que lo lanzo, no.
+
+        La sesion no se adivina ni se saca del registro del proceso: se
+        **declara al lanzar**, porque el nombre se deriva del segmento y quien
+        pide la carga ya lo tiene en la mano.
+        """
+        from adapters import can_rav4
+        self.parchear_directorios()
+        capturas_can = self.temporal / "can"
+        capturas_can.mkdir()
+        (capturas_can / "TOYOTA_RAV4_TSS2_sample_01.canraw").write_bytes(b"crudo")
+        (capturas_can / "TOYOTA_RAV4_TSS2_sample_04.canraw").write_bytes(b"crudo")
+        proceso = ProcesoFalso()
+        with patch.object(ingesta, "CAPTURAS_CAN", capturas_can):
+            with patch.object(ingesta.subprocess, "Popen", return_value=proceso):
+                respuesta = ingesta.can_importar(ingesta.PeticionCan(
+                    segmentos=["sample_01", "sample_04"], etapa="cargar"))
+
+        self.assertEqual(
+            respuesta["detalle"]["sesiones"],
+            [can_rav4.identidad_de_sesion("sample_01"),
+             can_rav4.identidad_de_sesion("sample_04")],
+            "la carga no declaro las sesiones que va a dejar en la base")
+        proceso.terminate()
+
+    def test_la_extraccion_no_declara_ninguna_sesion(self) -> None:
+        """No toca la base. Declarar una haria recontar por nada."""
+        self.parchear_directorios()
+        proceso = ProcesoFalso()
+        with patch.object(ingesta.subprocess, "Popen", return_value=proceso):
+            respuesta = ingesta.can_importar(
+                ingesta.PeticionCan(segmentos=["sample_01"]))
+        self.assertNotIn("sesiones", respuesta["detalle"])
+        proceso.terminate()
+
     def test_cargar_lanza_el_reproductor_cuando_el_crudo_esta(self) -> None:
         self.parchear_directorios()
         capturas_can = self.temporal / "can"
@@ -694,6 +737,35 @@ class CatalogoAlDiaTests(unittest.TestCase):
         with patch("backend.ingesta.catalogo_sesiones.refrescar_en_segundo_plano") as ref:
             RegistroDeTrabajos._poner_al_dia_el_catalogo(t)
         ref.assert_called_once_with("f1_25:session:9")
+
+    def test_refresca_cada_sesion_declarada_y_no_solo_la_primera(self) -> None:
+        """Una carga CAN puede traer varios segmentos, y cada uno es una sesion.
+
+        Con una sola refrescada, el primer segmento aparecia en la lista y los
+        demas quedaban invisibles con sus filas ya en la base.
+        """
+        from backend.ingesta import RegistroDeTrabajos
+        t = self._trabajo(tipo="can_cargar",
+                          detalle={"comando": ["x"], "codigo_salida": 0,
+                                   "sesiones": ["can:segmento:sample_01",
+                                                "can:segmento:sample_04"]})
+        with patch("backend.ingesta.catalogo_sesiones.refrescar_en_segundo_plano") as ref:
+            RegistroDeTrabajos._poner_al_dia_el_catalogo(t)
+        self.assertEqual([c.args[0] for c in ref.call_args_list],
+                         ["can:segmento:sample_01", "can:segmento:sample_04"])
+
+    def test_una_carga_que_no_declara_su_sesion_no_refresca_nada(self) -> None:
+        """Es lo que pasaba, y sigue siendo lo correcto cuando no se sabe.
+
+        Rehacer el catalogo entero ---149 s--- porque un trabajo no dijo que
+        toco no es un arreglo: es castigar a toda la base por una omision.
+        """
+        from backend.ingesta import RegistroDeTrabajos
+        t = self._trabajo(tipo="can_cargar",
+                          detalle={"comando": ["x"], "codigo_salida": 0})
+        with patch("backend.ingesta.catalogo_sesiones.refrescar_en_segundo_plano") as ref:
+            RegistroDeTrabajos._poner_al_dia_el_catalogo(t)
+        ref.assert_not_called()
 
     def test_un_trabajo_fallido_no_toca_el_catalogo(self) -> None:
         """Si la carga fallo, los numeros de antes siguen siendo los correctos."""

@@ -146,6 +146,23 @@ def _marca_temporal(inicio_utc: str, instante_ns: int) -> str:
     return (inicio + timedelta(microseconds=instante_ns / 1000)).isoformat()
 
 
+def identidad_de_sesion(segmento: str) -> str:
+    """Como se llama en la base la sesion que deja un segmento de grabacion.
+
+    POR QUE ES UNA FUNCION Y NO UN TEXTO ADENTRO DEL MENSAJE. El nombre lo
+    necesita tambien quien **lanza** la carga, antes de que el guion escriba una
+    sola fila: el catalogo de sesiones se pone al dia por identificador, y sin
+    saber cual no se pone al dia nada. Eso fue exactamente lo que paso el
+    2026-09-13: una carga entro con 57.890 filas y la sesion no figuro en
+    ninguna lista.
+
+    La alternativa ---repetir la formula en la ingesta--- deja dos duenos del
+    mismo dato, que es el defecto que este tablero ya arrastro cinco veces.
+    """
+
+    return f"can:segmento:{segmento}"
+
+
 def mensajes_desde_trama(
     identificador: int,
     datos: bytes,
@@ -194,7 +211,7 @@ def mensajes_desde_trama(
             "timestamp": marca,
             "vehicle_id": vehiculo,
             "driver_id": conductor,
-            "session_id": f"can:segmento:{segmento}",
+            "session_id": identidad_de_sesion(segmento),
             "lap_id": None,
             "signal_name": canonica,
             "value": bool(valor) if unidad == "bool" else round(float(valor), 6),

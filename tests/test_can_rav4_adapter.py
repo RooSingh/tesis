@@ -197,3 +197,30 @@ class BusTransmitidoTests(unittest.TestCase):
             can_rav4.mensajes_desde_trama(170, trama(b0=0x1A, b1=0xF0), 0,
                                           INICIO, SEGMENTO, bus=128),
             [])
+
+
+class IdentidadDeSesionTests(unittest.TestCase):
+    """QUIEN SABE COMO SE LLAMA UNA SESION CAN, Y TIENE QUE SER UNO SOLO.
+
+    El nombre `can:segmento:<segmento>` vivia unicamente dentro del texto que
+    arma cada mensaje. La ingesta necesita ese mismo nombre **antes** de lanzar
+    la carga, para poder poner al dia el catalogo cuando el proceso termine, y
+    copiar la formula alli habria dejado dos duenos del mismo dato ---que es el
+    defecto que este tablero ya arrastro cinco veces---.
+
+    Esta prueba ata las dos puntas: lo que la funcion devuelve tiene que ser
+    exactamente lo que el adaptador escribe en cada mensaje. Cambiar una sin la
+    otra rompe aca, que es justamente para lo que sirve.
+    """
+
+    def test_es_exactamente_el_que_viaja_en_cada_mensaje(self):
+        emitidos = {m["session_id"]
+                    for identificador in can_decoder.IDENTIFICADORES_RESPALDADOS
+                    for m in mensajes(identificador)}
+        self.assertTrue(emitidos, "el adaptador no emitio ningun mensaje")
+        self.assertEqual(emitidos, {can_rav4.identidad_de_sesion(SEGMENTO)})
+
+    def test_dos_segmentos_distintos_no_comparten_sesion(self):
+        """Si compartieran nombre, dos cargas se sumarian en una sola fila."""
+        self.assertNotEqual(can_rav4.identidad_de_sesion("sample_01"),
+                            can_rav4.identidad_de_sesion("sample_04"))
