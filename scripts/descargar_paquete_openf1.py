@@ -63,16 +63,90 @@ def _escribir(destino: Path, contenido: Any) -> None:
                        encoding="utf-8")
 
 
+#: Lo que hace que un objeto **sea** una sesion y no una ficha con un numero
+#: adentro. SE MIDIO, NO SE INVENTO: los dos paquetes sanos que hay en disco
+#: ---9947 y 9955--- traen los mismos quince campos no nulos, y estos tres son
+#: los que no pueden faltar sin que deje de describir una sesion. Se exigen
+#: tres de los quince a proposito: pedir los quince seria atarse a que OpenF1
+#: no agregue ni saque ninguno nunca.
+CAMPOS_DE_UNA_SESION = ("session_type", "date_start", "circuit_key")
+
+
+def _leer_si_se_puede(ruta: Path) -> tuple[bool, Any]:
+    """Devuelve `(se pudo leer, contenido)`. Un archivo ilegible no es un dato."""
+
+    try:
+        return True, json.loads(ruta.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False, None
+
+
+def _bajados_la_vez_anterior(destino: Path) -> set[str]:
+    """Los archivos que **este** guion declara haber bajado, segun el manifiesto.
+
+    Es el unico registro de procedencia que hay, y sirve para distinguir dos
+    vacios que en disco son identicos: una sesion que de verdad no tuvo
+    adelantamientos, y un archivo que dejo ahi otra cosa. Sin esta distincion,
+    la unica alternativa seria volver a pedir todo vacio en cada corrida, y eso
+    son consultas contra una API publica y gratuita que no se justifican.
+    """
+
+    manifiesto = destino / "manifiesto_contexto.json"
+    if not manifiesto.is_file():
+        return set()
+    se_pudo, contenido = _leer_si_se_puede(manifiesto)
+    if not se_pudo or not isinstance(contenido, dict):
+        return set()
+    return {r.get("archivo") for r in contenido.get("archivos", [])
+            if isinstance(r, dict) and r.get("estado") == "descargado"}
+
+
+def _la_ficha_sirve(ruta: Path) -> bool:
+    """Un `session.json` que describe una sesion, y no solo que existe una."""
+
+    se_pudo, contenido = _leer_si_se_puede(ruta)
+    if not se_pudo or not isinstance(contenido, dict):
+        return False
+    return all(contenido.get(campo) is not None for campo in CAMPOS_DE_UNA_SESION)
+
+
+def _el_contexto_sirve(ruta: Path, con_procedencia: set[str]) -> bool:
+    """Una lista. Y si esta vacia, que alguien declare haberla bajado asi.
+
+    EL VACIO NO SE DECLARA INVALIDO, y es a proposito. Una sesion de
+    entrenamientos puede no tener adelantamientos y una corta puede no tener
+    paradas: rechazar todo `[]` obligaria a volver a pedir para siempre algo
+    que de verdad esta vacio. Lo que se rechaza es el vacio **sin procedencia**,
+    que es el que aparecio en el 9939 diciendo que no corrio nadie.
+    """
+
+    se_pudo, contenido = _leer_si_se_puede(ruta)
+    if not se_pudo or not isinstance(contenido, list):
+        return False
+    return bool(contenido) or ruta.name in con_procedencia
+
+
 def descargar_paquete(session_key: int, destino: Path) -> dict[str, Any]:
-    """Deja en `destino` el paquete de contexto de la sesion. Idempotente."""
+    """Deja en `destino` el paquete de contexto de la sesion. Idempotente.
+
+    REANUDABLE POR CONTENIDO, NO POR NOMBRE. Un archivo que ya esta no se
+    vuelve a pedir **si sirve**. La version anterior preguntaba solo
+    `if salida.is_file()`, y el 2026-09-13 eso dejo pasar los restos de una
+    prueba que habian sobrescrito el paquete de la sesion 9939: un
+    `session.json` con dos campos y un `drivers.json` con `[]`. El guion
+    informo «ya estaba» para los dos. Si la API no hubiera estado cerrada esa
+    tarde, habria bajado el resto, informado exito, y dejado la sesion
+    afirmando para siempre que no corrio nadie.
+    """
 
     ultimo = [0.0]
     registros: list[dict[str, Any]] = []
+    con_procedencia = _bajados_la_vez_anterior(destino)
 
     # `session.json` es el unico obligatorio, y el importador lo exige como
     # **objeto**: OpenF1 contesta una lista de una sesion y hay que abrirla.
     ficha = destino / "session.json"
-    if ficha.is_file():
+    if ficha.is_file() and _la_ficha_sirve(ficha):
         registros.append({"archivo": "session.json", "estado": "ya estaba", "filas": 1})
     else:
         payload, registro = fetch_openf1("sessions", {"session_key": session_key}, ultimo)
@@ -84,7 +158,7 @@ def descargar_paquete(session_key: int, destino: Path) -> dict[str, Any]:
 
     for archivo in sorted(OPTIONAL_CONTEXT_FILES):
         salida = destino / archivo
-        if salida.is_file():
+        if salida.is_file() and _el_contexto_sirve(salida, con_procedencia):
             registros.append({"archivo": archivo, "estado": "ya estaba", "filas": None})
             continue
         payload, registro = fetch_openf1(_endpoint_de(archivo),
