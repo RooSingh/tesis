@@ -14,6 +14,19 @@ ESTILOS = RAIZ / "dashboard" / "styles.css"
 INDICE = RAIZ / "dashboard" / "index.html"
 
 
+def _solo_codigo(js: str) -> str:
+    """El JavaScript sin sus comentarios, de linea y de bloque.
+
+    NO ES UN ANALIZADOR Y NO PRETENDE SERLO ---una barra dentro de una cadena lo
+    confundiria--- pero para preguntar «¿esta escrita esta expresion?» es
+    exactamente lo que hace falta, y es lo que evita que una guarda se rompa con
+    el comentario que la explica.
+    """
+
+    sin_bloques = re.sub(r"/\*.*?\*/", " ", js, flags=re.DOTALL)
+    return "\n".join(linea.split("//")[0] for linea in sin_bloques.split("\n"))
+
+
 class DashboardFrontendTests(unittest.TestCase):
     def test_javascript_es_valido_para_el_motor_del_navegador(self) -> None:
         proceso = subprocess.run(
@@ -745,7 +758,14 @@ class DashboardFrontendTests(unittest.TestCase):
         for marca in ("hidden", "data-fuera", "capa-ausente", "data-necesita"):
             self.assertNotIn(marca, pie, marca)
 
-        codigo = APP.read_text(encoding="utf-8")
+        # SOLO EL CODIGO, SIN LOS COMENTARIOS. Esta guarda pregunta si el guion
+        # **toca** el pie legal, y se rompia con el comentario que explica por
+        # que no debe tocarlo: la frase nombra `data-fuente-legal` y la busqueda
+        # no distingue nombrarlo de hacerlo. Es la sexta vez en el dia que una
+        # guarda se rompe con su propia explicacion; el arreglo es el mismo que
+        # en `tests/js/identidad_y_cronometraje.js`, y aca tambien hay que
+        # quitar bloques `/* */`, no solo lineas `//`.
+        codigo = _solo_codigo(APP.read_text(encoding="utf-8"))
         for marca in ("pie-legal", "fuente-legal", "fuentes-legal"):
             self.assertNotIn(marca, codigo, marca)
 
@@ -813,6 +833,11 @@ class AyudantesDeSerieTests(unittest.TestCase):
             if proceso.returncode != 0:
                 rotos.append(f"--- {arnes.name}\n{proceso.stdout}\n{proceso.stderr}")
         self.assertEqual(rotos, [], "\n".join(rotos))
+
+    def test_una_sesion_generada_no_se_rotula_como_el_bus_real(self) -> None:
+        """El generador del capitulo 8 aparecia en la lista como «CAN real»."""
+
+        self._correr("como_se_llama_la_procedencia.js")
 
     def test_la_forma_del_bus_se_arma_y_se_declara_derivada(self) -> None:
         """El panel mostraba «recorrido reconstruido» y debajo, nada.

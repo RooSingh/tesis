@@ -1932,7 +1932,7 @@ function pintarFormatosDeSubida(formatos) {
   if (!caja) return;
   const filas = ((formatos || {}).formatos || []).map(f => (
     '<div class="formato"><b>' + textoSeguro(f.extension || "") + "</b>" +
-    '<span class="eyebrow">' + textoSeguro(ETIQUETA_FUENTE[FUENTE_CORTA[f.fuente]] || f.fuente) +
+    '<span class="eyebrow">' + textoSeguro(etiquetaDeOrigen(f.fuente)) +
     "</span><p>" + textoSeguro(f.que_es || "") + "</p>" +
     (f.acompana
       ? '<p class="nota">Se sube junto con su <b>' + textoSeguro(f.acompana) +
@@ -2368,7 +2368,11 @@ function pintarTitulo() {
     return;
   }
   const s = estado.abierta;
-  e.textContent = FUENTES[fuente].nombre + " · " +
+  /* CON UNA SESION ABIERTA SE NOMBRA LA SESION, NO EL MODO. El modo dice en
+     cual de los tres esta parado el tablero; lo que hay arriba de todo tiene
+     que decir de donde salio lo que se esta mirando. Con `demo_session_01`
+     abierta, el modo decia «CAN real» sobre datos generados. */
+  e.textContent = (s ? etiquetaDeOrigen(s.fuente) : FUENTES[fuente].nombre) + " · " +
     (fuente === "can" ? "captura del bus"
                       : "vuelta " + vueltaElegida + " de " + vueltasDeLaSesion());
   t.textContent = s ? nombreDeSesion(s) : "Esperando sesión";
@@ -9654,7 +9658,53 @@ let SESIONES = [];
 /* Las tres fuentes se distinguen a simple vista y no solo por el color: cada
    una lleva su etiqueta escrita. Confundirlas es el error mas caro que puede
    cometer quien mira, porque lo que se puede afirmar de cada una es distinto. */
+/* EL NOMBRE DE UN MODO. Cuales son los tres modos de adquisicion en los que el
+   tablero puede estar parado. Esta atado al pie legal ---cada bloque
+   `data-fuente-legal` lleva esta misma pastilla, y hay una prueba que lo
+   exige--- de modo que son tres y no cambian con lo que haya cargado. */
 const ETIQUETA_FUENTE = { f1: "F1 25", openf1: "OpenF1", can: "CAN real" };
+
+/* EL NOMBRE DE UNA PROCEDENCIA, QUE NO ES LO MISMO.
+   ---------------------------------------------------------------------
+   El rotulo de una sesion salia de la clave corta, y la clave corta es un
+   **agrupamiento de comportamiento**: `can_real_replay` y `can_simulated`
+   comparten `can` porque el tablero los trata igual ---mismo filtro, mismos
+   paneles---. Agrupar dos cosas para tratarlas igual no autoriza a llamarlas
+   igual.
+
+   MEDIDO EL 2026-09-13 SOBRE LA BASE DE LA PI. El generador del capitulo 8 dejo
+   `demo_session_01`, 42.889 filas, `source_type: "can_simulated"`. El tablero la
+   listaba con la pastilla **«CAN real»** y abrirla ponia «CAN real · captura del
+   bus» en el encabezado. Dos sitios afirmando que datos generados salieron del
+   bus de un vehiculo que circulaba.
+
+   EN ESTE TRABAJO ES EL PEOR ROTULO POSIBLE: lo que aporta es separar tres
+   niveles de procedencia, y el nivel A es el unico medido sobre un vehiculo
+   real. Que ese rotulo cubra datos generados vacia el aporte.
+
+   Se pide por `source_type`, que es lo que la base declara de cada sesion. */
+const ETIQUETA_DE_ORIGEN = {
+  f1_25_udp_simulation: "F1 25",
+  openf1_historical_replay: "OpenF1",
+  can_real_replay: "CAN real",
+  can_simulated: "CAN simulado",
+};
+
+/* Como se llama de donde vino una sesion.
+
+   LO DESCONOCIDO SE MUESTRA COMO LLEGA, no se lo bautiza. Antes caia por
+   omision en la fuente del bus real ---`FUENTE_CORTA[s.fuente] || "can"`--- y
+   un valor por omision no puede ser la afirmacion mas especifica y mas cara de
+   equivocar. Lo que llega de la base es un dato: se muestra tal cual, y quien
+   lo vea sabra que el tablero todavia no lo conoce.
+
+   Y NO SABERLO SE DICE. `sesiones_catalogo.source_type` admite nulos a
+   proposito: hay sesiones cargadas antes de que existiera la columna de
+   procedencia, y prohibirlo las habria dejado fuera del catalogo. */
+function etiquetaDeOrigen(origen) {
+  if (ETIQUETA_DE_ORIGEN[origen]) return ETIQUETA_DE_ORIGEN[origen];
+  return origen ? String(origen) : "sin fuente declarada";
+}
 
 const FUENTE_CORTA = {
   f1_25_udp_simulation: "f1",
@@ -11713,7 +11763,9 @@ function duracionLegible(s) {
 function sesionesFiltradas() {
   const texto = (document.getElementById("busca-sesion").value || "").trim().toLowerCase();
   let lista = SESIONES.filter(s => {
-    const corta = FUENTE_CORTA[s.fuente] || "can";
+    /* Sin clave corta no hay cajon: la sesion aparece en «todas» y en ninguno
+       de los tres filtros. Antes caia en el del bus real. */
+    const corta = FUENTE_CORTA[s.fuente] || "";
     if (filtroFuente !== "todas" && corta !== filtroFuente) return false;
     if (!texto) return true;
     // Se busca sobre lo que la persona ve y tambien sobre el identificador:
@@ -11752,7 +11804,8 @@ function pintarSesiones() {
              (abierta ? ' data-abierta="si"' : '') + '>' +
       '<div><span class="titulo">' + nombreDeSesion(s) + '</span>' +
         '<span class="ident" title="' + s.session_id + '">' + s.session_id + '</span></div>' +
-      '<div><span class="pastilla-fuente ' + corta + '">' + ETIQUETA_FUENTE[corta] + '</span>' +
+      '<div><span class="pastilla-fuente ' + corta + '" data-origen="' +
+      textoSeguro(s.fuente || "") + '">' + textoSeguro(etiquetaDeOrigen(s.fuente)) + '</span>' +
         '<span class="tipo-sesion">' + tipoDeSesion(s) + '</span></div>' +
       '<div class="dato">' + fechaDeSesion(s) + '<small>' + rotuloDeFecha(s) + '</small></div>' +
       '<div class="dato">' + duracionLegible(s) + '<small>duración</small></div>' +

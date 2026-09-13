@@ -2321,6 +2321,14 @@
   .pastilla-fuente.f1 { color: var(--auto-1); }
   .pastilla-fuente.openf1 { color: var(--auto-3); }
   .pastilla-fuente.can { color: var(--auto-4); }
+  /* LO SIMULADO NO SE VE IGUAL QUE LO MEDIDO, Y EL TEXTO SOLO NO ALCANZA.
+     `can_simulated` comparte cajon con el bus real ---mismo filtro, mismos
+     paneles--- y por eso comparte color. Con el borde entero, dos pastillas del
+     mismo color y del mismo tamaño se leen como la misma cosa de reojo, que es
+     como se leen las listas. El borde cortado dice «esto no se midio» sin
+     depender del color: quien no lo distinga, o quien mire una captura impresa,
+     lo ve igual. Es la misma convencion que el trazado derivado. */
+  .pastilla-fuente[data-origen$="_simulated"] { border-style: dashed; opacity: .82; }
   .tipo-sesion {
     display: block; margin-top: 4px; font-size: .78rem; color: var(--texto-medio);
   }
