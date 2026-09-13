@@ -90,12 +90,25 @@ VENTANA_SIN_CONFIRMAR = 1000
 TAMANO_LOTE = 2000
 
 
-def conteos_persistidos(session_id: str) -> dict[str, int]:
-    """Cuantas filas tiene la base por senal para esa sesion.
+def conteos_persistidos(session_id: str,
+                        vehiculos: set[str] | frozenset[str]) -> dict[str, int]:
+    """Cuantas filas tiene la base por senal, **para esos vehiculos**.
 
     Se piden **conteos y no nombres**. Preguntar solo que senales existen fue lo
     que dejo pasar una perdida del 5,9 %: las senales estaban todas, incompletas
     todas, y una consulta por nombre las declaraba presentes.
+
+    Y SE PIDEN PARA UNOS VEHICULOS EN CONCRETO, que es lo que faltaba. Sin ese
+    filtro esta consulta sumaba todos los de la sesion contra un esperado que es
+    de uno solo ---el propio, porque es lo unico que la herramienta reinyecta---
+    y el resultado no era una diferencia sino un sinsentido. Medido el
+    2026-09-13 sobre shanghai: «brake_position 53.445 de 10.689», cinco coches
+    contra uno, con un faltante total de -3.690.012.
+
+    Un faltante negativo no es un faltante grande: es una comparacion que no
+    significa nada. Que esta herramienta exista para atrapar perdidas
+    silenciosas y se equivocara de poblacion es lo que hace que valga arreglarlo
+    y no redondear el numero.
 
     El indice de la tabla empieza por fuente y sesion, de modo que la consulta
     se resuelve sin recorrer el resto de los datos.
@@ -105,8 +118,9 @@ def conteos_persistidos(session_id: str) -> dict[str, int]:
         cursor.execute(
             """select signal_name, count(*) from telemetry_messages
                where source_type = %s and session_id = %s
+                 and vehicle_id = any(%s)
                group by 1""",
-            (f1_25.SOURCE_TYPE, session_id),
+            (f1_25.SOURCE_TYPE, session_id, list(vehiculos)),
         )
         return dict(cursor.fetchall())
 
@@ -150,11 +164,25 @@ def leer_metadatos(ruta: Path) -> dict:
     return json.loads(meta.read_text(encoding="utf-8"))
 
 
-def inventariar(ruta: Path, inicio_utc: str, sha256: str | None) -> tuple[Counter, str]:
-    """Recorre la captura contando cuantos mensajes daria cada senal."""
+def inventariar(ruta: Path, inicio_utc: str,
+                sha256: str | None) -> tuple[Counter, str, set[str]]:
+    """Recorre la captura contando cuantos mensajes daria cada senal.
+
+    DEVUELVE TAMBIEN **DE QUE VEHICULOS** SON ESOS CONTEOS, y esa tercera cosa
+    no es un extra: es lo que permite que la conciliacion compare poblaciones
+    comparables.
+
+    `mensajes_desde_paquete()` trae por defecto solo el vehiculo propio, y aqui
+    se deja asi a proposito, porque `publicar()` y `escribir()` usan el mismo
+    defecto: la herramienta entera reinyecta un vehiculo. Lo que estaba mal era
+    que del otro lado se contaban todos los de la sesion. Declarando el
+    conjunto, el filtro de alla lo sigue solo ---tambien el dia que alguien
+    decida reinyectar la parrilla entera---.
+    """
 
     conteo: Counter = Counter()
     session_id = None
+    vehiculos: set[str] = set()
     for datagrama in f1_capture.leer_captura(ruta):
         try:
             decodificado = f1_udp.decodificar(datagrama.carga)
@@ -166,8 +194,9 @@ def inventariar(ruta: Path, inicio_utc: str, sha256: str | None) -> tuple[Counte
                 decodificado, inicio_utc, origen=f1_25.ORIGEN_REPRODUCIDO,
                 captura_sha256=sha256):
             conteo[mensaje["signal_name"]] += 1
+            vehiculos.add(mensaje["vehicle_id"])
             session_id = mensaje["session_id"]
-    return conteo, session_id
+    return conteo, session_id, vehiculos
 
 
 def identidad_de_corrida(meta: dict, ruta: Path) -> str:
@@ -393,19 +422,48 @@ def clasificar(esperado: dict[str, int],
 
     completas = {s for s, n in esperado.items() if presente.get(s, 0) == n}
     ausentes = {s for s in esperado if presente.get(s, 0) == 0}
-    incompletas = {s: (presente.get(s, 0), esperado[s]) for s in esperado
-                   if s not in completas and s not in ausentes}
+    resto = {s: (presente.get(s, 0), esperado[s]) for s in esperado
+             if s not in completas and s not in ausentes}
+    # SON CUATRO ESTADOS Y NO TRES, por el mismo motivo por el que antes fueron
+    # tres y no dos. Una senal con **mas** filas de las esperadas no es una
+    # senal incompleta con un faltante negativo: es otra cosa, y meterla entre
+    # las incompletas fue lo que produjo «Hay -3.690.012 filas faltantes».
+    #
+    # Hoy la causa conocida de un exceso ---comparar contra todos los vehiculos
+    # de la sesion--- esta arreglada aguas arriba, en `conteos_persistidos()`.
+    # Esto es la segunda linea: si las poblaciones vuelven a separarse por otro
+    # motivo, el guion lo dice en vez de restar y mostrar un numero imposible.
+    incompletas = {s: par for s, par in resto.items() if par[0] < par[1]}
+    excedidas = {s: par for s, par in resto.items() if par[0] > par[1]}
     return {
         "completas": completas,
         "ausentes": ausentes,
         "incompletas": incompletas,
+        "excedidas": excedidas,
         "filas_faltantes": sum(esp - hay for hay, esp in incompletas.values()),
     }
 
 
 def conciliar(session_id: str, esperado_por_senal: dict[str, int],
+              vehiculos: set[str] | frozenset[str],
               espera_maxima_s: float = 180.0) -> dict:
     """Compara lo que la base tiene contra lo que la operacion debia dejar.
+
+    `vehiculos` ES OBLIGATORIO, y ese es el arreglo. Antes esta consulta hacia
+    `group by signal_name` sin filtrar, de modo que sumaba **todos** los
+    vehiculos de la sesion contra un esperado que era de uno solo ---el propio,
+    porque es lo unico que la herramienta reinyecta---. Medido el 2026-09-13
+    sobre shanghai: «brake_position 53.445 de 10.689», que son exactamente
+    cinco coches contra uno, y un faltante total de -3.690.012.
+
+    Un faltante negativo no es un faltante grande: es una comparacion que no
+    significa nada. Y esta comparacion existe porque una version anterior de la
+    herramienta informo exito habiendo perdido el 5,9 % de las filas, asi que
+    una guarda que puede equivocarse de poblacion no guarda.
+
+    Se pide como argumento y no se adivina de la base: lo que hay que comparar
+    es contra lo que **esta operacion** produce, y eso lo sabe quien recorrio la
+    captura, no quien consulta la tabla.
 
     Existe porque la version anterior de esta herramienta informo exito habiendo
     perdido el 5,9 % de las filas. La verificacion de entonces se hizo contra el
@@ -430,8 +488,9 @@ def conciliar(session_id: str, esperado_por_senal: dict[str, int],
             cursor.execute(
                 """select signal_name, count(*) from telemetry_messages
                    where source_type = %s and session_id = %s
+                     and vehicle_id = any(%s)
                    group by 1""",
-                (f1_25.SOURCE_TYPE, session_id),
+                (f1_25.SOURCE_TYPE, session_id, list(vehiculos)),
             )
             presente = dict(cursor.fetchall())
 
@@ -453,15 +512,23 @@ def conciliar(session_id: str, esperado_por_senal: dict[str, int],
             break
         time.sleep(4)
 
+    # Solo cuenta como faltante lo que falta. Un exceso se declara aparte: ver
+    # el comentario de los cuatro estados en `clasificar()`.
     faltantes = {
         senal: esperadas - presente.get(senal, 0)
         for senal, esperadas in esperado_por_senal.items()
-        if presente.get(senal, 0) != esperadas
+        if presente.get(senal, 0) < esperadas
+    }
+    excesos = {
+        senal: presente.get(senal, 0) - esperadas
+        for senal, esperadas in esperado_por_senal.items()
+        if presente.get(senal, 0) > esperadas
     }
     return {
         "esperado": sum(esperado_por_senal.values()),
         "presente": sum(presente.get(s, 0) for s in esperado_por_senal),
         "senales_incompletas": faltantes,
+        "senales_excedidas": excesos,
     }
 
 
@@ -782,11 +849,12 @@ def main() -> None:
     print(f"Inicio  : {inicio_utc}")
     print("Recorriendo el crudo para inventariar...\n")
 
-    conteo, session_id = inventariar(args.captura, inicio_utc, meta.get("sha256"))
+    conteo, session_id, vehiculos = inventariar(
+        args.captura, inicio_utc, meta.get("sha256"))
     if session_id is None:
         raise SystemExit("La captura no produjo ningun mensaje normalizable.")
 
-    presentes = conteos_persistidos(session_id)
+    presentes = conteos_persistidos(session_id, vehiculos)
 
     estado = clasificar(conteo, presentes)
     completas = estado["completas"]
@@ -885,10 +953,26 @@ def main() -> None:
     # no quepa en silencio. Corre siempre, tambien cuando no hubo nada que
     # publicar.
     print("\nConciliando contra la base...")
-    resultado = conciliar(session_id, conteo)
+    resultado = conciliar(session_id, conteo, vehiculos)
 
     print(f"\nesperado : {resultado['esperado']:,}")
     print(f"presente : {resultado['presente']:,}")
+
+    # UN EXCESO SE DICE, Y NO CONCILIA. Si la base tiene mas filas de las que la
+    # captura contiene para esos vehiculos, callarlo seria el mismo error que
+    # esta herramienta existe para evitar ---informar exito sobre algo sin
+    # comprobar---, solo que en la otra direccion.
+    if resultado.get("senales_excedidas"):
+        de_mas = sum(resultado["senales_excedidas"].values())
+        print(f"\nNO CONCILIA: sobran {de_mas:,} filas en "
+              f"{len(resultado['senales_excedidas'])} senales.")
+        for senal, sobra in sorted(resultado["senales_excedidas"].items(),
+                                   key=lambda p: -p[1])[:10]:
+            print(f"  {senal:<34} {sobra:>9,} de mas")
+        print("\nUn exceso no se arregla reinyectando. Significa que lo contado "
+              "y lo guardado no son la misma poblacion, o que hay filas "
+              "repetidas: hay que averiguar cual de las dos antes de tocar nada.")
+        return
 
     if not resultado["senales_incompletas"]:
         print("\nCONCILIADO: la base tiene exactamente lo que la captura contiene.")
