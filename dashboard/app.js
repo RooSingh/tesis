@@ -4117,7 +4117,12 @@ function huecosEnLaLinea(vueltas) {
     (v.huecos || []).forEach(h => {
       const a = Date.parse(h.desde_utc);
       if (Number.isFinite(a) && Number.isFinite(inicio)) {
-        const conducidos = (a - inicio) / 1000 - saltado;
+        /* UN HUECO ENTRE DOS VUELTAS EMPIEZA ANTES DE LA VUELTA QUE LO DECLARA.
+           La ultima muestra antes del corte pertenece a la vuelta anterior, asi
+           que la resta da negativa y la marca se iria al principio de la barra.
+           Acotada a cero, cae en el limite entre las dos vueltas, que es donde
+           el salto ocurre de verdad. */
+        const conducidos = Math.max(0, (a - inicio) / 1000 - saltado);
         salida.push({ vuelta: v.numero, duracion_s: h.duracion_s,
                       fraccion: (antes + conducidos) / total });
       }

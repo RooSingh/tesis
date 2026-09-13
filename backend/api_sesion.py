@@ -397,8 +397,25 @@ def listar_vueltas(
                  GROUP BY timestamp)
             , q AS (
                 SELECT vuelta, timestamp, distancia, velocidad, invalida,
+                       -- EL SALTO NO SE PARTE POR VUELTA, Y ESO ERA UN DEFECTO.
+                       --
+                       -- Con `PARTITION BY vuelta`, un hueco que cae **entre**
+                       -- dos vueltas no pertenece a ninguna y desaparece.
+                       -- Medido sobre la prueba de desconexion del 2026-09-13:
+                       -- la captura se corto al final de la vuelta 2 ---00:27:50---
+                       -- y volvio al empezar la 3 ---00:35:10---, siete minutos
+                       -- y veinte segundos despues. Las cinco vueltas se
+                       -- declaraban `continua: true` y el hueco mas importante
+                       -- que este sistema puede tener era invisible.
+                       --
+                       -- Sin particion, el hueco queda en la vuelta que empieza
+                       -- **despues** de el, que es donde alguien lo busca: la
+                       -- vuelta 3 empezo tras un corte. El intervalo entre dos
+                       -- vueltas seguidas ---cincuenta milisegundos--- pasa a
+                       -- contar en la duracion efectiva, que es mas correcto que
+                       -- perderlo.
                        timestamp - lag(timestamp)
-                           OVER (PARTITION BY vuelta ORDER BY timestamp) AS salto,
+                           OVER (ORDER BY timestamp) AS salto,
                        -- CUANTO AVANZO EL COCHE A TRAVES DEL HUECO.
                        --
                        -- Es lo que separa «el coche estaba parado» de «se
@@ -407,7 +424,7 @@ def listar_vueltas(
                        -- y dos minutos en el garaje duran lo mismo. Parado no
                        -- avanza; dando vueltas avanza cientos de metros.
                        distancia - lag(distancia)
-                           OVER (PARTITION BY vuelta ORDER BY timestamp) AS avance
+                           OVER (ORDER BY timestamp) AS avance
                   FROM p
                  WHERE vuelta IS NOT NULL AND distancia IS NOT NULL)
             SELECT vuelta::int,
