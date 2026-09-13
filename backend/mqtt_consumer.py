@@ -14,7 +14,8 @@ Este modulo se ejecuta como proceso separado de FastAPI. Su objetivo es:
 from __future__ import annotations
 
 import json
-from collections import deque
+import time
+from collections import OrderedDict, deque
 import threading
 
 import paho.mqtt.client as mqtt
@@ -34,6 +35,7 @@ from backend.config import (
     MQTT_QOS_EN_VIVO,
     MQTT_CONFIRMACION_MANUAL,
 )
+from backend import catalogo_sesiones
 from backend.db import EscritorTelemetria
 from backend.models import TelemetryMessage
 
@@ -47,6 +49,98 @@ BATCH_SIZE = MQTT_BATCH_SIZE
 FLUSH_INTERVAL_SECONDS = MQTT_FLUSH_INTERVAL_SECONDS
 MAX_PENDING_MESSAGES = MQTT_MAX_PENDING_MESSAGES
 ADAPTADOR_LOTE_TELEMETRIA = TypeAdapter(list[TelemetryMessage])
+
+
+class DeclaracionDeSesiones:
+    """Declara en el catalogo las sesiones **mientras llegan**, no al cerrarlas.
+
+    EL DEFECTO QUE ESTO CIERRA, medido dos veces en dos dias. El catalogo lo
+    escribia solo `backend/ingesta.py`, y empieza con `if trabajo.estado !=
+    "terminado": return`. Un corte de corriente no tiene final: el 2026-09-12 la
+    Raspberry se quedo sin luz en plena captura y dejo 393.128 filas en la base
+    y fuera del catalogo ---imposibles de abrir---, y el 2026-09-13, repitiendo
+    el corte a proposito, volvio a pasar igual con 579.548.
+
+    No era un defecto de implementacion sino **la forma del diseño**: lo que se
+    escribe al cerrar lo pierde quien no llega a cerrar. Y no se arregla
+    aguantando mas, se arregla escribiendo antes.
+
+    POR QUE AQUI Y NO EN EL CAPTURADOR. El capturador sabe la sesion apenas la
+    detecta, pero cubre **un** camino. El consumidor ve aterrizar cada fila
+    venga de donde venga ---captura en vivo, reinyeccion, importacion, archivo
+    subido---, de modo que un solo sitio cierra los cuatro.
+
+    POR QUE DECLARAR TEMPRANO NO ESCRIBE UNA MENTIRA. `refrescar_sesion()` no
+    guarda lo que le pasen: recuenta desde la tabla. Llamarla a los diez
+    segundos deja lo que es cierto a los diez segundos, y la llamada siguiente
+    lo corrige sola. Una sesion cortada queda catalogada con los numeros de hace
+    un minuto ---visible--- en lugar de invisible con los numeros exactos.
+
+    EL RITMO ES LA PARTE DELICADA. Recontar una sesion cuesta entre 0,65 s y
+    7,2 s. Hacerlo por cada lote serian varias veces por segundo durante una
+    carrera: el arreglo saldria mas caro que el problema. Se declara una vez al
+    aparecer y despues como mucho una vez por minuto.
+    """
+
+    #: Cada cuanto se vuelve a declarar una sesion que sigue recibiendo. Un
+    #: minuto es el techo de lo que se puede perder en un corte, y a 0,65 s de
+    #: recuento es algo mas del uno por ciento de un nucleo.
+    CADA_CUANTO_S = 60
+
+    #: Cuantas sesiones se recuerdan. El consumidor corre para siempre: sin
+    #: tope, la tabla de vistas es una fuga de memoria con otro nombre.
+    TOPE_RECORDADAS = 512
+
+    def __init__(self) -> None:
+        self._vistas: "OrderedDict[str, float]" = OrderedDict()
+        self._candado = threading.Lock()
+
+    @staticmethod
+    def _ahora() -> float:
+        return time.monotonic()
+
+    def vieron(self, session_ids) -> None:
+        """Se acaban de escribir filas de estas sesiones. Declara las que toque.
+
+        NO LEVANTA NUNCA, y no es prolijidad: la llama `flush()` justo despues
+        de persistir. Persistir es obligatorio; catalogar es deseable. Si lo
+        deseable puede tumbar a lo obligatorio, se pierden datos por no poder
+        escribir un renglon de indice.
+        """
+        try:
+            ahora = self._ahora()
+            pendientes = []
+            with self._candado:
+                for session_id in session_ids:
+                    if not session_id:
+                        continue
+                    ultima = self._vistas.get(session_id)
+                    if ultima is not None and ahora - ultima < self.CADA_CUANTO_S:
+                        self._vistas.move_to_end(session_id)
+                        continue
+                    self._vistas[session_id] = ahora
+                    self._vistas.move_to_end(session_id)
+                    pendientes.append(session_id)
+                while len(self._vistas) > self.TOPE_RECORDADAS:
+                    # La mas vieja: si vuelve a aparecer se declara de nuevo, que
+                    # es barato, en vez de acumularla para siempre.
+                    self._vistas.popitem(last=False)
+            for session_id in pendientes:
+                catalogo_sesiones.refrescar_en_segundo_plano(session_id)
+        except Exception:  # noqa: BLE001 - ver el docstring
+            pass
+
+    def cuantas_recuerda(self) -> int:
+        with self._candado:
+            return len(self._vistas)
+
+    def olvidar_todo(self) -> None:
+        with self._candado:
+            self._vistas.clear()
+
+
+#: Una sola para el proceso: el ritmo se cuenta por sesion, no por lote.
+declaracion = DeclaracionDeSesiones()
 
 
 class TelemetryBatchBuffer:
@@ -267,6 +361,16 @@ class TelemetryBatchBuffer:
             self.metrics["persisted"] += persisted
             self.metrics["duplicates_skipped"] += max(0, len(batch) - persisted)
             self.metrics["batches"] += 1
+        # DESPUES DE ESCRIBIR, NUNCA ANTES. Declarar una sesion que todavia no
+        # esta en la tabla seria declarar un deseo: `refrescar_sesion()`
+        # recuenta, no encontraria nada y **borraria** la fila. Aqui las filas
+        # ya estan.
+        #
+        # `getattr` y no `m.session_id`: esto corre en el camino caliente, entre
+        # escribir y confirmar. Un `AttributeError` aqui saltaria por encima de
+        # `_confirmar_cubiertos()`, el lote quedaria escrito y sin confirmar, y
+        # el intermediario lo reenviaria entero. Catalogar no puede costar eso.
+        declaracion.vieron({getattr(m, "session_id", None) for m in batch})
         # **Recien aca se confirma.** Es el cambio entero: antes la biblioteca
         # confirmaba al volver del callback, de modo que un mensaje quedaba
         # confirmado y sin escribir mientras esperaba en la cola, y el
