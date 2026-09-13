@@ -50,8 +50,8 @@ CARGA_DEL_MODO = "combustible_inicial_kg"
 #: dos sesiones del mismo circuito.
 NO_AUTORIZA = (
     "dos sesiones del mismo circuito no son un experimento: cambian el tipo de "
-    "sesion, la carga de combustible que el modo impone, la dificultad de la "
-    "maquina, el clima, el trafico y el estado de quien conduce. Una diferencia "
+    "sesión, la carga de combustible que el modo impone, la dificultad de la "
+    "máquina, el clima, el tráfico y el estado de quien conduce. Una diferencia "
     "de tiempo entre ellas no queda atribuida al reglaje por figurar en esta "
     "tabla"
 )
@@ -201,7 +201,7 @@ def _lectura(sesiones: list[ReglajeDeUnaSesion]) -> str:
 
     otras = sesiones[1:]
     if not otras:
-        return "no hay otra sesion en este circuito con la que comparar"
+        return "no hay otra sesión en este circuito con la que comparar"
     cambian = [s for s in otras if s.cuantos_difieren]
     if not cambian:
         return ("el reglaje es el mismo en las %d sesiones de este circuito: "
@@ -209,8 +209,9 @@ def _lectura(sesiones: list[ReglajeDeUnaSesion]) -> str:
                 % len(sesiones))
     ejes = sorted({d["clave"] for s in cambian for d in s.difiere_en
                    if not d["lo_impone_el_modo"]})
-    return ("de las %d sesiones de este circuito, %d corrieron con otro reglaje; "
-            "cambia %s" % (len(sesiones), len(cambian), ", ".join(ejes)))
+    return ("de las %d sesiones de este circuito, %d corrieron con otro "
+            "reglaje; cambia %s"
+            % (len(sesiones), len(cambian), ", ".join(ejes)))
 
 
 def comparar(session_id: str, valores_de, vehiculo_de) -> Comparacion:
@@ -226,8 +227,8 @@ def comparar(session_id: str, valores_de, vehiculo_de) -> Comparacion:
     circuito = propia.get("circuito")
     comparacion = Comparacion(session_id=session_id, circuito=circuito)
     if not circuito:
-        comparacion.motivo = ("esta sesion no declara circuito: sin el no hay "
-                              "con que agrupar los reglajes")
+        comparacion.motivo = ("esta sesión no declara circuito: sin él no hay "
+                              "con qué agrupar los reglajes")
         return comparacion
 
     candidatas = [s for s in sesiones_con_reglaje()
@@ -237,7 +238,7 @@ def comparar(session_id: str, valores_de, vehiculo_de) -> Comparacion:
     candidatas = ([session_id] if session_id in candidatas else []) + \
                  [s for s in candidatas if s != session_id]
     if not candidatas:
-        comparacion.motivo = ("ninguna sesion de %s declara el paquete de "
+        comparacion.motivo = ("ninguna sesión de %s declara el paquete de "
                               "reglaje" % circuito)
         return comparacion
 

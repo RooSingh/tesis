@@ -124,7 +124,7 @@ class ComparacionDeReglajes(unittest.TestCase):
             "reglajes": {"s1": dict(BASE), "s2": dict(BASE, aleron_trasero=9)},
         })
         self.assertEqual([s["session_id"] for s in r["sesiones"]], ["s1"])
-        self.assertIn("no hay otra sesion", r["lectura"])
+        self.assertIn("no hay otra sesión", r["lectura"])
 
     def test_un_eje_que_una_de_las_dos_no_declara_no_es_un_cambio(self) -> None:
         """Una ausencia no es una diferencia, y anotarla inventaria un cambio."""
@@ -201,7 +201,7 @@ class LecturaDeLaTabla(unittest.TestCase):
             for i, c in enumerate(cuantos)]
 
     def test_una_sola_sesion_no_afirma_nada(self) -> None:
-        self.assertIn("no hay otra sesion",
+        self.assertIn("no hay otra sesión",
                       reglajes._lectura(self._con([0])))
 
     def test_ninguna_difiere(self) -> None:
