@@ -95,19 +95,67 @@ POSICION_POR_FUENTE = {
     "openf1_historical_replay": ("track_position_x", "track_position_y"),
 }
 
-def _fuente_de(session_id: str) -> str:
-    """Deduce la fuente por el prefijo del identificador de sesion.
+#: Lo que cada prefijo sugiere. Es una pista, no el dato: ver `_fuente_de`.
+PREFIJOS_DE_FUENTE = (
+    ("f1_25:", "f1_25_udp_simulation"),
+    ("can:", "can_real_replay"),
+    ("openf1:", "openf1_historical_replay"),
+    # El generador era el unico sin prefijo, y por eso caia en el `return` de
+    # OpenF1 que habia al final. Ver `telemetry_generator/main.py`.
+    ("can_sim:", "can_simulated"),
+)
 
-    Los identificadores llevan su origen: `f1_25:session:...`,
-    `can:segmento:...`, y los de la fuente deportiva son la clave numerica.
-    Deducirlo evita que quien consulta tenga que repetir un dato que ya esta
-    en el identificador, y que pueda equivocarse al repetirlo.
+
+def _por_el_prefijo(session_id: str) -> str | None:
+    for prefijo, fuente in PREFIJOS_DE_FUENTE:
+        if session_id.startswith(prefijo):
+            return fuente
+    # UNA CLAVE NUMERICA PELADA ES UNA SESION DE LA FUENTE DEPORTIVA, y eso si
+    # es una regla: `9939` es como OpenF1 nombra sus sesiones. Lo que estaba
+    # mal no era reconocerla, era que el mismo renglon capturaba **todo** lo
+    # que no se reconocia y lo afirmaba igual.
+    if session_id.isdigit():
+        return "openf1_historical_replay"
+    return None
+
+
+def _fuente_de(session_id: str) -> str:
+    """La fuente de una sesion: lo que la base declara, y el prefijo de respaldo.
+
+    ANTES SE ADIVINABA POR EL NOMBRE, y el ultimo renglon decia
+    `return "openf1_historical_replay"`: cualquier identificador que no
+    empezara con `f1_25:` ni con `can:` se trataba como fuente deportiva.
+
+    EL DIA QUE ESO SE VIO. El 2026-09-13 se genero una sesion con el generador
+    del capitulo 8 ---`demo_session_01`, sin prefijo--- y el tablero la abrio
+    con **todos los paneles vacios**, incluso los de las señales cuyo nombre
+    coincide exactamente con el que el panel pide. `/vueltas` contestaba
+    `"fuente": "openf1_historical_replay"` y explicaba el muestreo a 3,7 Hz de
+    la fuente deportiva sobre una maniobra de bus CAN.
+
+    ES LA MISMA FAMILIA QUE EL `|| "can"` DEL TABLERO, arreglado el mismo dia:
+    lo desconocido recibia la afirmacion mas especifica y mas cara de
+    equivocar, en lugar de recibir un «no se».
+
+    Y ADEMAS ERA UN RESTO. Cuando se escribio, los identificadores de la fuente
+    deportiva eran la clave numerica pelada y ese renglon los servia. Hoy son
+    `openf1:session:9955`: dejo de servir a quien decia servir y solo capturaba
+    a los demas.
+
+    LA REGLA, Y POR QUE NO SE CONSULTA LA BASE. El primer intento fue preguntar
+    el `source_type` al catalogo, que es donde esta el dato. Es peor: esta
+    funcion se llama en treinta sitios, **dentro de manejadores que ya tienen
+    una conexion abierta**, de modo que cada llamada abriria una segunda
+    conexion en medio de una peticion que no la necesita. Se descarto.
+
+    Lo que se hace es lo barato y suficiente: **cada fuente lleva su prefijo**,
+    incluido el generador, que era el unico que no lo llevaba. Y lo que no se
+    reconoce se devuelve tal cual en lugar de afirmar una fuente: quien reciba
+    una clave que no entiende puede decir «no se», que es justo lo que antes no
+    podia hacer.
     """
-    if session_id.startswith("f1_25:"):
-        return "f1_25_udp_simulation"
-    if session_id.startswith("can:"):
-        return "can_real_replay"
-    return "openf1_historical_replay"
+
+    return _por_el_prefijo(session_id) or session_id
 
 
 def _filas(cursor, consulta: str, parametros: tuple) -> list[tuple]:

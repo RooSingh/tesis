@@ -61,7 +61,16 @@ def crear_estado_inicial() -> TelemetryState:
         timestamp="2026-07-01T15:30:12.120000Z",
         vehicle_id="demo_car_01",
         driver_id="demo_driver_01",
-        session_id="demo_session_01",
+        # EL IDENTIFICADOR LLEVA SU FUENTE, como los de las otras tres.
+        #
+        # Se llamaba `demo_session_01`, sin prefijo, y era el unico. El backend
+        # deduce la fuente del prefijo ---`f1_25:`, `can:`, `openf1:`--- de
+        # modo que esta sesion caia en el ultimo renglon de `_fuente_de()`, que
+        # decia `return "openf1_historical_replay"`. Resultado, visto en
+        # pantalla el 2026-09-13: el tablero abria la maniobra con todos los
+        # paneles vacios y `/vueltas` explicaba el muestreo a 3,7 Hz de la
+        # fuente deportiva sobre una maniobra de bus CAN.
+        session_id="can_sim:maniobra:demo_01",
         lap_id="demo_sequence_01",
         sector_id="demo_sector_01",
         speed=100.0,
