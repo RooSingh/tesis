@@ -207,4 +207,93 @@ prueba("el que congela el circuito usa esta regla", () => {
     "congela el recorrido entero, con la aproximacion adentro");
 });
 
+/* -------- y un pedazo de vuelta no es un circuito -------- */
+
+const CONSTANTES_DEL_RECORRIDO = ["RECORRIDO_EMPIEZA_ANTES_DE_M"];
+
+function extraerConstante(nombre) {
+  const marca = "const " + nombre + " = ";
+  const desde = fuenteApp.indexOf(marca);
+  if (desde === -1) throw new Error("no esta la constante " + nombre);
+  const fin = fuenteApp.indexOf(";", desde);
+  return fuenteApp.slice(desde, fin + 1);
+}
+
+const bancoDeVueltaEntera = new Function(
+  "vivo",
+  [CONSTANTES_DEL_RECORRIDO.map(extraerConstante).join("\n"),
+   extraer("cerroUnaVueltaEntera"),
+   "return cerroUnaVueltaEntera;"].join("\n"))(
+  { metroDeArranque: new Map() });
+
+function conArranque(metro) {
+  const vivo = { metroDeArranque: new Map() };
+  if (metro !== undefined) vivo.metroDeArranque.set("coche", metro);
+  return new Function(
+    "vivo",
+    [CONSTANTES_DEL_RECORRIDO.map(extraerConstante).join("\n"),
+     extraer("cerroUnaVueltaEntera"),
+     "return cerroUnaVueltaEntera;"].join("\n"))(vivo)("coche");
+}
+
+prueba("EL DEFECTO: escuchar a mitad de vuelta no mide el circuito", () => {
+  /* El 2026-09-13, en Spa: se empezo a escuchar a mitad de la tercera vuelta y
+     al cerrarla se congelo el arco acumulado ---1.313 posiciones, sesenta y
+     cinco segundos--- como si fuera el circuito. La polilinea se cierra uniendo
+     la punta con el arranque por donde el coche nunca paso: ese es el trazado
+     cruzado que se vio en pantalla. */
+  assert.strictEqual(conArranque(3200), false,
+    "un arco de media vuelta se congelo como circuito");
+  assert.strictEqual(conArranque(600), false);
+});
+
+prueba("y una vuelta medida desde la linea si lo es", () => {
+  assert.strictEqual(conArranque(0), true);
+  assert.strictEqual(conArranque(3.4), true,
+    "la primera muestra cae unos metros pasada la linea, no en el cero exacto");
+  assert.strictEqual(conArranque(-900), true,
+    "antes de la linea tambien: de eso se ocupa soloDesdeLaLinea");
+});
+
+prueba("el umbral es el que la constante declara, no otro", () => {
+  const umbral = new Function(
+    extraerConstante("RECORRIDO_EMPIEZA_ANTES_DE_M") +
+    " return RECORRIDO_EMPIEZA_ANTES_DE_M;")();
+  assert.strictEqual(conArranque(umbral), true);
+  assert.strictEqual(conArranque(umbral + 0.1), false);
+});
+
+prueba("no saber desde donde se midio no autoriza a congelar", () => {
+  assert.strictEqual(conArranque(undefined), false);
+  assert.strictEqual(conArranque(NaN), false);
+});
+
+prueba("el banco se arma sobre la funcion publicada", () => {
+  assert.strictEqual(typeof bancoDeVueltaEntera, "function");
+});
+
+prueba("EL LARGO SE CONGELA CON EL MAYOR, NO CON EL ULTIMO", () => {
+  /* El paquete de vuelta trae `lap_distance` **antes** que `lap_number`: para
+     cuando se detecta el cruce, el cuentakilometros ya volvio a cero. Leer el
+     ultimo declaraba el circuito de Spa con «3 m» de largo, que es lo que se
+     vio el 2026-09-13. Es una linea de la incorporacion en vivo y no una rama
+     aislable: se comprueba sobre el `app.js` publicado. */
+  const i = fuenteApp.indexOf("if (cerroUnaVueltaEntera(");
+  assert.notStrictEqual(i, -1, "no esta la decision de congelar");
+  const bloque = fuenteApp.slice(i, i + 300);
+  assert.ok(/congelarTrazadoVivo\(vivo\.metroMayorDeLaVuelta\.get\(/.test(bloque),
+    "congela con el ultimo metro, que en la meta son tres: " + bloque.split("\n")[1]);
+});
+
+prueba("y el arco descartado no se mezcla con la vuelta que arranca", () => {
+  const i = fuenteApp.indexOf("function olvidarRecorridoParcial(");
+  assert.notStrictEqual(i, -1, "no esta olvidarRecorridoParcial");
+  const cuerpo = fuenteApp.slice(i, fuenteApp.indexOf("\n}", i));
+  assert.ok(/vivo\.recorrido\.delete\(/.test(cuerpo), "no suelta el recorrido");
+  assert.ok(/vivo\.metroDePosicion\.delete\(/.test(cuerpo),
+    "deja los metros desalineados con los puntos, y ahi soloDesdeLaLinea se abstiene");
+  assert.ok(/vivo\.recorridoDibujado = 0/.test(cuerpo),
+    "sin reiniciar el contador el dibujo no se rehace hasta dentro de cien puntos");
+});
+
 console.log("ok " + hechas + " pruebas del metro antes de la linea");

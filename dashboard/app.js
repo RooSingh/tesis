@@ -8833,6 +8833,17 @@ const vivo = {
      `recorrido`. Hace falta para que el circuito que se congela no arrastre lo
      recorrido antes de la linea. Ver `soloDesdeLaLinea`. */
   metroDePosicion: new Map(),
+  /* EL METRO MAS LEJANO DE LA VUELTA EN CURSO, por vehiculo.
+
+     No es `distancia`, que guarda **el ultimo** y vuelve a cero en la meta. El
+     largo del circuito es el mayor, y el unico momento en que hace falta es
+     justo despues del reinicio, cuando `distancia` ya no lo tiene. Ver
+     `congelarTrazadoVivo`. */
+  metroMayorDeLaVuelta: new Map(),
+  /* EL PRIMER METRO QUE SE ALCANZO A MEDIR DE LA VUELTA EN CURSO, por
+     vehiculo. Es lo que distingue una vuelta entera de un pedazo: empezar a
+     escuchar a mitad de vuelta acumula un arco, no un circuito. */
+  metroDeArranque: new Map(),
   //: Cuantos puntos habia la ultima vez que se rehizo el dibujo. Rehacerlo en
   //: cada punto significa recalcular la orientacion de la nube entera, y el
   //: dibujo salta de sitio a cada paso.
@@ -8969,6 +8980,7 @@ function vaciarVivo(sesion) {
   vivo.recorrido.clear(); vivo.posicionMundo.clear();
   vivo.marcaDePosicion.clear(); vivo.velocidadAnterior.clear();
   vivo.metroDePosicion.clear();
+  vivo.metroMayorDeLaVuelta.clear(); vivo.metroDeArranque.clear();
   vivo.recorridoDibujado = 0;
   /* Y lo derivado de las series tambien: las vistas temporales y los relojes de
      vuelta viven en otra cache, con la vuelta y el vehiculo por clave, y esos
@@ -9214,6 +9226,47 @@ function soloDesdeLaLinea(puntos, metros) {
   return desde < 0 ? puntos : puntos.slice(desde + 1);
 }
 
+/* A cuantos metros de la linea se puede haber empezado a medir y seguir
+   diciendo que la vuelta esta entera.
+
+   No es una tolerancia elegida a ojo: a veinte posiciones por segundo y a
+   300 km/h ---la recta de Spa--- entre dos muestras hay 4,2 m. Doscientos son
+   casi cincuenta muestras de margen, y menos del 3 % de un circuito de 7 km.
+   Un pedazo que falte por encima de eso deja de ser un error de muestreo y
+   pasa a ser un tramo que nadie recorrio mientras se escuchaba. */
+const RECORRIDO_EMPIEZA_ANTES_DE_M = 200;
+
+/* Si lo acumulado hasta el cruce de meta es una vuelta entera o un pedazo.
+
+   EL CASO REAL, DEL 2026-09-13. Se empezo a escuchar a mitad de la tercera
+   vuelta de Spa. Al cerrarla, lo acumulado eran sesenta y cinco segundos de
+   arco ---1.313 posiciones--- y se congelo **como si fuera el circuito**: una
+   polilinea cerrada que une la punta con el arranque por donde el coche nunca
+   paso. Eso es el trazado enredado que se vio.
+
+   La pregunta que faltaba no es cuantos puntos hay, sino **desde que metro**
+   se empezo a medir. Se conoce: es el primer metro de vuelta que entro despues
+   del ultimo cruce. Negativo ---la vuelta de salida, antes de la linea---
+   tambien vale, y de eso ya se ocupa `soloDesdeLaLinea`.
+
+   `undefined` es no saberlo, y no saberlo no autoriza a congelar nada. */
+function cerroUnaVueltaEntera(vehiculo) {
+  const arranque = vivo.metroDeArranque.get(vehiculo);
+  if (arranque === undefined || !Number.isFinite(arranque)) return false;
+  return arranque <= RECORRIDO_EMPIEZA_ANTES_DE_M;
+}
+
+/* Tira el arco acumulado y deja el recorrido listo para medir desde la linea.
+
+   No se conserva «por si acaso»: lo que sigue es una vuelta entera, y mezclar
+   las dos es exactamente lo que dibuja la cuerda cruzada. */
+function olvidarRecorridoParcial(vehiculo) {
+  vivo.recorrido.delete(vehiculo);
+  vivo.metroDePosicion.delete(vehiculo);
+  vivo.marcaDePosicion.delete(vehiculo);
+  vivo.recorridoDibujado = 0;
+}
+
 function congelarTrazadoVivo(largoDeLaVuelta) {
   const clave = claveVehiculoPropio();
   const crudos = clave ? vivo.recorrido.get(clave) : null;
@@ -9397,17 +9450,37 @@ function incorporarTelemetriaViva(m, recuperando) {
     // paso. Dejarlo cortar aca borraria las muestras nuevas que se recuperan.
     if (!recuperando && anterior !== undefined && anterior !== numero) {
       vivo.series.delete(m.vehicle_id);
-      /* Se cerro una vuelta: lo recorrido hasta aca es el circuito. El largo
-         es la ultima distancia declarada antes de volver a cero. */
+      /* Se cerro una vuelta. Lo recorrido es el circuito **solo si se estuvo
+         desde la linea**; si no, es un arco y se descarta para empezar de
+         nuevo con la vuelta que arranca aca. Ver `cerroUnaVueltaEntera`. */
       if (m.vehicle_id === claveVehiculoPropio() && PISTA.enConstruccion) {
-        congelarTrazadoVivo(vivo.distancia.get(m.vehicle_id));
+        if (cerroUnaVueltaEntera(m.vehicle_id)) {
+          congelarTrazadoVivo(vivo.metroMayorDeLaVuelta.get(m.vehicle_id));
+        } else {
+          olvidarRecorridoParcial(m.vehicle_id);
+        }
       }
+      vivo.metroMayorDeLaVuelta.delete(m.vehicle_id);
+      vivo.metroDeArranque.delete(m.vehicle_id);
     }
   }
   if (m.signal_name === "lap_distance" && numero !== null) {
     const anterior = vivo.distancia.get(m.vehicle_id);
     if (!recuperando && anterior !== undefined && numero + 20 < anterior) {
       vivo.series.delete(m.vehicle_id);
+    }
+    /* EL MAYOR DE LA VUELTA, QUE ES EL QUE MIDE EL CIRCUITO.
+       `distancia` guarda el ultimo, y el ultimo al cruzar la meta son tres
+       metros: el paquete de vuelta trae la distancia **antes** que el numero
+       de vuelta, de modo que para cuando se detecta el cruce el cuentakilo-
+       metros ya se reinicio. Asi se congelo Spa declarando «3 m» de largo el
+       2026-09-13. El mayor no se reinicia hasta que la vuelta cambia. */
+    const mayor = vivo.metroMayorDeLaVuelta.get(m.vehicle_id);
+    if (mayor === undefined || numero > mayor) {
+      vivo.metroMayorDeLaVuelta.set(m.vehicle_id, numero);
+    }
+    if (!vivo.metroDeArranque.has(m.vehicle_id)) {
+      vivo.metroDeArranque.set(m.vehicle_id, numero);
     }
     // Con la recuperacion, la distancia solo avanza: una muestra vieja no
     // reubica las que ya se dibujaron.
@@ -10850,6 +10923,7 @@ function olvidarLoDeLaCorrida() {
   vivo.recorrido.clear();
   vivo.marcaDePosicion.clear(); vivo.velocidadAnterior.clear();
   vivo.metroDePosicion.clear();
+  vivo.metroMayorDeLaVuelta.clear(); vivo.metroDeArranque.clear();
   vivo.recorridoDibujado = 0;
   AUTOS = [];
   seleccion = new Set();
