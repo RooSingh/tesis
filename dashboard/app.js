@@ -207,6 +207,26 @@ function fueAnulada(e) {
   return !!e && e.name === "AbortError";
 }
 
+/* SI ESTO NO SE AVISA, NADIE SE ENTERA NUNCA.
+   Estas cadenas terminaban preguntando si el error era un `TypeError`. Se
+   escribio para avisar de un fallo de red ---`fetch` rechaza con esa clase---
+   y de paso se comia **todos los defectos propios**: un `ReferenceError` no es
+   de esa clase, asi que la consola quedaba limpia. El recorrido del bus estuvo
+   dos dias roto detras de ese `catch`, con el testigo del tablero informando
+   que lo habia aplicado. Ver `tests/js/la_forma_del_bus.js`.
+
+   La pregunta correcta no es «¿de que clase es este error?» sino «¿es uno de
+   los que ya sabemos leer?». Hay tres que no se avisan porque no son defectos:
+   la consulta que se anulo al cerrar la sesion, la que se corto por tiempo, y
+   la que el servidor contesto con un codigo de error ---esa ya se muestra en
+   el panel que la pidio---. Lo que quede afuera es nuestro, y se dice. */
+function convieneAvisar(e) {
+  if (fueAnulada(e)) return false;
+  if (e && e.porTiempo) return false;
+  if (e && e.estado !== undefined) return false;
+  return true;
+}
+
 async function pedirCrudo(ruta, senal) {
   const r = await fetch(API + ruta, { headers: { "Accept": "application/json" }, signal: senal });
   let cuerpo = null;
@@ -992,7 +1012,7 @@ function pedirParrillaDeOpenF1(sessionId, apertura) {
       renombrarAutos();
       render();
     })
-    .catch(e => { if (e instanceof TypeError) console.error(e); });
+    .catch(e => { if (convieneAvisar(e)) console.error(e); });
 }
 
 /* EL PROPIO NO ES EL PRIMERO DE LA LISTA.
@@ -6356,7 +6376,7 @@ function asegurarPosiciones(numero, deFondo) {
       render();
     })
     // Un fallo de red aca no es grave; uno de dibujo si, y no puede quedar mudo.
-    .catch(e => { if (!fueAnulada(e) && e instanceof TypeError) console.error(e); })
+    .catch(e => { if (convieneAvisar(e)) console.error(e); })
     .then(() => {
       if (estado.pidiendoPos[numero] === apertura) delete estado.pidiendoPos[numero];
       podarVueltas();
@@ -10400,7 +10420,7 @@ function recuperarAnotacionesVivas(sesion, conexion) {
           incorporarAnotacionViva(Object.assign({}, a, { vehiculo: vehiculo })));
       });
     })
-    .catch(e => { if (!fueAnulada(e) && e instanceof TypeError) console.error(e); });
+    .catch(e => { if (convieneAvisar(e)) console.error(e); });
 }
 
 function datoEvento(e) {
@@ -10456,7 +10476,7 @@ function conectarFlujoEnVivo() {
           .sort((a, b) => (relojDeMuestra(a) || 0) - (relojDeMuestra(b) || 0))
           .forEach(m => incorporarTelemetriaViva(m, true));
       })
-      .catch(e => { if (!fueAnulada(e) && e instanceof TypeError) console.error(e); });
+      .catch(e => { if (convieneAvisar(e)) console.error(e); });
   };
   canal.onerror = () => {
     estado.vivo = Object.assign({}, estado.vivo || {}, { motivo: "Flujo interrumpido; reconectando." });
@@ -12567,7 +12587,7 @@ function refrescarContexto() {
         // Si fallo, la clave se limpia para que el proximo intento vuelva a
         // pedirlo en vez de creer que ya lo tiene.
         _contextoDe = "";
-        if (!fueAnulada(e) && e instanceof TypeError) console.error(e);
+        if (convieneAvisar(e)) console.error(e);
       })
       .then(() => {
         _contextoEnVuelo = false;
@@ -12760,7 +12780,7 @@ function pedirContextoDeCarrera(cuando, apertura) {
         }
         pintarCronometraje();
       })
-      .catch(e => { if (!fueAnulada(e) && e instanceof TypeError) console.error(e); }));
+      .catch(e => { if (convieneAvisar(e)) console.error(e); }));
 }
 
 /* ============================================================
@@ -12855,7 +12875,7 @@ function asegurarReglajesDelCircuito() {
       /* Que no se sepa no se dibuja como que no hay: se limpia la clave para
          que el proximo intento vuelva a pedirlo. */
       _reglajesDe = "";
-      if (!fueAnulada(e) && e instanceof TypeError) console.error(e);
+      if (convieneAvisar(e)) console.error(e);
     });
 }
 
@@ -13139,7 +13159,7 @@ function pedirControlDeCarrera(sessionId, apertura) {
       })
       /* Un fallo aca no puede vaciar los avisos derivados: son dos listas y una
          no responde por la otra. Se anota y se sigue. */
-      .catch(e => { if (!fueAnulada(e) && e instanceof TypeError) console.error(e); }));
+      .catch(e => { if (convieneAvisar(e)) console.error(e); }));
 }
 
 function ubicarControlDeCarrera(eventos) {
@@ -13467,16 +13487,55 @@ function pedirRecorridoDelBus() {
       if (!sigueVigente(apertura)) return;
       const puntos = (r && r.puntos) || [];
       if (puntos.length < 3) { TESTIGO.trazadosDescartados++; return; }
+      /* ESTA PISTA NO SE ARMA CON `armarPista`, Y NO ES UN DESCUIDO.
+         `armarPista` construye una pista desde una respuesta de `/trazado`:
+         circuito cerrado, con sectores, con largo declarado y parametrizado
+         por metro recorrido. Esto viene de `/can/recorrido` y es otra cosa: un
+         tramo de ruta que no vuelve a su principio, sin sectores, y ubicado
+         por **tiempo**. El 2026-09-11 se unifico igual ---32e387d--- y el
+         panel quedo dos dias con su rotulo y nada debajo. Ver
+         `tests/js/la_forma_del_bus.js`.
+
+         Sin invertir: la reconstruccion ya entrega el plano en el sentido en
+         que se recorrio, y darlo vuelta espejaria las curvas.
+
+         Y SIN CERRAR. `trazadoAPath` cierra el camino con `Z` porque un
+         circuito vuelve a su largada. Un tramo de ruta no vuelve: cerrarlo
+         dibuja una recta del final al principio que nadie recorrio, y en un
+         tramo casi recto esa recta es todo el dibujo otra vez. */
+      const mundo = puntos.map(q => [q.x, q.y]);
+      const armado = trazadoAPath(mundo, false, false);
+      PISTA = {
+        path: armado.path,
+        proyectar: armado.proyectar,
+        proyectarMundo: armado.proyectarMundo,
+        mundo: mundo,
+        largo_m: r.recorrido_m,
+        desnivel_m: null,
+        muestras: puntos.length,
+        curvas: [],
+        /* Lo que hace falta para ubicar un instante sobre esta forma. */
+        marcas_ms: puntos.map(q => q.t_ms),
+        origen_utc: (r.eje_temporal || {}).origen_utc || null,
+        derivado: true,
+        advertencia: r.advertencia || "",
+        /* La comprobacion mas fuerte que esta fuente admite, y viajaba sin que
+           nadie la leyera. Ver `textoDeLaValidacion`. */
+        validacion: r.validacion_guinada || null,
+      };
+      estado.trazado = r;
+      /* SE CUENTA DESPUES DE ARMARLA, y antes se contaba antes. Con el armado
+         roto, el testigo informaba `trazadosAplicados: 1` sobre un panel
+         vacio: un testigo que cuenta la intencion y no el resultado tapa
+         exactamente el fallo que tendria que delatar. */
       TESTIGO.trazadosAplicados++;
-      estado.trazado = t;
-      PISTA = armarPista(t, CURVAS);
       const svg = document.getElementById("linea-pista");
       if (svg && svg.ownerSVGElement) delete svg.ownerSVGElement.dataset.reserva;
       const g = document.getElementById("marcas-pista");
       if (g) g.dataset.firma = "";
       render();
     })
-    .catch(e => { if (e instanceof TypeError) console.error(e); }));
+    .catch(e => { if (convieneAvisar(e)) console.error(e); }));
 }
 
 /* EL TRAZADO SE DIBUJA CON UNA VUELTA COMPLETA Y SIN SALTOS.
@@ -13925,7 +13984,7 @@ function pedirTrazado(ruta) {
       if (g) g.dataset.firma = "";
       render();
     })
-    .catch(e => { if (e instanceof TypeError) console.error(e); }));
+    .catch(e => { if (convieneAvisar(e)) console.error(e); }));
 }
 
 /* Los nombres de curva son anotacion externa citada: se piden por circuito y
@@ -15154,7 +15213,7 @@ function pedirMatriz(intento) {
         setTimeout(() => pedirMatriz(intento + 1), 10000);
       }
     })
-    .catch(e => { if (!fueAnulada(e) && e instanceof TypeError) console.error(e); });
+    .catch(e => { if (convieneAvisar(e)) console.error(e); });
 }
 
 /* LA TABLA DE MAGNITUDES ES SUYA, Y SOLO ESA.

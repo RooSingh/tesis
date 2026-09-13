@@ -814,6 +814,14 @@ class AyudantesDeSerieTests(unittest.TestCase):
                 rotos.append(f"--- {arnes.name}\n{proceso.stdout}\n{proceso.stderr}")
         self.assertEqual(rotos, [], "\n".join(rotos))
 
+    def test_la_forma_del_bus_se_arma_y_se_declara_derivada(self) -> None:
+        """El panel mostraba «recorrido reconstruido» y debajo, nada.
+
+        Y el testigo del propio tablero contaba el trazado como aplicado.
+        """
+
+        self._correr("la_forma_del_bus.js")
+
     def test_los_ayudantes_de_serie_se_comportan_como_se_espera(self) -> None:
         self._correr("ayudantes_de_serie.js")
 
