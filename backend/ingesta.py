@@ -188,6 +188,10 @@ class Trabajo:
     detalle: dict[str, Any] = field(default_factory=dict)
     error: str | None = None
     bitacora: str | None = None
+    #: El final del registro, ya leido. Viaja en la respuesta porque la ruta de
+    #: `bitacora` no siempre es abrible por quien mira: desde que la aplicacion
+    #: corre en contenedor, `/app/logs/...` no existe fuera de la imagen.
+    final_del_registro: list[str] = field(default_factory=list)
     proceso: Any = None               # subprocess.Popen, si el trabajo es un proceso
 
     @property
@@ -212,11 +216,97 @@ class Trabajo:
             "detalle": self.detalle,
             "error": self.error,
             "bitacora": self.bitacora,
+            "final_del_registro": self.final_del_registro,
         }
         if self.proceso is not None:
             cuerpo["pid"] = getattr(self.proceso, "pid", None)
             cuerpo["codigo_salida"] = self.proceso.poll()
         return cuerpo
+
+
+# --------------------------------------------------------------------------- #
+# EL MOTIVO TIENE QUE CRUZAR LA FRONTERA DEL CONTENEDOR
+#
+# Un trabajo que falla dejaba en `error` la ruta a su registro ---«Ver
+# /app/logs/tablero_f1_25_republicar_77418cba96ce.log»--- y nada mas. Esa ruta
+# esta **adentro de la imagen**: no la puede abrir quien mira el tablero, ni
+# quien entra a la Raspberry. Antes de contenerizar al menos era abrible por
+# quien tuviera la maquina; desde el 2026-09-13 no lo es para nadie.
+#
+# Y EL MOTIVO SOLIA SER BUENO. El caso que lo destapo era una negativa razonada
+# del guion de reinyeccion ---«lo presente se guardo sin identidad de corrida,
+# de modo que no chocaria contra nada y se duplicaria»--- que ademas decia como
+# resolverla. Eso es lo que habia que leer.
+#
+# VIAJA EL FINAL, NO EL REGISTRO ENTERO. Una captura de dos horas escribe un
+# archivo que no tiene por que atravesar una respuesta HTTP, y el final es
+# donde un proceso dice por que se detuvo.
+# --------------------------------------------------------------------------- #
+
+#: Cuantas lineas utiles del final viajan. Doce alcanzan para un bloque de
+#: cierre con su explicacion y su sugerencia, que es la forma que tienen los
+#: guiones de este proyecto de despedirse.
+LINEAS_DE_CIERRE = 12
+
+#: Y un tope duro en bytes, porque una linea sola puede ser enorme ---una traza
+#: de excepcion en una linea, un volcado---. El tope de lineas no acota nada si
+#: una linea pesa un mega.
+BYTES_DE_CIERRE = 4000
+
+
+def _final_del_registro(ruta: str | None,
+                        lineas: int = LINEAS_DE_CIERRE,
+                        tope_bytes: int = BYTES_DE_CIERRE) -> list[str]:
+    """Las ultimas lineas con algo escrito, o una lista vacia.
+
+    No levanta nunca. Un registro que no se puede leer es una molestia; que la
+    molestia tumbe al vigia que marca el trabajo como fallido seria peor: el
+    trabajo quedaria «en curso» para siempre.
+
+    SE LEE DESDE EL FINAL, no entero: se busca el ultimo tramo del archivo y se
+    corta ahi. Leer un registro de captura completo para mostrar doce lineas
+    seria pagar el archivo entero por su cola.
+
+    LAS LINEAS VACIAS DEL FINAL SE DESCARTAN. Un proceso que cierra con saltos
+    de linea ---y son varios--- empujaria su propio motivo fuera del tope.
+    """
+
+    if not ruta:
+        return []
+    try:
+        archivo = Path(ruta)
+        peso = archivo.stat().st_size
+        with archivo.open("rb") as f:
+            if peso > tope_bytes:
+                f.seek(peso - tope_bytes)
+                crudo = f.read()
+                # El primer renglon quedo cortado a la mitad: se tira, porque
+                # media linea dice menos que ninguna y puede enganar.
+                corte = crudo.find(b"\n")
+                crudo = crudo[corte + 1:] if corte != -1 else crudo
+            else:
+                crudo = f.read()
+    except (OSError, ValueError):
+        return []
+
+    texto = crudo.decode("utf-8", errors="replace")
+    utiles = [renglon.rstrip() for renglon in texto.splitlines() if renglon.strip()]
+    return utiles[-lineas:]
+
+
+def _por_que_fallo(codigo: int, final: list[str]) -> str:
+    """El motivo que se muestra primero. Dice algo, o dice que no hay nada.
+
+    Lo que **no** hace es devolver una ruta. Una ruta no es un motivo: es una
+    promesa de motivo, y desde el contenedor es una promesa que no se puede
+    cumplir. Si el proceso no escribio nada, eso tambien se dice, que es un dato
+    distinto de «fallo y no se por que».
+    """
+
+    if not final:
+        return (f"El proceso termino con codigo {codigo} y no dejo nada escrito "
+                f"en su registro.")
+    return f"El proceso termino con codigo {codigo}: {final[-1]}"
 
 
 class RegistroDeTrabajos:
@@ -384,11 +474,15 @@ class RegistroDeTrabajos:
                 pass
             trabajo.fin_utc = _ahora_utc()
             trabajo.detalle = {**trabajo.detalle, "codigo_salida": codigo}
+            # SE LEE UNA VEZ, AL TERMINAR, y no en cada serializacion: el
+            # registro de una captura de dos horas se consulta muchas veces y
+            # se escribe una sola. Se lee despues de cerrar el descriptor para
+            # que lo ultimo que el hijo escribio ya este en disco.
+            trabajo.final_del_registro = _final_del_registro(trabajo.bitacora)
             if trabajo.estado == "en_curso":
                 trabajo.estado = "terminado" if codigo == 0 else "fallido"
                 if codigo != 0:
-                    trabajo.error = (f"El proceso termino con codigo {codigo}. "
-                                     f"Ver {trabajo.bitacora}.")
+                    trabajo.error = _por_que_fallo(codigo, trabajo.final_del_registro)
             self._poner_al_dia_el_catalogo(trabajo)
 
         threading.Thread(target=_vigilar, name=f"vigia-{tipo}", daemon=True).start()
