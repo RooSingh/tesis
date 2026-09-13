@@ -12082,9 +12082,31 @@ function faseDeLaDireccion(texto) {
 
 /* Hay algo que elegir aunque no sea ambiguo: con varias etapas continuas el
    boton sigue sirviendo para mirar una sola. Ofrecerlo no obliga a nada. */
+/* SI HAY ALGO QUE ELEGIR, Y NO SI HAY MAS DE UNA ADQUISICION.
+   ------------------------------------------------------------
+   No son la misma pregunta desde que las capturas de una misma carrera se
+   unen solas. `alcanceEsAmbiguo` ya consultaba a `sonUnaSolaCarrera`; esta se
+   quedo preguntando por el largo de la lista, de modo que el boton se dibujaba
+   ofreciendo cambiar algo que el sistema **ya resolvio**.
+
+   MEDIDO SOBRE LAS 28 SESIONES DE LA PI: 16 ya lo ocultaban, **12 lo mostraban
+   sin nada que decidir** ---dos o tres capturas de la misma carrera, sin
+   reproducciones y sin solaparse--- y **ninguna lo necesitaba**.
+
+   NO SE BORRA EL BOTON, Y LA DIFERENCIA IMPORTA. El caso ambiguo lo crea un
+   boton de este mismo tablero: republicar una captura sobre una sesion ya
+   guardada deja dos adquisiciones que **no** se deben unir ---`sonUnaSolaCarrera`
+   se niega bien por `es_reproduccion`--- y sin el boton se verian todas las
+   vueltas dos veces sin forma de separarlas. Hoy no hay ninguna asi; el
+   mecanismo esta vivo igual.
+
+   Y LAS FASES SE SIGUEN PREGUNTANDO APARTE: unir dos capturas no decide en que
+   etapa mirar una que reinicia el reloj del juego adentro. */
 function hayAlcanceQueElegir() {
   const lista = corrida.disponibles || [];
-  return lista.length > 1 || lista.some(a => (a.fases || []).length > 1);
+  if (lista.some(a => (a.fases || []).length > 1)) return true;
+  if (sonUnaSolaCarrera(lista)) return false;
+  return lista.length > 1;
 }
 
 function pintarBotonDeCorrida() {

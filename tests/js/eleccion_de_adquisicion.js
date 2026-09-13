@@ -242,6 +242,30 @@ prueba("una sola adquisicion con etapas que reinician el reloj es ambigua", () =
   globalThis.corrida = dosCapturas;
   assert.strictEqual(sacadas.alcanceEsAmbiguo(), false,
     "dos capturas de la misma carrera son una carrera con un agujero");
+  /* Y EL BOTON TAMPOCO, PORQUE YA NO HAY NADA QUE ELEGIR.
+     `alcanceEsAmbiguo` consultaba a `sonUnaSolaCarrera` y esta se quedo
+     preguntando por el largo de la lista: el boton se dibujaba ofreciendo
+     cambiar algo que el sistema ya habia resuelto. Medido sobre las 28 sesiones
+     de la Pi: **12 lo mostraban sin nada que decidir** y ninguna lo
+     necesitaba. */
+  assert.strictEqual(sacadas.hayAlcanceQueElegir(), false,
+    "el boton ofrece elegir sobre una union que ya se decidio sola");
+
+  /* PERO SI UNA DE LAS DOS TIENE ETAPAS, SIGUE HABIENDO QUE ELEGIR: unir dos
+     capturas no decide en cual mirar una que reinicia el reloj del juego. */
+  globalThis.corrida = { disponibles: [
+    { clave: "original-1", es_reproduccion: false,
+      fases: [{ orden: 1 }, { orden: 2, reloj_del_juego_reinicia_al_entrar: true }] },
+    { clave: "original-2", es_reproduccion: false, fases: [] }] };
+  assert.strictEqual(sacadas.hayAlcanceQueElegir(), true,
+    "se perdio la eleccion de etapa al ocultar el boton de la union");
+
+  /* Y UNA REPRODUCCION JUNTO A SU CAPTURA LO SIGUE NECESITANDO ENTERO: es el
+     caso que crea el propio boton de republicar, y sin el se verian todas las
+     vueltas dos veces sin forma de separarlas. */
+  globalThis.corrida = dos;
+  assert.strictEqual(sacadas.hayAlcanceQueElegir(), true,
+    "se oculto el boton en el unico caso que de verdad lo necesita");
   globalThis.corrida = antes;
 });
 
