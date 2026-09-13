@@ -2312,28 +2312,35 @@ function subirLoElegido(archivos) {
          tarda: se vuelve a pedir hasta que deje de cambiar, con techo. */
       if (t && t.estado === "terminado") {
         anotarPasoDeSubida("Actualizando el catálogo…", "en-curso");
-        /* SE MIRA SI APARECIO, EN VEZ DE ANUNCIARLO A LOS CUATRO SEGUNDOS.
-           Decia «Listo: la sesión tiene que aparecer en Abrir sesión guardada»
-           sin haber mirado. Se vio el 2026-09-13 cargando un segmento del bus:
-           el trabajo termino bien, **las 57.890 filas entraron en la base** y
-           la sesion no estaba en el catalogo. Quien leyo el cartel la fue a
-           buscar y no estaba.
-
-           Y no aparecio por una razon concreta que vale decir: el trabajo no
-           declara que sesion cargo ---su `detalle` trae el comando y el codigo
-           de salida y nada mas--- de modo que el refresco por sesion se llama
-           con `null` y no hace nada. Eso es del servidor; lo que se arregla
-           aca es dejar de afirmarlo. */
-        refrescarCatalogo(6, aparecio => {
+        /* SE MIRA SI LA SESION ESTA, EN VEZ DE ANUNCIARLO A LOS CUATRO
+           SEGUNDOS. Decia «Listo: la sesión tiene que aparecer» sin haber
+           mirado; el 2026-09-13 un segmento del bus entro con sus 57.890 filas
+           y la sesion no quedo catalogada. Quien leyo el cartel la fue a buscar
+           y no estaba. */
+        const suyas = sesionesDelTrabajo(t);
+        const estabanAntes = suyas.length &&
+          suyas.every(id => SESIONES.some(x => x.session_id === id));
+        refrescarCatalogo(6, ({ cambio, lista }) => {
           _quitarUltimoPaso();
-          anotarPasoDeSubida(
-            aparecio
-              ? "Listo: ya aparece en «Abrir sesión guardada»."
-              : "El procesamiento terminó bien, pero el catálogo no cambió. " +
-                "El dato puede estar cargado y faltar catalogarlo: probá " +
-                "«Abrir sesión guardada» en un minuto.",
-            aparecio ? "hecho" : "pendiente");
-        });
+          const como = comoQuedoElCatalogo(suyas, estabanAntes, lista);
+          const dicho = {
+            "apareció": ["Listo: ya aparece en «Abrir sesión guardada».", "hecho"],
+            "ya estaba": ["Listo: ya estaba en «Abrir sesión guardada», con los " +
+                          "mismos datos.", "hecho"],
+            "no está": ["El procesamiento terminó bien, pero la sesión no está " +
+                        "en el catálogo. El dato puede estar cargado y faltar " +
+                        "catalogarlo: probá «Abrir sesión guardada» en un minuto.",
+                        "pendiente"],
+            /* Sin sesion declarada no se puede afirmar nada de una en
+               particular, y lo unico que queda es si la lista se movio. */
+            "sin declarar": cambio
+              ? ["Listo: el catálogo tiene una sesión nueva.", "hecho"]
+              : ["El procesamiento terminó bien, pero el catálogo no cambió. " +
+                 "El dato puede estar cargado y faltar catalogarlo: probá " +
+                 "«Abrir sesión guardada» en un minuto.", "pendiente"],
+          }[como];
+          anotarPasoDeSubida(dicho[0], dicho[1]);
+        }, suyas);
       }
     })
     .catch(() => { /* cada paso ya se anoto con su motivo */ });
@@ -12527,24 +12534,68 @@ function esperaDeTelemetria() {
    entra sin castigar al caso comun, que responde en el primero. */
 /* `alTerminar` recibe si el catalogo cambio. Devolverlo es lo que permite no
    afirmar que una sesion aparecio sin haberlo mirado. */
-function refrescarCatalogo(intentos, alTerminar) {
+function refrescarCatalogo(intentos, alTerminar, esperando) {
   const antes = SESIONES.length;
+  const busco = esperando || [];
   pedir("/sesiones?limite=400")
     .then(c => {
       const lista = (c.sesiones || []).filter(s => s.filas > 0);
       const cambio = lista.length !== antes;
       SESIONES = lista;
       render();
-      // Se insiste solo mientras no haya cambiado nada y queden intentos: en
-      // cuanto la sesion nueva aparece, no hay motivo para volver a preguntar.
-      if (!cambio && intentos > 1) {
-        setTimeout(() => refrescarCatalogo(intentos - 1, alTerminar),
+      /* SE INSISTE HASTA QUE ESTE LO QUE SE ESPERA, no hasta que la lista
+         crezca. Recontar una sesion tarda segundos y el largo de la lista no
+         cambia cuando la sesion **ya estaba**: esperar un cambio ahi era
+         esperar algo que no iba a pasar, y se gastaban los seis intentos para
+         terminar diciendo que no aparecio. */
+      const listo = busco.length
+        ? busco.every(id => lista.some(x => x.session_id === id))
+        : cambio;
+      if (!listo && intentos > 1) {
+        setTimeout(() => refrescarCatalogo(intentos - 1, alTerminar, busco),
                    (7 - intentos) * 1000 + 1000);
         return;
       }
-      if (typeof alTerminar === "function") alTerminar(cambio);
+      if (typeof alTerminar === "function") alTerminar({ cambio, lista });
     })
-    .catch(() => { if (typeof alTerminar === "function") alTerminar(false); });
+    .catch(() => {
+      if (typeof alTerminar === "function") {
+        alTerminar({ cambio: false, lista: SESIONES });
+      }
+    });
+}
+
+/* QUE SESIONES DEJO ESTE TRABAJO, SEGUN EL TRABAJO.
+   Un trabajo que corre dentro del servidor devuelve un diccionario y ahi pone
+   la suya; uno lanzado como proceso aparte las declara al lanzarse, porque su
+   unico canal de vuelta es el codigo de salida. Las dos formas terminan aca. */
+function sesionesDelTrabajo(t) {
+  const d = (t && t.detalle) || {};
+  const una = d.session_id || d.sesion || d.run_id;
+  return (d.sesiones || (una ? [una] : [])).filter(Boolean);
+}
+
+/* COMO QUEDO EL CATALOGO, Y «NO CAMBIO» NO ES «NO ESTA».
+   ---------------------------------------------------------------------
+   Aca se preguntaba si la lista habia cambiado. El 2026-09-13 alguien volvio a
+   subir un segmento que ya estaba cargado: el procesamiento termino bien, el
+   catalogo no cambio **porque no tenia por que cambiar**, y el tablero anuncio
+   «el dato puede estar cargado y faltar catalogarlo», mandando a buscar un
+   problema que no existia.
+
+   ES LA TERCERA VEZ EN EL DIA QUE APARECE LA MISMA PREGUNTA MAL FORMULADA. La
+   conciliacion del guion de carga preguntaba «¿cuanto crecio la base?» en vez
+   de «¿tiene lo que estos segmentos deben dejar?». Confundir **el movimiento**
+   con **el estado** da falso negativo en cuanto la operacion es idempotente.
+
+   Y AHORA SE PUEDE PREGUNTAR BIEN. El comentario que estaba aca decia que el
+   trabajo no declara que sesion cargo; eso se arreglo el mismo dia y el tablero
+   ya tiene contra que mirar. */
+function comoQuedoElCatalogo(suyas, estabanAntes, lista) {
+  if (!suyas.length) return "sin declarar";
+  const hay = s => (lista || []).some(x => x.session_id === s);
+  if (!suyas.every(hay)) return "no está";
+  return estabanAntes ? "ya estaba" : "apareció";
 }
 
 function nombreDeFase(a, f) {

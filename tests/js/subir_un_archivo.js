@@ -83,11 +83,20 @@ const { extensionDe, esAcompanante, ordenDeSubida, extensionesQueSeAceptan,
         comoSeProcesa, tamanoLegible } = sacadas;
 
 let hechas = 0;
+//: Las que devuelven una promesa se esperan; las demas siguen siendo directas.
+const pendientes = [];
 function prueba(titulo, fn) {
-  try { fn(); hechas++; } catch (e) {
+  const fallo = e => {
     process.exitCode = 1;
     console.error("FALLA  " + titulo + "\n       " + (e && e.message));
+  };
+  let r;
+  try { r = fn(); } catch (e) { fallo(e); return; }
+  if (r && typeof r.then === "function") {
+    pendientes.push(r.then(() => { hechas++; }, fallo));
+    return;
   }
+  hechas++;
 }
 
 /* -------- lo que se ofrece en el dialogo lo dice el servidor -------- */
@@ -408,12 +417,10 @@ prueba("NO SE ANUNCIA QUE APARECIO SIN HABER MIRADO", () => {
      a buscar y no estaba. */
   const i = fuenteApp.indexOf("function subirLoElegido(");
   const cuerpo = fuenteApp.slice(i, fuenteApp.indexOf("\n}", i));
-  assert.ok(/refrescarCatalogo\(6, aparecio =>/.test(cuerpo),
+  assert.ok(/refrescarCatalogo\(/.test(cuerpo),
     "no se mira si la sesion aparecio");
-  assert.ok(/ya aparece en/.test(cuerpo),
-    "falta lo que se dice cuando si aparecio");
-  assert.ok(/el catálogo no cambió/.test(cuerpo),
-    "falta lo que se dice cuando no aparecio, que es el caso que fallaba");
+  assert.ok(/comoQuedoElCatalogo\(/.test(cuerpo),
+    "el desenlace no se decide mirando si la sesion esta");
   /* La cadena que se escribe y no la que la explica: el comentario que cuenta
      por que se fue la nombra, y un guardian que se rompe con su propia
      explicacion obliga a borrar la explicacion. Tercera vez hoy. */
@@ -421,15 +428,142 @@ prueba("NO SE ANUNCIA QUE APARECIO SIN HABER MIRADO", () => {
     "volvio la promesa que no se comprueba");
 });
 
-prueba("y el refresco declara si el catalogo cambio", () => {
-  /* Sin devolverlo, quien llama no puede afirmar nada sobre el resultado: es
-     el dato entero. */
-  const i = fuenteApp.indexOf("function refrescarCatalogo(");
+/* El banco del refresco: `pedir` contesta lo que se le diga y las esperas se
+   cuentan en vez de dormirse. Lo que interesa es **cuantas veces pregunta**. */
+function bancoDelRefresco(lista, sesionesIniciales) {
+  const visto = { pedidos: 0, esperas: 0, final: null };
+  const cuerpo = [
+    "let SESIONES = sesionesIniciales;",
+    "const render = () => {};",
+    "const pedir = () => { visto.pedidos++; return Promise.resolve({ sesiones: lista }); };",
+    "const setTimeout = (f) => { visto.esperas++; f(); };",
+    extraer("refrescarCatalogo"),
+    "return refrescarCatalogo;",
+  ].join("\n");
+  const fn = new Function("lista", "sesionesIniciales", "visto", cuerpo)(
+    lista, sesionesIniciales, visto);
+  return [fn, visto];
+}
+
+prueba("EL REFRESCO PARA CUANDO ESTA LO QUE ESPERA, aunque la lista no crezca", () => {
+  /* Recontar una sesion tarda segundos, y el largo de la lista **no cambia
+     cuando la sesion ya estaba**. Esperando un cambio ahi se gastaban los seis
+     intentos para terminar diciendo que no aparecio. */
+  const lista = [{ session_id: "can:segmento:sample_01", filas: 57890 }];
+  const [refrescar, visto] = bancoDelRefresco(lista, lista);
+  refrescar(6, r => { visto.final = r; }, ["can:segmento:sample_01"]);
+  return Promise.resolve().then(() => {
+    assert.strictEqual(visto.pedidos, 1,
+      "insistio " + visto.pedidos + " veces sobre una sesion que ya estaba");
+    assert.strictEqual(visto.esperas, 0);
+  });
+});
+
+prueba("y sigue insistiendo mientras la sesion declarada no aparece", () => {
+  const [refrescar, visto] = bancoDelRefresco([], []);
+  refrescar(3, r => { visto.final = r; }, ["can:segmento:sample_01"]);
+  return Promise.resolve().then(() => {}).then(() => {}).then(() => {}).then(() => {
+    assert.ok(visto.pedidos > 1,
+      "no volvio a preguntar por una sesion que todavia no esta");
+  });
+});
+
+prueba("sin sesion declarada se conserva el criterio viejo: que la lista crezca", () => {
+  const lista = [{ session_id: "a", filas: 1 }, { session_id: "b", filas: 1 }];
+  const [refrescar, visto] = bancoDelRefresco(lista, [{ session_id: "a", filas: 1 }]);
+  refrescar(6, r => { visto.final = r; }, []);
+  return Promise.resolve().then(() => {
+    assert.strictEqual(visto.pedidos, 1);
+    assert.strictEqual(visto.final.cambio, true);
+  });
+});
+
+prueba("el refresco devuelve la lista, que es contra lo que se decide", () => {
+  const lista = [{ session_id: "x", filas: 1 }];
+  const [refrescar, visto] = bancoDelRefresco(lista, []);
+  refrescar(1, r => { visto.final = r; }, ["x"]);
+  return Promise.resolve().then(() => {
+    assert.deepStrictEqual(visto.final.lista, lista);
+  });
+});
+
+/* ==================================================================
+   «NO CAMBIO» NO ES «NO ESTA»
+   ------------------------------------------------------------------
+   REPORTADO POR EL USUARIO EL 2026-09-13 con la pantalla delante. Subio otra
+   vez un segmento que ya estaba cargado. El procesamiento termino bien ---y
+   concilio, que es lo que se acababa de arreglar--- y el tablero dijo:
+
+       «El procesamiento termino bien, pero el catalogo no cambio. El dato
+        puede estar cargado y faltar catalogarlo.»
+
+   La sesion estaba en el catalogo desde hacia rato. El catalogo no cambio
+   porque **no tenia por que cambiar**, y el aviso mandaba a buscar un problema
+   que no existia.
+
+   ES LA TERCERA VEZ EN EL DIA QUE APARECE LA MISMA PREGUNTA MAL FORMULADA. La
+   conciliacion del guion preguntaba «¿cuanto crecio la base?» en vez de «¿tiene
+   lo que estos segmentos deben dejar?». Aca se preguntaba «¿cambio la lista?»
+   en vez de «¿esta la sesion?». Las dos confunden **el movimiento** con **el
+   estado**, y las dos dan falso negativo cuando la operacion es idempotente.
+
+   Y AHORA SE PUEDE PREGUNTAR BIEN, QUE ANTES NO SE PODIA. El comentario que
+   estaba aca decia que el trabajo no declara que sesion cargo: eso se arreglo
+   el mismo dia ---`lanzar_proceso` recibe las sesiones y las deja en
+   `detalle`--- de modo que el tablero ya tiene contra que mirar.
+   ================================================================== */
+
+const sesionesDelTrabajo = new Function(
+  extraer("sesionesDelTrabajo") + "\nreturn sesionesDelTrabajo;")();
+const comoQuedoElCatalogo = new Function(
+  extraer("comoQuedoElCatalogo") + "\nreturn comoQuedoElCatalogo;")();
+
+prueba("el trabajo declara que sesiones toco, y se leen de ahi", () => {
+  assert.deepStrictEqual(
+    sesionesDelTrabajo({ detalle: { sesiones: ["can:segmento:sample_01"] } }),
+    ["can:segmento:sample_01"]);
+  //: Los trabajos que corren dentro del servidor devuelven una sola, con otro nombre.
+  assert.deepStrictEqual(
+    sesionesDelTrabajo({ detalle: { session_id: "f1_25:session:9" } }),
+    ["f1_25:session:9"]);
+  assert.deepStrictEqual(sesionesDelTrabajo({ detalle: { comando: ["x"] } }), []);
+  assert.deepStrictEqual(sesionesDelTrabajo(null), []);
+});
+
+prueba("EL DEFECTO: que ya estuviera no es que falte catalogarla", () => {
+  const lista = [{ session_id: "can:segmento:sample_01" }];
+  assert.strictEqual(
+    comoQuedoElCatalogo(["can:segmento:sample_01"], true, lista), "ya estaba");
+});
+
+prueba("y una sesion nueva se anuncia como lo que es", () => {
+  const lista = [{ session_id: "can:segmento:sample_01" }];
+  assert.strictEqual(
+    comoQuedoElCatalogo(["can:segmento:sample_01"], false, lista), "apareció");
+});
+
+prueba("LA ALARMA SE CONSERVA PARA CUANDO DE VERDAD FALTA", () => {
+  /* Es el caso que motivo todo esto: 57.890 filas en la base y la sesion sin
+     catalogar. No puede aflojarse por arreglar el falso positivo. */
+  assert.strictEqual(
+    comoQuedoElCatalogo(["can:segmento:sample_01"], false, []), "no está");
+  assert.strictEqual(
+    comoQuedoElCatalogo(["a", "b"], false, [{ session_id: "a" }]), "no está",
+    "con dos sesiones declaradas alcanza con que falte una");
+});
+
+prueba("un trabajo que no declara sesion no permite afirmar nada", () => {
+  /* Queda el criterio viejo ---si la lista cambio--- y su aviso, que para ese
+     caso sigue siendo lo unico que se puede decir. */
+  assert.strictEqual(comoQuedoElCatalogo([], false, []), "sin declarar");
+});
+
+prueba("los tres desenlaces tienen su texto, y ninguno promete", () => {
+  const i = fuenteApp.indexOf("function subirLoElegido(");
   const cuerpo = fuenteApp.slice(i, fuenteApp.indexOf("\n}", i));
-  assert.ok(/alTerminar\(cambio\)/.test(cuerpo),
-    "el refresco no dice si encontro algo nuevo");
-  assert.ok(/alTerminar\(false\)/.test(cuerpo),
-    "si la consulta falla no se avisa, y se queda esperando para siempre");
+  assert.ok(/ya aparece en/.test(cuerpo), "falta el texto de la que aparecio");
+  assert.ok(/ya estaba en/.test(cuerpo), "falta el texto de la que ya estaba");
+  assert.ok(/faltar catalogarlo/.test(cuerpo), "falta el aviso de la que no esta");
 });
 
 /* -------- el marcado que todo esto necesita -------- */
@@ -450,4 +584,6 @@ prueba("y se puede llegar a el con cualquier fuente elegida", () => {
   assert.ok(/id="btn-subir"/.test(indice), "no hay boton propio de subida");
 });
 
-console.log("ok " + hechas + " pruebas de subir un archivo");
+Promise.all(pendientes).then(() => {
+  console.log("ok " + hechas + " pruebas de subir un archivo");
+});
