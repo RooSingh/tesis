@@ -226,6 +226,13 @@ def _una_sesion(datos: dict, proc: dict, duracion: Any,
             "sha256": datos.get("sha256"),
             "inicio_utc": inicio_captura,
             "duracion_s": duracion_captura,
+            # SI LA CAPTURA TODAVIA ESTA ABIERTA. El capturador reescribe un
+            # metadato provisional mientras escucha, y ese metadato **no
+            # describe una captura**: no tiene huella ni duracion, de modo que
+            # nada puede atarlo a una adquisicion. Se declara aca para que
+            # quien elige pueda descartarlo; borrarlo en la lectura lo dejaria
+            # invisible tambien para el vivo, que es quien lo necesita.
+            "en_curso": bool(datos.get("en_curso")),
         }
 
     circuito = identidad_del_circuito(proc)
@@ -338,7 +345,39 @@ def _releer() -> tuple[dict[str, dict], dict[str, list[dict]]]:
                 procedencias[sesion] = proc
             if parrilla is not None:
                 candidatas.setdefault(sesion, []).append(parrilla)
-    return procedencias, candidatas
+    return procedencias, {s: _sin_provisionales(c) for s, c in candidatas.items()}
+
+
+def _esta_en_curso(parrilla: dict) -> bool:
+    """Si esta parrilla sale de una captura que todavia no se cerro."""
+    return bool((parrilla.get("captura") or {}).get("en_curso"))
+
+
+def _sin_provisionales(candidatas: list[dict]) -> list[dict]:
+    """Descarta las parrillas provisionales **cuando ya hay una cerrada**.
+
+    UNA CAPTURA EN CURSO NO COMPITE CON UNA CERRADA. Su metadato provisional
+    declara `en_curso` y poco mas que el arranque: sin huella y sin duracion,
+    `pertenece_a` no puede atarlo a ninguna adquisicion. Mientras la sesion
+    sigue viva eso no molesta ---es la unica que hay, y es la que le pone
+    nombre a los vehiculos del tablero en vivo---, pero si el capturador muere
+    sin cerrar, el provisional se queda en el directorio para siempre y **pasa
+    a competir con la captura buena**.
+
+    Por eso no se lo descarta siempre: se lo descarta cuando sobra. Con una
+    cerrada disponible, la que no se cerro no aporta nada que se pueda atar.
+
+    MEDIDO EL 2026-09-13, sobre la contrarreloj de Spa que se corto a mitad.
+    Dos candidatas para la misma sesion ---la cerrada y el provisional
+    huerfano del corte--- que difieren solo en los nombres de los fantasmas de
+    la tabla de tiempos en linea (`julimxxx` contra `mauruiz20` en los indices
+    3 al 14, que cambian entre una escucha y otra). Participantes distintos,
+    ninguna atable por ventana, y las **dos** adquisiciones se quedaron sin un
+    solo nombre ---incluido el del unico vehiculo con telemetria, que las dos
+    declaran igual---.
+    """
+    cerradas = [c for c in candidatas if not _esta_en_curso(c)]
+    return cerradas or candidatas
 
 
 def _mas_reciente() -> float:

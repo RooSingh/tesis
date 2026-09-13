@@ -199,6 +199,47 @@ class ParrillaTests(unittest.TestCase):
     def test_una_sesion_desconocida_no_inventa_una_parrilla(self) -> None:
         self.assertIsNone(ps.parrilla_de("f1_25:session:no-existe"))
 
+    #: El fantasma de la tabla de tiempos, que cambia de nombre entre una
+    #: escucha y la siguiente. No conduce nada y no tiene telemetria: su unico
+    #: efecto es hacer que dos parrillas de la misma sesion no coincidan.
+    FANTASMA = {"indice": 3, "nombre": "julimxxx", "numero": 2,
+                "equipo": "McLaren", "equipo_id": 8, "es_ia": True,
+                "plataforma": "desconocida"}
+
+    def test_el_provisional_de_una_captura_muerta_no_tapa_a_la_cerrada(self) -> None:
+        """El corte de corriente del 2026-09-12, en Spa, dejo uno huerfano.
+
+        El capturador reescribe un metadato provisional mientras escucha. Si
+        muere sin cerrar ---se le corto la corriente a la Pi--- ese archivo se
+        queda en el directorio y compite con la captura buena. Como declara
+        otros fantasmas en los indices altos, las dos parrillas «no coinciden»
+        y la sesion entera se quedaba sin un solo nombre.
+        """
+        self._escribir("cerrada.meta.json",
+                       self._con_parrilla(1, [self.NORRIS, self.FANTASMA]))
+        provisional = self._con_parrilla(1, [
+            self.NORRIS, dict(self.FANTASMA, nombre="mauruiz20")])
+        provisional["en_curso"] = True
+        self._escribir(".captura_en_curso.meta.json", provisional)
+
+        parrilla = ps.parrilla_de("f1_25:session:1")
+        self.assertIsNotNone(parrilla, "el provisional huerfano tapo a la cerrada")
+        self.assertEqual([v["nombre"] for v in parrilla["vehiculos"]],
+                         ["NORRIS", "julimxxx"])
+
+    def test_sin_captura_cerrada_el_provisional_es_la_parrilla(self) -> None:
+        """Es la que nombra a los vehiculos del tablero mientras se escucha.
+
+        Descartarlo siempre dejaria «Vehiculo 0» durante toda la escucha, que
+        es el defecto que el provisional vino a arreglar.
+        """
+        provisional = self._con_parrilla(1, [self.NORRIS])
+        provisional["en_curso"] = True
+        self._escribir(".captura_en_curso.meta.json", provisional)
+        parrilla = ps.parrilla_de("f1_25:session:1")
+        self.assertIsNotNone(parrilla)
+        self.assertEqual(parrilla["vehiculos"][0]["nombre"], "NORRIS")
+
     def test_una_parrilla_vacia_es_no_tenerla(self) -> None:
         self._escribir("a.meta.json", self._con_parrilla(1, []))
         self.assertIsNone(ps.parrilla_de("f1_25:session:1"))
