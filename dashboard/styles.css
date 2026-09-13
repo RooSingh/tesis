@@ -2416,6 +2416,26 @@
   /* Una ausencia explicada no es un error: es lo que esa sesion tiene para
      decir. Va en el gris de lo secundario y no en el de alerta. */
   table.tabla-reglajes .sin-tiempo { color: var(--texto-tenue); }
+
+  /* ---------- qué mover para llegar a la referencia ----------
+     La columna del cambio es la única que se lee de un vistazo, así que lleva
+     el peso. Sube y baja se distinguen por el color de la magnitud, no por uno
+     de acierto: la referencia no es un óptimo y apartarse de ella no es un
+     error. */
+  table.tabla-contra-referencia { margin-top: 8px; }
+  table.tabla-contra-referencia td.mover { font-weight: 700; }
+  table.tabla-contra-referencia td.mover[data-sentido="sube"] { color: var(--acento); }
+  table.tabla-contra-referencia td.mover[data-sentido="baja"] { color: var(--alerta); }
+
+  /* De dónde sale la referencia, y qué no autoriza. Cinco cosas distintas en
+     cinco renglones: leídas de corrido no se encontraba ninguna. */
+  #referencia-puesta p { margin: 0 0 6px; }
+  #referencia-puesta p:last-child { margin-bottom: 0; }
+  /* La salvedad va primero y marcada: es lo que cambia cómo se lee el cuadro. */
+  #referencia-puesta .salvedad { color: var(--alerta); border-left: 3px solid var(--alerta);
+    padding-left: 8px; }
+  #referencia-puesta .cita-fuente { font-style: italic; }
+  #referencia-puesta .alcance-fuente { font-size: .72rem; color: var(--texto-tenue); }
   .reglajes-circuito .nota { margin-top: 8px; }
 
   .lienzo-comparacion { width: 100%; display: block; cursor: crosshair; }

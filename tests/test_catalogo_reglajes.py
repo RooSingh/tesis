@@ -150,7 +150,7 @@ class CatalogoReglajesTests(unittest.TestCase):
         """
         r = catalogo_reglajes.referencia_de("monza", clima="lluvia fuerte")
         self.assertEqual(r["clima"], "seco")
-        self.assertIn("no hay referencia de lluvia", r["otro_clima"])
+        self.assertIn("o hay referencia de lluvia", r["otro_clima"])
         # Y con la que corresponde no se avisa nada: seria ruido.
         self.assertNotIn("otro_clima",
                          catalogo_reglajes.referencia_de("monza", clima="despejado"))

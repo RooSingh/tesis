@@ -3369,8 +3369,8 @@ def _comparar_con_referencia(session_id: str, puesta: dict,
         esperada = FAMILIA_DEL_MODO.get(referencia.get("modo"))
         if esperada and familia != esperada:
             referencia["otro_modo"] = (
-                "esta referencia es de %s y la sesion es %s: parte de la "
-                "diferencia es del tipo de sesion y no de la eleccion de quien "
+                "Ojo: esta referencia es de %s y la sesión es %s. Parte de la "
+                "diferencia es del tipo de sesión y no de lo que eligió quien "
                 "condujo" % (referencia.get("modo"),
                              familia or "de tipo no declarado"))
     diferencias = []

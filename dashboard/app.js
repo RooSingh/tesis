@@ -12853,27 +12853,42 @@ function pintarPuestaAPunto() {
     bloqueReferencia.textContent = "";
     const referencia = d && (d.referencia_puesta || d.referencia);
     if (referencia) {
-      /* PARA QUE MODO VALE, CUANDO NO ES EL DE ESTA SESION. Todas las
-         referencias que hay son de carrera y casi todas las sesiones
-         capturadas son contrarreloj: sin decirlo, la diferencia se lee como si
-         fuera una elección de quien condujo, y parte de ella es del tipo de
-         sesión. La cita de la fuente viaja al lado, que es lo que permite ir a
-         comprobar el número. */
-      bloqueReferencia.append(document.createTextNode(
-        "Referencia: " + referencia.fuente.titulo + ". " +
-        (referencia.otro_modo ? referencia.otro_modo + ". " : "") +
-        (referencia.otro_clima ? referencia.otro_clima + ". " : "") +
-        (referencia.cita ? "Dice: " + referencia.cita + " " : "") +
-        referencia.alcance + " "));
+      /* CINCO COSAS DISTINTAS EN CINCO RENGLONES, Y NO EN UN PÁRRAFO.
+         Iban pegadas: de qué fuente sale, para qué modo vale, para qué clima,
+         la frase que respalda las cifras y lo que no autoriza a concluir. Leído
+         de corrido no se encuentra ninguna, y la que más importa ---que la
+         referencia es de carrera y la sesión es contrarreloj--- quedaba
+         enterrada en el medio.
+
+         La advertencia va primero y marcada. Es lo que cambia cómo se lee el
+         cuadro de abajo: sin ella, doce puntos de alerón parecen un error de
+         quien condujo y parte de ellos son del tipo de sesión. */
+      const renglon = (texto, clase) => {
+        const p = document.createElement("p");
+        if (clase) p.className = clase;
+        p.textContent = texto;
+        bloqueReferencia.append(p);
+        return p;
+      };
+      if (referencia.otro_modo) renglon(referencia.otro_modo + ".", "salvedad");
+      if (referencia.otro_clima) renglon(referencia.otro_clima + ".", "salvedad");
+
+      const cabecera = renglon("Referencia: " + referencia.fuente.titulo + ". ",
+                               "de-donde-sale");
       try {
         const url = new URL(referencia.fuente.url);
         if (url.protocol === "https:" || url.protocol === "http:") {
           const enlace = document.createElement("a");
           enlace.href = url.href; enlace.target = "_blank"; enlace.rel = "noreferrer";
           enlace.textContent = "Ver fuente";
-          bloqueReferencia.append(enlace);
+          cabecera.append(enlace);
         }
       } catch (_) { /* La referencia sigue identificada por titulo. */ }
+
+      /* La frase textual de la fuente: es lo que permite ir a comprobar el
+         número sin creerle a esta pantalla. */
+      if (referencia.cita) renglon("Dice: " + referencia.cita, "cita-fuente");
+      renglon(referencia.alcance + ".", "alcance-fuente");
     }
   }
   const cab = document.getElementById("canal-puesta");
@@ -12881,19 +12896,42 @@ function pintarPuestaAPunto() {
     ? campos.length + " ajustes · " + ((d.puesta_asentada || d.asentada) ? "asentada" : "observada")
     : "—";
 
-  /* EN QUE SE APARTA DE LA REFERENCIA EXTERNA, cuando hay alguna.
-     Iba pegado a cada valor de la lista ---«3 nivel · ref. 3»--- y era lo unico
-     que esa lista aportaba: el numero solo no dice nada, el numero contra otro
-     si. Se conserva en una linea. Sin diferencias no se escribe nada: que
-     coincida con la referencia es lo normal y no hace falta decirlo. */
+  /* EN QUE SE APARTA DE LA REFERENCIA EXTERNA, EN UN CUADRO Y NO EN UNA FRASE.
+     Era un renglon corrido ---«Alerón delantero 12 en vez de 3, Alerón trasero
+     12 en vez de 0, Sesgo de freno 58 en vez de 54…»--- que hay que leer entero
+     para encontrar un ajuste, y que no deja comparar dos de un vistazo. Lo que
+     alguien quiere saber es **qué mover y cuánto**, y eso es una columna.
+
+     LA COLUMNA DEL CAMBIO VA CON SIGNO, y el signo es el del movimiento: lo que
+     hay que sumarle al valor propio para llegar al de la referencia. Un «−9» se
+     lee «bajá nueve» sin hacer ninguna cuenta.
+
+     Sin diferencias no se escribe nada: coincidir con la referencia es lo
+     normal y anunciarlo seria ruido. */
   const contra = document.getElementById("contra-referencia");
   if (contra) {
     const apartes = diferencias.filter(x => x.diferencia);
-    contra.textContent = apartes.length
-      ? "Contra la referencia: " + apartes.map(x =>
-          (ROTULO_PUESTA[x.clave] || x.clave) + " " + cifra(x.aplicado, 0) +
-          " en vez de " + cifra(x.referencia, 0)).join(", ") + "."
-      : "";
+    /* La unidad la declara el campo medido, que es su dueño: repetirla acá
+       seria tener el mismo dato en dos sitios. */
+    const unidadDe = new Map(campos.map(c => [c.clave, c.unidad || ""]));
+    contra.innerHTML = !apartes.length ? "" :
+      '<table class="tabla-reglajes tabla-contra-referencia">' +
+      "<thead><tr><th>Ajuste</th><th>Tenés</th><th>Referencia</th>" +
+      "<th>Cambio</th></tr></thead><tbody>" +
+      apartes.map(x => {
+        const u = unidadDe.get(x.clave) === "%" ? " %" : "";
+        /* Del valor propio al de la referencia. `diferencia` viene al revés
+           ---aplicado menos referencia--- porque describe el apartamiento; acá
+           hace falta el movimiento, que es su opuesto. */
+        const mover = x.referencia - x.aplicado;
+        return "<tr><td>" + textoSeguro(ROTULO_PUESTA[x.clave] || x.clave) +
+          '</td><td class="cifra">' + cifra(x.aplicado, 0) + u +
+          '</td><td class="cifra">' + cifra(x.referencia, 0) + u +
+          '</td><td class="cifra mover" data-sentido="' +
+          (mover > 0 ? "sube" : "baja") + '">' +
+          (mover > 0 ? "+" : "−") + cifra(Math.abs(mover), 0) +
+          "</td></tr>";
+      }).join("") + "</tbody></table>";
   }
   pintarReglajesDelCircuito();
 }

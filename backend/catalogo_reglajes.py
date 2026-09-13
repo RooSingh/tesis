@@ -41,9 +41,9 @@ from __future__ import annotations
 #: Se repetia palabra por palabra en cada entrada, y con diecisiete entradas eso
 #: son diecisiete sitios donde corregir la misma frase.
 ALCANCE = (
-    "Referencia de comunidad publicada para el juego, no una medicion de este "
-    "trabajo: no demuestra que sea optima ni que cause una mejora. Sirve para "
-    "declarar contra que condicion externa se compara el reglaje observado"
+    "Referencia de comunidad publicada para el juego, no una medición de este "
+    "trabajo: no demuestra que sea óptima ni que cause una mejora. Sirve para "
+    "declarar contra qué condición externa se compara el reglaje observado"
 )
 
 
@@ -571,7 +571,7 @@ def referencia_de(circuito: str | None, programa: str = "F1 25",
     if elegida is None:
         elegida = fichas[0]
         if llueve is not None and elegida["clima"] != quiere:
-            otro_clima = ("no hay referencia de %s para esta pista: la que se "
+            otro_clima = ("No hay referencia de %s para esta pista: la que se "
                           "muestra es de %s" % (quiere, elegida["clima"]))
 
     copia = {

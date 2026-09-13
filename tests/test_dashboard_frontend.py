@@ -71,18 +71,29 @@ class DashboardFrontendTests(unittest.TestCase):
         self.assertIn('"campos": campos', api,
                       "la API dejo de publicar la medicion del reglaje")
 
-    def test_lo_unico_que_esa_lista_decia_se_conserva(self) -> None:
+    def test_lo_unico_que_esa_lista_decia_se_conserva_y_en_un_cuadro(self) -> None:
         """Cada valor llevaba al lado el de la referencia externa.
 
         Eso era informacion y no relleno ---el numero solo no dice nada, el
-        numero contra otro si--- y baja a una linea en vez de irse con la lista.
+        numero contra otro si--- asi que sobrevivio a que la lista se fuera.
+
+        Y NO COMO UNA FRASE CORRIDA. Quedo como «Alerón delantero 12 en vez de
+        3, Alerón trasero 12 en vez de 0, Sesgo de freno 58 en vez de 54...»:
+        hay que leerla entera para encontrar un ajuste y no deja comparar dos de
+        un vistazo. Lo que alguien quiere saber es **que mover y cuanto**, y eso
+        es una columna.
         """
         indice = INDICE.read_text(encoding="utf-8")
         self.assertIn('id="contra-referencia"', indice)
         codigo = APP.read_text(encoding="utf-8")
-        self.assertIn('"Contra la referencia: "', codigo)
+        self.assertIn("tabla-contra-referencia", codigo,
+                      "la comparacion volvio a ser una frase corrida")
+        self.assertIn("<th>Cambio</th>", codigo,
+                      "el cuadro no dice cuanto hay que mover cada ajuste")
+        self.assertIn("x.referencia - x.aplicado", codigo,
+                      "el cambio no es el movimiento desde el valor propio")
         self.assertIn("diferencias.filter(x => x.diferencia)", codigo,
-                      "escribe la linea aunque no haya diferencia que declarar")
+                      "dibuja el cuadro aunque no haya diferencia que declarar")
 
     def test_el_tablero_no_arma_el_pedido_de_importacion_por_su_cuenta(self) -> None:
         """EL PLAN DE PROCESAMIENTO LO DECLARA EL SERVIDOR.
