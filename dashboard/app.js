@@ -2117,13 +2117,32 @@ function subirLoElegido(archivos) {
           _quitarUltimoPaso();
           /* EL MOTIVO DEL FALLO ES LO QUE HAY QUE MOSTRAR. Un «terminó como
              fallido» sin el motivo obliga a ir a buscarlo al servidor, que es
-             justo lo que esta pantalla existe para evitar. */
+             justo lo que esta pantalla existe para evitar. Antes remitía a una
+             ruta de log **dentro del contenedor**, que quien mira el tablero no
+             puede abrir. */
+          if (t.estado === "terminado") {
+            anotarPasoDeSubida(
+              "Procesado en " + Math.round(t.duracion_s || 0) + " s.", "hecho");
+            return t;
+          }
           anotarPasoDeSubida(
-            t.estado === "terminado"
-              ? "Procesado en " + Math.round(t.duracion_s || 0) + " s."
-              : "El procesamiento terminó como «" + t.estado + "»" +
-                (t.error ? ": " + t.error : ""),
-            t.estado === "terminado" ? "hecho" : "rechazado");
+            "El procesamiento terminó como «" + t.estado + "»" +
+            (t.error ? ": " + t.error : ""), "rechazado");
+          /* LA CAUSA VA DESPUÉS Y NO EN VEZ DE, y son cosas distintas: `error`
+             se arma con la **última** línea del registro, que suele ser el
+             remedio ---«volver a ejecutar con --limpiar-parciales»--- y la
+             causa está antes ---«se guardó sin identidad de corrida, de modo
+             que se duplicaría»---. Quedarse con el remedio dice qué escribir y
+             no qué pasó.
+
+             Se muestran las últimas líneas tal como el servidor las leyó, sin
+             elegir cuál: elegir una sería volver a perder la otra. */
+          const cola = (t.final_del_registro || [])
+            .filter(l => String(l).trim())
+            .slice(-4);
+          if (cola.length) {
+            anotarPasoDeSubida("El registro dice: " + cola.join(" · "), "");
+          }
           return t;
         });
     })
@@ -2134,12 +2153,28 @@ function subirLoElegido(archivos) {
          tarda: se vuelve a pedir hasta que deje de cambiar, con techo. */
       if (t && t.estado === "terminado") {
         anotarPasoDeSubida("Actualizando el catálogo…", "en-curso");
-        refrescarCatalogo(6);
-        setTimeout(() => {
-          _pasosDeSubida.pop();
-          anotarPasoDeSubida("Listo: la sesión tiene que aparecer en «Abrir " +
-                             "sesión guardada».", "hecho");
-        }, 4000);
+        /* SE MIRA SI APARECIO, EN VEZ DE ANUNCIARLO A LOS CUATRO SEGUNDOS.
+           Decia «Listo: la sesión tiene que aparecer en Abrir sesión guardada»
+           sin haber mirado. Se vio el 2026-09-13 cargando un segmento del bus:
+           el trabajo termino bien, **las 57.890 filas entraron en la base** y
+           la sesion no estaba en el catalogo. Quien leyo el cartel la fue a
+           buscar y no estaba.
+
+           Y no aparecio por una razon concreta que vale decir: el trabajo no
+           declara que sesion cargo ---su `detalle` trae el comando y el codigo
+           de salida y nada mas--- de modo que el refresco por sesion se llama
+           con `null` y no hace nada. Eso es del servidor; lo que se arregla
+           aca es dejar de afirmarlo. */
+        refrescarCatalogo(6, aparecio => {
+          _quitarUltimoPaso();
+          anotarPasoDeSubida(
+            aparecio
+              ? "Listo: ya aparece en «Abrir sesión guardada»."
+              : "El procesamiento terminó bien, pero el catálogo no cambió. " +
+                "El dato puede estar cargado y faltar catalogarlo: probá " +
+                "«Abrir sesión guardada» en un minuto.",
+            aparecio ? "hecho" : "pendiente");
+        });
       }
     })
     .catch(() => { /* cada paso ya se anoto con su motivo */ });
@@ -12167,7 +12202,9 @@ function esperaDeTelemetria() {
 /* Pide el catalogo hasta que se estabilice. `intentos` es el techo: cada uno
    espera un poco mas que el anterior, de modo que un refresco de siete segundos
    entra sin castigar al caso comun, que responde en el primero. */
-function refrescarCatalogo(intentos) {
+/* `alTerminar` recibe si el catalogo cambio. Devolverlo es lo que permite no
+   afirmar que una sesion aparecio sin haberlo mirado. */
+function refrescarCatalogo(intentos, alTerminar) {
   const antes = SESIONES.length;
   pedir("/sesiones?limite=400")
     .then(c => {
@@ -12178,10 +12215,13 @@ function refrescarCatalogo(intentos) {
       // Se insiste solo mientras no haya cambiado nada y queden intentos: en
       // cuanto la sesion nueva aparece, no hay motivo para volver a preguntar.
       if (!cambio && intentos > 1) {
-        setTimeout(() => refrescarCatalogo(intentos - 1), (7 - intentos) * 1000 + 1000);
+        setTimeout(() => refrescarCatalogo(intentos - 1, alTerminar),
+                   (7 - intentos) * 1000 + 1000);
+        return;
       }
+      if (typeof alTerminar === "function") alTerminar(cambio);
     })
-    .catch(() => {});
+    .catch(() => { if (typeof alTerminar === "function") alTerminar(false); });
 }
 
 function nombreDeFase(a, f) {

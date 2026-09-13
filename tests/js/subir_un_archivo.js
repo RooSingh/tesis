@@ -386,6 +386,52 @@ prueba("y al terminar se refresca el catalogo", () => {
     "se procesa y el catalogo queda sin la sesion nueva");
 });
 
+prueba("EL MOTIVO DEL FALLO SE MUESTRA, NO SE REMITE A UN ARCHIVO", () => {
+  /* Remitia a `/app/logs/...`, una ruta **dentro del contenedor** que quien
+     mira el tablero no puede abrir. Y `error` se arma con la ultima linea del
+     registro, que suele ser el **remedio**: la causa esta antes. Se muestran
+     las ultimas lineas tal como el servidor las leyo, sin elegir cual, porque
+     elegir una seria volver a perder la otra. */
+  const i = fuenteApp.indexOf("function subirLoElegido(");
+  const cuerpo = fuenteApp.slice(i, fuenteApp.indexOf("\n}", i));
+  assert.ok(/t\.final_del_registro/.test(cuerpo),
+    "el motivo sigue siendo una ruta que nadie puede abrir");
+  assert.ok(/filter\(l => String\(l\)\.trim\(\)\)/.test(cuerpo),
+    "las lineas vacias del cierre empujan al motivo fuera de lo que se muestra");
+});
+
+prueba("NO SE ANUNCIA QUE APARECIO SIN HABER MIRADO", () => {
+  /* Decia «Listo: la sesión tiene que aparecer en Abrir sesión guardada» a los
+     cuatro segundos, sin comprobar nada. Se vio el 2026-09-13 cargando un
+     segmento del bus: el trabajo termino bien, **las 57.890 filas entraron en
+     la base** y la sesion no estaba en el catalogo. Quien leyo el cartel la fue
+     a buscar y no estaba. */
+  const i = fuenteApp.indexOf("function subirLoElegido(");
+  const cuerpo = fuenteApp.slice(i, fuenteApp.indexOf("\n}", i));
+  assert.ok(/refrescarCatalogo\(6, aparecio =>/.test(cuerpo),
+    "no se mira si la sesion aparecio");
+  assert.ok(/ya aparece en/.test(cuerpo),
+    "falta lo que se dice cuando si aparecio");
+  assert.ok(/el catálogo no cambió/.test(cuerpo),
+    "falta lo que se dice cuando no aparecio, que es el caso que fallaba");
+  /* La cadena que se escribe y no la que la explica: el comentario que cuenta
+     por que se fue la nombra, y un guardian que se rompe con su propia
+     explicacion obliga a borrar la explicacion. Tercera vez hoy. */
+  assert.ok(!/"Listo: la sesión tiene que aparecer/.test(cuerpo),
+    "volvio la promesa que no se comprueba");
+});
+
+prueba("y el refresco declara si el catalogo cambio", () => {
+  /* Sin devolverlo, quien llama no puede afirmar nada sobre el resultado: es
+     el dato entero. */
+  const i = fuenteApp.indexOf("function refrescarCatalogo(");
+  const cuerpo = fuenteApp.slice(i, fuenteApp.indexOf("\n}", i));
+  assert.ok(/alTerminar\(cambio\)/.test(cuerpo),
+    "el refresco no dice si encontro algo nuevo");
+  assert.ok(/alTerminar\(false\)/.test(cuerpo),
+    "si la consulta falla no se avisa, y se queda esperando para siempre");
+});
+
 /* -------- el marcado que todo esto necesita -------- */
 
 prueba("el dialogo existe y tiene sus tres partes", () => {
