@@ -187,8 +187,16 @@ def listar_sesiones(fuente: str | None = None, limite: int = 400) -> dict[str, A
     # circuito y el tipo viven en los metadatos de captura, derivados del
     # paquete de sesion; sin esto, una clasificacion y una carrera se ven
     # iguales: dos identificadores con muchas filas.
+    # LA FUENTE DEPORTIVA NO PASA POR EL CAPTURADOR y por eso no tiene esos
+    # metadatos: su procedencia la declara el `session.json` que viene dentro del
+    # paquete, y quedo en `racing_sessions` al importarlo. Se lee **una vez**
+    # para toda la lista: una consulta por sesion serian treinta viajes a la base
+    # para llenar una columna.
+    deportivas = procedencia_openf1.indice()
+
     for sesion in r["sesiones"]:
-        proc = procedencia_sesiones.de(sesion["session_id"])
+        proc = (procedencia_sesiones.de(sesion["session_id"]) or
+                deportivas.get(sesion["session_id"]))
         sesion["procedencia"] = proc
         sesion["tipo"] = proc.get("tipo_sesion_nombre") if proc else None
         sesion["familia_de_sesion"] = proc.get("familia_de_sesion") if proc else None

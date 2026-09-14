@@ -110,5 +110,41 @@ class UnaSesionDeportivaDiceSuCircuitoTests(unittest.TestCase):
             self.assertEqual(procedencia_openf1.indice(), {})
 
 
+class ElListadoLoUsaDeVerdadTests(unittest.TestCase):
+    """La prueba que faltaba, y se nota por como se descubrio.
+
+    El lector de arriba quedo probado y **el enchufe no**: el cambio en
+    `/sesiones` nunca llego a escribirse ---el guion que lo aplicaba murio en una
+    asercion antes de guardar--- y la suite siguio en verde. Se descubrio
+    desplegando y mirando la respuesta real, que es tarde.
+
+    Una funcion probada que nadie llama es una funcion probada que no hace nada.
+    """
+
+    def test_el_listado_pide_la_procedencia_deportiva(self) -> None:
+        import inspect
+        from backend import api_sesion
+        fuente = inspect.getsource(api_sesion.listar_sesiones)
+        self.assertIn("procedencia_openf1.indice()", fuente,
+                      "el listado no lee la procedencia de la fuente deportiva")
+
+    def test_y_la_usa_solo_cuando_la_del_capturador_no_esta(self) -> None:
+        """La del capturador manda: es de la captura concreta, no de la sesion."""
+        import inspect
+        from backend import api_sesion
+        fuente = inspect.getsource(api_sesion.listar_sesiones)
+        self.assertIn("procedencia_sesiones.de(sesion[\"session_id\"]) or", fuente,
+                      "la procedencia deportiva pisa a la del capturador")
+
+    def test_SE_LEE_UNA_VEZ_Y_NO_POR_SESION(self) -> None:
+        """Adentro del bucle serian treinta viajes a la base."""
+        import inspect
+        from backend import api_sesion
+        fuente = inspect.getsource(api_sesion.listar_sesiones)
+        antes = fuente.split('for sesion in r["sesiones"]')[0]
+        self.assertIn("procedencia_openf1.indice()", antes,
+                      "la consulta quedo adentro del bucle")
+
+
 if __name__ == "__main__":
     unittest.main()
