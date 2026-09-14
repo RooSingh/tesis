@@ -9793,8 +9793,17 @@ const ETIQUETA_FUENTE = { f1: "F1 25", openf1: "OpenF1", can: "CAN real" };
    real. Que ese rotulo cubra datos generados vacia el aporte.
 
    Se pide por `source_type`, que es lo que la base declara de cada sesion. */
+/* UN NOMBRE PROPIO NO DECLARA QUE CLASE DE DATO ES. «F1 25» dice de donde
+   salio el dato; no dice que no hubo un auto. Quien no conoce el producto no
+   puede deducirlo, y es justo lo que hay que declarar: la seccion 12.7 del
+   informe afirma que la pantalla lo dice con la palabra «simulado».
+
+   Lo decia. El tablero llevaba una marca permanente «DATO SIMULADO» y el
+   rediseno del 2026-09-07 la quito, dejando la afirmacion del informe sin
+   sistema que la sostuviera. Vuelve aca, que es donde corresponde: en la
+   procedencia de la sesion y no en el nombre del modo. */
 const ETIQUETA_DE_ORIGEN = {
-  f1_25_udp_simulation: "F1 25",
+  f1_25_udp_simulation: "F1 25 · simulado",
   openf1_historical_replay: "OpenF1",
   can_real_replay: "CAN real",
   can_simulated: "CAN simulado",

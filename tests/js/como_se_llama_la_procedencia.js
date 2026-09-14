@@ -102,8 +102,35 @@ prueba("EL DEFECTO: una sesion generada no se llama «CAN real»", () => {
 
 prueba("y el bus de verdad se sigue llamando por su nombre", () => {
   assert.strictEqual(etiquetaDeOrigen("can_real_replay"), "CAN real");
-  assert.strictEqual(etiquetaDeOrigen("f1_25_udp_simulation"), "F1 25");
   assert.strictEqual(etiquetaDeOrigen("openf1_historical_replay"), "OpenF1");
+});
+
+prueba("TODA PROCEDENCIA SIN VEHICULO REAL DETRAS LO DICE EN EL ROTULO", () => {
+  /* La afirmacion que esto sostiene es de la seccion 12.7 del informe: que la
+     pantalla declara con la palabra «simulado» que el dato no salio de un
+     vehiculo. Existio como marca permanente «DATO SIMULADO» y el rediseno del
+     2026-09-07 la quito, dejando la afirmacion sin sistema que la sostuviera.
+
+     Por que aqui y no en el nombre del modo: un nombre propio ---«F1 25»---
+     identifica de donde salio el dato, no que clase de dato es. Quien no
+     conoce el producto no puede deducir de «F1 25» que no hubo un auto.
+
+     Se fija la lista entera y no una fuente: una procedencia generada que se
+     agregue manana y no diga «simulado» tiene que romper esta prueba. */
+  const GENERADAS = ["f1_25_udp_simulation", "can_simulated"];
+  GENERADAS.forEach(fuente => {
+    const etiqueta = etiquetaDeOrigen(fuente);
+    assert.ok(/simulad/i.test(etiqueta),
+      fuente + " no declara que es simulada: «" + etiqueta + "»");
+  });
+});
+
+prueba("y la que si tiene un vehiculo real detras NO lo dice", () => {
+  /* Una palabra que aparece en todos los rotulos no separa nada. */
+  ["can_real_replay", "openf1_historical_replay"].forEach(fuente => {
+    assert.ok(!/simulad/i.test(etiquetaDeOrigen(fuente)),
+      fuente + " se declara simulada y no lo es");
+  });
 });
 
 prueba("NINGUNA FUENTE COMPARTE ROTULO CON OTRA", () => {
