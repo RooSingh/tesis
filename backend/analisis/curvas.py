@@ -172,6 +172,171 @@ def _separar_solapadas(curvas: list[Curva]) -> None:
         siguiente.desde_m = max(siguiente.desde_m, medio)
 
 
+#: Cada cuantos metros se lee el rumbo. NO ES UN DETALLE DE AFINADO: es lo que
+#: separa una curva del temblor del muestreo.
+#:
+#: Leido muestra a muestra, el rumbo de una recta medida cada dos metros con
+#: unos centimetros de error salta varios grados en cada paso, alternando de
+#: signo. Leido cada ocho metros, ese error queda por debajo del grado y las
+#: curvas de verdad siguen enteras. El paso tambien vuelve a la lectura
+#: independiente de cuan finamente venga muestreado el recorrido, que cambia
+#: entre fuentes y entre sesiones.
+PASO_DE_RUMBO_M = 8.0
+
+#: Piso de ruido, en grados por paso. Por debajo, el cambio de rumbo no abre ni
+#: cierra un giro: se lo arrastra dentro del que este abierto.
+#:
+#: ES UN MARGEN, NO UN VALOR AFINADO, y conviene que este dicho. Subirlo hasta
+#: 25 grados se come curvas de verdad y el arnes lo atrapa; **bajarlo a cero no
+#: cambia nada** a ningun nivel de temblor probado, porque el remuestreo a paso
+#: fijo ya se comio ese ruido antes de llegar aca. Su limite inferior no esta
+#: comprobado por ninguna prueba, y hay una que lo declara asi.
+RUIDO_DE_RUMBO_GRADOS = 1.0
+
+#: Cuanto puede durar un tramo derecho dentro de un mismo giro, en metros. Dos
+#: curvas del mismo sentido separadas por menos que esto son un solo giro
+#: ---tambien para el que maneja--- y por mas, dos.
+UNION_DE_GIRO_M = 20.0
+
+#: Por debajo de esto un giro no se informa. Es bajo a proposito: el tunel de
+#: Monaco gira 34,9 grados en 115 m y **es una curva numerada**; con un umbral
+#: alto desaparece, y una curva que desaparece corre el mapeo de todas las que
+#: vienen despues.
+UMBRAL_DE_GIRO_GRADOS = 18.0
+
+
+def _a_paso_fijo(pts: list[tuple[float, float]],
+                 paso_m: float) -> list[tuple[float, float]]:
+    """El recorrido remuestreado cada `paso_m`, con su distancia acumulada."""
+
+    salida, acumulado, sobra = [(0.0, pts[0])], 0.0, 0.0
+    for i in range(1, len(pts)):
+        tramo = math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1])
+        if tramo <= 0:
+            continue
+        recorrido = sobra + tramo
+        while recorrido >= paso_m:
+            avance = paso_m - sobra
+            f = avance / tramo
+            acumulado += paso_m
+            salida.append((acumulado,
+                           (pts[i - 1][0] + (pts[i][0] - pts[i - 1][0]) * f,
+                            pts[i - 1][1] + (pts[i][1] - pts[i - 1][1]) * f)))
+            sobra, recorrido, tramo = 0.0, recorrido - paso_m, tramo - avance
+            # El origen del tramo avanza con la muestra recien puesta: sin esto,
+            # la fraccion siguiente se calcula sobre el largo que queda pero se
+            # aplica al vector entero y la muestra se pasa de largo.
+            #
+            # NINGUNA PRUEBA MATA ESTA LINEA, y esta dicho a proposito. El error
+            # que introduce cae SOBRE LA MISMA CUERDA ---todos los puntos de un
+            # tramo son colineales--- asi que no cambia ningun rumbo salvo en las
+            # uniones entre cuerdas, y ahi queda por debajo de los umbrales. Se
+            # la conserva porque es lo correcto, no porque algo la defienda.
+            pts[i - 1] = salida[-1][1]
+        sobra = recorrido
+    return salida
+
+
+def giros_de_la_vuelta(
+    puntos: Iterable[tuple[float, float]],
+    umbral_grados: float = UMBRAL_DE_GIRO_GRADOS,
+    union_m: float = UNION_DE_GIRO_M,
+    ruido_grados: float = RUIDO_DE_RUMBO_GRADOS,
+    paso_m: float = PASO_DE_RUMBO_M,
+) -> list[dict]:
+    """Los giros de una vuelta leidos de la FORMA del recorrido.
+
+    POR QUE HAY DOS INSTRUMENTOS Y NO UNO. `tramos_de_una_vuelta` mira la
+    aceleracion lateral y encuentra zonas de giro sostenido. Esas zonas
+    **funden las curvas vecinas del mismo sentido**: en Silverstone dan un solo
+    tramo donde el mapa numera tres curvas, y en Monaco uno solo de 178 m donde
+    el mapa numera dos ---Mirabeau Inferior y Portier---.
+
+    Fundidas, el catalogo no puede decir cual numero va en cual zona, y ese es
+    el obstaculo que dejo trece circuitos sin nombrar. Mirando la aceleracion
+    lateral no se sale: el canal declara **cuanto** gira, no **cuantas veces**.
+
+    La forma si lo dice. Dos curvas del mismo sentido separadas por una recta
+    son dos acumulaciones de rumbo distintas aunque el auto no suelte el
+    volante entre las dos. En Monaco eso mostro los dos giros de +119 grados
+    que estaban escondidos dentro de una sola deteccion.
+
+    LO QUE NO DICE, A PROPOSITO: izquierda ni derecha. El plano en que el
+    simulador publica las coordenadas **esta espejado** ---Spa, que se corre
+    horario, da antihorario ahi, y `/sesiones/{id}/trazado` ya lo advierte---.
+    Esta funcion informa el signo en el plano que recibio; traducirlo a un
+    sentido del mundo es del llamador, que es quien sabe de que fuente vino.
+
+    LA DISTANCIA ES DE CUERDAS Y QUEDA CORTA. Se acumula sumando la distancia
+    entre puntos consecutivos, y una cuerda corta la curva: el largo que sale es
+    menor que el recorrido, y la diferencia se concentra en las curvas cerradas.
+    En Monaco el poligono da 3.258 m contra los 3.320 de la ruta. Quien compare
+    estos metros contra los de la telemetria tiene que escalarlos.
+    """
+
+    pts = [(float(x), float(y)) for x, y in puntos]
+    if len(pts) < 3 or paso_m <= 0:
+        return []
+
+    # EL PASO NO PUEDE SER MAS FINO QUE EL RECORRIDO QUE LLEGA, y esto costo
+    # una prueba en rojo para verlo.
+    #
+    # Un recorrido es una poligonal: entre dos puntos consecutivos va una recta,
+    # y todo el giro esta concentrado en los vertices. Leyendo el rumbo mas
+    # seguido que esa separacion, lo que se mide es la forma del POLIGONO ---un
+    # tiron en cada vertice y nada en el medio--- y no la de la curva. Si los
+    # tramos rectos entre tirones pasan de `union_m`, una curva entera sale
+    # partida en pedazos.
+    #
+    # Pasa con datos de verdad: `/sesiones/{id}/trazado` reduce a los puntos que
+    # se le piden, y con los 600 de omision un circuito de seis kilometros llega
+    # con diez metros entre puntos. Un arco de 180 grados muestreado cada 25 m
+    # salia partido en dos mitades de 72 grados.
+    espaciado = _mediana([
+        math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1])
+        for i in range(1, len(pts))
+    ])
+    paso = max(paso_m, 2.0 * espaciado)
+    muestras = _a_paso_fijo(pts, paso)
+    if len(muestras) < 3:
+        return []
+
+    def rumbo(i: int) -> float:
+        (_, a), (_, b) = muestras[i], muestras[i + 1]
+        return math.atan2(b[1] - a[1], b[0] - a[0])
+
+    giros: list[dict] = []
+    abierto: dict | None = None
+    ultimo = -1                      # ultimo paso con un cambio de rumbo real
+    for k in range(len(muestras) - 2):
+        cambio = math.degrees(
+            (rumbo(k + 1) - rumbo(k) + math.pi) % (2 * math.pi) - math.pi)
+        donde = muestras[k][0]
+        if abs(cambio) < ruido_grados:
+            continue
+        # CUANTA RECTA HUBO EN EL MEDIO, CONTADA EN PASOS RECTOS Y NO EN METROS.
+        #
+        # Restar las distancias daba un hueco de un paso entero entre dos
+        # muestras CONSECUTIVAS, y con un paso mayor que `union_m` eso abria un
+        # giro nuevo en cada muestra: un arco de 90 grados salia como cinco
+        # pedazos de 18 y ninguno llegaba al umbral. Lo que separa dos curvas no
+        # es la distancia entre dos lecturas sino los pasos SIN giro que hay
+        # entre ellas.
+        hueco = (k - ultimo - 1) * paso if ultimo >= 0 else 0.0
+        mismo = abierto is not None and (cambio > 0) == (abierto["grados"] > 0)
+        if abierto is not None and (not mismo or hueco > union_m):
+            abierto = None
+        if abierto is not None:
+            abierto["grados"] += cambio
+            abierto["hasta_m"] = donde
+        else:
+            abierto = {"desde_m": donde, "hasta_m": donde, "grados": cambio}
+            giros.append(abierto)
+        ultimo = k
+
+    return [g for g in giros if abs(g["grados"]) >= umbral_grados]
+
+
 def tramos_de_una_vuelta(
     puntos: Iterable[tuple[float, float]],
     umbral: float = UMBRAL_LATERAL_G,
