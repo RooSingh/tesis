@@ -14392,6 +14392,42 @@ function marcasDeSector(sectores, puntos, proyectar) {
   return salida;
 }
 
+/* CON QUE VUELTA SE DIBUJA EL CIRCUITO.
+   ---------------------------------------------------------------------
+   MEDIDO EL 2026-09-13 sobre la carrera de Spa, vuelta por vuelta, con el cierre
+   que la propia respuesta declara ---la distancia entre el primer punto y el
+   ultimo---:
+
+       vuelta  1    cierre 2.122,6 m
+       vuelta  2    cierre   113,2 m
+       vuelta  3    cierre   137,8 m
+       vuelta 25    cierre    49,9 m
+
+   LA VUELTA 1 DE UNA CARRERA NO ES UNA VUELTA AL CIRCUITO. Los coches arrancan
+   desde la parrilla, de modo que ese giro va de la parrilla a la meta y le falta
+   el tramo de la meta a la parrilla. No es un dato malo: describe otra cosa. Y
+   el circuito salia con un hueco ---un tramo recto que nadie recorrio---.
+
+   EL TABLERO ELEGIA JUSTO ESA. Pedia «la primera completa y continua», y la
+   vuelta 1 cumple las dos. Estaba bien medida y era la equivocada.
+
+   POR QUE ESTA REGLA Y NO UN UMBRAL DE CIERRE. Descartar por «cierra mal»
+   obliga a elegir cuanto es mal, y ese numero habria que justificarlo contra
+   cada fuente y cada frecuencia de muestreo. Lo que se sabe sin medir nada es
+   mas fuerte: **la vuelta 1 es la unica que puede empezar en otro sitio**; de la
+   segunda en adelante, cada una empieza donde termino la anterior, que es la
+   linea. No es una regla sobre carreras ---en una contrarreloj la primera sale
+   de boxes--- sino sobre lo que una vuelta es.
+
+   Y SI LA PRIMERA ES LA UNICA QUE HAY, SE USA. No dibujar nada seria peor que
+   dibujar el giro que existe, que es real aunque no cierre. */
+function conQueVueltaSeDibuja(vueltas) {
+  const usable = v => v && v.completa && v.continua !== false;
+  const lista = vueltas || [];
+  return lista.find(v => usable(v) && v.numero > 1) ||
+         lista.find(usable) || null;
+}
+
 function pedirTrazado(ruta) {
   /* EL BUS NO PUBLICA COORDENADAS, Y AUN ASI TIENE UNA FORMA.
      `/trazado` sale de `world_position_*`, que la simulacion declara y el bus
@@ -14404,7 +14440,7 @@ function pedirTrazado(ruta) {
      distintas: OpenF1 no tiene metro medido y si tiene `track_position_*`, de
      modo que su trazado sale de `/trazado` como siempre. */
   if (!hayCoordenadasMedidas()) { pedirRecorridoDelBus(); return; }
-  const buena = estado.vueltas.find(v => v.continua !== false && v.completa);
+  const buena = conQueVueltaSeDibuja(estado.vueltas);
   const cual = buena ? "&vuelta=" + buena.numero : "";
   /* De quien es el recorrido. La fuente deportiva no publica quien conduce
      ---no tiene nada como `player_car_index`--- y sin decirlo el punto de

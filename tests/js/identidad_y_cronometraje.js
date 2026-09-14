@@ -199,6 +199,10 @@ const NOMBRES = [
   "vueltasDeLaSesion", "iniciosDeVuelta", "calcularInstante",
   "vueltaEnFraccion", "trazadoAPath",
   "tramoDeLaVuelta",
+  //: `pedirTrazado` la llama para elegir con que vuelta dibujar: sin declararla
+  //: aqui, el banco revienta con un nombre no definido y el fallo no dice nada
+  //: del defecto que se estaba probando.
+  "conQueVueltaSeDibuja",
   "pedirTrazado",
   "senalesParaElRecorrido",
   "pieDelRecorrido",

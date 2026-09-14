@@ -36,7 +36,7 @@ from fastapi import APIRouter, HTTPException, Query
 from adapters import f1_25 as adaptador_f1_25
 from backend import (anotador_vivo, catalogo_curvas, catalogo_reglajes,
                      catalogo_sesiones, db, f1_udp, matriz_fuentes,
-                     procedencia_sesiones)
+                     procedencia_openf1, procedencia_sesiones)
 from backend.analisis import reglajes
 
 router = APIRouter()
