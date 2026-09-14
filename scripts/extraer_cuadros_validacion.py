@@ -32,9 +32,16 @@ instante del cambio muestra por lo tanto el panel anterior, y todas las figuras
 quedaban corridas un indice. Por eso a cada cambio de panel se le suma
 `--retardo` (0,3 s por omision).
 
-El retardo se aplica **solo a los cambios de panel**. La velocidad maxima, la
-marcha atras y la apertura del aleron son instantes de un valor, no transiciones
-de pantalla: correrlos tres decimas los aleja del valor que se quiere ver.
+El retardo se aplica a **los cambios de panel y a la marcha atras**, que son los
+dos instantes elegidos por ser el primero de un cambio. La marcha atras se tomaba
+en el primer instante con marcha -1 y la pantalla todavia mostraba N: medido
+sobre el video de Silverstone, a una decima despues todavia dice N y a tres
+decimas dice R, dentro de los 0,65 s que la captura la declara puesta. La
+velocidad maxima **no** se corre: es el pico de un valor que ya esta en
+pantalla, y tres decimas despues el vehiculo ya no va a esa velocidad. La
+apertura del aleron es tambien el primer instante de un cambio, pero la carrera
+de Silverstone no la tiene y no se pudo comprobar: queda sin retardo hasta que un
+video la muestre.
 
 Donde va cada cosa
 ------------------
@@ -244,6 +251,9 @@ def momentos_de_interes(ruta_captura: Path,
         momentos.append({
             "segundo": marcha_atras[0],
             "motivo": "marcha-atras",
+            # Es el primer instante con marcha -1, y la pantalla tarda en
+            # dibujar la R igual que tarda en dibujar un panel nuevo.
+            "retardo_s": retardo_panel_s,
             # Es el caso que la verificacion aritmetica no puede atrapar: tipear
             # el campo sin signo daria 255 sin alterar el tamano del paquete.
             "espera": "la pantalla debe mostrar R",

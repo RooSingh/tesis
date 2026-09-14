@@ -101,6 +101,20 @@ class RetardoEnLaExtraccion(unittest.TestCase):
         maxima = [t for m, t in zip(manifiesto, instantes) if m["motivo"] == "velocidad-maxima"]
         self.assertEqual(maxima, [10.0])
 
+    def test_la_marcha_atras_se_toma_despues_del_cambio(self):
+        """Tomada en el primer instante con marcha -1, la pantalla todavia dice N."""
+        muestras = [(10.0, _telemetria(1, marcha=0)), (12.0, _telemetria(1, marcha=-1)),
+                    (12.5, _telemetria(1, marcha=-1))]
+
+        manifiesto, instantes = self._extraer(muestras, retardo=0.3, desfase=-2.0)
+
+        atras = [(m, t) for m, t in zip(manifiesto, instantes) if m["motivo"] == "marcha-atras"]
+        self.assertEqual(len(atras), 1)
+        fila, instante = atras[0]
+        self.assertAlmostEqual(instante, 12.0 + 0.3 - 2.0)
+        self.assertEqual(fila["segundo_captura"], 12.0)
+        self.assertEqual(fila["retardo_s"], 0.3)
+
     def test_el_cuadro_va_al_destino_pedido(self):
         muestras = [(10.0, _telemetria(1)), (20.0, _telemetria(2))]
         captura = _Captura(muestras)
