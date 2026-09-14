@@ -530,6 +530,106 @@ MONZA_SECTORES_FIA: tuple[DeclaracionDeSector, ...] = (
 )
 
 
+# --------------------------------------------------------------------------
+# Suzuka -- Suzuka International Racing Course
+# --------------------------------------------------------------------------
+
+#: Longitud de linea central declarada por el mapa de la FIA del Gran Premio de
+#: Japon 2025 ---«Circuit Centreline Length = 5.807km»---.
+SUZUKA_LARGO_DECLARADO_M = 5807.0
+
+#: Lo que dio la vuelta medida: 3,0 m de diferencia. El lazo cierra en 3,1 m.
+SUZUKA_LARGO_MEDIDO_M = 5810.0
+
+#: Desnivel medido en la misma vuelta. Ninguna de las fuentes consultadas
+#: publica el desnivel de Suzuka, asi que no hay cifra declarada que citar.
+SUZUKA_DESNIVEL_MEDIDO_M = 40.5
+
+#: SENTIDO QUE NO SE PUDO MEDIR, y es el primero del catalogo.
+#:
+#: El giro acumulado de una vuelta cerrada venia acertando nueve de nueve. En
+#: Suzuka da -19,2 grados en una vuelta y +17,1 en la otra: cero, con el signo
+#: cambiando. No es ruido, es la topologia. Suzuka es el unico circuito del
+#: campeonato **en forma de ocho** ---la recta de atras cruza por arriba de la
+#: principal--- y en un ocho el giro total se cancela.
+#:
+#: El area con signo sobrevive, con mucho menos margen: normalizada por el largo
+#: al cuadrado da 0,0037 contra 0,0289 de Monza y 0,0237 de Silverstone. Los dos
+#: lazos se restan y queda el del mas grande. De ahi sale este valor, que es
+#: para lo que la ficha usa el campo: orientar el dibujo.
+#:
+#: Ninguna fuente consultada ---el mapa de la FIA, la enciclopedia, la guia de
+#: circuito del campeonato--- publica el sentido de Suzuka.
+SUZUKA_SENTIDO = "horario"
+
+#: Suzuka, trazado de Gran Premio.
+#:
+#: NOMBRES: guia de circuito del Gran Premio de Japon, que los asigna curva por
+#: curva. NUMERACION: mapa de la FIA del Gran Premio de Japon 2025, version 1,
+#: que numera de 1 a 18.
+#:
+#: METROS: apice de aceleracion lateral, medidos sobre
+#: `f1_25:session:17211676691250864516`, **vuelta 2**, con
+#: `curvas.tramos_de_una_vuelta` a 0,8 g.
+#:
+#: POR QUE LA VUELTA 2 Y NO LA 1. En la vuelta 1 las dos Degner salen fundidas
+#: en una sola zona de 253 m y en la vuelta 2 aparecen separadas. Son dos curvas
+#: numeradas y el catalogo necesita las dos: la vuelta que las distingue es la
+#: que sirve. Las otras quince zonas coinciden en las dos vueltas.
+#:
+#: DOS PUBLICACIONES DISCREPAN, Y LAS DESEMPATA EL MAPA. Una guia dice que la
+#: curva 7 es la Dunlop y la 8 Degner 1; otra, que la 8 es la Dunlop y la 9
+#: Degner 1. El mapa de la FIA no publica ningun nombre, y justamente por eso
+#: puede arbitrar: declara que el sector 2 abre 105 m antes de la curva 8, y ese
+#: limite esta medido en 2.227,1 m. La curva 8 cae en 2.332,1 m, donde la
+#: deteccion encuentra una zona que gira a **derecha**; la Dunlop es una
+#: izquierda en las dos guias. Gana la primera numeracion.
+#:
+#: El otro anclaje ---«S2 270m before Turn 15» contra el limite de 4.690,1 m---
+#: pone la 130R en 4.960,1 m, dentro de la zona 4.926,2-5.186,9.
+#:
+#: Y TRECE SENTIDOS PUBLICADOS COINCIDEN CON LOS TRECE MEDIDOS, sobre esta misma
+#: vuelta. No prueban el catalogo, pero lo harian saltar si estuviera corrido.
+SUZUKA: tuple[Curva, ...] = (
+    # La primera curva: dos numeros y un solo giro de 189 grados a derecha.
+    # Ninguna de las guias consultadas le pone nombre.
+    Curva(1, "", (1, 2), 640.7, 143, anclaje=_LAT, sentido="derecha"),
+    Curva(2, "Curvas S", (3,), 1101.7, 180, anclaje=_LAT, sentido="izquierda"),
+    Curva(3, "Curvas S", (4,), 1193.7, 153, anclaje=_LAT, sentido="derecha"),
+    Curva(4, "Curvas S", (5,), 1373.9, 192, anclaje=_LAT, sentido="izquierda"),
+    Curva(5, "Curvas S", (6,), 1527.7, 149, anclaje=_LAT, sentido="derecha"),
+    Curva(6, "Curva Dunlop", (7,), 2045.5, 181, anclaje=_LAT, sentido="izquierda"),
+    Curva(7, "Degner 1", (8,), 2305.8, 207, anclaje=_LAT, sentido="derecha"),
+    Curva(8, "Degner 2", (9,), 2480.0, 144, anclaje=_LAT, sentido="derecha"),
+    Curva(9, "", (10,), 2810.9, 210, anclaje=_LAT, sentido="derecha"),
+    # La mas lenta del trazado, 72 km/h, y la que el ocho no alcanza a tapar.
+    Curva(10, "Horquilla", (11,), 2916.9, 72, anclaje=_LAT, sentido="izquierda"),
+    Curva(11, "", (12,), 3527.2, 195, anclaje=_LAT, sentido="derecha"),
+    Curva(12, "Curva Spoon", (13, 14), 3946.5, 153, anclaje=_LAT, sentido="izquierda"),
+    Curva(13, "130R", (15,), 4948.9, 253, anclaje=_LAT, sentido="izquierda"),
+    Curva(14, "Chicana Casio", (16,), 5409.0, 95, anclaje=_LAT, sentido="derecha"),
+    Curva(15, "Chicana Casio", (17,), 5462.6, 84, anclaje=_LAT, sentido="izquierda"),
+    Curva(16, "Chicana Casio", (18,), 5693.2, 112, anclaje=_LAT, sentido="derecha"),
+)
+
+#: DOS TRAMOS QUE LA DETECCION ENCUENTRA Y EL MAPA NO NUMERA.
+#:
+#: Estan en la recta de atras, entre la Spoon y la 130R, y se toman a 273 y
+#: 291 km/h. Es el mismo caso que los dos de la recta Hangar en Silverstone: se
+#: declaran con su metro y su velocidad para que la ausencia sea explicita y no
+#: parezca que se perdieron dos nombres.
+SUZUKA_SIN_NOMBRE: tuple[tuple[float, int], ...] = (
+    (4344.5, 273),
+    (4494.7, 291),
+)
+
+#: LO QUE EL MAPA DE LA FIA DECLARA, guardado para poder volver a comprobar.
+SUZUKA_SECTORES_FIA: tuple[DeclaracionDeSector, ...] = (
+    DeclaracionDeSector(curva=8, metros=105.0, lado="antes"),
+    DeclaracionDeSector(curva=15, metros=270.0, lado="antes"),
+)
+
+
 #: EL SENTIDO DE GIRO, MEDIDO, Y CON SU CONTROL NEGATIVO.
 #:
 #: POR QUE HIZO FALTA MEDIRLO. Spa lo tiene declarado por su operador, pero
@@ -568,6 +668,22 @@ GIRO_NETO_MEDIDO_GRADOS: dict[str, float] = {
 }
 
 
+#: DONDE ESTE INSTRUMENTO NO SE PUEDE USAR, Y POR QUE. Va con el motivo escrito
+#: porque un circuito al que se le olvido medir el giro y uno donde la medicion
+#: no aplica se ven igual desde afuera: los dos faltan del diccionario de
+#: arriba. Una prueba exige que cada circuito del catalogo este en una lista o
+#: en la otra.
+GIRO_QUE_NO_SE_PUEDE_MEDIR: dict[str, str] = {
+    "suzuka":
+        "es el unico circuito del campeonato en forma de ocho ---la recta de "
+        "atras cruza por arriba de la principal--- y en un ocho el giro total "
+        "se cancela: un lazo aporta +360 grados y el otro -360. Medido da "
+        "-19,2 en una vuelta y +17,1 en la otra. El sentido de la ficha sale "
+        "del area con signo, que sobrevive con mucho menos margen: 0,0037 "
+        "normalizada, contra 0,0289 de Monza.",
+}
+
+
 #: Indexado por el identificador estable de circuito, igual que
 #: `track_reference`, para poder crecer a otros circuitos sin cambiar la interfaz.
 CATALOGO: dict[str, tuple[Curva, ...]] = {
@@ -575,6 +691,7 @@ CATALOGO: dict[str, tuple[Curva, ...]] = {
     "silverstone": SILVERSTONE,
     "spielberg": SPIELBERG,
     "monza": MONZA,
+    "suzuka": SUZUKA,
 }
 
 #: Como nombra cada circuito el capturador, que deriva la clave del paquete de
@@ -589,6 +706,7 @@ ALIAS: dict[str, str] = {
     "francorchamps": "spa-francorchamps",
     "red-bull-ring": "spielberg",
     "autodromo-nazionale-monza": "monza",
+    "suzuka-international-racing-course": "suzuka",
     "redbullring": "spielberg",
 }
 
@@ -660,6 +778,16 @@ FICHAS: dict[str, Ficha] = {
         # Vacio: en Monza no hay zona con nombre que la deteccion no encuentre.
         # Lo que hay es al reves, una deteccion que el mapa no numera, y esa
         # vive en la fila ---con su nombre y su numero vacio--- no aca.
+        sin_frenada=(),
+    ),
+    "suzuka": Ficha(
+        largo_declarado_m=SUZUKA_LARGO_DECLARADO_M,
+        # MEDIDO: ninguna fuente consultada publica el desnivel de Suzuka.
+        desnivel_declarado_m=SUZUKA_DESNIVEL_MEDIDO_M,
+        sentido=SUZUKA_SENTIDO,
+        # Vacio y comprobado: las dieciocho curvas que el mapa numera aparecen
+        # en la deteccion. Lo que sobra son dos tramos sin numerar, y esos viven
+        # en `SUZUKA_SIN_NOMBRE`.
         sin_frenada=(),
     ),
 }

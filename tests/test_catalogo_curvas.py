@@ -521,9 +521,15 @@ class ElSentidoDeGiroSEMIDE(unittest.TestCase):
         un margen del que no conviene depender."""
 
         for circuito in cat.CATALOGO:
+            if circuito in cat.GIRO_QUE_NO_SE_PUEDE_MEDIR:
+                # La excepcion tiene que estar DECLARADA, no simplemente
+                # ausente: un circuito que se olvida de medir y uno donde la
+                # medicion no aplica se ven igual desde aca.
+                continue
             giro = cat.GIRO_NETO_MEDIDO_GRADOS.get(circuito)
             self.assertIsNotNone(
-                giro, f"{circuito} entro al catalogo sin medir su giro neto")
+                giro, f"{circuito} entro al catalogo sin medir su giro neto "
+                      f"ni declarar por que no se puede")
             esperado = "horario" if giro < 0 else "antihorario"
             self.assertEqual(cat.ficha_de(circuito).sentido, esperado, circuito)
 
@@ -676,6 +682,182 @@ class NingunCircuitoRepiteUNNUMERO(unittest.TestCase):
                 len(huecos), len(declaradas),
                 f"{circuito}: la numeracion saltea {huecos} y la ficha declara "
                 f"{len(declaradas)} zona(s) sin frenada")
+
+#: Limites de sector medidos sobre `f1_25:session:17211676691250864516`,
+#: vuelta 2, por `sector_index`.
+SUZUKA_SECTOR_2_M = 2227.1
+SUZUKA_SECTOR_3_M = 4690.1
+
+#: Lo que declara el mapa de la FIA del Gran Premio de Japon 2025, version 1:
+#: «S1 (105m before Turn 8)» y «S2 (270m before Turn 15)».
+FIA_S1_ANTES_DE_LA_8_M = 105.0
+FIA_S2_ANTES_DE_LA_15_M = 270.0
+
+#: Longitud de linea central del mismo mapa: 5.807 km.
+FIA_SUZUKA_LARGO_DECLARADO_M = 5807.0
+
+
+class ElMapaDeLaFIAArbitraEntreDosPublicaciones(unittest.TestCase):
+    """EL CASO MAS UTIL DEL CATALOGO, y no lo buscamos: aparecio solo.
+
+    Dos guias de circuito publican la numeracion de Suzuka corrida entre si. Una
+    dice que la curva 7 es la Dunlop y la 8 Degner 1; la otra, que la 8 es la
+    Dunlop y la 9 Degner 1. Elegir por reputacion de la fuente seria una
+    corazonada con formato de cita.
+
+    Lo resuelve el mapa de la FIA, que **no publica ningun nombre** y por eso
+    puede arbitrar: declara que el sector 2 abre 105 m antes de la curva 8, y ese
+    limite esta medido. La curva 8 cae entonces en 2.332,1 m, y ahi la deteccion
+    encuentra una zona que gira a DERECHA. La Dunlop es una izquierda ---en eso
+    las dos guias coinciden--- asi que la curva 8 no puede ser la Dunlop.
+
+    Gana la primera numeracion, y no porque la fuente nos guste: porque una
+    tercera, que no participa de nombrar nada, la sostiene.
+    """
+
+    #: Extremos de las dos zonas detectadas, medidos sobre la misma vuelta.
+    TRAMO_DE_LA_8 = (2258.9, 2362.1)
+    TRAMO_DE_LA_15 = (4926.2, 5186.9)
+
+    def _la_numerada(self, numero: int):
+        curvas = [c for c in cat.curvas_de("suzuka")
+                  if numero in c.numeros_cronometraje]
+        self.assertEqual(len(curvas), 1, f"la curva {numero} tiene {len(curvas)} zonas")
+        return curvas[0]
+
+    def test_la_curva_8_cae_dentro_del_tramo_que_la_nombra(self) -> None:
+        derivado = SUZUKA_SECTOR_2_M + FIA_S1_ANTES_DE_LA_8_M
+        desde, hasta = self.TRAMO_DE_LA_8
+        self.assertTrue(desde <= derivado <= hasta)
+        self.assertTrue(desde <= self._la_numerada(8).metro_medido <= hasta)
+
+    def test_la_curva_15_cae_dentro_del_tramo_que_la_nombra(self) -> None:
+        derivado = SUZUKA_SECTOR_3_M + FIA_S2_ANTES_DE_LA_15_M
+        desde, hasta = self.TRAMO_DE_LA_15
+        self.assertTrue(desde <= derivado <= hasta)
+        self.assertTrue(desde <= self._la_numerada(15).metro_medido <= hasta)
+
+    def test_la_130R_ademas_cae_CERCA_del_punto_que_el_mapa_declara(self) -> None:
+        """CUANDO LA PERTENENCIA NO ALCANZA, Y POR QUE ACA SI SE PUEDE PEDIR MAS.
+
+        La zona de la 130R mide 260 m. Correr su anclaje doscientos metros lo
+        deja igual adentro del tramo, asi que la comprobacion por pertenencia
+        ---la que este catalogo adopto porque la distancia fallaba en las curvas
+        lentas--- no la atrapa. Lo dijo una mutacion.
+
+        En una curva RAPIDA la distancia si se puede exigir, y es justo el otro
+        extremo de lo que enseño Spielberg: el apice lateral se aleja del punto
+        del mapa cuando se frena largo y se gira tarde. A 253 km/h no se frena
+        largo. Medido: 11,2 m, del mismo orden que los 6,7 y 11,8 de Silverstone.
+
+        No se generaliza a las lentas: la curva 3 de Spielberg, a 63 km/h, cae a
+        30,5 m y estaria bien igual.
+        """
+
+        derivado = SUZUKA_SECTOR_3_M + FIA_S2_ANTES_DE_LA_15_M
+        self.assertAlmostEqual(self._la_numerada(15).metro_medido, derivado,
+                               delta=30.0)
+
+    def test_la_curva_8_gira_a_derecha_y_por_eso_no_es_la_dunlop(self) -> None:
+        """LA PARTE QUE DECIDE. Si algun dia alguien corre la numeracion un
+        lugar para seguir a la otra guia, esta prueba lo dice: la 8 quedaria
+        sobre una izquierda."""
+
+        self.assertEqual(self._la_numerada(8).sentido, "derecha")
+        self.assertEqual(self._la_numerada(8).nombre, "Degner 1")
+        dunlop = self._la_numerada(7)
+        self.assertEqual(dunlop.nombre, "Curva Dunlop")
+        self.assertEqual(dunlop.sentido, "izquierda")
+
+    def test_las_dieciocho_numeradas_estan_todas_y_una_sola_vez(self) -> None:
+        numeros = [n for c in cat.curvas_de("suzuka")
+                   for n in c.numeros_cronometraje]
+        self.assertEqual(sorted(numeros), list(range(1, 19)))
+
+    def test_el_largo_medido_describe_este_circuito(self) -> None:
+        self.assertEqual(cat.SUZUKA_LARGO_DECLARADO_M, FIA_SUZUKA_LARGO_DECLARADO_M)
+        self.assertLess(
+            abs(cat.SUZUKA_LARGO_DECLARADO_M - cat.SUZUKA_LARGO_MEDIDO_M), 10.0)
+
+    def test_las_dos_detecciones_de_la_recta_de_atras_quedan_declaradas(self) -> None:
+        """Son dos curvas suaves a 273 y 291 km/h que el mapa no numera, entre
+        Spoon y la 130R. Se declaran por la misma razon que las de la recta
+        Hangar en Silverstone: que la ausencia sea explicita."""
+
+        self.assertEqual(len(cat.SUZUKA_SIN_NOMBRE), 2)
+        for metro, _ in cat.SUZUKA_SIN_NOMBRE:
+            for curva in cat.curvas_de("suzuka"):
+                self.assertNotAlmostEqual(curva.metro_medido, metro, delta=1.0)
+
+
+class UNCIRCUITOENOCHONOTIENESENTIDODEGIRO(unittest.TestCase):
+    """SUZUKA ROMPIO EL INSTRUMENTO DEL SENTIDO, Y ESO ES UN HALLAZGO.
+
+    El giro acumulado de una vuelta cerrada venia dando el sentido con nueve
+    aciertos sobre nueve, cuatro de ellos antihorarios. En Suzuka da **-19,2
+    grados en una vuelta y +17,1 en la otra**: cero, con el signo cambiando.
+
+    No es ruido: es la topologia. Suzuka es el unico circuito del campeonato
+    **en forma de ocho** ---la recta de atras pasa por arriba de la recta
+    principal--- y en un ocho el giro total se cancela: un lazo aporta +360 y el
+    otro -360. El numero de vueltas de la curva sobre si misma es cero, asi que
+    la pregunta «¿para que lado gira?» no tiene una respuesta que ese
+    instrumento pueda dar.
+
+    EL AREA CON SIGNO SOBREVIVE, pero con mucho menos margen, y conviene tenerlo
+    medido: normalizada por el largo al cuadrado, Suzuka da 0,0037 contra 0,0289
+    de Monza y 0,0237 de Silverstone. Los dos lazos se restan y queda el del
+    lazo mas grande, que es el que manda. Sirve para orientar el dibujo, que es
+    para lo que la ficha usa este campo.
+
+    Ninguna de las fuentes consultadas ---el mapa de la FIA, la enciclopedia, la
+    guia del campeonato--- publica el sentido de Suzuka.
+    """
+
+    def test_suzuka_esta_declarado_como_no_medible(self) -> None:
+        self.assertIn("suzuka", cat.GIRO_QUE_NO_SE_PUEDE_MEDIR)
+        self.assertNotIn("suzuka", cat.GIRO_NETO_MEDIDO_GRADOS)
+
+    def test_el_motivo_esta_escrito_y_no_es_una_cadena_vacia(self) -> None:
+        """Una excepcion sin motivo es una excepcion que nadie puede revisar."""
+
+        motivo = cat.GIRO_QUE_NO_SE_PUEDE_MEDIR["suzuka"]
+        self.assertGreater(len(motivo), 40)
+        self.assertIn("ocho", motivo.lower())
+
+    def test_ningun_circuito_esta_en_las_dos_listas(self) -> None:
+        self.assertFalse(
+            set(cat.GIRO_NETO_MEDIDO_GRADOS) & set(cat.GIRO_QUE_NO_SE_PUEDE_MEDIR))
+
+    def test_contar_sentidos_tampoco_decide_nada_en_suzuka(self) -> None:
+        """LA MISMA TOPOLOGIA, VISTA DESDE EL CATALOGO.
+
+        En Spielberg la mayoria es siete a tres y sirve de comprobacion barata
+        del sentido. Aca es nueve a siete: un margen de dos sobre dieciseis, que
+        no sostiene nada. Y contando ademas las dos detecciones sin numerar de
+        la recta de atras, que giran las dos a izquierda, queda nueve a nueve.
+
+        Esta prueba existe para que nadie generalice la guarda de Spielberg: la
+        mayoria de sentidos es una comprobacion de circuito, no un metodo.
+
+        Son dieciseis filas y no dieciocho porque dos llevan dos numeros: la
+        primera curva y la Spoon.
+        """
+
+        sentidos = [c.sentido for c in cat.curvas_de("suzuka")]
+        self.assertEqual(len(sentidos), 16)
+        dobles = sum(len(c.numeros_cronometraje) - 1
+                     for c in cat.curvas_de("suzuka"))
+        self.assertEqual(dobles, 2)
+
+        derechas = sentidos.count("derecha")
+        izquierdas = sentidos.count("izquierda")
+        self.assertEqual((derechas, izquierdas), (9, 7))
+        self.assertLessEqual(derechas - izquierdas, 2,
+                             "si la mayoria creciera, habria que volver a mirar")
+
+        # Con las dos sin numerar, que son las dos a izquierda, empata.
+        self.assertEqual(izquierdas + len(cat.SUZUKA_SIN_NOMBRE), derechas)
 
 class LaFichaEsDelCircuitoQueSePide(unittest.TestCase):
     """UN SEGUNDO CIRCUITO DESTAPO QUE LA FICHA ESTABA ESCRITA A MANO.
