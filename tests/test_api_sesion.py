@@ -1833,7 +1833,21 @@ class AliasDeCircuito(unittest.TestCase):
         self.assertTrue(catalogo_curvas.curvas_de("Spa Francorchamps"))
 
     def test_un_circuito_sin_catalogo_sigue_devolviendo_vacio(self):
-        self.assertEqual(catalogo_curvas.curvas_de("spielberg"), ())
+        """ESTA PRUEBA USABA SPIELBERG DE EJEMPLO Y SPIELBERG YA TIENE CATALOGO.
+
+        Lo que comprueba es que un circuito ausente vuelva vacio en vez de
+        romper la vista, y para eso hace falta un circuito **que siga
+        ausente**. Dejarla apuntando a Spielberg la habria puesto roja por un
+        motivo que no es el suyo; cambiarle el ejemplo a uno que el catalogo no
+        tiene la conserva midiendo lo mismo.
+
+        Es la forma de envejecer de una guarda que nombra un caso concreto: el
+        caso deja de serlo y la guarda no se entera sola."""
+
+        self.assertTrue(catalogo_curvas.curvas_de("spielberg"),
+                        "Spielberg ya esta en el catalogo: el ejemplo de "
+                        "«circuito ausente» tiene que ser otro")
+        self.assertEqual(catalogo_curvas.curvas_de("interlagos"), ())
 
 
 class UltimosValoresAcotados(unittest.TestCase):

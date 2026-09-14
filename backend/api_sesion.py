@@ -4471,7 +4471,13 @@ def curvas_del_circuito(circuito: str) -> dict[str, Any]:
         "curvas": [
             {
                 "orden": c.orden,
+                # LOS DOS, Y NO UNO. `nombre` es el hecho ---vacio significa
+                # que el operador del circuito no la nombra--- y `rotulo` es
+                # como se la llama en pantalla. Publicar solo el rotulo
+                # borraria la diferencia entre una curva sin nombre y una que
+                # alguien llamo «Curva 5».
                 "nombre": c.nombre,
+                "rotulo": catalogo_curvas.rotulo_de(c),
                 "numeros_cronometraje": list(c.numeros_cronometraje),
                 "metro_medido": c.metro_medido,
                 "velocidad_minima_kmh": c.velocidad_minima_kmh,

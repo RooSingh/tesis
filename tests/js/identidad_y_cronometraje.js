@@ -171,6 +171,7 @@ const NOMBRES = [
   "comoSeVeElFlujo",
   "tiempoDeVuelta", "diferenciaEnSegundos",
   "reservaDeArriba", "encuadrarTrazado",
+  "comoSeLlamaLaCurva",
   "metroDeCurva", "zonasDeCurva", "bandasDeVuelta", "bandasParaElTramo",
   "pintarZonas", "partirEnRenglones", "vistaDeComparacion",
   "segmentosComparacion", "vueltasParaComparar", "nombreDeLaLamina",
@@ -305,7 +306,7 @@ const {
   serieDeCanal, serieAcumuladaDeCanal,
   tiempoDeVuelta, diferenciaEnSegundos, esCanalEscalonado, serieTemporal,
   valorEscalonadoEn, valorContinuoEn, calcularInstante,
-  reservaDeArriba, encuadrarTrazado, metroDeCurva, zonasDeCurva,
+  reservaDeArriba, encuadrarTrazado, comoSeLlamaLaCurva, metroDeCurva, zonasDeCurva,
   partirEnRenglones, vistaDeComparacion, segmentosComparacion,
   nombreDeLaLamina, pieDeExportacion, exportarComparacion,
   bandasDeVuelta, bandasParaElTramo, pintarZonas,
@@ -2090,6 +2091,65 @@ prueba("sobre una vuelta, las zonas cubren el circuito sin huecos", () => {
     assert.strictEqual(z[i].ini, z[i - 1].fin, "hueco entre franjas en " + i);
   }
   assert.strictEqual(z[z.length - 1].fin, 7004);
+});
+
+/* El catalogo de Spielberg como lo devuelve `/circuitos/spielberg/curvas`: el
+   operador nombra cinco de las diez y el servidor manda las dos cosas, el
+   `nombre` ---vacio cuando nadie la nombra--- y el `rotulo` con que se dibuja. */
+const CURVAS_DE_SPIELBERG = [
+  { orden: 1, nombre: "Niki Lauda", rotulo: "Niki Lauda", numeros_cronometraje: [1], metro_medido: 467.3 },
+  { orden: 2, nombre: "", rotulo: "Curva 3", numeros_cronometraje: [3], metro_medido: 1405.7 },
+  { orden: 3, nombre: "Rauch", rotulo: "Rauch", numeros_cronometraje: [4], metro_medido: 1572.5 },
+  { orden: 4, nombre: "", rotulo: "Curva 5", numeros_cronometraje: [5], metro_medido: 2253 },
+  { orden: 5, nombre: "", rotulo: "Curva 6", numeros_cronometraje: [6], metro_medido: 2741.9 },
+];
+
+function conSpielberg() {
+  reiniciar();
+  _fijar.curvas(CURVAS_DE_SPIELBERG.slice());
+  _fijar.pista({ largo_m: 4322.2, curvas: CURVAS_DE_SPIELBERG.slice() });
+  _modo = { eje: "distancia", alcance: "una" };
+  _fijar.alcance("una");
+  _fijar.eje("distancia");
+}
+
+prueba("una curva que nadie nombra no se dibuja con el rotulo en blanco", () => {
+  /* ==================================================================
+     UNA AUSENCIA QUE LOS DOS PRIMEROS CIRCUITOS NO TENIAN.
+
+     En Spa y en Silverstone todas las curvas del catalogo tienen nombre. En
+     Spielberg el operador nombra cinco de las diez, y las otras cinco llegan
+     con `nombre` vacio porque **nadie las nombra**: el vacio es el hecho.
+
+     Leyendo `nombre`, esas cinco franjas salian sin texto. Y peor: como el
+     rotulo se elige contando nombres repetidos, las cinco contaban como el
+     mismo nombre ---la cadena vacia--- y se les pegaba el numero de
+     cronometraje detras, dando franjas rotuladas « 5».
+
+     Quien decide como se llama una curva es el servidor, en `rotulo_de`.
+     ================================================================== */
+  conSpielberg();
+  const z = zonas(0, 4322.2, CAR19);
+  const rotulos = z.map(x => x.nombre);
+  rotulos.forEach(r => assert.ok(r && r.trim(), "franja sin rotulo: " + JSON.stringify(r)));
+  assert.deepStrictEqual(rotulos.slice(0, 4),
+    ["Niki Lauda", "Curva 3", "Rauch", "Curva 5"]);
+});
+
+prueba("dos curvas sin nombre no se leen como la misma curva repetida", () => {
+  /* El desempate por numero existe porque en Spa hay dos «Les Combes». Con el
+     nombre vacio creia ver cinco curvas homonimas donde hay cinco distintas. */
+  conSpielberg();
+  const z = zonas(0, 4322.2, CAR19);
+  /* SE PREGUNTA POR TODAS Y NO POR LAS QUE EMPIEZAN CON «Curva».
+
+     La primera version de esta guarda filtraba por ese prefijo, y antes del
+     arreglo los rotulos salian « 3» y « 5»: el filtro no atrapaba ninguno, la
+     lista quedaba vacia y la comprobacion daba verde sin mirar nada. Una
+     guarda tapada por el defecto que venia a encontrar. */
+  const rotulos = z.map(x => x.nombre);
+  assert.strictEqual(new Set(rotulos).size, rotulos.length,
+    "dos franjas distintas se rotulan igual: " + JSON.stringify(rotulos));
 });
 
 prueba("cada zona empieza en su curva y termina donde empieza la siguiente", () => {

@@ -4223,7 +4223,8 @@ function pintarPista() {
   if (rehacer && CURVAS.length && PISTA.largo_m) {
     const zonas = CURVAS.map((c, i) => {
       const p = linea.getPointAtLength(largo * Math.max(0, Math.min(1, c.metro_medido / PISTA.largo_m)));
-      return { nombre: c.nombre, xy: [p.x, p.y], metro: c.metro_medido, orden: i + 1 };
+      return { nombre: comoSeLlamaLaCurva(c), xy: [p.x, p.y],
+               metro: c.metro_medido, orden: i + 1 };
     });
     /* CADA MARCA LLEVA SU NOMBRE ENCIMA.
        La leyenda de once renglones ocupaba un tercio del panel para decir algo
@@ -8917,6 +8918,27 @@ function vistaDeComparacion() {
   };
 }
 
+/* COMO SE LLAMA UNA CURVA LO DECIDE EL SERVIDOR, NO EL TABLERO.
+
+   No todas las curvas del catalogo tienen nombre: en Spielberg el operador del
+   circuito nombra cinco de las diez, y las otras cinco llegan con `nombre`
+   vacio porque **nadie las nombra**. El vacio es el hecho y por eso viaja; lo
+   que no puede viajar hasta el dibujo es el vacio, porque una franja sin texto
+   no es un hecho, es un rotulo roto.
+
+   Quien resuelve eso es `catalogo_curvas.rotulo_de`, del lado del servidor, y
+   manda el resultado en `rotulo`. Aca solo se lo lee. Resolverlo de este lado
+   seria darle dos dueños al mismo dato, que es el defecto que este sistema ya
+   tuvo con `estado.clima`, con el pie de avisos, con el constructor del
+   trazado y con la ficha del circuito.
+
+   El respaldo a `nombre` es para una respuesta de un servidor anterior a que
+   `rotulo` existiera, y no para decidir nada: si las dos vienen vacias, la
+   franja sale sin texto y se ve, que es mejor que inventar un nombre aca. */
+function comoSeLlamaLaCurva(c) {
+  return (c && (c.rotulo || c.nombre)) || "";
+}
+
 function zonasDeCurva(xMin, xMax, clave, eje, alcance) {
   /* El eje y el alcance llegan como argumento y no se leen de la variable
      global: la lamina los tomaba de ahi mientras sus datos venian de otro
@@ -8926,7 +8948,7 @@ function zonasDeCurva(xMin, xMax, clave, eje, alcance) {
 
   /* Los limites, ordenados. Uno por curva y por vuelta visible. */
   const curvas = CURVAS
-    .map(c => ({ metro: metroDeCurva(c), nombre: c.nombre, curva: c }))
+    .map(c => ({ metro: metroDeCurva(c), nombre: comoSeLlamaLaCurva(c), curva: c }))
     .filter(c => c.metro !== null)
     .sort((a, b) => a.metro - b.metro);
   if (!curvas.length) return null;
@@ -14198,8 +14220,8 @@ function pintarTrazadoGrande() {
       marca.setAttribute("class", "marca-curva");
       marca.setAttribute("tabindex", "0");
       marca.setAttribute("role", "img");
-      marca.setAttribute("aria-label", "Curva " + (i + 1) + ": " + cu.nombre);
-      marca.dataset.nombre = cu.nombre;
+      marca.setAttribute("aria-label", "Curva " + (i + 1) + ": " + comoSeLlamaLaCurva(cu));
+      marca.dataset.nombre = comoSeLlamaLaCurva(cu);
       marca.dataset.numero = String(i + 1);
       const punto = document.createElementNS(NS, "circle");
       punto.setAttribute("class", "punto-curva-grande");
@@ -14212,7 +14234,7 @@ function pintarTrazadoGrande() {
       num.setAttribute("y", q.y.toFixed(2));
       num.textContent = String(i + 1);
       const comoSeLlama = document.createElementNS(NS, "title");
-      comoSeLlama.textContent = (i + 1) + ". " + cu.nombre;
+      comoSeLlama.textContent = (i + 1) + ". " + comoSeLlamaLaCurva(cu);
       marca.appendChild(comoSeLlama);
       marca.appendChild(punto);
       marca.appendChild(num);

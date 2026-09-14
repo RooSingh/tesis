@@ -346,11 +346,119 @@ SILVERSTONE_SIN_NOMBRE: tuple[tuple[float, int], ...] = (
     (4594.1, 318),
 )
 
+# --------------------------------------------------------------------------
+# Spielberg -- Red Bull Ring
+# --------------------------------------------------------------------------
+
+#: Longitud de linea central declarada por el mapa de circuito de la FIA del
+#: Gran Premio de Austria 2025 ---«Circuit Centreline Length = 4.326 km»--- y
+#: por la pagina del operador.
+SPIELBERG_LARGO_DECLARADO_M = 4326.0
+
+#: Lo que dio la vuelta medida: 3,8 m de diferencia sobre 4.326, del mismo orden
+#: que Silverstone (3,4 m) y Spa (2,5 m). El lazo cierra en 1,89 m.
+SPIELBERG_LARGO_MEDIDO_M = 4322.2
+
+#: Desnivel que declara el operador: «the height difference is 65m».
+SPIELBERG_DESNIVEL_DECLARADO_M = 65.0
+
+#: Lo que dio la misma vuelta. Se guarda aparte por la misma razon que el largo:
+#: uno es la cita y el otro es la medicion.
+#:
+#: (Silverstone no tiene declarado: su ficha lleva el desnivel MEDIDO en el
+#: campo que dice «declarado». Queda anotado como deuda; corregirlo de paso,
+#: sin volver a comprobar las dos fichas que hoy sostienen la pantalla, es
+#: exactamente la clase de arreglo al voleo que este modulo evita.)
+SPIELBERG_DESNIVEL_MEDIDO_M = 63.7
+
+#: SENTIDO MEDIDO, NO DECLARADO, y es el primer circuito del catalogo donde hay
+#: que decirlo asi.
+#:
+#: Ni el mapa de la FIA, ni la pagina del operador, ni la guia de circuito del
+#: campeonato publican si Spielberg se corre horario o antihorario. Spa lo tiene
+#: declarado y Silverstone tambien; aca no habia a quien citar, y copiar el
+#: sentido del circuito vecino habria sido inventarlo.
+#:
+#: Se midio: una vuelta cerrada es exactamente una revolucion, y el giro
+#: acumulado ---la integral de la aceleracion lateral sobre el cuadrado de la
+#: velocidad--- tiene el signo de esa revolucion. `analisis/curvas` fija que
+#: negativo es derecha.
+#:
+#: Calibrado contra un circuito de sentido establecido: Silverstone da
+#: -363,2 grados, una vuelta entera a derecha con 0,9 % de error. Spielberg da
+#: -390,2 y -403,3 sobre dos vueltas distintas. Mismo signo, y el control cae
+#: donde tiene que caer.
+SPIELBERG_SENTIDO = "horario"
+
+#: Spielberg, Red Bull Ring, trazado de Gran Premio.
+#:
+#: NOMBRES: pagina de circuito del operador, **tal como estaba en junio de
+#: 2025**. La fecha no es un detalle de cita: en el Red Bull Ring los nombres
+#: de curva son derechos comerciales anuales y no un dato cultural como «La
+#: Source» o «Copse». La pagina de 2026 nombra la curva 3 y la de 2025 no, y
+#: fuentes secundarias del mismo periodo le adosan a la curva 2 y a la 3
+#: nombres que el operador no publicaba. La temporada que modela F1 25 es la
+#: 2025, asi que se toma la pagina de 2025.
+#:
+#: Es la misma trampa que el proyecto ya habia anotado para los mapas de la
+#: FIA: el documento del ano siguiente existe, abre bien y se ve igual.
+#:
+#: NUMERACION: mapa de circuito de la FIA del Gran Premio de Austria 2025,
+#: version 2, que numera de 1 a 10.
+#:
+#: METROS: apice de aceleracion lateral, medidos sobre
+#: `f1_25:session:1994924273811378928`, siete vueltas que cubren el circuito,
+#: con `curvas.tramos_de_una_vuelta` a 0,8 g.
+#:
+#: POR QUE ESTA VUELTA Y NO OTRA. La primera sesion de Spielberg que se miro
+#: ---`f1_25:session:3282644824454978680`--- tiene una sola vuelta usable, no
+#: cierra el lazo por 124 m y da quince detecciones para diez curvas. Con una
+#: sola vuelta no hay repeticion que mirar y un trompo entra al catalogo como
+#: curva. La sesion elegida tiene siete vueltas completas y **las diez zonas se
+#: repiten en la mayoria**: ocho de las diez en las siete vueltas, las otras dos
+#: en cinco y en seis.
+#:
+#: COMO SE COMPROBO EL MAPEO. El mapa declara dos limites de sector dichos en
+#: curvas: «S1 (170m before T3)» y «S2 (60m before T7)». Los limites de esta
+#: vuelta estan medidos aparte por `sector_index` en 1.205,2 m y 2.936,2 m.
+#: Cruzando las dos cosas la curva 3 cae en 1.375,2 m y la 7 en 2.996,2 m, sin
+#: usar este catalogo. **Los dos caen dentro del tramo que el catalogo nombra
+#: con ese numero**, y esa ---y no la distancia--- es la comprobacion: ver
+#: `tests/test_catalogo_curvas.py`.
+#:
+#: Y hay un tercer cruce, gratis: de las cinco curvas cuyo sentido publica una
+#: fuente externa ---1, 2, 4, 7 y 9---, las cinco coinciden con el sentido
+#: medido. Cinco aciertos sobre un mapeo que podria estar corrido no prueban el
+#: catalogo, pero lo harian saltar si estuviera corrido en uno.
+SPIELBERG: tuple[Curva, ...] = (
+    Curva(1, "Niki Lauda", (1,), 467.3, 123, anclaje=_LAT, sentido="derecha"),
+    Curva(2, "Munzer", (2,), 1109.5, 251, anclaje=_LAT, sentido="izquierda"),
+    # La mas lenta del trazado, 63 km/h, y la que obligo a cambiar la pregunta
+    # de la comprobacion: el punto que declara el mapa cae a 30,5 m del apice.
+    Curva(3, "", (3,), 1405.7, 63, anclaje=_LAT, sentido="derecha"),
+    Curva(4, "Rauch", (4,), 1572.5, 176, anclaje=_LAT, sentido="derecha"),
+    Curva(5, "", (5,), 2253.0, 102, anclaje=_LAT, sentido="derecha"),
+    Curva(6, "", (6,), 2741.9, 168, anclaje=_LAT, sentido="izquierda"),
+    Curva(7, "Graz", (7,), 2996.8, 173, anclaje=_LAT, sentido="izquierda"),
+    Curva(8, "", (8,), 3274.1, 224, anclaje=_LAT, sentido="derecha"),
+    Curva(9, "Jochen Rindt", (9,), 3775.7, 174, anclaje=_LAT, sentido="derecha"),
+    Curva(10, "", (10,), 4017.9, 149, anclaje=_LAT, sentido="derecha"),
+)
+
+#: LO QUE EL MAPA DE LA FIA DECLARA, guardado para poder volver a comprobar.
+#: Mapa de circuito del Gran Premio de Austria 2025, version 2.
+SPIELBERG_SECTORES_FIA: tuple[DeclaracionDeSector, ...] = (
+    DeclaracionDeSector(curva=3, metros=170.0, lado="antes"),
+    DeclaracionDeSector(curva=7, metros=60.0, lado="antes"),
+)
+
+
 #: Indexado por el identificador estable de circuito, igual que
 #: `track_reference`, para poder crecer a otros circuitos sin cambiar la interfaz.
 CATALOGO: dict[str, tuple[Curva, ...]] = {
     "spa-francorchamps": SPA_FRANCORCHAMPS,
     "silverstone": SILVERSTONE,
+    "spielberg": SPIELBERG,
 }
 
 #: Como nombra cada circuito el capturador, que deriva la clave del paquete de
@@ -363,6 +471,8 @@ ALIAS: dict[str, str] = {
     "silverstone-gp": "silverstone",
     "spa_francorchamps": "spa-francorchamps",
     "francorchamps": "spa-francorchamps",
+    "red-bull-ring": "spielberg",
+    "redbullring": "spielberg",
 }
 
 
@@ -413,6 +523,16 @@ FICHAS: dict[str, Ficha] = {
         # que nadie midio.
         sin_frenada=(),
     ),
+    "spielberg": Ficha(
+        largo_declarado_m=SPIELBERG_LARGO_DECLARADO_M,
+        desnivel_declarado_m=SPIELBERG_DESNIVEL_DECLARADO_M,
+        sentido=SPIELBERG_SENTIDO,
+        # Vacio, y comprobado: las diez curvas que el mapa numera aparecen en
+        # la deteccion. Lo que falta en Spielberg no son detecciones sino
+        # nombres ---cinco de las diez---, y esa ausencia vive en la fila, con
+        # el nombre vacio, no aca.
+        sin_frenada=(),
+    ),
 }
 
 
@@ -441,15 +561,48 @@ def curvas_de(circuito: str) -> tuple[Curva, ...]:
     return CATALOGO.get(_clave(circuito), ())
 
 
+def rotulo_de(curva: Curva) -> str:
+    """Como se llama a esta curva en pantalla, con nombre publicado o sin el.
+
+    QUIEN RESUELVE EL VACIO ES UNO SOLO, y por eso esto es una funcion y no una
+    linea en el tablero. En Spielberg el operador nombra cinco de las diez
+    curvas, y las otras cinco se guardan con `nombre` vacio porque **nadie las
+    nombra**: el vacio es el hecho. Pero un rotulo en blanco sobre el trazado no
+    es un hecho, es un dibujo roto.
+
+    La salida es el numero que publica el mapa de la FIA, que es una fuente
+    citada igual que el nombre. No se inventa nada: se dice lo que si se sabe.
+
+    Este sistema ya tuvo cuatro veces el defecto de un dato con dos dueños
+    ---`estado.clima`, el pie de avisos, el constructor del trazado, la ficha
+    del circuito---. Si el tablero resolviera el vacio por su cuenta, el rotulo
+    de la pantalla y el del servidor podrian separarse sin que nada avisara.
+    """
+
+    if curva.nombre:
+        return curva.nombre
+    numeros = "-".join(str(n) for n in curva.numeros_cronometraje)
+    return f"Curva {numeros}" if numeros else f"Curva {curva.orden}"
+
+
 def nombre_en_metro(circuito: str, metro: float, tolerancia_m: float = 60.0) -> str | None:
-    """Nombre de la zona mas cercana a un metro de la vuelta, si hay alguna.
+    """Nombre de la zona nombrada mas cercana a un metro de la vuelta, si hay.
 
     `tolerancia_m` acota cuanto puede alejarse el punto consultado del anclaje
     medido antes de que la respuesta deje de ser defendible. Fuera de esa
     distancia devuelve `None` en vez de estirar el nombre de la curva vecina.
+
+    LAS CURVAS SIN NOMBRE SE SALTEAN, y no es lo mismo que descartarlas. Esta
+    funcion contesta «como se llama lo que hay en este metro», y de una curva
+    que nadie nombro la respuesta honesta es que no se sabe: devolver la cadena
+    vacia la haria pasar por un nombre, y quien la reciba no puede distinguirla
+    de un nombre en blanco. Para rotular el trazado ---donde la curva si esta y
+    hay que dibujarla--- esta `rotulo_de`, que contesta otra pregunta.
     """
     mejor, distancia = None, tolerancia_m
     for curva in curvas_de(circuito):
+        if not curva.nombre:
+            continue
         d = abs(curva.metro_medido - metro)
         if d <= distancia:
             mejor, distancia = curva, d
