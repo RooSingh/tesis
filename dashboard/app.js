@@ -8680,6 +8680,68 @@ function asegurarDatosComparacion() {
     .then(r => { pedirPintado("trazas"); return r; });
 }
 
+/* UNA VUELTA PUEDE CONTENER DOS PASADAS.
+   ---------------------------------------------------------------------
+   MEDIDO EL 2026-09-14 sobre una carrera real de cinco vueltas con dos
+   jugadores. Dentro de `lap_number = 5` del que termino primero hay **dos**
+   pasadas: 1.446 muestras de 17.295 a 21.615 m de sesion, y despues del cruce
+   de meta, otras 883 de 21.618 a 23.654 m con el odometro de vuelta reiniciado
+   desde cero. Es la vuelta de desaceleracion: la carrera termino y el juego no
+   avanza el numero de vuelta.
+
+   Y LA CONSULTA DEVUELVE LAS FILAS ORDENADAS POR DISTANCIA DE VUELTA, que es lo
+   correcto para dibujar una vuelta contra su metro. Con dos pasadas eso las
+   **intercala**: 0 m de la primera, 0 m de la segunda, 10 m de la primera.
+   Contra el eje de sesion el trazo retrocedia 77 veces, y cada retroceso salia
+   como una recta cruzando el grafico.
+
+   EL DATO NO ESTA MAL. `session_distance` es monotono en la base: 124 ->
+   23.653,6 m con un solo retroceso de 1,5 m en 9.438 muestras. Lo que estaba mal
+   era tratar dos pasadas como una linea.
+
+   POR QUE NO ALCANZA CON ORDENAR. Contra el eje de sesion, ordenar arreglaria el
+   dibujo; contra el eje de vuelta no, porque las dos pasadas ocupan el **mismo**
+   tramo de x. Lo que son es dos tramos.
+
+   Y ES EL MISMO CRITERIO QUE EL TRAZADO Y LOS HUECOS: una linea entre dos
+   mediciones afirma el camino que las une, y entre el final de una pasada y el
+   principio de la siguiente ese camino no ocurrio.
+
+   UN RETROCESO CHICO NO ES UNA PASADA NUEVA. El propio odometro tiembla; lo que
+   separa una pasada es que **vuelva al principio**, no que retroceda un metro. */
+const VUELVE_AL_PRINCIPIO_M = 500;
+
+function enPasadas(datos) {
+  const d = datos || {};
+  const metro = d.distancia_m;
+  const n = (d.timestamp_utc || metro || []).length;
+  if (!n) return [];
+  const puntos = [];
+  for (let i = 0; i < n; i++) {
+    puntos.push({
+      i: i,
+      t: (d.timestamp_utc || [])[i],
+      metro: metro ? metro[i] : null,
+      sesion: (d.distancia_sesion_m || [])[i],
+    });
+  }
+  /* SE VUELVE AL ORDEN DE TIEMPO ANTES DE PARTIR. Ordenadas por distancia de
+     vuelta, las dos pasadas vienen intercaladas y ningun corte las separa. */
+  puntos.sort((a, b) => (a.t < b.t ? -1 : a.t > b.t ? 1 : a.i - b.i));
+  if (!metro) return [puntos];
+
+  const tramos = [[]];
+  puntos.forEach((p, k) => {
+    const anterior = k ? puntos[k - 1] : null;
+    if (anterior && p.metro !== null && anterior.metro !== null &&
+        p.metro < anterior.metro - VUELVE_AL_PRINCIPIO_M) {
+      tramos.push([]);
+    }
+    tramos[tramos.length - 1].push(p);
+  });
+  return tramos.filter(t => t.length);
+}
+
 function segmentosComparacion(metrica, vehiculo) {
   const nombre = nombreDeSenal(metrica);
   const segmentos = [];
@@ -8699,12 +8761,21 @@ function segmentosComparacion(metrica, vehiculo) {
       xs = marcas.map(t => (new Date(t).getTime() - origen) / 1000);
     }
     if (!xs) return;
-    const puntos = [];
-    for (let i = 0; i < Math.min(xs.length, ys.length); i++) {
-      if (xs[i] === null || ys[i] === null || !Number.isFinite(Number(xs[i])) || !Number.isFinite(Number(ys[i]))) continue;
-      puntos.push([Number(xs[i]), Number(ys[i])]);
-    }
-    if (puntos.length) segmentos.push(puntos);
+    /* UNA VUELTA PUEDE CONTENER DOS PASADAS, y cada una es su propio tramo:
+       ver `enPasadas`. Sin esto, la vuelta de desaceleracion de quien termino
+       primero se unia con la vuelta de carrera y salian rectas cruzando el
+       grafico entero. */
+    enPasadas(datos).forEach(pasada => {
+      const puntos = [];
+      pasada.forEach(p => {
+        const i = p.i;
+        if (i >= xs.length || i >= ys.length) return;
+        if (xs[i] === null || ys[i] === null ||
+            !Number.isFinite(Number(xs[i])) || !Number.isFinite(Number(ys[i]))) return;
+        puntos.push([Number(xs[i]), Number(ys[i])]);
+      });
+      if (puntos.length) segmentos.push(puntos);
+    });
   });
   return segmentos;
 }

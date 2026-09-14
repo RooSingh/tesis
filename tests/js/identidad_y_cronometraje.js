@@ -199,6 +199,11 @@ const NOMBRES = [
   "vueltasDeLaSesion", "iniciosDeVuelta", "calcularInstante",
   "vueltaEnFraccion", "trazadoAPath",
   "tramoDeLaVuelta",
+  //: `segmentosComparacion` la llama para partir una vuelta con dos pasadas.
+  //: Es la tercera vez en el dia que una funcion nueva usada dentro de otra
+  //: extraida revienta este banco con «no esta definida», que es un fallo que no
+  //: dice nada del defecto que se estaba probando.
+  "enPasadas",
   //: `pedirTrazado` la llama para elegir con que vuelta dibujar: sin declararla
   //: aqui, el banco revienta con un nombre no definido y el fallo no dice nada
   //: del defecto que se estaba probando.
@@ -227,6 +232,7 @@ const CONSTANTES = ["SENAL_DE", "SENAL_CAN", "SENAL_OPENF1",
                     "VECES_EL_PASO_HABITUAL", "SILENCIO_QUE_APAGA_MS",
                     "TODAS_LAS_CAPTURAS",
                     "HUECO_DE_CAPTURA_MS",
+                    "VUELVE_AL_PRINCIPIO_M",
                     "UNIDAD_QUE_MUESTRA_EL_TABLERO",
                     "DIVISOR_ENTRE_UNIDADES", "SIN_VEHICULO",
                     "UNIDAD_POR_FUENTE",
