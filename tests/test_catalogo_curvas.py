@@ -297,8 +297,11 @@ class ComoSeLoConsulta(unittest.TestCase):
         self.assertIsNone(cat.nombre_en_metro("silverstone", 4600.0))
 
     def test_un_circuito_sin_catalogo_no_rompe(self) -> None:
-        self.assertEqual(cat.curvas_de("interlagos"), ())
-        self.assertIsNone(cat.nombre_en_metro("interlagos", 100.0))
+        """El nombre del ejemplo no es un circuito: ver la guarda gemela en
+        `test_api_sesion`, que se puso roja dos veces por usar uno real."""
+
+        self.assertEqual(cat.curvas_de("circuito-que-no-existe"), ())
+        self.assertIsNone(cat.nombre_en_metro("circuito-que-no-existe", 100.0))
 
 
 #: Limites de sector medidos sobre `f1_25:session:1994924273811378928`, las
@@ -505,6 +508,174 @@ class ElSentidoDeGiroSEMIDE(unittest.TestCase):
         self.assertEqual(sentidos.count("derecha"), 7)
         self.assertEqual(sentidos.count("izquierda"), 3)
 
+    def test_cada_circuito_declara_el_sentido_QUE_MIDIO(self) -> None:
+        """LA GUARDA DE SPIELBERG NO ALCANZABA, Y LA MUTACION LO DIJO.
+
+        Con Spielberg comprobado y Monza recien entrado, invertir el sentido de
+        Monza no ponia roja ninguna prueba: la guarda nombraba un circuito y el
+        catalogo tenia cuatro. Es la forma en que una guarda envejece sin
+        avisar, y la unica manera de encontrarla es mutar lo que vigila.
+
+        Ahora se pregunta por el catalogo entero, y contra el numero medido en
+        vez de contra una mayoria: la mayoria de Monza es siete a cinco, que es
+        un margen del que no conviene depender."""
+
+        for circuito in cat.CATALOGO:
+            giro = cat.GIRO_NETO_MEDIDO_GRADOS.get(circuito)
+            self.assertIsNotNone(
+                giro, f"{circuito} entro al catalogo sin medir su giro neto")
+            esperado = "horario" if giro < 0 else "antihorario"
+            self.assertEqual(cat.ficha_de(circuito).sentido, esperado, circuito)
+
+    def test_el_giro_medido_esta_en_el_orden_de_una_revolucion(self) -> None:
+        """No se exige que de 360: la vuelta 1 de Monza da 545 y la de Monaco
+        642. Se exige que no sea un numero de otra escala, que es lo que
+        aparece cuando la serie viene rota o el signo se traduce mal."""
+
+        for circuito, giro in cat.GIRO_NETO_MEDIDO_GRADOS.items():
+            self.assertTrue(180.0 <= abs(giro) <= 720.0,
+                            f"{circuito}: {giro} grados no es una vuelta")
+
+
+#: Limites de sector medidos sobre `f1_25:session:15159024678183568642`, por
+#: `sector_index`, sobre las dos vueltas que cubren el circuito.
+MONZA_SECTOR_2_M = 1900.0
+MONZA_SECTOR_3_M = 3731.0
+
+#: Lo que declara el mapa de la FIA del Gran Premio de Italia 2025, version 2:
+#: «S1 (233m before Turn 4)» y «S2 (215m before Turn 8)».
+FIA_S1_ANTES_DE_LA_4_M = 233.0
+FIA_S2_ANTES_DE_LA_8_M = 215.0
+
+#: Longitud de linea central del mismo mapa: 5.793 km. El operador publica la
+#: misma cifra, «5793 meters».
+FIA_MONZA_LARGO_DECLARADO_M = 5793.0
+
+
+class MonzaTieneUNNOMBREQUEELMAPANONUMERA(unittest.TestCase):
+    """LA CUARTA FORMA EN QUE LAS DOS FUENTES NO COINCIDEN, Y LA MAS UTIL.
+
+    Hasta aca el catalogo habia visto tres desacuerdos entre lo que se detecta y
+    lo que se publica:
+
+      Spa          nombres sin deteccion     (Kemmel: no se frena)
+      Silverstone  detecciones sin nombre    (dos giros en la recta Hangar)
+      Spielberg    numeros sin nombre        (el operador nombra cinco de diez)
+
+    Monza trae la cuarta: **un nombre sin numero**. La FIA numera once curvas y
+    la deteccion encuentra doce. La que sobra esta en el metro 3.309, se toma a
+    295 km/h y gira apenas a izquierda, entre Lesmo y Ascari; el mapa no la
+    numera, pero el operador del circuito **si la nombra**: Curva del Serraglio.
+
+    Y no es una curiosidad: esa deteccion de mas **corre el mapeo por orden**.
+    La curva 8 del mapa no es la octava deteccion sino la novena, y eso esta
+    comprobado por una fuente que no participo de armar el catalogo ---el limite
+    de sector medido cruzado con lo que el mapa declara---. Sin el Serraglio en
+    la lista, las cuatro ultimas curvas de Monza quedarian corridas un lugar.
+
+    Es el mismo defecto que dejo a Abu Dhabi sin nombrar, visto desde el otro
+    lado: alla faltan dos detecciones y aca sobra una.
+    """
+
+    #: Extremos de los dos tramos detectados, medidos sobre la misma vuelta.
+    TRAMO_DE_LA_4 = (2109.0, 2168.0)
+    TRAMO_DE_LA_8 = (3918.0, 3993.0)
+
+    def _la_numerada(self, numero: int):
+        curvas = [c for c in cat.curvas_de("monza")
+                  if numero in c.numeros_cronometraje]
+        self.assertEqual(len(curvas), 1,
+                         f"la curva {numero} tiene {len(curvas)} zonas")
+        return curvas[0]
+
+    def test_la_curva_4_cae_dentro_del_tramo_que_la_nombra(self) -> None:
+        derivado = MONZA_SECTOR_2_M + FIA_S1_ANTES_DE_LA_4_M
+        desde, hasta = self.TRAMO_DE_LA_4
+        self.assertTrue(desde <= derivado <= hasta)
+        self.assertTrue(desde <= self._la_numerada(4).metro_medido <= hasta)
+
+    def test_la_curva_8_es_la_novena_deteccion_y_no_la_octava(self) -> None:
+        """ESTA ES LA PRUEBA QUE SOSTIENE AL SERRAGLIO.
+
+        El punto derivado del limite de sector cae en 3.946 m. Si el catalogo
+        no tuviera el Serraglio, ahi estaria la curva 9 y no la 8, y esta
+        comprobacion ---que no usa el catalogo para derivar el punto--- lo
+        diria."""
+
+        derivado = MONZA_SECTOR_3_M + FIA_S2_ANTES_DE_LA_8_M
+        desde, hasta = self.TRAMO_DE_LA_8
+        self.assertTrue(desde <= derivado <= hasta)
+
+        octava = self._la_numerada(8)
+        self.assertTrue(desde <= octava.metro_medido <= hasta)
+        self.assertEqual(octava.orden, 9,
+                         "la curva 8 del mapa es la novena zona de la vuelta")
+
+    def test_el_serraglio_esta_nombrado_y_sin_numerar(self) -> None:
+        sin_numero = [c for c in cat.curvas_de("monza")
+                      if not c.numeros_cronometraje]
+        self.assertEqual(len(sin_numero), 1)
+        self.assertEqual(sin_numero[0].nombre, "Curva del Serraglio")
+        self.assertTrue(sin_numero[0].metro_medido > 0)
+
+    def test_una_curva_sin_numero_igual_se_rotula_con_su_nombre(self) -> None:
+        """El respaldo de `rotulo_de` es el numero, y el Serraglio no tiene.
+        Tiene nombre, asi que el respaldo no se usa."""
+
+        serraglio = next(c for c in cat.curvas_de("monza")
+                         if not c.numeros_cronometraje)
+        self.assertEqual(cat.rotulo_de(serraglio), "Curva del Serraglio")
+
+    def test_las_once_numeradas_estan_todas_y_una_sola_vez(self) -> None:
+        numeros = [n for c in cat.curvas_de("monza")
+                   for n in c.numeros_cronometraje]
+        self.assertEqual(sorted(numeros), list(range(1, 12)))
+
+    def test_el_largo_medido_describe_este_circuito(self) -> None:
+        self.assertEqual(cat.MONZA_LARGO_DECLARADO_M,
+                         FIA_MONZA_LARGO_DECLARADO_M)
+        self.assertLess(
+            abs(cat.MONZA_LARGO_DECLARADO_M - cat.MONZA_LARGO_MEDIDO_M), 10.0)
+
+
+class NingunCircuitoRepiteUNNUMERO(unittest.TestCase):
+    """La guarda que antes solo miraba Silverstone, para todo el catalogo.
+
+    Un numero repetido significa que dos zonas se creen la misma curva; un
+    numero que falta, que una quedo sin mapear. Las dos cosas corren el mapeo,
+    y corrido el mapeo todos los nombres posteriores estan mal.
+    """
+
+    def test_ningun_numero_aparece_dos_veces(self) -> None:
+        for circuito in cat.CATALOGO:
+            numeros = [n for c in cat.curvas_de(circuito)
+                       for n in c.numeros_cronometraje]
+            self.assertEqual(len(numeros), len(set(numeros)), circuito)
+
+    def test_todo_hueco_en_la_numeracion_esta_declarado(self) -> None:
+        """UN HUECO PUEDE SER CORRECTO, PERO TIENE QUE ESTAR DICHO.
+
+        Esta guarda nacio pidiendo que no hubiera huecos, y lo primero que
+        encontro fue el numero 7 de Spa ---que estaba ausente desde el primer
+        catalogo---. No era un defecto: el 7 es Malmedy, que hoy se toma sin
+        levantar, y `SPA_SIN_FRENADA` ya lo declaraba. La guarda pedia de mas.
+
+        Asi que la pregunta buena no es si hay hueco, sino si el hueco esta
+        explicado. Una curva numerada que la deteccion no encuentra es un hecho
+        del circuito y se declara en la ficha; un hueco sin declaracion es una
+        curva que nadie mapeo, y corre todo lo que viene despues.
+        """
+
+        for circuito in cat.CATALOGO:
+            numeros = sorted(n for c in cat.curvas_de(circuito)
+                             for n in c.numeros_cronometraje)
+            huecos = [n for n in range(numeros[0], numeros[-1] + 1)
+                      if n not in numeros]
+            declaradas = cat.ficha_de(circuito).sin_frenada
+            self.assertLessEqual(
+                len(huecos), len(declaradas),
+                f"{circuito}: la numeracion saltea {huecos} y la ficha declara "
+                f"{len(declaradas)} zona(s) sin frenada")
 
 class LaFichaEsDelCircuitoQueSePide(unittest.TestCase):
     """UN SEGUNDO CIRCUITO DESTAPO QUE LA FICHA ESTABA ESCRITA A MANO.
@@ -576,7 +747,7 @@ class LaFichaEsDelCircuitoQueSePide(unittest.TestCase):
             self.assertEqual(c["anclaje"], "minimo de velocidad")
 
     def test_un_circuito_sin_catalogo_no_tiene_ficha(self) -> None:
-        self.assertIsNone(cat.ficha_de("interlagos"))
+        self.assertIsNone(cat.ficha_de("circuito-que-no-existe"))
 
     def test_la_ficha_y_el_catalogo_se_indexan_igual(self) -> None:
         """Si un circuito tiene curvas y no tiene ficha, la ruta vuelve a

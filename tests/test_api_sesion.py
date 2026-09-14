@@ -1808,7 +1808,18 @@ class CurvasTests(unittest.TestCase):
         self.assertIn("Kemmel", r["sin_frenada"])
 
     def test_un_circuito_sin_catalogo_no_falla(self) -> None:
-        r = api_sesion.curvas_del_circuito("monza")
+        """EL EJEMPLO DE «CIRCUITO AUSENTE» NO PUEDE SER UN CIRCUITO REAL.
+
+        Esta guarda uso Spielberg primero y Monza despues, y las dos veces se
+        puso roja el dia que ese circuito entro al catalogo ---por un motivo que
+        no es el suyo---. Lo que comprueba es que un circuito que no esta vuelva
+        vacio en vez de romper la vista, y para eso el ejemplo tiene que ser uno
+        que no vaya a estar nunca.
+
+        Es la forma de envejecer de una guarda que nombra un caso concreto: el
+        caso deja de serlo y la guarda no se entera sola."""
+
+        r = api_sesion.curvas_del_circuito("circuito-que-no-existe")
         self.assertEqual(r["curvas"], [])
         self.assertIn("No hay catalogo", r["motivo"])
 
@@ -1844,10 +1855,7 @@ class AliasDeCircuito(unittest.TestCase):
         Es la forma de envejecer de una guarda que nombra un caso concreto: el
         caso deja de serlo y la guarda no se entera sola."""
 
-        self.assertTrue(catalogo_curvas.curvas_de("spielberg"),
-                        "Spielberg ya esta en el catalogo: el ejemplo de "
-                        "«circuito ausente» tiene que ser otro")
-        self.assertEqual(catalogo_curvas.curvas_de("interlagos"), ())
+        self.assertEqual(catalogo_curvas.curvas_de("circuito-que-no-existe"), ())
 
 
 class UltimosValoresAcotados(unittest.TestCase):

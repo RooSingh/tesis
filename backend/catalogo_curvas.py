@@ -453,12 +453,128 @@ SPIELBERG_SECTORES_FIA: tuple[DeclaracionDeSector, ...] = (
 )
 
 
+# --------------------------------------------------------------------------
+# Monza -- Autodromo Nazionale
+# --------------------------------------------------------------------------
+
+#: Longitud de linea central declarada por el mapa de circuito de la FIA del
+#: Gran Premio de Italia 2025 ---«Circuit Centreline Length = 5.793km»--- y por
+#: el operador, que publica «5793 meters».
+MONZA_LARGO_DECLARADO_M = 5793.0
+
+#: Lo que dio la vuelta medida: 4,2 m de diferencia sobre 5.793.
+MONZA_LARGO_MEDIDO_M = 5797.2
+
+#: Desnivel medido en la misma vuelta. Ninguna de las dos fuentes consultadas
+#: publica el desnivel de Monza, asi que aca no hay cifra declarada que citar:
+#: la ficha lleva la medida y esta linea dice que lo es.
+MONZA_DESNIVEL_MEDIDO_M = 12.6
+
+#: Sentido medido con el giro acumulado de una vuelta cerrada, igual que
+#: Spielberg. Ver `SPIELBERG_SENTIDO` y el documento de anclajes.
+MONZA_SENTIDO = "horario"
+
+#: Monza, trazado de Gran Premio.
+#:
+#: NOMBRES: pagina de circuito del operador ---Autodromo Nazionale Monza--- y
+#: la nota oficial del campeonato «How every corner at Monza got its name». Las
+#: dos coinciden, incluido el cambio de «Curva Grande» por «Curva Biassono» y
+#: el de «Parabolica» por «Curva Alboreto»: el catalogo guarda el nombre
+#: vigente y no el historico, por la misma razon por la que toma los mapas de
+#: la temporada que se modela.
+#:
+#: NUMERACION: mapa de la FIA del Gran Premio de Italia 2025, version 2, que
+#: numera de 1 a 11.
+#:
+#: METROS: apice de aceleracion lateral, medidos sobre
+#: `f1_25:session:15159024678183568642`, las dos vueltas que cubren el
+#: circuito, con `curvas.tramos_de_una_vuelta` a 0,8 g. Las doce zonas se
+#: repiten en las dos.
+#:
+#: UNA DETECCION MAS QUE CURVAS NUMERADAS, Y NO SOBRA. La FIA numera once y la
+#: deteccion encuentra doce. La que no lleva numero esta en el metro 3.309, se
+#: toma a 295 km/h y gira apenas a izquierda: es la **Curva del Serraglio**, que
+#: el operador nombra y el mapa no numera.
+#:
+#: Esa deteccion **corre el mapeo por orden**, y por eso no se la puede omitir:
+#: la curva 8 del mapa es la novena zona de la vuelta. Esta comprobado sin usar
+#: este catalogo. El mapa declara «S2 215m before Turn 8» y el limite medido por
+#: `sector_index` esta en 3.731,0 m, asi que la curva 8 cae en 3.946,0 m ---y ahi
+#: esta la novena zona, con su apice en 3.951,5---. El otro anclaje, «S1 233m
+#: before Turn 4» contra el limite de 1.900,0 m, pone la curva 4 en 2.133,0 m
+#: contra un apice de 2.142,8.
+#:
+#: Es el reverso exacto del caso de Abu Dhabi, que sigue sin nombrar: alla
+#: faltan dos detecciones y aca sobra una. Lo que las dos tienen en comun es que
+#: basta una para que todo lo posterior quede mal.
+MONZA: tuple[Curva, ...] = (
+    Curva(1, "Prima Variante", (1,), 940.9, 87, anclaje=_LAT, sentido="derecha"),
+    Curva(2, "Prima Variante", (2,), 980.3, 52, anclaje=_LAT, sentido="izquierda"),
+    Curva(3, "Curva Biassono", (3,), 1543.8, 250, anclaje=_LAT, sentido="derecha"),
+    Curva(4, "Seconda Variante", (4,), 2142.8, 98, anclaje=_LAT, sentido="izquierda"),
+    Curva(5, "Seconda Variante", (5,), 2192.6, 107, anclaje=_LAT, sentido="derecha"),
+    Curva(6, "Curva di Lesmo", (6,), 2526.6, 178, anclaje=_LAT, sentido="derecha"),
+    Curva(7, "Curva di Lesmo", (7,), 2872.0, 173, anclaje=_LAT, sentido="derecha"),
+    # Nombrada por el operador y sin numero en el mapa. Ver el encabezado.
+    Curva(8, "Curva del Serraglio", (), 3309.4, 295, anclaje=_LAT, sentido="izquierda"),
+    Curva(9, "Variante Ascari", (8,), 3951.5, 166, anclaje=_LAT, sentido="izquierda"),
+    Curva(10, "Variante Ascari", (9,), 4051.6, 174, anclaje=_LAT, sentido="derecha"),
+    Curva(11, "Variante Ascari", (10,), 4140.7, 198, anclaje=_LAT, sentido="izquierda"),
+    Curva(12, "Curva Alboreto", (11,), 5264.5, 171, anclaje=_LAT, sentido="derecha"),
+)
+
+#: LO QUE EL MAPA DE LA FIA DECLARA, guardado para poder volver a comprobar.
+MONZA_SECTORES_FIA: tuple[DeclaracionDeSector, ...] = (
+    DeclaracionDeSector(curva=4, metros=233.0, lado="antes"),
+    DeclaracionDeSector(curva=8, metros=215.0, lado="antes"),
+)
+
+
+#: EL SENTIDO DE GIRO, MEDIDO, Y CON SU CONTROL NEGATIVO.
+#:
+#: POR QUE HIZO FALTA MEDIRLO. Spa lo tiene declarado por su operador, pero
+#: Spielberg no: ni el mapa de la FIA, ni la pagina del circuito, ni la guia del
+#: campeonato dicen si se corre horario o antihorario. Copiarlo del vecino
+#: habria sido inventarlo, y el sentido no es decorativo ---orienta la
+#: proyeccion del trazado, asi que si esta al reves se ve---.
+#:
+#: COMO SE MIDE. Una vuelta cerrada es exactamente una revolucion. El giro
+#: acumulado es la integral de la aceleracion lateral sobre el cuadrado de la
+#: velocidad, y `analisis/curvas` fija que **negativo es derecha**.
+#:
+#: LA MAGNITUD NO SIRVE Y EL SIGNO SI, y conviene decirlo porque la primera
+#: lectura de esto fue demasiado optimista. Silverstone da -363,2 grados, que
+#: es una revolucion con 0,9 % de error, y eso invita a leer el numero como si
+#: midiera la vuelta. No la mide: la vuelta 1 de Monza da -545,0 y la 1 de
+#: Monaco -642,7. Lo que se usa es el signo.
+#:
+#: Y EL SIGNO SE COMPROBO CONTRA UN CONTROL NEGATIVO, que es lo que lo hace
+#: defendible. Medido el 2026-09-14 sobre nueve circuitos de sentido conocido:
+#:
+#:     horario       silverstone  -363,2      antihorario  imola       +194,8
+#:                   monza        -376,3                   abu-dhabi   +371,3
+#:                   melbourne    -378,9                   austin      +426,2
+#:                   spielberg    -390,2                   baku        +440,9
+#:                   shanghai     -385,7
+#:                   spa          -421,1
+#:
+#: Nueve de nueve. Los dos grupos no se tocan, y ninguno de los cuatro
+#: antihorarios participo de elegir el criterio.
+GIRO_NETO_MEDIDO_GRADOS: dict[str, float] = {
+    "spa-francorchamps": -421.1,
+    "silverstone": -363.2,
+    "spielberg": -390.2,
+    "monza": -376.3,
+}
+
+
 #: Indexado por el identificador estable de circuito, igual que
 #: `track_reference`, para poder crecer a otros circuitos sin cambiar la interfaz.
 CATALOGO: dict[str, tuple[Curva, ...]] = {
     "spa-francorchamps": SPA_FRANCORCHAMPS,
     "silverstone": SILVERSTONE,
     "spielberg": SPIELBERG,
+    "monza": MONZA,
 }
 
 #: Como nombra cada circuito el capturador, que deriva la clave del paquete de
@@ -472,6 +588,7 @@ ALIAS: dict[str, str] = {
     "spa_francorchamps": "spa-francorchamps",
     "francorchamps": "spa-francorchamps",
     "red-bull-ring": "spielberg",
+    "autodromo-nazionale-monza": "monza",
     "redbullring": "spielberg",
 }
 
@@ -531,6 +648,18 @@ FICHAS: dict[str, Ficha] = {
         # la deteccion. Lo que falta en Spielberg no son detecciones sino
         # nombres ---cinco de las diez---, y esa ausencia vive en la fila, con
         # el nombre vacio, no aca.
+        sin_frenada=(),
+    ),
+    "monza": Ficha(
+        largo_declarado_m=MONZA_LARGO_DECLARADO_M,
+        # MEDIDO, no declarado: ninguna de las dos fuentes publica el desnivel
+        # de Monza. Es la misma deuda que ya tiene Silverstone y por ahora se
+        # anota en vez de cambiar el nombre del campo en los cuatro circuitos.
+        desnivel_declarado_m=MONZA_DESNIVEL_MEDIDO_M,
+        sentido=MONZA_SENTIDO,
+        # Vacio: en Monza no hay zona con nombre que la deteccion no encuentre.
+        # Lo que hay es al reves, una deteccion que el mapa no numera, y esa
+        # vive en la fila ---con su nombre y su numero vacio--- no aca.
         sin_frenada=(),
     ),
 }
