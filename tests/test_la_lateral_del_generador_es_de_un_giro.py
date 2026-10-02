@@ -35,7 +35,7 @@ cualitativa: es un error.
 
 CONSECUENCIA PARA EL INFORME. La tabla 8.2 publica `accel_y` en el rango
 -0,240 a 1,760 m/s². Con la relacion correcta ese rango pasa a ser -0,793 a
-4,535. Queda anotado en `docs/QUE_CORREGIR_EN_EL_LATEX.md`.
+4,535.
 """
 
 from __future__ import annotations

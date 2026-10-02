@@ -208,7 +208,7 @@ class DosCochesBajoUnaIdentidadTest(unittest.TestCase):
     20 Hz entrelazadas, con los coches hasta 577 metros separados. De la vuelta
     3 en adelante la serie es de uno solo.
 
-    Quedo escrito en `docs/mediciones/`, y un documento **no impide que el
+    Quedo documentado, y un documento **no impide que el
     proximo analisis use la vuelta 2**. Este modulo ya sabe decir «esta vuelta
     no es comparable, y por esto»; era ahi donde faltaba.
 

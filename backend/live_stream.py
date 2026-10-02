@@ -116,7 +116,7 @@ EVENTOS_POR_SUSCRIPTOR = 200
 #: La cola de cada suscriptor tiene tope, pero lo que estaba **antes** de ella
 #: no lo tenia. Cada señal programaba un `call_soon_threadsafe` por suscriptor:
 #: con la parrilla completa ---35.186 señales normalizadas por segundo, medido
-#: en `docs/mediciones/caudal_por_fuente.json`--- y tres navegadores mirando,
+#: con `scripts/medir_caudal_por_fuente.py`--- y tres navegadores mirando,
 #: son mas de cien mil funciones por segundo entrando a la cola de tareas del
 #: bucle. Esa cola es una `deque` sin limite: si el bucle no llega a
 #: vaciarla ---y a esa frecuencia no llega--- crece hasta que se acaba la

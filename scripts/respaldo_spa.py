@@ -172,7 +172,7 @@ def export_package(output):
     for name in (RAW, RAW + ".meta.json"):
         shutil.copy2(raw_source.parent / name, capture_dir / name)
     shutil.copy2(__file__, output / "respaldo_spa.py")
-    shutil.copy2(root / "docs" / "restaurar_spa.md", output / "LEEME.md")
+    shutil.copy2(root / "scripts" / "restaurar_spa.md", output / "LEEME.md")
     for path in sorted(output.rglob("*")):
         if path.is_file():
             manifest["files"][path.relative_to(output).as_posix()] = {

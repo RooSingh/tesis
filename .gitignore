@@ -1,38 +1,30 @@
-datasets/
-external/
+# Entorno de Python
 .venv/
 __pycache__/
 *.pyc
-session-*.md
+.pytest_cache/
 
-# Cuadros de validacion semantica. Se versionan solo los dos que el informe
-# imprime como figura; los otros diecinueve son reproducibles con
-# scripts/extraer_cuadros_validacion.py a partir de la captura y el video, y el
-# manifiesto JSON declara que instante y que valor contrasta cada uno. Son 29 MB
-# de material derivado que no aporta nada que el manifiesto no diga.
+# Datos crudos (capturas, datasets de CAN, videos). Se obtienen aparte: ver README.
+datasets/
+# Codigo de terceros consultado (openpilot/opendbc), no modificado.
+external/
+
+# Salida de ejecucion de los servicios.
+logs/
+
+# Configuracion local de cada maquina. El ejemplo (.env.example) si se versiona.
+.env
+infra/.env
+
+# Material personal de trabajo. Nunca se versiona.
+_privado/
+
+# Cuadros de validacion del informe: se versionan solo los dos que se imprimen
+# como figura; el resto se regenera con scripts/extraer_cuadros_validacion.py.
 informe/tesis/figuras/carrera_silverstone_*.png
 !informe/tesis/figuras/carrera_silverstone_14_velocidad-maxima.png
 !informe/tesis/figuras/carrera_silverstone_16_panel-motor.png
 
-# Registro del capturador permanente. Es salida de ejecucion, no fuente.
-logs/
-
-# Archivos de bloqueo de Office. Existen solo mientras el documento esta
-# abierto y no son parte de nada.
+# Archivos temporales del sistema y de Office
 ~$*
-
-# Restos de una recuperacion de git: son sus propios archivos de bloqueo.
-_to_delete/
-
-# Los valores de entorno de esta maquina. El ejemplo si se versiona.
-.env
-
-# El puerto del anfitrion para la base, que es de cada maquina y no del trabajo.
-infra/.env
-
-# Iteraciones descartables de figuras. Las que valen viven en informe/tesis/figuras.
-Claude outputs/
-
-# Cache del registro de skills del asistente. Es estado de la herramienta de
-# quien edita, no del trabajo, y cambia con cada maquina.
-.atl/
+.DS_Store

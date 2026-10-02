@@ -33,7 +33,8 @@ param(
     [string[]]$Servicios = @("capturador", "backend", "cola")
 )
 
-$Raiz = "C:\Users\Usuario\Documents\GitHub\tesis"
+# La raiz del repositorio es la carpeta padre de scripts\, en cualquier maquina.
+$Raiz = Split-Path -Parent $PSScriptRoot
 
 $Definiciones = @{
     "capturador" = @{

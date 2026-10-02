@@ -4,7 +4,7 @@ Que decodifica, y por que solo eso
 ----------------------------------
 El bus del vehiculo publica cerca de ciento setenta identificadores distintos.
 Este modulo decodifica **siete**, que son los que
-`docs/research/matriz_evidencia_senales.md` respalda con evidencia: referencia en
+el analisis del bus respalda con evidencia: referencia en
 el catalogo de definiciones, muestra observada sobre treinta rutas y veinticinco
 dispositivos, y comportamiento coherente.
 

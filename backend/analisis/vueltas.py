@@ -94,7 +94,7 @@ SENAL_NUMERO = "lap_number"
 #: los coches hasta 577 metros separados. De la vuelta 3 en adelante la serie es
 #: de un solo coche. Quedo documentado, y **un documento no impide que el
 #: proximo analisis use la vuelta 2**: por eso el criterio vive aca, donde ya
-#: viven los de boxes y bandera, y no solo en `docs/mediciones/`.
+#: viven los de boxes y bandera, y no solo en un documento.
 #:
 #: LA FIRMA. Un coche solo nunca retrocede seiscientos metros; dos coches
 #: entrelazados lo hacen en cada muestra. Lo que se cuenta son retrocesos

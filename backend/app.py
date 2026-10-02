@@ -961,7 +961,7 @@ def live_parrilla(sesion: str | None = None) -> dict:
     **Limite declarado:** la procedencia se escribe al cerrar la captura, de modo
     que una sesion en curso todavia no tiene parrilla servible. Se resuelve solo
     cuando la sesion termina, y de forma completa cuando exista el catalogo de
-    sesiones persistidas que el cronograma tiene previsto.
+    sesiones persistidas.
     """
 
     if not CAPTURAS.is_dir():

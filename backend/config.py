@@ -9,12 +9,12 @@ se comporta exactamente como antes. Definirlas es lo que permite correrlo en
 otra parte ---otra base, otro intermediario, detras de un tunel--- sin tocar una
 linea.
 
-`docs/ENTORNO.env.example` enumera todas con su valor por omision.
+`.env.example`, en la raiz, enumera todas con su valor por omision.
 
 Lo que sigue sin estar aca, a proposito: la autenticacion. El proyecto no la
 tiene y no la finge. Mientras todo escucha en `127.0.0.1` la maquina es el
 limite; publicado hacia afuera, ese limite lo tiene que poner algo delante ---en
-el despliegue documentado, Cloudflare Access---. Ver `docs/DESPLIEGUE.md`.
+el despliegue sobre la Raspberry Pi, Cloudflare Access---.
 """
 
 import os

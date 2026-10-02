@@ -15,8 +15,7 @@ es adorno: **una anotacion es una afirmacion**, y una que no puede justificarse
 vale menos que su ausencia. Una condicion que no se cumple con claridad no se
 anota.
 
-Es ademas el prototipo de las anotaciones en vivo que el cronograma tiene
-previstas: la misma logica, aplicada al flujo en lugar de al archivo.
+Es ademas el prototipo de las anotaciones en vivo: la misma logica, aplicada al flujo en lugar de al archivo.
 """
 
 from __future__ import annotations

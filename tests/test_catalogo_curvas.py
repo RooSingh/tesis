@@ -492,8 +492,6 @@ class ElSentidoDeGiroSEMIDE(unittest.TestCase):
     Silverstone da -363,2 grados sobre la vuelta 2, que es una vuelta entera a
     derecha con 0,9 % de error. Spielberg da -390,2 y -403,3 sobre dos vueltas.
     Mismo signo, y el control cae donde tiene que caer.
-
-    Ver `docs/mediciones/anclaje_de_curvas_tres_circuitos.txt`.
     """
 
     def test_spielberg_se_corre_horario(self) -> None:

@@ -1087,8 +1087,7 @@ def _reducir(filas: list, puntos: int,
 # consecuencia, mas de una adquisicion.
 #
 # En `f1_25:session:3731090176871608020` conviven tres: la original del 5 de
-# septiembre y dos corridas de prueba del 8, documentadas en
-# `docs/diagnostico_spa_carrera_2.md`. Agrupadas como una sola carrera, la
+# septiembre y dos corridas de prueba del 8. Agrupadas como una sola carrera, la
 # vuelta 1 abarca tres dias y `posiciones_en_pista` reparte 260.454 s en 200
 # cubos ---1.302 s cada uno--- mientras el reproductor recorre 283 s.
 #

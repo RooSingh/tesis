@@ -22,8 +22,8 @@ Lo que se declara con precision
 
 Que se publica
 --------------
-Solo lo que `docs/research/matriz_evidencia_senales.md` respalda con confianza
-alta o media-alta. **Cada mensaje viaja con su confianza y con su limite**, porque
+Solo lo que el analisis del bus respalda con confianza alta o media-alta
+(ver el informe, capitulo de la fuente CAN). **Cada mensaje viaja con su confianza y con su limite**, porque
 una velocidad de rueda con escala declarada y una posicion de acelerador sin
 unidad del fabricante no valen lo mismo, y el consumidor no puede distinguirlas
 mirando el numero.
