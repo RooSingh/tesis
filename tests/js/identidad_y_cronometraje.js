@@ -163,7 +163,7 @@ const NOMBRES = [
   "tintaDeVehiculo",
   "anotarParrillas", "parrillaVigente",
   "secundarioDeVehiculo", "quienConduce",
-  "vehiculosConTelemetriaGuardada", "autoPropio",
+  "vehiculosConTelemetriaGuardada", "coberturaDeVehiculos", "autoPropio",
   "unidadDeCanal", "sinCambiosEnElTramo",
   "divisorDeUnidad", "unidadDeclaradaDe", "divisorDePresentacion",
   "estaEnLaUnidadQueSeMuestra", "serieCrudaDeCanal", "_armarSerieDeCanal",
@@ -297,7 +297,7 @@ const {
   muestrasQueAporta, idsParaComparar, sePuedeComparar,
   poblarPropio,
   renombrarAutos, armarAutos, tintaDeVehiculo,
-  secundarioDeVehiculo, vehiculosConTelemetriaGuardada, autoPropio,
+  secundarioDeVehiculo, vehiculosConTelemetriaGuardada, coberturaDeVehiculos, autoPropio,
   camposDeIdentidad, quienConduce,
   unidadDeCanal, sinCambiosEnElTramo,
   divisorDeUnidad, unidadDeclaradaDe, divisorDePresentacion,
@@ -606,6 +606,39 @@ prueba("la cobertura la declara la API y no el largo de la lista dibujada", () =
   armarAutos([CAR19]);
   assert.strictEqual(vehiculosConTelemetriaGuardada(), 2,
                      "se conto lo que hay en pantalla y no lo que hay guardado");
+});
+
+prueba("la cobertura es de la sesion y no de la adquisicion elegida", () => {
+  // Spa, dos conductores: el propio quedo en la captura original y los otros
+  // cinco en el recompletado. La pantalla decia 6 en un panel y 5 en el otro.
+  reiniciar();
+  globalThis.corrida = { adquisicion: "recompletado", fase: null, disponibles: null, mezclada: true };
+  anotarParrillas(SESION, [
+    { clave: "original", parrilla: parrillaDeSpa({ con_telemetria: 1 }) },
+    { clave: "recompletado", parrilla: parrillaDeSpa({ con_telemetria: 5 }) },
+  ], 6);
+  assert.strictEqual(vehiculosConTelemetriaGuardada(), 6,
+                     "se conto la adquisicion elegida y no la sesion");
+  const c = coberturaDeVehiculos();
+  assert.ok(c.texto.indexOf("6 vehículos con telemetría guardada") === 0, c.texto);
+  assert.ok(/aporta la telemetría de 5 de ellos/.test(c.titulo),
+            "el titulo tiene que decir cuanto aporta la adquisicion elegida");
+});
+
+prueba("una parrilla que llega despues no borra la cobertura de la sesion", () => {
+  reiniciar();
+  anotarParrillas(SESION, [{ clave: "recompletado", parrilla: parrillaDeSpa({ con_telemetria: 5 }) }], 6);
+  anotarParrillas(SESION, [{ clave: "contexto", parrilla: parrillaDeSpa({ con_telemetria: 5 }) }]);
+  assert.strictEqual(vehiculosConTelemetriaGuardada(), 6);
+});
+
+prueba("los dos paneles leen el mismo renglon", () => {
+  reiniciar();
+  ponerParrilla(parrillaDeSpa({ con_telemetria: 2 }));
+  armarAutos([CAR19]);
+  const a = coberturaDeVehiculos(), b = coberturaDeVehiculos();
+  assert.strictEqual(a.texto, b.texto);
+  assert.ok(/^2 vehículos con telemetría guardada · \d+ en la parrilla declarada$/.test(a.texto), a.texto);
 });
 
 prueba("sin parrilla la cobertura cae en lo unico que se sabe", () => {

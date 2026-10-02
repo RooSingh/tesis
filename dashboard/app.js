@@ -925,13 +925,24 @@ function textoSeguro(t) {
    pertenecen. `null` mientras no llego ninguna. */
 let PARRILLAS = null;
 
-function anotarParrillas(sessionId, adquisiciones) {
+function anotarParrillas(sessionId, adquisiciones, conTelemetriaEnLaSesion) {
   const porClave = {};
   (adquisiciones || []).forEach(a => {
     const p = a && a.parrilla;
     if (p && p.disponible && Array.isArray(p.vehiculos)) porClave[a.clave] = p;
   });
-  PARRILLAS = sessionId ? { sesion: sessionId, porClave: porClave } : null;
+  /* La cobertura de la sesion entera solo la trae `/adquisiciones`. Las otras
+     dos vias ---la parrilla de OpenF1 y la procedencia en vivo--- no la conocen,
+     y llamar sin ella no puede borrar la que ya habia llegado para la misma
+     sesion: el orden en que contestan las consultas no esta garantizado. */
+  const previa = PARRILLAS && PARRILLAS.sesion === sessionId
+    ? PARRILLAS.conTelemetriaEnLaSesion : null;
+  const enLaSesion = Number.isFinite(conTelemetriaEnLaSesion)
+    ? conTelemetriaEnLaSesion : previa;
+  PARRILLAS = sessionId
+    ? { sesion: sessionId, porClave: porClave,
+        conTelemetriaEnLaSesion: Number.isFinite(enLaSesion) ? enLaSesion : null }
+    : null;
 }
 
 /* La parrilla del alcance que se esta mirando.
@@ -978,12 +989,49 @@ function parrillaComun(porClave) {
   return capturas.every(p => firma(p) === primera) ? capturas[0] : null;
 }
 
-/* Cuantos vehiculos de este alcance tienen telemetria guardada. Es cobertura,
-   no identidad: la parrilla puede nombrar veinte y la base tener uno. */
+/* Cuantos vehiculos de esta sesion tienen telemetria guardada. Es cobertura,
+   no identidad: la parrilla puede nombrar veinte y la base tener uno.
+
+   DE LA SESION, NO DE LA ADQUISICION ELEGIDA. Se contaba la parrilla de la
+   adquisicion, y el panel de vehiculos contaba la lista dibujada: sobre la
+   carrera de dos conductores de Spa la misma pantalla decia «6 con telemetría»
+   y «5 vehículos con telemetría guardada». Las dos cifras eran ciertas y
+   ninguna decia que contaba: el coche propio esta en la captura original y los
+   otros cinco en el recompletado. La base tiene seis, y la cifra que se declara
+   es la de la sesion, que la API calcula uniendo todas las adquisiciones. */
 function vehiculosConTelemetriaGuardada() {
+  const abierta = estado.abierta && estado.abierta.session_id;
+  if (PARRILLAS && PARRILLAS.sesion === abierta &&
+      Number.isFinite(PARRILLAS.conTelemetriaEnLaSesion)) {
+    return PARRILLAS.conTelemetriaEnLaSesion;
+  }
   const p = parrillaVigente();
   if (p && Number.isFinite(p.con_telemetria)) return p.con_telemetria;
   return AUTOS.length;
+}
+
+/* EL MISMO RENGLON PARA LOS DOS PANELES QUE LO MUESTRAN.
+   El de vehiculos y el de cronometraje armaban cada uno su texto, con su
+   propia cuenta y sus propias palabras, y terminaron diciendo cosas distintas
+   sobre la misma sesion. Ahora los dos leen de aca. */
+function coberturaDeVehiculos() {
+  const n = vehiculosConTelemetriaGuardada();
+  const parrilla = parrillaVigente();
+  const enParrilla = (parrilla || { vehiculos: [] }).vehiculos.length;
+  const texto =
+    (n === 1 ? "1 vehículo con telemetría guardada"
+             : n + " vehículos con telemetría guardada") +
+    (enParrilla ? " · " + enParrilla + " en la parrilla declarada" : "");
+  let titulo = "Vehículos de esta sesión con telemetría guardada en la base, " +
+    "contando todas sus adquisiciones" +
+    (enParrilla ? "; y participantes que declara la parrilla del juego" : "") + ".";
+  const enLaElegida = parrilla && Number.isFinite(parrilla.con_telemetria)
+    ? parrilla.con_telemetria : null;
+  if (enLaElegida !== null && enLaElegida !== n) {
+    titulo += " La adquisición elegida aporta la telemetría de " + enLaElegida +
+      " de ellos.";
+  }
+  return { n: n, enParrilla: enParrilla, texto: texto, titulo: titulo };
 }
 
 /* La identidad de un vehiculo, o el respaldo explicito si no se la conoce.
@@ -2630,10 +2678,10 @@ function pintarAutos() {
   /* DOS CIFRAS QUE NO SON LA MISMA. Cuantos vehiculos tienen telemetria
      guardada, y cuantos declara la parrilla. Antes se mostraba una sola y se
      leia como si fueran las dos. */
-  document.getElementById("canal-autos").textContent = AUTOS.length
-    ? ((AUTOS.length === 1 ? "1 con telemetría" : AUTOS.length + " con telemetría") +
-       (enParrilla ? " · " + enParrilla + " en parrilla" : ""))
-    : "—";
+  const canalAutos = document.getElementById("canal-autos");
+  const cobertura = coberturaDeVehiculos();
+  canalAutos.textContent = AUTOS.length ? cobertura.texto : "—";
+  canalAutos.title = AUTOS.length ? cobertura.titulo : "";
 }
 
 /* ---------------- disponibilidad ---------------- */
@@ -12115,7 +12163,7 @@ function abrirSesionGuardada(id) {
            renombra lo que hay, sin tocar claves, seleccion, propio ni cabezal.
            Enterarse de un nombre no reinicia una reproduccion. */
         anotarParrillas(a.session_id || (estado.abierta || {}).session_id,
-                        a.adquisiciones);
+                        a.adquisiciones, a.con_telemetria_en_la_sesion);
         if (renombrarAutos()) {
           const sel = document.getElementById("sel-propio");
           if (sel) sel.dataset.firma = "";
@@ -15765,12 +15813,9 @@ function pintarCronometraje() {
      tener sus señales: se declara aparte y con sus propias palabras. */
   const cobertura = document.getElementById("crono-cobertura");
   if (cobertura) {
-    const n = vehiculosConTelemetriaGuardada();
-    const enParrilla = (parrillaVigente() || { vehiculos: [] }).vehiculos.length;
-    cobertura.textContent =
-      (n === 1 ? "1 vehículo con telemetría guardada" :
-        n + " vehículos con telemetría guardada") +
-      (enParrilla ? " · " + enParrilla + " en la parrilla declarada" : "");
+    const c = coberturaDeVehiculos();
+    cobertura.textContent = c.texto;
+    cobertura.title = c.titulo;
   }
 
   const cab = document.getElementById("canal-traza");

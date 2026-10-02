@@ -1946,6 +1946,16 @@ def adquisiciones(session_id: str) -> dict:
         "session_id": session_id,
         "fuente": fuente,
         "adquisiciones": salida,
+        # CUANTOS VEHICULOS TIENEN TELEMETRIA GUARDADA EN LA SESION ENTERA.
+        #
+        # La parrilla de cada adquisicion declara su propio `con_telemetria`, y
+        # eso es lo que se mostraba como cobertura de la sesion. En la carrera de
+        # dos conductores de Spa el tablero decia a la vez «6 con telemetria» y
+        # «5 vehiculos con telemetria guardada»: el coche propio esta en la
+        # captura original y los otros cinco en el recompletado, de modo que la
+        # adquisicion elegida contaba cinco mientras la lista mostraba seis.
+        # La cifra de la sesion es la union de todas, y es la que se declara.
+        "con_telemetria_en_la_sesion": len(con_telemetria),
         "mezclada": len(salida) > 1,
         "como_se_identifica": (
             "por `replay_run_id`: el reproductor lo escribe y la captura "
