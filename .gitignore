@@ -16,14 +16,9 @@ logs/
 .env
 infra/.env
 
-# Material personal de trabajo. Nunca se versiona.
+# Material personal de trabajo y el informe. Nunca se versionan.
 _privado/
-
-# Cuadros de validacion del informe: se versionan solo los dos que se imprimen
-# como figura; el resto se regenera con scripts/extraer_cuadros_validacion.py.
-informe/tesis/figuras/carrera_silverstone_*.png
-!informe/tesis/figuras/carrera_silverstone_14_velocidad-maxima.png
-!informe/tesis/figuras/carrera_silverstone_16_panel-motor.png
+informe/
 
 # Archivos temporales del sistema y de Office
 ~$*

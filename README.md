@@ -66,7 +66,6 @@ cadena completa sin ninguna fuente externa.
 | `infra/` | `docker-compose.yml`, `Dockerfile` y configuración de Mosquitto |
 | `scripts/` | herramientas de línea de comandos: captura, reproducción, carga de datos, mediciones y verificaciones. Ver [`scripts/README.md`](scripts/README.md) |
 | `tests/` | suite de pruebas en Python (`unittest`) y arneses del tablero en JavaScript (`tests/js/`) |
-| `informe/` | el informe del trabajo, en LaTeX |
 
 No se versionan (ver `.gitignore`): `datasets/` (capturas y datos crudos),
 `external/` (código de terceros), `logs/` (salida de ejecución) y `.env`.
