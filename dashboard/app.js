@@ -2859,7 +2859,13 @@ let _firmaEsquinas = "";
 
 function pintarEsquinas() {
   const ti = instante();
+  /* LA FIRMA LLEVA LOS VALORES, NO SOLO EL CABEZAL.
+     Solo miraba el avance del cabezal, que en vivo vale siempre uno: el panel
+     se pintaba una vez y se quedaba con esas temperaturas, presiones y daños
+     mientras `sincronizarContextoVivo` renovaba `estado.vehiculo` con cada
+     muestra. Ahora se repinta cuando cambia lo que muestra. */
   const firmaE = [fuente, estadoSesion, ti.avance.toFixed(4), Math.round(ti.frenando),
+                  JSON.stringify(estado.vehiculo || null),
                   tinta("--acento")].join("|");
   if (firmaE === _firmaEsquinas) return;
   _firmaEsquinas = firmaE;
