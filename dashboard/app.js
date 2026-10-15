@@ -8692,6 +8692,20 @@ function idsParaComparar() {
   return [...seleccion].slice(0, 4);
 }
 
+/* EN VIVO LA VISTA AMPLIADA LEE EL FLUJO, COMO LOS GRAFICOS CHICOS.
+   Leia solo `estado.series`, que en vivo esta vacio a proposito, y se cortaba
+   con el cartel de «vueltas ya cerradas»: los cuatro graficos de la cabina se
+   movian y al ampliar uno el trazo desaparecia. Ampliar es mirar lo mismo mas
+   grande, no cambiar de dato. En vivo hay una sola vuelta ---la que esta en
+   curso--- y es la que trae `vivo.series`, de modo que el alcance es esa. */
+function ampliadaEnVivo() {
+  return estadoSesion === "vivo";
+}
+
+function alcanceVigente() {
+  return ampliadaEnVivo() ? "una" : alcanceComparacion;
+}
+
 function vueltasParaComparar() {
   return alcanceComparacion === "carrera"
     ? estado.vueltas.map(v => v.numero)
@@ -8791,8 +8805,32 @@ function enPasadas(datos) {
   return tramos.filter(t => t.length);
 }
 
+/* Los segmentos de la vuelta en curso, del buffer vivo. Cada muestra es
+   `[metro de vuelta, valor, reloj de la fuente en ms]`; contra el reloj el eje
+   cuenta desde la primera muestra que queda en el buffer. Se corta donde el
+   metro vuelve al principio, con el mismo criterio que `enPasadas`. */
+function segmentosEnVivo(nombre, vehiculo) {
+  const porSenal = vivo.series.get(vehiculo);
+  const cruda = porSenal ? (porSenal.get(nombre) || []) : [];
+  if (!cruda.length) return [];
+  const enDistancia = ejeVigente() === "distancia";
+  const primera = cruda.find(p => Number.isFinite(p[2]));
+  const origen = primera ? primera[2] : null;
+  const segmentos = [[]];
+  let anterior = null;
+  cruda.forEach(p => {
+    const x = enDistancia ? p[0] : (origen === null || !Number.isFinite(p[2]) ? NaN : (p[2] - origen) / 1000);
+    if (!Number.isFinite(Number(x)) || !Number.isFinite(Number(p[1]))) return;
+    if (enDistancia && anterior !== null && x < anterior - VUELVE_AL_PRINCIPIO_M) segmentos.push([]);
+    segmentos[segmentos.length - 1].push([Number(x), Number(p[1])]);
+    anterior = x;
+  });
+  return segmentos.filter(s => s.length);
+}
+
 function segmentosComparacion(metrica, vehiculo) {
   const nombre = nombreDeSenal(metrica);
+  if (ampliadaEnVivo()) return segmentosEnVivo(nombre, vehiculo);
   const segmentos = [];
   vueltasParaComparar().forEach(numero => {
     const bloque = estado.series[numero];
@@ -8939,10 +8977,10 @@ function vistaDeComparacion() {
   }
 
   const enDistancia = ejeVigente() === "distancia";
-  const deLaCarrera = alcanceComparacion === "carrera";
+  const deLaCarrera = alcanceVigente() === "carrera";
   return {
     ids: ids, activas: activas, paneles: paneles,
-    eje: ejeVigente(), alcance: alcanceComparacion,
+    eje: ejeVigente(), alcance: alcanceVigente(),
     xMin: xMin, xMax: xMax, completo: completo, conZoom: !!zoom,
     unidad: enDistancia ? "m" : "s",
     rotuloDelEje: enDistancia
@@ -9555,22 +9593,13 @@ function dibujarComparacion() {
   const impedimento = motivoDelEjeEspacial();
   if (impedimento) { avisoDeComparacion(cv, ctx, impedimento); return; }
 
-  /* LA COMPARACION TRABAJA SOBRE VUELTAS GUARDADAS, Y HAY QUE DECIRLO.
-     Compara **vueltas cerradas** entre si: lee `estado.series`, que en vivo
-     esta vacio a proposito. Los cuatro graficos chicos si leen el flujo, de
-     modo que durante una sesion en vivo la pantalla mostraba unos paneles con
-     dato y este en blanco, sin explicar la diferencia.
-
-     No se la conecta al flujo porque no hay que conectar: en vivo hay **una**
-     vuelta y esta a medio correr, y comparar una vuelta incompleta contra nada
-     no es una comparacion. Lo que corresponde es decir que espera a que la
-     vuelta cierre. */
-  if (estadoSesion === "vivo" && !Object.keys(estado.series).length) {
-    avisoDeComparacion(cv, ctx,
-      "La comparación trabaja sobre vueltas ya cerradas. Esta sesión está en curso: " +
-      "en cuanto se guarde la primera vuelta completa aparece acá.");
-    return;
-  }
+  /* EN VIVO SE DIBUJA LA VUELTA EN CURSO, NO UN CARTEL.
+     Aca se cortaba con «la comparación trabaja sobre vueltas ya cerradas», y
+     ese cartel no se iba nunca: en vivo `estado.series` sigue vacio aunque las
+     vueltas cierren. Ampliar un grafico de la cabina lo hacia desaparecer. Ahora
+     los segmentos salen del flujo (`segmentosEnVivo`), y lo unico que no se
+     ofrece en vivo es lo que necesita una vuelta guardada: el delta. */
+  const enVivo = ampliadaEnVivo();
   /* LA MISMA VISTA QUE EXPORTA LA LAMINA. Quienes, que señales, que eje, que
      alcance, que dominio y que segmentos: resueltos una vez, en un solo sitio. */
   const vista = vistaDeComparacion();
@@ -9580,7 +9609,9 @@ function dibujarComparacion() {
   /* EL DELTA ES UN PANEL MAS, Y VA ARRIBA. Es la respuesta a «¿donde me saca
      tiempo?», y las trazas de abajo son el «¿que hizo distinto?» que la
      explica: leerlas en ese orden es leer la causa despues del efecto. */
-  const motivoSinDelta = porQueNoHayDelta(vista.ids.length, vista.eje, vista.alcance);
+  const motivoSinDelta = enVivo
+    ? "el delta enfrenta vueltas guardadas, y en vivo la vuelta está a medio correr."
+    : porQueNoHayDelta(vista.ids.length, vista.eje, vista.alcance);
   /* `estado.abierta` es la **ficha** de la sesion, no su identificador: pasarla
      tal cual arma una direccion con `[object Object]` adentro y la consulta se
      va a una sesion que no existe. */
@@ -9605,6 +9636,12 @@ function dibujarComparacion() {
 
   if (vista.vacia) {
     ctx.fillStyle = tinta("--texto-tenue"); ctx.font = "14px 'IBM Plex Sans', sans-serif";
+    /* En vivo no hay nada que pedir a la base: falta que el flujo traiga la
+       señal. Reintentar pediria la vuelta guardada, que en vivo no existe. */
+    if (enVivo) {
+      ctx.fillText("Esperando las primeras muestras en vivo de esta señal…", 20, h / 2);
+      return;
+    }
     const faltan = vueltasParaComparar().some(numero => {
       const bloque = estado.series[numero];
       return !bloque || ids.some(id => !bloque.vehiculos[id]);
@@ -9684,10 +9721,13 @@ function dibujarComparacion() {
      que cruza los graficos chicos cruza estos, en la misma posicion, porque
      leen el mismo cabezal; y sobre cada serie va el punto de ese instante,
      que es lo que permite leer el valor exacto de cada piloto. */
-  if (estadoSesion !== "vacio" && alcanceComparacion === "una") {
+  if (estadoSesion !== "vacio" && alcanceVigente() === "una") {
     const t = instante();
+    /* En vivo, contra el reloj, el instante es la ultima muestra: el eje cuenta
+       desde la primera que queda en el buffer, no desde el inicio de la vuelta. */
     const valorCabezal = ejeVigente() === "distancia"
-      ? t.metro : t.fraccion * (duracionDeVuelta(t.vuelta) || 0);
+      ? t.metro
+      : (enVivo ? vista.completo[1] : t.fraccion * (duracionDeVuelta(t.vuelta) || 0));
     if (valorCabezal >= xMin && valorCabezal <= xMax) {
       const xc = margenIzq + ((valorCabezal - xMin) / Math.max(1e-9, xMax - xMin)) * ancho;
       ctx.strokeStyle = tinta("--acento");
@@ -9745,6 +9785,9 @@ function dibujarComparacion() {
   if (zoom) {
     dice.push("Zoom activo entre " + cifra(d0, 1) + unidadDelEje + " y " +
               cifra(d1, 1) + unidadDelEje + ".");
+  } else if (enVivo) {
+    dice.push("En vivo: la vuelta en curso, con las últimas " + MAX_MUESTRAS_VIVO +
+              " muestras de cada señal que llegaron por el flujo.");
   } else {
     if (alcanceComparacion === "carrera") dice.push("Carrera completa con segmentos separados por vuelta.");
     dice.push(ejeVigente() === "distancia"
@@ -16248,12 +16291,9 @@ function pintarTrazas() {
      el mismo instante mirado dos veces, y dos posiciones distintas para el
      mismo momento serian un tablero contandose dos cosas. */
   if (trazadoGrandeAbierto()) pintarTrazadoGrande();
-  /* En vivo la comparacion no lee nada de lo que llega ---trabaja sobre
-     vueltas cerradas--- asi que repintarla en cada muestra es trabajo por un
-     dibujo identico. Se la repinta cuando cambia lo que si lee. */
-  if (compAbierta() && !(estadoSesion === "vivo" && !Object.keys(estado.series).length)) {
-    dibujarComparacion();
-  }
+  /* En vivo la vista ampliada lee el flujo (`segmentosEnVivo`), asi que se la
+     repinta con cada tanda de muestras, igual que los graficos chicos. */
+  if (compAbierta()) dibujarComparacion();
 }
 
 /* La pasada completa. Se conserva ---y se sigue llamando en todo lo que cambia

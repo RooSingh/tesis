@@ -205,6 +205,9 @@ const NOMBRES = [
   //: extraida revienta este banco con «no esta definida», que es un fallo que no
   //: dice nada del defecto que se estaba probando.
   "enPasadas",
+  //: `vistaDeComparacion` y `segmentosComparacion` preguntan si la vista
+  //: ampliada esta en vivo para leer el flujo en vez de la vuelta guardada.
+  "ampliadaEnVivo", "alcanceVigente", "segmentosEnVivo",
   //: `pedirTrazado` la llama para elegir con que vuelta dibujar: sin declararla
   //: aqui, el banco revienta con un nombre no definido y el fallo no dice nada
   //: del defecto que se estaba probando.
@@ -2466,6 +2469,31 @@ prueba("una vuelta: la lamina usa la distancia de vuelta", () => {
   assert.ok(/DISTANCIA DE VUELTA/.test(t), t);
   assert.ok(/vuelta 7/.test(t), t);
   assert.strictEqual(_guardado.nombre, "senales-vuelta-7-distancia.png");
+});
+
+/* EN VIVO LA VISTA AMPLIADA LEE EL FLUJO.
+   Leia solo las vueltas guardadas y en vivo mostraba un cartel: el grafico de
+   la cabina se movia y al ampliarlo el trazo desaparecia. Con la carrera
+   elegida y dos vueltas guardadas en la acumulada, en vivo tiene que verse la
+   vuelta en curso del buffer y no lo guardado. */
+prueba("en vivo la vista ampliada dibuja la vuelta en curso del flujo", () => {
+  sesionParaExportar();
+  globalThis.vivo = nuevoVivo();
+  vivo.series.set(CAR19, new Map([["speed",
+    [[100, 210, 1000], [150, 220, 1050], [200, 230, 1100]]]]));
+  globalThis.estadoSesion = "vivo";
+  try {
+    const vista = vistaDeComparacion();
+    assert.strictEqual(vista.vacia, false);
+    assert.strictEqual(vista.alcance, "una");
+    assert.strictEqual(vista.xMin, 100);
+    assert.strictEqual(vista.xMax, 200);
+    assert.deepStrictEqual(vista.paneles[0].porVehiculo[0],
+                           [[[100, 210], [150, 220], [200, 230]]]);
+  } finally {
+    globalThis.estadoSesion = "cargado";
+    globalThis.vivo = nuevoVivo();
+  }
 });
 
 prueba("el zoom se aplica al mismo dominio que en pantalla", () => {
